@@ -1,6 +1,6 @@
 [project]
 name = "rikugan"
-version = "1.13.3"
+version = "1.14.0"
 description = "Agentic LLM reverse-engineering companion embedded directly in IDA Pro."
 readme = "README.md"
 license = "MIT"

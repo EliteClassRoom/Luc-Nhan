@@ -7,7 +7,7 @@ For host capability flags see ``rikugan.core.host``.
 from __future__ import annotations
 
 PLUGIN_NAME = "Luc Nhan"
-PLUGIN_VERSION = "1.13.3"
+PLUGIN_VERSION = "1.14.0"
 PLUGIN_HOTKEY = "Ctrl+Shift+I"
 PLUGIN_COMMENT = "Intelligent Reverse-engineering Integrated System"
 
