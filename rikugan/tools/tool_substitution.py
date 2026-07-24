@@ -175,14 +175,11 @@ _API_PATTERNS: Final[dict[str, tuple[str, str]]] = {
         "get_struct_info",
         "Dumping UDT member layout (offset/type/name) is what get_struct_info does.",
     ),
-    # Reading raw data values — prefer read_global_value over get_qword/get_wide_byte.
-    "ida_bytes.get_qword": (
+    # Reading a raw qword/pointer — bare-method-name: the matcher's last-hop
+    # fallback resolves both ida_bytes.get_qword and idc.get_qword to this key.
+    "get_qword": (
         "read_global_value",
         "Reading a qword/pointer value is what read_global_value(type_hint='u64'/'ptr') does.",
-    ),
-    "idc.get_qword": (
-        "read_global_value",
-        "Reading a qword value is what read_global_value(type_hint='u64') does.",
     ),
 }
 
