@@ -164,6 +164,26 @@ _API_PATTERNS: Final[dict[str, tuple[str, str]]] = {
         "list_enums",
         "Iterating enum types is what list_enums does.",
     ),
+    # Reading struct/UDT layout — bare-method-name fallback: the LLM writes
+    # ``tif = ida_typeinf.tinfo_t(); tif.get_named_type(...); tif.get_udt_details(udt)``
+    # so the call sites we collect are just ``get_named_type`` / ``get_udt_details``.
+    "get_named_type": (
+        "get_struct_info",
+        "Reading a named struct's type + member layout is what get_struct_info does.",
+    ),
+    "get_udt_details": (
+        "get_struct_info",
+        "Dumping UDT member layout (offset/type/name) is what get_struct_info does.",
+    ),
+    # Reading raw data values — prefer read_global_value over get_qword/get_wide_byte.
+    "ida_bytes.get_qword": (
+        "read_global_value",
+        "Reading a qword/pointer value is what read_global_value(type_hint='u64'/'ptr') does.",
+    ),
+    "idc.get_qword": (
+        "read_global_value",
+        "Reading a qword value is what read_global_value(type_hint='u64') does.",
+    ),
 }
 
 
