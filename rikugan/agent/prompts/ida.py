@@ -23,7 +23,7 @@ You have the IDA Pro decompiler engine at your fingertips -- zero latency.
 
 _IDA_TOOL_USAGE = """\
 ## Tool Usage -- CRITICAL
-You have 60+ purpose-built tools for IDA analysis. ALWAYS prefer these
+You have 80+ purpose-built tools for IDA analysis. ALWAYS prefer these
 built-in tools over execute_python (IDAPython scripting).
 
 The full categorized catalog (every tool grouped by category with a

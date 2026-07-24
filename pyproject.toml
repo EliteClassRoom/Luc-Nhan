@@ -7,46 +7,46 @@ license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "buzzer-re" }]
 keywords = [
-    "ai",
-    "llm",
-    "agent",
-    "reverse-engineering",
-    "decompiler",
-    "claude",
-    "openai",
-    "gemini",
-    "ollama",
-    "mcp",
-    "ida",
+  "ai",
+  "llm",
+  "agent",
+  "reverse-engineering",
+  "decompiler",
+  "claude",
+  "openai",
+  "gemini",
+  "ollama",
+  "mcp",
+  "ida",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: Microsoft :: Windows",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS :: MacOS X",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Disassemblers and Examiners",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Disassemblers and Examiners",
 ]
 
 # Runtime dependencies — kept in sync with ``ida-plugin.json``'s ``pythonDependencies``.
 # IDA Pro installs these via pip when the plugin loads; listing them here also lets
 # ``uv sync`` provision a working dev environment for provider/agent tests.
 dependencies = [
-    "anthropic>=0.112.0",
-    "openai>=2.0.0",
-    "google-genai>=2.0.0",
-    "mcp>=1.28.0",
-    "ida-domain>=0.5.0",
-    "tomli>=2.4.0",
-    "cryptography>=49.0.0",
-    "requests>=2.31.0",
-    "html2text>=2025.4.15",
-    "markdown-it-py>=3.0.0",
-    "portalocker>=3.0.0,<4",
-    "unicorn>=2.1.0,<3",
+  "anthropic>=0.112.0",
+  "openai>=2.0.0",
+  "google-genai>=2.0.0",
+  "mcp>=1.28.0",
+  "ida-domain>=0.5.0",
+  "tomli>=2.4.0",
+  "cryptography>=49.0.0",
+  "requests>=2.31.0",
+  "html2text>=2025.4.15",
+  "markdown-it-py>=3.0.0",
+  "portalocker>=3.0.0,<4",
+  "unicorn>=2.1.0,<3",
 ]
 
 [tool.ruff]
@@ -85,16 +85,16 @@ disallow_untyped_defs = true
 # IDA type-inf / Hex-Rays APIs — loaded via ``importlib.import_module`` to
 # avoid Shiboken UAF (see core/thread_safety.py docstring).
 module = [
-    "rikugan.ida.tools.types_tools",
-    "rikugan.ida.tools.microcode_format",
-    "rikugan.ida.tools.microcode",
-    "rikugan.ida.tools.disassembly",
-    "rikugan.ida.tools.annotations",
-    "rikugan.ida.tools.xrefs",
-    "rikugan.ida.tools.decompiler",
-    "rikugan.ida.ui.panel",
-    "rikugan.ida.ui.actions",
-    "rikugan.ida.headless_bootstrap",
+  "rikugan.ida.tools.types_tools",
+  "rikugan.ida.tools.microcode_format",
+  "rikugan.ida.tools.microcode",
+  "rikugan.ida.tools.disassembly",
+  "rikugan.ida.tools.annotations",
+  "rikugan.ida.tools.xrefs",
+  "rikugan.ida.tools.decompiler",
+  "rikugan.ida.ui.panel",
+  "rikugan.ida.ui.actions",
+  "rikugan.ida.headless_bootstrap",
 ]
 ignore_errors = true
 
@@ -112,28 +112,28 @@ ignore_errors = true
 # top-level window with no parent) and cannot be cleanly expressed
 # without ignoring the module.
 module = [
-    "rikugan.ui.chat_view",
-    "rikugan.ui.a2a_widget",
-    "rikugan.ui.session_controller_base",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.panel_core",
-    "rikugan.ui.mutation_log_view",
-    "rikugan.ui.tools_panel",
-    "rikugan.ui.settings_dialog",
-    "rikugan.ui.plan_view",
-    "rikugan.ui.input_area",
-    "rikugan.ui.bulk_renamer",
-    "rikugan.ui.agent_tree",
-    "rikugan.ui.context_bar",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.ui.tabs.skills_tab",
-    "rikugan.ui.tabs.profiles_tab",
-    "rikugan.ui.tabs.mcp_tab",
-    "rikugan.ida.ui.tools_form",
-    "rikugan.ida.tools.registry",
-    "rikugan.tools.web_fetch",
-    "rikugan.tests.conftest",
+  "rikugan.ui.chat_view",
+  "rikugan.ui.a2a_widget",
+  "rikugan.ui.session_controller_base",
+  "rikugan.ui.tool_widgets",
+  "rikugan.ui.panel_core",
+  "rikugan.ui.mutation_log_view",
+  "rikugan.ui.tools_panel",
+  "rikugan.ui.settings_dialog",
+  "rikugan.ui.plan_view",
+  "rikugan.ui.input_area",
+  "rikugan.ui.bulk_renamer",
+  "rikugan.ui.agent_tree",
+  "rikugan.ui.context_bar",
+  "rikugan.ui.theme.manager",
+  "rikugan.ui.theme.palette_ida",
+  "rikugan.ui.tabs.skills_tab",
+  "rikugan.ui.tabs.profiles_tab",
+  "rikugan.ui.tabs.mcp_tab",
+  "rikugan.ida.ui.tools_form",
+  "rikugan.ida.tools.registry",
+  "rikugan.tools.web_fetch",
+  "rikugan.tests.conftest",
 ]
 ignore_errors = true
 
@@ -153,12 +153,11 @@ ignore_errors = true
 
 [dependency-groups]
 dev = [
-    "desloppify>=1.0",
-    "pyside6>=6.11.1",
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-    "ruff>=0.6",
-    "mypy>=1.10",
-    "pyyaml>=6.0",
+  "desloppify>=1.0",
+  "pyside6>=6.11.1",
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.6",
+  "mypy>=1.10",
+  "pyyaml>=6.0",
 ]
-
