@@ -142,8 +142,14 @@ class SessionControllerBase:
         tab_id = self._create_session()
         self._active_tab_id = tab_id
 
-        self._runner: BackgroundAgentRunner | None = None
-        self._pending_messages: list[str] = []
+        # Multi-runner: one BackgroundAgentRunner per tab so agents can run
+        # concurrently. ``_pending_messages`` is per-tab too so a queued
+        # follow-up in tab A never leaks into tab B. When
+        # ``parallel_agent_enabled`` is False the effective cap is 1, which
+        # reproduces the legacy single-agent behavior.
+        self._runners: dict[str, BackgroundAgentRunner] = {}
+        self._pending_messages: dict[str, list[str]] = {}
+        self._max_concurrent_agents = config.parallel_agent_max_concurrent if config.parallel_agent_enabled else 1
         # Snapshot of the skill-relevant config fields so ``update_settings``
         # can skip the expensive ``_reload_skills`` filesystem rescan when
         # only non-skill config (provider/model/theme) changed. Theme-only
@@ -263,10 +269,13 @@ class SessionControllerBase:
         return new_tab_id
 
     def close_tab(self, tab_id: str) -> None:
-        """Save and remove a tab's session."""
+        """Save and remove a tab's session, cancelling any running agent on it."""
         session = self._sessions.get(tab_id)
         if session is None:
             return
+        # Stop the agent that belongs to this tab before tearing it down.
+        self.cancel(tab_id)
+        self._runners.pop(tab_id, None)
         if self.config.checkpoint_auto_save and session.messages:
             try:
                 history = SessionHistory(self.config)
@@ -277,13 +286,16 @@ class SessionControllerBase:
         log_debug(f"Closed tab {tab_id}")
 
     def switch_tab(self, tab_id: str) -> None:
-        """Switch active tab. Cancels running agent if switching away."""
+        """Switch active tab.
+
+        Unlike the legacy single-agent behavior, switching tabs does NOT
+        cancel a running agent — agents keep running in their own tab so
+        multiple can progress concurrently.
+        """
         if tab_id == self._active_tab_id:
             return
         if tab_id not in self._sessions:
             return
-        if self.is_agent_running:
-            self.cancel()
         self._active_tab_id = tab_id
         log_debug(f"Switched to tab {tab_id}")
 
@@ -346,10 +358,33 @@ class SessionControllerBase:
 
     @property
     def is_agent_running(self) -> bool:
-        return self._runner is not None and self._runner.agent_loop.is_running
+        """True if *any* tab has a running agent (used by headless/control)."""
+        return any(r.agent_loop.is_running for r in self._runners.values())
 
-    def get_runner(self) -> BackgroundAgentRunner | None:
-        return self._runner
+    def is_tab_running(self, tab_id: str) -> bool:
+        """True if the given tab's agent is currently running."""
+        runner = self._runners.get(tab_id)
+        return runner is not None and runner.agent_loop.is_running
+
+    def get_runner(self, tab_id: str | None = None) -> BackgroundAgentRunner | None:
+        """Return the runner for *tab_id* (defaults to the active tab).
+
+        Zero-arg default targets the active tab so headless/control call
+        sites (which always have exactly one tab) keep working unchanged.
+        """
+        tid = tab_id if tab_id is not None else self._active_tab_id
+        return self._runners.get(tid)
+
+    def iter_runners(self):
+        """Yield ``(tab_id, runner)`` for every live runner."""
+        return iter(self._runners.items())
+
+    def _running_count(self) -> int:
+        return sum(1 for r in self._runners.values() if r.agent_loop.is_running)
+
+    def has_free_slot(self) -> bool:
+        """True if a new agent can start without exceeding the concurrency cap."""
+        return self._running_count() < self._max_concurrent_agents
 
     def get_provider(self) -> LLMProvider | None:
         """Create and return an LLMProvider instance for the current config.
@@ -497,8 +532,13 @@ class SessionControllerBase:
         except Exception as exc:
             log_debug(f"set_capabilities(minimax_provider) failed: {exc}")
 
-    def start_agent(self, user_message: str) -> str | None:
-        """Create provider + agent loop and start the background runner."""
+    def start_agent(self, user_message: str, tab_id: str | None = None) -> str | None:
+        """Create provider + agent loop and start the background runner.
+
+        Targets *tab_id* (defaults to the active tab). The runner is stored
+        per-tab in ``_runners`` so multiple agents can run concurrently.
+        """
+        tid = tab_id if tab_id is not None else self._active_tab_id
         if not self._runtime_init_done.is_set():
             # Delay only the first agent start if background init is still running.
             self._runtime_init_done.wait(timeout=10.0)
@@ -519,29 +559,35 @@ class SessionControllerBase:
         # the tool schema to send to the model.
         self._sync_web_tool_config()
 
+        session = self._sessions.get(tid)
+        if session is None:
+            return f"Unknown tab: {tid}"
+
         loop = AgentLoop(
             provider,
             self.tool_registry,
             self.config,
-            self._sessions[self._active_tab_id],
+            session,
             skill_registry=self._skill_registry,
             host_name=self.host_name,
         )
 
         # Inject central memory service for every agent run.
-        self._wire_central_memory(loop)
+        self._wire_central_memory(loop, tid)
 
-        self._runner = BackgroundAgentRunner(loop)
-        self._runner.start(user_message)
+        runner = BackgroundAgentRunner(loop)
+        self._runners[tid] = runner
+        runner.start(user_message)
         return None
 
-    def _wire_central_memory(self, loop: AgentLoop) -> None:
+    def _wire_central_memory(self, loop: AgentLoop, tab_id: str | None = None) -> None:
         """Construct and inject BinaryMemoryService into the loop.
 
         Called for every agent run. If identity resolution fails (bind
         returns ephemeral), this method returns early without injecting
         a service, so the loop runs without central memory.
         """
+        tid = tab_id if tab_id is not None else self._active_tab_id
         try:
             from ..memory.authority import MemoryAuthorityIssuer
             from ..memory.manager import MemoryWorkspaceManager
@@ -549,7 +595,9 @@ class SessionControllerBase:
             from ..memory.repository import SQLiteKnowledgeRepository
             from ..memory.workspace_store import WorkspaceStore
 
-            session = self._sessions[self._active_tab_id]
+            session = self._sessions.get(tid)
+            if session is None:
+                return
             manager = MemoryWorkspaceManager(self.config)
 
             # Build identity request from current session
@@ -599,43 +647,75 @@ class SessionControllerBase:
 
             log_error(traceback.format_exc())
 
-    def get_event(self, timeout: float = 0) -> TurnEvent | None:
-        if self._runner is None:
-            return None
-        return self._runner.get_event(timeout=timeout)
+    def get_event(self, tab_id: str | None = None, timeout: float = 0) -> TurnEvent | None:
+        """Return the next event for *tab_id*'s runner (defaults to active tab).
 
-    def cancel(self) -> None:
+        Zero-arg form targets the active tab to keep headless/control callers
+        working without changes.
+        """
+        tid = tab_id if tab_id is not None else self._active_tab_id
+        runner = self._runners.get(tid)
+        if runner is None:
+            return None
+        return runner.get_event(timeout=timeout)
+
+    def cancel(self, tab_id: str | None = None) -> None:
+        """Cancel the agent for *tab_id* (defaults to the active tab).
+
+        Only that tab's pending queue is cleared — other tabs are untouched.
+        """
+        tid = tab_id if tab_id is not None else self._active_tab_id
+        self._pending_messages.pop(tid, None)
+        runner = self._runners.get(tid)
+        if runner:
+            runner.cancel()
+
+    def cancel_all(self) -> None:
+        """Cancel every running agent across all tabs."""
         self._pending_messages.clear()
-        if self._runner:
-            self._runner.cancel()
+        for runner in self._runners.values():
+            runner.cancel()
 
     def queue_message(self, text: str) -> None:
-        self._pending_messages.append(text)
-        log_debug(f"Message queued, {len(self._pending_messages)} pending")
+        """Queue *text* as a follow-up for the active tab."""
+        self.queue_message_for_tab(self._active_tab_id, text)
 
-    def on_agent_finished(self) -> str | None:
-        """Handle end-of-run cleanup and return the next queued message.
+    def queue_message_for_tab(self, tab_id: str, text: str) -> None:
+        """Queue *text* as a follow-up for a specific tab."""
+        self._pending_messages.setdefault(tab_id, []).append(text)
+        pending = self._pending_messages.get(tab_id, [])
+        log_debug(f"Message queued for tab {tab_id}, {len(pending)} pending")
 
-        Previously this cleared the pending queue unconditionally. That
-        silently dropped any message the user typed while a run was
-        active. We now keep the queue and return its head so the UI
-        layer can drain one message per run completion. Cancellation
-        paths (``cancel``, ``new_chat``, ``shutdown``, tab switch)
-        continue to clear the queue to avoid leaking stale-context
-        requests across runs.
+    def pop_queued_message(self, tab_id: str) -> str | None:
+        """Pop and return the oldest queued follow-up for *tab_id*, if any."""
+        queue = self._pending_messages.get(tab_id)
+        if not queue:
+            return None
+        msg = queue.pop(0)
+        log_debug(f"Draining queue for tab {tab_id}: {len(queue)} remaining")
+        return msg
+
+    def on_agent_finished(self, tab_id: str | None = None) -> str | None:
+        """Handle end-of-run cleanup for *tab_id* and return its next queued message.
+
+        Pops that tab's runner from ``_runners`` and saves its session. The
+        returned message (if any) lets the UI drain that tab's follow-up queue.
+        Cancellation paths (``cancel``, ``new_chat``, ``shutdown``) clear the
+        queue separately to avoid leaking stale-context requests across runs.
 
         Returns
         -------
         str | None
-            The first pending message if any remain, otherwise ``None``.
+            That tab's first pending message if any remain, otherwise ``None``.
         """
-        self._runner = None
+        tid = tab_id if tab_id is not None else self._active_tab_id
+        self._runners.pop(tid, None)
 
         # Re-persist the instance ID in the database so a freshly created
         # IDB still gets one recorded before the next checkpoint cycle.
         set_database_instance_id(self._db_instance_id)
 
-        session = self._sessions.get(self._active_tab_id)
+        session = self._sessions.get(tid)
         if session and self.config.checkpoint_auto_save and session.messages:
             try:
                 history = SessionHistory(self.config)
@@ -651,10 +731,11 @@ class SessionControllerBase:
             except (OSError, ValueError) as e:
                 log_error(f"Failed to auto-save session: {e}")
 
-        if not self._pending_messages:
+        queue = self._pending_messages.get(tid)
+        if not queue:
             return None
-        next_message = self._pending_messages.pop(0)
-        log_debug(f"Draining queue after run: {len(self._pending_messages)} remaining")
+        next_message = queue.pop(0)
+        log_debug(f"Draining queue after run (tab {tid}): {len(queue)} remaining")
         return next_message
 
     @staticmethod
@@ -671,7 +752,10 @@ class SessionControllerBase:
 
     def new_chat(self) -> None:
         """Reset the active tab to a fresh session."""
-        self._pending_messages.clear()
+        self._pending_messages.pop(self._active_tab_id, None)
+        # A running agent on this tab is now orphaned by the session reset —
+        # cancel it so it doesn't write results into the discarded session.
+        self.cancel(self._active_tab_id)
         session = self._sessions.get(self._active_tab_id)
         if session and self.config.checkpoint_auto_save and session.messages:
             try:
@@ -989,9 +1073,9 @@ class SessionControllerBase:
         self._runtime_shutdown.set()
         if self._runtime_init_thread.is_alive():
             self._runtime_init_done.wait(timeout=1.0)
-        if self._runner:
-            self._runner.cancel()
-            self._runner = None
+        # Cancel every running agent across all tabs.
+        self.cancel_all()
+        self._runners.clear()
         # Final attempt to persist instance ID before the host saves the DB.
         set_database_instance_id(self._db_instance_id)
         for tab_id, session in self._sessions.items():

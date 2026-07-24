@@ -42,7 +42,6 @@ from .export_formatting import (
 from .history_panel import HistoryPanel
 from .input_area import InputArea
 from .mutation_log_view import MutationLogPanel
-from .profiling import probe as ui_probe
 from .qt_compat import (
     QCheckBox,
     QDialog,
@@ -249,6 +248,11 @@ class RikuganPanelCore(QWidget):
         self._polling = False
         self._pending_answer = False
         self._awaiting_button_approval = False
+        # Multi-tab: which tab's runner awaits an answer/approval. The
+        # input area is global, so the booleans above still gate it
+        # panel-wide (C1); these route the answer to the right runner.
+        self._pending_answer_tab: str | None = None
+        self._awaiting_approval_tab: str | None = None
         self._is_shutdown = False
         self._ui_hooks_factory = ui_hooks_factory
         self._ui_hooks = None
@@ -947,9 +951,15 @@ class RikuganPanelCore(QWidget):
         # happen automatically when ``chat_view.deleteLater()`` is called
         # on close/shutdown — Qt removes the connections along with the
         # signal owner.
-        chat_view.tool_approval_submitted.connect(self._on_tool_approval)
-        chat_view.user_answer_submitted.connect(self._on_user_answer_submitted)
-        chat_view.orchestra_approval_decided.connect(self._on_orchestra_approval)
+        chat_view.tool_approval_submitted.connect(
+            lambda tcid, d, tid=tab_id: self._on_tool_approval(tc_id=tcid, decision=d, tab_id=tid)
+        )
+        chat_view.user_answer_submitted.connect(
+            lambda ans, tid=tab_id: self._on_user_answer_submitted(answer=ans, tab_id=tid)
+        )
+        chat_view.orchestra_approval_decided.connect(
+            lambda tcid, d, tid=tab_id: self._on_orchestra_approval(tool_call_id=tcid, decision=d, tab_id=tid)
+        )
         self._chat_views[tab_id] = chat_view
         index = self._tab_widget.addTab(chat_view, label)
         self._tab_widget.setCurrentIndex(index)
@@ -990,9 +1000,15 @@ class RikuganPanelCore(QWidget):
                 pass
         new_view = ChatView()
         new_view.setProperty("tab_id", tab_id)
-        new_view.tool_approval_submitted.connect(self._on_tool_approval)
-        new_view.user_answer_submitted.connect(self._on_user_answer_submitted)
-        new_view.orchestra_approval_decided.connect(self._on_orchestra_approval)
+        new_view.tool_approval_submitted.connect(
+            lambda tcid, d, tid=tab_id: self._on_tool_approval(tc_id=tcid, decision=d, tab_id=tid)
+        )
+        new_view.user_answer_submitted.connect(
+            lambda ans, tid=tab_id: self._on_user_answer_submitted(answer=ans, tab_id=tid)
+        )
+        new_view.orchestra_approval_decided.connect(
+            lambda tcid, d, tid=tab_id: self._on_orchestra_approval(tool_call_id=tcid, decision=d, tab_id=tid)
+        )
         self._chat_views[tab_id] = new_view
         label = self._ctrl.tab_label(tab_id)
         if index >= 0:
@@ -1005,8 +1021,8 @@ class RikuganPanelCore(QWidget):
         self._focus_tab(tab_id)
         return
 
-    def _on_orchestra_approval(self, tool_call_id: str, decision: str) -> None:
-        """Forward orchestra delegation approval to the agent loop.
+    def _on_orchestra_approval(self, tool_call_id: str, decision: str, tab_id: str | None = None) -> None:
+        """Forward orchestra delegation approval to the agent loop of *tab_id*.
 
         The orchestra / agent-handoff path uses the dedicated
         ``submit_approval`` channel — which routes to the agent
@@ -1018,14 +1034,17 @@ class RikuganPanelCore(QWidget):
         the orchestra decision would never be observed.
         """
         del tool_call_id  # unused; approval queue does not track ids
-        runner = self._ctrl.get_runner()
+        tid = tab_id if tab_id is not None else self._ctrl.active_tab_id
+        runner = self._ctrl.get_runner(tid)
         if runner:
             runner.agent_loop.submit_approval(decision)
         # Clear the same UI state flags that ``_on_tool_approval``
         # clears: button-only mode is over, the user is no longer
         # being asked a queued question.
         self._pending_answer = False
+        self._pending_answer_tab = None
         self._awaiting_button_approval = False
+        self._awaiting_approval_tab = None
 
     def _on_new_tab(self) -> None:
         """Create a new chat tab, with optional context clearing."""
@@ -1544,15 +1563,24 @@ class RikuganPanelCore(QWidget):
             log_debug(f"Ignoring text input while awaiting button approval: {text!r}")
             return
         if self._pending_answer:
+            # C2: a question is pending — route the free-text answer to the
+            # tab that ASKED it (``_pending_answer_tab``), not the active tab.
+            pending_tab = self._pending_answer_tab
             self._pending_answer = False
+            self._pending_answer_tab = None
+            self._awaiting_button_approval = False
+            self._awaiting_approval_tab = None
             chat_view.add_user_message(text)
             self._set_running(True)
-            runner = self._ctrl.get_runner()
+            runner = self._ctrl.get_runner(pending_tab)
             if runner:
                 runner.agent_loop.submit_user_answer(text)
             return
-        # Queue while the agent is actively running.
-        if self._ctrl.is_agent_running:
+        active = self._ctrl.active_tab_id
+        # B3: queue only if THIS tab's agent is already running — not when
+        # some other tab runs in the background (that's the whole point of
+        # multi-tab). An idle tab starts its agent immediately.
+        if self._ctrl.is_tab_running(active):
             self._ctrl.queue_message(text)
             chat_view.add_queued_message(text)
             return
@@ -1568,7 +1596,10 @@ class RikuganPanelCore(QWidget):
         if self._is_shutdown:
             return
         self._pending_answer = False
+        self._pending_answer_tab = None
         self._awaiting_button_approval = False
+        self._awaiting_approval_tab = None
+        # Cancel the active tab's agent (other tabs keep running).
         self._ctrl.cancel()
         # Remove [queued] widgets from the active chat view
         chat_view = self._active_chat_view()
@@ -1631,16 +1662,29 @@ class RikuganPanelCore(QWidget):
         return "no"
 
     def _start_agent(self, user_message: str) -> None:
-        chat_view = self._active_chat_view()
+        """Start the agent for the active tab (legacy entry point)."""
+        self._start_agent_for_tab(self._ctrl.active_tab_id, user_message)
+
+    def _start_agent_for_tab(self, tab_id: str, user_message: str, *, add_user_msg: bool = True) -> None:
+        """Start (or queue) the agent for a specific tab."""
+        chat_view = self._chat_views.get(tab_id)
         if chat_view is None:
             return
-        chat_view.add_user_message(user_message)
+        if add_user_msg:
+            chat_view.add_user_message(user_message)
         self._set_running(True)
 
         # Update tab label after first user message
-        self._update_tab_label(self._ctrl.active_tab_id)
+        self._update_tab_label(tab_id)
 
-        error = self._ctrl.start_agent(user_message)
+        # Concurrency cap: if too many agents run already, queue for this tab
+        # and let _on_agent_finished start it when a slot frees.
+        if not self._ctrl.has_free_slot():
+            self._ctrl.queue_message_for_tab(tab_id, user_message)
+            chat_view.add_queued_message(user_message)
+            return
+
+        error = self._ctrl.start_agent(user_message, tab_id=tab_id)
         if error:
             chat_view.add_error_message(error)
             self._set_running(False)
@@ -1670,37 +1714,38 @@ class RikuganPanelCore(QWidget):
         if self._polling or self._is_shutdown:
             return
         self._polling = True
-        events_processed = 0
         try:
-            chat_view = self._active_chat_view()
-            container = chat_view._container if chat_view is not None else None
-            # Defer layout/paint passes until the whole batch is processed.
-            # When 3 tools complete between ticks, each TOOL_RESULT makes a hidden
-            # widget visible which triggers an O(n-widgets) layout cascade on the
-            # chat container.  Batching those into one final pass cuts this from
-            # O(k·n) to O(n) per tick.
-            if container is not None:
-                container.setUpdatesEnabled(False)
-            try:
-                with ui_probe("ui.poll_events", events=0):
-                    for _ in range(30):
-                        event = self._ctrl.get_event(timeout=0)
-                        if event is None:
-                            if not self._ctrl.is_agent_running:
-                                self._on_agent_finished()
-                            return
-                        self._on_event(event)
-                        events_processed += 1
-            finally:
+            # Drain EVERY live runner (not just the active one) so background
+            # tabs keep streaming. Each event routes to its owning ChatView.
+            for tid, runner in list(self._ctrl.iter_runners()):
+                chat_view = self._chat_views.get(tid)
+                container = chat_view._container if chat_view is not None else None
+                # Defer layout/paint passes until the whole batch is processed
+                # for this tab (see O(k*n) → O(n) note above).
                 if container is not None:
-                    container.setUpdatesEnabled(True)
+                    container.setUpdatesEnabled(False)
+                try:
+                    for _ in range(30):
+                        event = self._ctrl.get_event(tid, timeout=0)
+                        if event is None:
+                            if not runner.agent_loop.is_running:
+                                self._on_agent_finished(tid)
+                            break
+                        self._on_event(event, tid)
+                finally:
+                    if container is not None:
+                        container.setUpdatesEnabled(True)
         finally:
             self._polling = False
 
-    def _on_event(self, event: TurnEvent) -> None:
+    def _on_event(self, event: TurnEvent, tab_id: str | None = None) -> None:
         if self._is_shutdown:
             return
-        chat_view = self._active_chat_view()
+        # Route the event to the ChatView that OWNS it (the emitting tab),
+        # not necessarily the active tab. Without this, text streamed by a
+        # background agent would land in the tab the user is looking at.
+        tid = tab_id if tab_id is not None else self._ctrl.active_tab_id
+        chat_view = self._chat_views.get(tid)
         if chat_view is None:
             return
         chat_view.handle_event(event)
@@ -1719,7 +1764,9 @@ class RikuganPanelCore(QWidget):
             # been updated yet during streaming, so session.last_prompt_tokens
             # would be stale.  prompt_tokens reflects current context size.
             token_count = event.usage.context_tokens if event.usage.context_tokens > 0 else event.usage.total_tokens
-            if token_count > 0:
+            # C3: only the active tab's usage drives the global token display,
+            # otherwise concurrent tabs make it flicker between values.
+            if token_count > 0 and tid == self._ctrl.active_tab_id:
                 self._update_token_display(token_count)
         if event.type in (
             TurnEventType.USER_QUESTION,
@@ -1727,10 +1774,12 @@ class RikuganPanelCore(QWidget):
             TurnEventType.PLAN_GENERATED,
         ):
             self._pending_answer = True
+            self._pending_answer_tab = tid
             # Plan approvals, save approvals, and any question with
             # predefined options MUST be answered via buttons only.
             # Disable text input so free-text ("continue", "redo", etc.)
-            # cannot bypass the approval gate.
+            # cannot bypass the approval gate. Input is global (C1), so
+            # this blocks panel-wide, but the answer routes to ``tid``.
             has_options = bool(event.metadata.get("options")) if event.metadata else False
             allow_text = bool(event.metadata.get("allow_text")) if event.metadata else False
             needs_button = event.type in (
@@ -1739,64 +1788,85 @@ class RikuganPanelCore(QWidget):
             ) or (has_options and not allow_text)
             if needs_button:
                 self._awaiting_button_approval = True
-            self._set_running(False)
+                self._awaiting_approval_tab = tid
+            if tid == self._ctrl.active_tab_id:
+                self._set_running(False)
         if event.type == TurnEventType.MUTATION_RECORDED:
             self._on_mutation_recorded(event)
 
-    def _on_tool_approval(self, tool_call_id: str, decision: str) -> None:
-        """Forward tool approval to the agent loop."""
-        runner = self._ctrl.get_runner()
+    def _on_tool_approval(self, tool_call_id: str, decision: str, tab_id: str | None = None) -> None:
+        """Forward tool approval to the agent loop of *tab_id*."""
+        tid = tab_id if tab_id is not None else (self._awaiting_approval_tab or self._ctrl.active_tab_id)
+        runner = self._ctrl.get_runner(tid)
         if runner:
             runner.agent_loop.submit_tool_approval(decision)
+        # Only clear the gate if this approval resolves the blocking tab.
+        if self._awaiting_approval_tab in (None, tid):
+            self._awaiting_button_approval = False
+            self._awaiting_approval_tab = None
 
-    def _on_user_answer_submitted(self, answer: str) -> None:
-        """Handle a button click from UserQuestionWidget (plan/save/ask_user)."""
-        if not self._pending_answer:
+    def _on_user_answer_submitted(self, answer: str, tab_id: str | None = None) -> None:
+        """Handle a button click from UserQuestionWidget (plan/save/ask_user).
+
+        Routes the answer to *tab_id*'s runner (the tab that asked the
+        question), not necessarily the active tab.
+        """
+        tid = tab_id if tab_id is not None else self._pending_answer_tab
+        if not self._pending_answer or tid is None:
             return
         self._pending_answer = False
+        self._pending_answer_tab = None
         self._awaiting_button_approval = False
-        chat_view = self._active_chat_view()
+        self._awaiting_approval_tab = None
+        chat_view = self._chat_views.get(tid)
         if chat_view is not None:
             chat_view.add_user_message(answer)
         self._set_running(True)
-        runner = self._ctrl.get_runner()
+        runner = self._ctrl.get_runner(tid)
         if runner:
             runner.agent_loop.submit_user_answer(answer)
 
-    def _on_agent_finished(self) -> None:
+    def _on_agent_finished(self, tab_id: str | None = None) -> None:
         if self._is_shutdown:
             return
-        if self._poll_timer:
+        tid = tab_id if tab_id is not None else self._ctrl.active_tab_id
+
+        # Only stop the poll timer when NO runner is left alive.
+        if not self._ctrl.is_agent_running and self._poll_timer:
             self._poll_timer.stop()
 
-        # Clear approval state — if the agent crashed mid-approval the
-        # buttons are stale and free-text input must be restored.
-        self._pending_answer = False
-        self._awaiting_button_approval = False
+        # Clear approval state IF it belonged to this tab — a crash mid-
+        # approval must restore free-text for that tab, but not clobber a
+        # pending question on a different tab.
+        if self._pending_answer_tab in (None, tid):
+            self._pending_answer = False
+            self._pending_answer_tab = None
+        if self._awaiting_approval_tab in (None, tid):
+            self._awaiting_button_approval = False
+            self._awaiting_approval_tab = None
 
-        # The controller now keeps the pending queue and returns the
-        # next message to drain (if any). Cancellation paths still
-        # clear the queue via ``cancel()``.
-        next_message = self._ctrl.on_agent_finished()
-        chat_view = self._active_chat_view()
+        chat_view = self._chat_views.get(tid)
+        # The controller pops this tab's runner and returns its next queued
+        # follow-up (if any). Cancellation paths clear the queue via cancel().
+        next_message = self._ctrl.on_agent_finished(tid)
 
         if next_message and chat_view is not None:
             # Replace the first queued placeholder with a real user
-            # bubble and start the next run.  ``_start_agent`` calls
+            # bubble and start the next run.  ``_start_agent_for_tab`` calls
             # ``add_user_message`` which inserts the normal bubble, so
             # we pop the queued widget first to avoid two visible
             # user entries for the same text.  Remaining queued
             # widgets stay in place; the next finish will pop them
             # one at a time in order.
             chat_view.pop_first_queued_message()
-            self._start_agent(next_message)
+            self._start_agent_for_tab(tid, next_message, add_user_msg=True)
             return
 
         # No more pending messages — drop any stale [queued] widgets
-        # and mark the run as no longer active.
+        # for this tab and refresh the running state for the active tab.
         if chat_view is not None:
             chat_view.remove_queued_messages()
-        self._set_running(False)
+        self._set_running(self._ctrl.is_tab_running(self._ctrl.active_tab_id))
 
     # --- Mutation log integration ---
 
