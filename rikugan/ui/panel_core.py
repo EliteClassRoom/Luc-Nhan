@@ -952,7 +952,7 @@ class RikuganPanelCore(QWidget):
         # on close/shutdown — Qt removes the connections along with the
         # signal owner.
         chat_view.tool_approval_submitted.connect(
-            lambda tcid, d, tid=tab_id: self._on_tool_approval(tc_id=tcid, decision=d, tab_id=tid)
+            lambda tcid, d, tid=tab_id: self._on_tool_approval(tool_call_id=tcid, decision=d, tab_id=tid)
         )
         chat_view.user_answer_submitted.connect(
             lambda ans, tid=tab_id: self._on_user_answer_submitted(answer=ans, tab_id=tid)
@@ -1001,7 +1001,7 @@ class RikuganPanelCore(QWidget):
         new_view = ChatView()
         new_view.setProperty("tab_id", tab_id)
         new_view.tool_approval_submitted.connect(
-            lambda tcid, d, tid=tab_id: self._on_tool_approval(tc_id=tcid, decision=d, tab_id=tid)
+            lambda tcid, d, tid=tab_id: self._on_tool_approval(tool_call_id=tcid, decision=d, tab_id=tid)
         )
         new_view.user_answer_submitted.connect(
             lambda ans, tid=tab_id: self._on_user_answer_submitted(answer=ans, tab_id=tid)
