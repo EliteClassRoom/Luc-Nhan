@@ -23,6 +23,7 @@ import threading
 from collections.abc import Iterable
 from typing import Any
 
+from ..core.atomic_io import atomic_replace
 from ..core.logging import log_debug, log_error
 from .paths import KnowledgePaths, relation_id
 from .schema import (
@@ -104,7 +105,7 @@ class KnowledgeRawStore:
                     os.fsync(f.fileno())
                 except OSError:
                     pass
-            os.replace(tmp_path, path)
+            atomic_replace(tmp_path, path)
         except Exception:
             # Best-effort cleanup of the temp file
             try:

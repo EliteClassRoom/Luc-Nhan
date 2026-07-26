@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..constants import MEMORY_LOCK_TIMEOUT_SECONDS, MEMORY_MARKDOWN_MAX_BYTES
+from ..core.atomic_io import atomic_replace
 from .workspace import WorkspacePaths
 from .workspace_store import WorkspaceStore
 
@@ -182,7 +183,7 @@ def _atomic_replace_regular_file(path: Path, content: str) -> None:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
     except BaseException:
         try:
             os.unlink(tmp)
