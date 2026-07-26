@@ -43,6 +43,7 @@ from .history_panel import HistoryPanel
 from .input_area import InputArea
 from .mutation_log_view import MutationLogPanel
 from .qt_compat import (
+    OK_CANCEL_BUTTONS,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
@@ -433,9 +434,7 @@ class RikuganPanelCore(QWidget):
             pw_edit.setEchoMode(QLineEdit.EchoMode.Password)
             pw_edit.setPlaceholderText("Password")
             layout.addWidget(pw_edit)
-            buttons = QDialogButtonBox(
-                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            )
+            buttons = QDialogButtonBox(OK_CANCEL_BUTTONS)
             buttons.accepted.connect(dlg.accept)
             buttons.rejected.connect(dlg.reject)
             layout.addWidget(buttons)
@@ -1142,7 +1141,7 @@ class RikuganPanelCore(QWidget):
             cb = QCheckBox(f"Include subagent logs ({len(session.subagent_logs)} subagent runs)")
             cb.setChecked(True)
             layout.addWidget(cb)
-            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            buttons = QDialogButtonBox(OK_CANCEL_BUTTONS)
             buttons.accepted.connect(dlg.accept)
             buttons.rejected.connect(dlg.reject)
             layout.addWidget(buttons)
@@ -1646,7 +1645,7 @@ class RikuganPanelCore(QWidget):
                 f"QPushButton:hover {{ background: {t.mid}; }}"
             )
         )
-        yes_btn = dlg.addButton("Yes", QMessageBox.ButtonRole.AcceptRole)
+        yes_btn = dlg.addButton("Yes, new tab", QMessageBox.ButtonRole.AcceptRole)
         clear_btn = dlg.addButton(
             f"Yes, clear context ({context_pct}% used)",
             QMessageBox.ButtonRole.AcceptRole,

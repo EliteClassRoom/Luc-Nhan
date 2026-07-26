@@ -32,6 +32,8 @@ from ..providers.auth_cache import resolve_auth_cached
 from ..providers.ollama_provider import DEFAULT_OLLAMA_URL
 from ..providers.registry import ProviderRegistry
 from .qt_compat import (
+    OK_CANCEL_BUTTONS,
+    YES_NO_BUTTONS,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -119,7 +121,7 @@ def _prompt_zai_migration(parent: Any = None) -> bool:
             "If you decline, the connection continues as a generic\n"
             "OpenAI-compatible endpoint."
         ),
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        YES_NO_BUTTONS,
         QMessageBox.StandardButton.No,
     )
     return result == QMessageBox.StandardButton.Yes
@@ -232,7 +234,7 @@ class _AddProviderDialog(QDialog):
         self._error_label.hide()
         layout.addWidget(self._error_label)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(OK_CANCEL_BUTTONS)
         buttons.accepted.connect(self._validate)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -411,7 +413,7 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(self._tabs)
 
-        self._button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self._button_box = QDialogButtonBox(OK_CANCEL_BUTTONS)
         self._button_box.accepted.connect(self._on_accept)
         self._button_box.rejected.connect(self.reject)
         layout.addWidget(self._button_box)
@@ -1021,7 +1023,7 @@ class SettingsDialog(QDialog):
                     self,
                     "Clear API Key?",
                     "Switching GLM endpoint type requires a different API key.\n\nClear the current key?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    YES_NO_BUTTONS,
                     QMessageBox.StandardButton.Yes,
                 )
                 if reply == QMessageBox.StandardButton.Yes:
@@ -1792,7 +1794,7 @@ class SettingsDialog(QDialog):
         from .qt_compat import QDialogButtonBox
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            OK_CANCEL_BUTTONS,
         )
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)

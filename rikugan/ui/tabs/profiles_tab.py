@@ -15,6 +15,7 @@ from ...core.profile import (
     list_profiles,
 )
 from ..qt_compat import (
+    YES_NO_BUTTONS,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -524,7 +525,7 @@ class ProfilesTab(QWidget):
             self,
             "Delete Profile",
             f"Delete profile '{name}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            YES_NO_BUTTONS,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
@@ -533,7 +534,7 @@ class ProfilesTab(QWidget):
 
     def _prompt_new_profile(self, title: str) -> tuple | None:
         """Prompt for name + description. Returns (name, description) or None."""
-        from ..qt_compat import QDialog, QDialogButtonBox
+        from ..qt_compat import OK_CANCEL_BUTTONS, QDialog, QDialogButtonBox
 
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
@@ -556,7 +557,7 @@ class ProfilesTab(QWidget):
         error_label.hide()
         lay.addWidget(error_label)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(OK_CANCEL_BUTTONS)
         lay.addWidget(buttons)
 
         def _validate():
