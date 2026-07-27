@@ -160,7 +160,7 @@ Subagents (see `rikugan/agent/subagent_manager.py` + `rikugan/agent/agents/`) ru
 
 ### Skills & MCP
 
-- **Skills**: Markdown + YAML frontmatter in `rikugan/skills/builtins/<slug>/SKILL.md`. Users add their own in `~/.idapro/rikugan/skills/`. 11 built-in skills: `malware-analysis`, `linux-malware`, `deobfuscation`, `ctf`, `modify`, `smart-patch-ida`, `vuln-audit`, `ida-scripting`, `driver-analysis`, `generic-re`, `naming-convention`.
+- **Skills**: Markdown + YAML frontmatter in `rikugan/skills/builtins/<slug>/SKILL.md`. Users add their own in `~/.idapro/rikugan/skills/`. 11 built-in skills: `malware-analysis`, `elf-malware-analysis`, `deobfuscation`, `ctf`, `modify`, `smart-patch-ida`, `vuln-audit`, `ida-scripting`, `driver-analysis`, `generic-re`, `naming-convention`.
 - **MCP**: a JSON-RPC 2.0 client in `rikugan/mcp/`. Tools from an MCP server are bridged into the `ToolRegistry` with the prefix `mcp_<server>_<tool>`.
 
 ### Approval gates

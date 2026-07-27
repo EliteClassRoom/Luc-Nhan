@@ -62,6 +62,7 @@ User Input
 ```
 
 Key files:
+
 - `rikugan/agent/loop.py` — `AgentLoop` + `BackgroundAgentRunner`
 - `rikugan/agent/turn.py` — `TurnEvent` / `TurnEventType`
 - `rikugan/tools/base.py` — `@tool` decorator, `ToolDefinition`
@@ -93,6 +94,7 @@ The entry point is `AgentLoop.run()`, a Python generator. It yields `TurnEvent` 
 3. **System Prompt Build** — `build_system_prompt()` assembles the prompt from host-specific base + binary context + cursor position + tool list + skill + persistent memory (central memory subsystem: SQLite structured facts + `MEMORY.md` manual notes).
 
 4. **Turn Loop** — The core loop:
+
    ```
    while True:
        yield TURN_START
@@ -212,6 +214,7 @@ def rename_function(
 ```
 
 The decorator:
+
 1. Inspects the function signature using `typing.get_type_hints()`
 2. Extracts parameter descriptions from `Annotated` metadata
 3. Generates a `ToolDefinition` with JSON schema
@@ -234,6 +237,7 @@ class ToolDefinition:
 ```
 
 Key flags:
+
 - `mutating=True` — Triggers pre-state capture and mutation recording for undo
 - `requires_decompiler=True` — Tool is excluded if decompiler is unavailable
 - `timeout` — Per-tool timeout; wrapped in `ThreadPoolExecutor` during execution
@@ -241,17 +245,20 @@ Key flags:
 ### `ToolRegistry`
 
 Central registry for all tool definitions. Core methods:
+
 - `register(defn)` / `register_module(module)` — Registration
 - `execute(name, args)` — Dispatches to handler with argument coercion and timeout
 - `get(name)` → `ToolDefinition` — Lookup
 - `to_provider_format()` → list of JSON schemas for LLM
 
 Argument coercion in `execute()`:
+
 - Hex strings (`"0x401000"`) → `int` for integer parameters
 - `"true"`/`"false"` strings → `bool`
 - `0`/`1` integers → `bool`
 
 Timeout wrapping:
+
 ```python
 future = _executor.submit(defn.handler, **arguments)
 result = future.result(timeout=timeout)  # default 30s
@@ -306,6 +313,7 @@ Requests a phase change in exploration mode. Validates via `ExplorationState.can
 ### `save_memory`
 
 Persists a fact to the central memory workspace (managed `MEMORY.md` region backed by SQLite):
+
 ```json
 {"fact": "sub_401230 is the snake initializer", "category": "function_purpose"}
 ```
@@ -313,6 +321,7 @@ Persists a fact to the central memory workspace (managed `MEMORY.md` region back
 ### `spawn_subagent`
 
 Creates an isolated `SubagentRunner` with its own `SessionState`:
+
 ```json
 {"task": "Analyze the main function", "max_turns": 5}
 ```
@@ -354,6 +363,7 @@ Task: Analyze this binary as potential malware.
 ### Discovery
 
 `SkillRegistry.discover()` scans:
+
 1. Built-in skills: `rikugan/skills/builtins/*/SKILL.md`
 2. User skills: `~/.idapro/rikugan/skills/*/SKILL.md`
 
@@ -362,6 +372,7 @@ Reference files in `references/*.md` subdirectories are automatically appended t
 ### Skill Activation
 
 When a user types `/<slug>`, `_resolve_skill()` in `loop.py`:
+
 1. Finds the matching `SkillDefinition`
 2. Prepends the skill body to the system prompt
 3. If `allowed_tools` is set, filters the tool list
@@ -372,7 +383,7 @@ When a user types `/<slug>`, `_resolve_skill()` in `loop.py`:
 | Slug | Purpose |
 |------|---------|
 | `/malware-analysis` | Windows PE malware triage |
-| `/linux-malware` | ELF malware analysis |
+| `/elf-malware-analysis` | ELF malware analysis |
 | `/deobfuscation` | String decryption, CFF, opaque predicates |
 | `/vuln-audit` | Buffer overflow, format string, integer bugs |
 | `/driver-analysis` | Windows kernel driver analysis |
@@ -412,6 +423,7 @@ The agent autonomously investigates the binary to understand the user's goal.
 ### Phase Transition Gate
 
 To move from EXPLORE → PLAN, `KnowledgeBase.has_minimum_for_planning` must be true:
+
 - At least 1 relevant function
 - At least 1 hypothesis
 - At least 1 hypothesis with `relevance="high"`
@@ -537,6 +549,7 @@ The parent loop creates a `SubagentRunner`, delegates all events to the UI, and 
 ### Knowledge Base Transfer
 
 When a subagent running in explore mode finishes:
+
 1. `_clear_exploration_state()` saves the `KnowledgeBase` to `_last_knowledge_base`
 2. The parent accesses it via the `last_knowledge_base` property
 3. The parent populates its own `ExplorationState.knowledge_base` from the subagent's results
@@ -592,6 +605,7 @@ old_comment = tool_executor("get_comment", {"address": address})
 ### `/undo [N]`
 
 The `/undo` command:
+
 1. Parses the count (default 1)
 2. Iterates `_mutation_log` in reverse
 3. For each reversible record: calls `ToolRegistry.execute(reverse_tool, reverse_args)`
@@ -628,6 +642,7 @@ class ContextWindowManager:
 ### Compaction Strategy
 
 When `should_compact()` returns True:
+
 1. Keep the first message (system/initial)
 2. Keep the last 4 messages (recent context)
 3. Summarize all middle messages into one `[Context summary]` message
@@ -639,6 +654,7 @@ When `should_compact()` returns True:
 ### Integration with AgentLoop
 
 At the top of each turn in `run()`:
+
 ```python
 if self._context_manager.should_compact():
     messages = self._context_manager.compact_messages(messages)
@@ -661,6 +677,7 @@ Per-binary SQLite-backed memory (`memory.db`) plus a deterministic `MEMORY.md` p
 ### `save_memory` Pseudo-Tool
 
 The LLM can persist facts:
+
 ```json
 {"fact": "sub_401230 is the snake initializer, length at +0x1A", "category": "function_purpose"}
 ```
@@ -700,6 +717,7 @@ class SessionState:
 ```
 
 Key methods:
+
 - `add_message(msg)` — Appends and updates token tracking
 - `get_messages_for_provider(context_window)` — Returns sanitized, trimmed messages
 - `_sanitize()` — Patches orphaned `tool_use` blocks with synthetic error results
@@ -728,6 +746,7 @@ class SessionControllerBase:
 ### Persistence
 
 `SessionHistory` handles save/restore:
+
 - Sessions are JSON-serialized to `<config_dir>/rikugan/sessions/`
 - Auto-saved after each agent turn (if `checkpoint_auto_save` is enabled)
 - Restored per-file when the same IDB is reopened
@@ -752,6 +771,7 @@ mcp.json config → MCPManager → MCPClient (per server) → subprocess (stdio)
 Communicates with an MCP server subprocess via JSON-RPC 2.0 + Content-Length framing.
 
 Key features:
+
 - **Heartbeat**: Background thread pings the server every 30s. Marks `_healthy=False` on failure
 - **`is_healthy` property**: Returns False if heartbeat failed or process died
 - **Per-request timeout**: Configurable default (from `MCP_DEFAULT_TIMEOUT`)
@@ -793,6 +813,7 @@ class LLMProvider(ABC):
 ### Prompt Caching (Anthropic)
 
 `cache_control: {"type": "ephemeral"}` is set on:
+
 1. The system prompt (stable across turns)
 2. The last tool result message
 3. The last user message
@@ -802,6 +823,7 @@ This enables Anthropic's server-side prompt caching for 2-10x cost reduction on 
 ### Retry Logic
 
 In `_stream_llm_turn()`:
+
 - `RateLimitError` triggers exponential backoff (1s, 2s, 4s) up to 3 retries
 - `ProviderError` with `retryable=True` follows the same pattern
 - User sees "Rate limited, retrying in Ns..." via `TEXT_DELTA` events
@@ -872,6 +894,7 @@ The main Qt widget. Layout:
 ### Event Polling
 
 A `QTimer` fires every 50ms, calling `_poll_events()`:
+
 1. Dequeues up to 20 events from `BackgroundAgentRunner`
 2. Routes each to `ChatView.handle_event()`
 3. Checks for `USER_QUESTION` / `SAVE_APPROVAL_REQUEST` to enable input
@@ -899,6 +922,7 @@ Tool call batching: consecutive calls to the same tool are merged into a `ToolBa
 ### `MutationLogPanel`
 
 Side panel showing mutation history:
+
 - `MutationEntryWidget` per mutation — shows timestamp, description, reversibility indicator, tool badge
 - "Undo Last" button emits `undo_requested` signal → submits `/undo 1`
 - Count label updates dynamically
@@ -914,12 +938,14 @@ Side panel showing mutation history:
 ### IDA API Marshalling
 
 IDA Pro requires all API calls on the main thread. The `@idasync` decorator in `core/thread_safety.py` marshalls calls:
+
 - If already on main thread: execute directly
 - If on background thread: schedule via `ida_kernwin.execute_sync()` and wait
 
 ### User Answer/Approval Queues
 
 Two `queue.Queue(maxsize=1)` instances replace the old `threading.Event` + mutable field pattern:
+
 - `_user_answer_queue` — For `USER_QUESTION` responses (plan approval, save gate, etc.)
 - `_tool_approval_queue` — For `execute_python` approval
 
@@ -948,6 +974,7 @@ RikuganError
 ### Retry Logic
 
 In `_stream_llm_turn()`:
+
 ```python
 for attempt in range(max_retries):
     try:

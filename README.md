@@ -93,7 +93,7 @@ The agent really ***lives*** and ***breaths*** reversing.
 | `/driver-analysis` | Windows kernel driver analysis — DriverEntry, dispatch table, IOCTL handlers |
 | `/generic-re` | General-purpose binary analysis — understand functionality, architecture, and behavior |
 | `/ida-scripting` | Write IDAPython scripts — verifies IDA 9.x APIs against the offline docs bundle first, web fetch against Hex-Rays only as a last resort |
-| `/linux-malware` | Linux ELF malware analysis — packing, persistence, C2, rootkits, MITRE ATT&CK |
+| `/elf-malware-analysis` | Linux ELF malware analysis — packing, persistence, C2, rootkits, MITRE ATT&CK |
 | `/malware-analysis` | Windows PE malware analysis — kill chain, IOC extraction, MITRE ATT&CK |
 | `/modify` | Modify binary behavior using natural language — explore, plan, patch, save |
 | `/naming-convention` | Apply consistent naming rules across the binary (PascalCase functions, lowercase fields, etc.) |
