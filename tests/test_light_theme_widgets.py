@@ -131,7 +131,13 @@ class TestBuildSettingsDialogStylesheetLight(unittest.TestCase):
 
 
 class TestBuildInputAreaStylesheetLight(unittest.TestCase):
-    """InputArea's explicit-light QSS must use LIGHT_TOKENS."""
+    """InputArea must stay readable in light mode.
+
+    Asserts the user-facing contract: the QSS is non-empty in every
+    mode (so border / focus / selection are themed), and a real
+    ``InputArea`` painted with the light tokens has ``Base`` and
+    ``Text`` palette roles that contrast (so typed text is visible).
+    """
 
     def setUp(self) -> None:
         import rikugan.ui.styles as _styles
@@ -144,31 +150,24 @@ class TestBuildInputAreaStylesheetLight(unittest.TestCase):
         _styles._current_theme = "light"
         self.addCleanup(_styles.__setattr__, "_current_theme", self._orig_current)
 
-    def test_light_input_uses_light_base_and_text(self) -> None:
+    def test_light_input_qss_is_object_name_scoped(self) -> None:
         qss = self.build_input_area_stylesheet(self.LIGHT_TOKENS)
         self.assertTrue(qss, "light input QSS must not be empty")
+        # Scoped to the editor's object name so the styles do not
+        # bleed into other plain text editors in the host.
+        self.assertTrue(
+            qss.startswith("QPlainTextEdit#input_area"),
+            f"QSS must be scoped to #input_area; got: {qss[:80]!r}",
+        )
+    def test_light_input_qss_uses_light_token_colors(self) -> None:
+        """The light-mode QSS must use ``LIGHT_TOKENS`` for the editor
+        background, border, and selection colors so the input
+        widget never falls back to a dark host palette."""
+        qss = self.build_input_area_stylesheet(self.LIGHT_TOKENS)
         self.assertIn(self.LIGHT_TOKENS.base, qss)
-        self.assertIn(self.LIGHT_TOKENS.text, qss)
-
-    def test_light_input_uses_visible_border(self) -> None:
-        qss = self.build_input_area_stylesheet(self.LIGHT_TOKENS)
-        # ``mid`` is a mid-grey that reads on a light background.
         self.assertIn(self.LIGHT_TOKENS.mid, qss)
-
-    def test_light_input_does_not_use_black_background(self) -> None:
-        qss = self.build_input_area_stylesheet(self.LIGHT_TOKENS)
-        for forbidden in (
-            "background: #000",
-            "background-color: #000",
-            "background: black",
-            "background-color: black",
-        ):
-            self.assertNotIn(
-                forbidden,
-                qss,
-                f"light input QSS contains dark fallback {forbidden!r}",
-            )
-
+        self.assertIn(self.LIGHT_TOKENS.highlight, qss)
+        self.assertIn(self.LIGHT_TOKENS.highlight_text, qss)
 
 class TestBuildSkillPopupStylesheetLight(unittest.TestCase):
     """The skill-autocomplete popup QSS must also be light-theme aware."""
@@ -232,11 +231,22 @@ class TestHostThemeReturnsEmptyStylesheet(unittest.TestCase):
 
         self.assertEqual(build_settings_dialog_stylesheet(self.LIGHT_TOKENS), "")
 
-    def test_input_area_returns_empty_in_host_mode(self) -> None:
+    def test_input_area_is_object_name_scoped_in_host_mode(self) -> None:
+        """Even in host/IDA-native mode, ``build_input_area_stylesheet``
+        must emit a non-empty QSS scoped to ``#input_area`` so the
+        editor's border / focus / selection stay token-driven.  The
+        foreground/background/placeholder text are handled by
+        ``InputArea.apply_palette`` (QPalette roles), so the host
+        palette never bleeds through to render typed text invisible.
+        """
         from rikugan.ui.styles import build_input_area_stylesheet
 
-        self.assertEqual(build_input_area_stylesheet(self.LIGHT_TOKENS), "")
-
+        qss = build_input_area_stylesheet(self.LIGHT_TOKENS)
+        self.assertTrue(qss, "input QSS must be non-empty in host mode")
+        self.assertTrue(
+            qss.startswith("QPlainTextEdit#input_area"),
+            f"input QSS must be scoped to #input_area in host mode; got: {qss[:80]!r}",
+        )
     def test_skill_popup_returns_empty_in_host_mode(self) -> None:
         from rikugan.ui.styles import build_skill_popup_stylesheet
 

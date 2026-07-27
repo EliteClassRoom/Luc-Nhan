@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from ..core.logging import get_logger
 from .qt_compat import (
+    QColor,
     QFrame,
     QLabel,
+    QPalette,
     QPlainTextEdit,
     QSizePolicy,
     Qt,
@@ -125,9 +127,29 @@ class InputArea(QPlainTextEdit):
         super().__init__(parent)
         self.setObjectName("input_area")
         self.setPlaceholderText("Ask about this binary... (/ for skills, /modify to patch)")
-        self.setMaximumHeight(100)
-        self.setMinimumHeight(40)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # Two-to-three-line minimum so the editor is comfortably usable
+        # out of the box.  The vertical QSplitter in the panel owns the
+        # upper bound — we deliberately do NOT cap the editor's
+        # maximum height so the user can drag the splitter as tall as
+        # they want and only scrolling constrains a single typing run.
+        # Vertical policy is ``Expanding`` so the editor fills the
+        # chat-splitter bottom pane when the user drags the handle
+        # taller (``Preferred`` would leave empty space below the
+        # editor).
+        self.setMinimumHeight(60)
+        # Vertical policy must be ``Expanding`` so the editor fills the
+        # chat-splitter bottom pane when the user drags the handle.
+        # ``Preferred`` would let the splitter grow the pane but leave
+        # the editor at its size hint with empty space below.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Qt's default vertical scrollbar policy is ``ScrollBarAsNeeded``,
+        # so we don't set it explicitly.  Only disable the horizontal
+        # scrollbar — long lines should wrap, not scroll horizontally.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Enable widget-width line wrap so a long single-line message
+        # wraps within the editor rather than being horizontally
+        # clipped when the horizontal scrollbar is disabled.
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self._enabled = True
         self._skill_slugs: list[str] = []
         self._popup: _SkillPopup | None = None
@@ -145,17 +167,24 @@ class InputArea(QPlainTextEdit):
             logger.debug("InputArea themeChanged connect failed", exc_info=exc)
 
     def apply_theme(self) -> None:
-        """Refresh the editor (and skill popup) QSS for the current theme.
+        """Refresh the editor (and skill popup) QSS and palette for the current theme.
 
         Builds the stylesheet from the live :class:`ThemeTokens` and
-        applies it.  The stylesheet targets only
-        ``QPlainTextEdit#input_area`` (this widget's object name) so
-        it does not affect other plain text editors in the host.
+        applies it.  Foreground / background / placeholder colors are
+        also pushed into ``QPalette`` so they survive in host/IDA-native
+        mode where the surrounding chrome is not themed.  The
+        stylesheet targets only ``QPlainTextEdit#input_area`` (this
+        widget's object name) so it does not affect other plain text
+        editors in the host.
         """
         try:
             tokens = ThemeManager.instance().tokens()
         except Exception:
             return
+        try:
+            self.apply_palette(tokens)
+        except Exception as exc:
+            logger.debug("InputArea apply_palette failed", exc_info=exc)
         try:
             self.setStyleSheet(build_input_area_stylesheet(tokens))
         except Exception as exc:
@@ -165,6 +194,31 @@ class InputArea(QPlainTextEdit):
                 self._popup.apply_theme()
             except Exception as exc:
                 logger.debug("InputArea popup apply_theme failed", exc_info=exc)
+
+    def apply_palette(self, tokens: object) -> None:
+        """Push the editor's Base / Text / PlaceholderText roles from tokens.
+
+        ``QPlainTextEdit`` does not expose foreground, background, or
+        placeholder colors as QSS sub-controls; the only way to make
+        typed text visible in every theme (including host/IDA-native
+        where the surrounding chrome may be light-on-light or
+        dark-on-dark) is to set the ``QPalette`` roles explicitly.
+        ``QColor`` and ``QPalette`` are re-exported from
+        ``rikugan.ui.qt_compat`` (the project binding seam) so the
+        test stub layer is honoured consistently with production.
+        """
+        base = getattr(tokens, "base", "#ffffff")
+        text = getattr(tokens, "text", "#1e1e1e")
+        muted = getattr(tokens, "muted_text", "#888888")
+        pal = self.palette()
+        pal.setColor(QPalette.ColorRole.Base, QColor(base))
+        pal.setColor(QPalette.ColorRole.Text, QColor(text))
+        # ``PlaceholderText`` exists on Qt 5.12+ / Qt 6.  Guarded so
+        # older PySide6 builds (where the role is absent) silently
+        # skip the placeholder role but still keep Base/Text visible.
+        if hasattr(QPalette.ColorRole, "PlaceholderText"):
+            pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(muted))
+        self.setPalette(pal)
 
     def set_submit_callback(self, callback) -> None:
         """Set the callback for submit (Enter key). Callback signature: (str) -> None."""

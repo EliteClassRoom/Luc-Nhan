@@ -546,7 +546,16 @@ class RikuganPanelCore(QWidget):
         t = ThemeManager.instance().tokens()
         return f"QSplitter::handle {{ background: {t.mid}; }}"
 
-    # Backward-compat alias: legacy callers referencing ``_MODE_BAR_STYLE``
+    def _chat_splitter_style(self) -> str:
+        """Themed QSS for the vertical chat/input splitter handle.
+
+        Mirrors :meth:`_main_splitter_style` so the handle is visible
+        against the active palette.  The handle width is set to 4px in
+        :meth:`_build_ui` so users can grab and drag it; the style only
+        paints the colors.
+        """
+        t = ThemeManager.instance().tokens()
+        return f"QSplitter#chat_splitter::handle {{ background: {t.mid}; }}"
     # directly get the themed value at access time.
 
     def _build_ui(self) -> None:
@@ -582,7 +591,6 @@ class RikuganPanelCore(QWidget):
         self._mode_stack = QStackedWidget()
         layout.addWidget(self._mode_stack, 1)
         _early_log("panel_core:build_ui:mode_stack:done")
-
         _early_log("panel_core:build_ui:dependency_banner:entry")
         self._dependency_banner = QLabel()
         self._dependency_banner.setObjectName("dependency_banner")
@@ -594,8 +602,12 @@ class RikuganPanelCore(QWidget):
         else:
             self._dependency_banner.hide()
         _early_log("panel_core:build_ui:dependency_banner:done")
-
         # --- Page 0: Chat ---
+        # The chat page is split vertically between the main conversation
+        # area and the message input so the user can drag the splitter
+        # to grow the input (a real resize handle, not a fixed
+        # maximum).  ``_build_input_section`` returns the existing
+        # HBox of editor + action buttons; the splitter owns its size.
         _early_log("panel_core:build_ui:chat_page:entry")
         chat_page = QWidget()
         chat_layout = QVBoxLayout(chat_page)
@@ -605,13 +617,25 @@ class RikuganPanelCore(QWidget):
         self._build_tab_widget()
         _early_log("panel_core:build_ui:tab_widget:done")
         _early_log("panel_core:build_ui:main_splitter:entry")
-        self._build_main_splitter(chat_layout)
+        self._build_main_splitter()
         _early_log("panel_core:build_ui:main_splitter:done")
         _early_log("panel_core:build_ui:create_initial_tab:entry")
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
         _early_log("panel_core:build_ui:create_initial_tab:done")
         _early_log("panel_core:build_ui:input_section:entry")
-        chat_layout.addWidget(self._build_input_section())
+        input_container = self._build_input_section()
+        self._chat_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._chat_splitter.setObjectName("chat_splitter")
+        self._chat_splitter.setHandleWidth(4)
+        self._chat_splitter.setChildrenCollapsible(False)
+        self._chat_splitter.setStyleSheet(
+            maybe_host_stylesheet(self._chat_splitter_style())
+        )
+        self._chat_splitter.addWidget(self._main_splitter)
+        self._chat_splitter.addWidget(input_container)
+        self._chat_splitter.setStretchFactor(0, 1)
+        self._chat_splitter.setStretchFactor(1, 0)
+        chat_layout.addWidget(self._chat_splitter, 1)
         _early_log("panel_core:build_ui:input_section:done")
         _early_log("panel_core:build_ui:mode_stack_chat_page:entry")
         self._mode_stack.addWidget(chat_page)
@@ -649,12 +673,42 @@ class RikuganPanelCore(QWidget):
                 log_debug(f"UI hook setup failed: {e}")
                 self._ui_hooks = None
         _early_log("panel_core:build_ui:ui_hooks:done")
-
-        # Task 7 (spec §7.1): startup is fresh-by-default.  No
-        # session-restore side effects — History must be opened
-        # explicitly by the user.
+        # Auto-restore: schedule a single hidden history list request so
+        # the newest saved chat replaces the blank draft tab. The flag
+        # gates ``_apply_history_list_result`` and is cleared on any
+        # non-LISTED status, so failure leaves the blank tab intact.
+        # The visible History panel stays hidden during this path; the
+        # user can still open History explicitly at any time.
+        self._startup_restore_pending = True
+        self._startup_restore_load_pending = False
+        self._start_history_list_request()
         self._install_shortcuts()
         _early_log("panel_core:build_ui:done")
+
+    def showEvent(self, event) -> None:  # noqa: D401
+        """Seed the chat-splitter default sizes on first show.
+
+        ``setSizes`` is meaningless before the widget is laid out, so
+        we wait for the first show event.  The user can still drag
+        the handle afterwards; ``setSizes`` is a one-shot default, not
+        a clamp.  The bottom pane starts at the input editor's
+        minimum height so 2-3 lines are visible without dragging.
+        """
+        super().showEvent(event)
+        splitter = getattr(self, "_chat_splitter", None)
+        if splitter is None or getattr(self, "_chat_splitter_seeded", False):
+            return
+        self._chat_splitter_seeded = True
+        total = splitter.height() or 1
+        input_min = 60
+        if getattr(self, "_input_area", None) is not None:
+            try:
+                input_min = max(int(self._input_area.minimumHeight()), 60)
+            except Exception:
+                pass
+        input_size = min(input_min, max(40, total - 80))
+        chat_size = max(40, total - input_size)
+        splitter.setSizes([chat_size, input_size])
 
     def _install_shortcuts(self) -> None:
         """Wire window-scoped panel shortcuts (Ctrl+T new tab, Ctrl+W close).
@@ -672,7 +726,6 @@ class RikuganPanelCore(QWidget):
         close_tab_sc = QShortcut(QKeySequence("Ctrl+W"), self)
         close_tab_sc.setContext(Qt.ShortcutContext.WindowShortcut)
         close_tab_sc.activated.connect(self._close_current_tab)
-
     def _close_current_tab(self) -> None:
         """Close the active chat tab (Ctrl+W handler)."""
         self._on_close_tab(self._tab_widget.currentIndex())
@@ -693,15 +746,22 @@ class RikuganPanelCore(QWidget):
         self._tab_bar.setExpanding(False)
         self._tab_bar.setVisible(False)  # hidden until 2+ tabs
 
-    def _build_main_splitter(self, layout: QVBoxLayout) -> None:
-        """Create the horizontal splitter (chat | mutation log | history) and add to layout.
+    def _build_main_splitter(self) -> QSplitter:
+        """Create the horizontal splitter (chat | mutation log | history) and return it.
 
         Spec §6.4: splitter widget order is chat, Mutation Log, History.
         Mutation and History start hidden; only the visible auxiliary
         widget receives the existing 3:1 chat-to-side stretch ratio, so
         the hidden third widget consumes zero width.
+
+        The splitter is *not* added to any layout here — the caller
+        decides where the splitter lives.  In the normal panel layout
+        it is the top pane of the vertical chat splitter
+        (``self._chat_splitter``), but tests and host wrappers may place
+        it elsewhere.
         """
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.setObjectName("main_splitter")
         self._main_splitter.setHandleWidth(1)
         self._main_splitter.setStyleSheet(maybe_host_stylesheet(self._main_splitter_style()))
         self._main_splitter.addWidget(self._tab_widget)
@@ -734,7 +794,7 @@ class RikuganPanelCore(QWidget):
         self._main_splitter.setStretchFactor(1, 1)
         self._main_splitter.setStretchFactor(2, 1)
 
-        layout.addWidget(self._main_splitter, 1)
+        return self._main_splitter
 
     def _build_input_section(self) -> QWidget:
         """Build the bottom input area with text field and action buttons."""
@@ -751,9 +811,9 @@ class RikuganPanelCore(QWidget):
         input_layout.addLayout(self._build_action_buttons())
         return self._input_container
 
-    def _build_action_buttons(self) -> QVBoxLayout:
-        """Build the vertical stack of action buttons (Send, Stop, New, etc.)."""
-        btn_layout = QVBoxLayout()
+    def _build_action_buttons(self) -> QHBoxLayout:
+        """Build the horizontal strip of action buttons (Send, Stop, New, Export, etc.)."""
+        btn_layout = QHBoxLayout()
         btn_layout.setSpacing(4)
 
         self._send_btn = QPushButton("Send")
@@ -885,6 +945,10 @@ class RikuganPanelCore(QWidget):
                 self._tab_widget.setStyleSheet(maybe_host_stylesheet(self._tab_widget_style()))
             if hasattr(self, "_main_splitter") and self._main_splitter is not None:
                 self._main_splitter.setStyleSheet(maybe_host_stylesheet(self._main_splitter_style()))
+            if hasattr(self, "_chat_splitter") and self._chat_splitter is not None:
+                self._chat_splitter.setStyleSheet(
+                    maybe_host_stylesheet(self._chat_splitter_style())
+                )
             # The add-tab '+' button lives on the tab bar, not on the
             # panel itself.  Guard against the tab bar not being
             # constructed yet (early emit) and against the button
@@ -2412,6 +2476,15 @@ class RikuganPanelCore(QWidget):
             and result.session.id in getattr(self, "_history_delete_intents", ())
         ):
             return
+        # Startup auto-restore: a hidden load follows the startup list
+        # request. Consume the flag on every terminal result. Failure
+        # paths drop the flag and leave the blank draft tab intact;
+        # the History panel stays hidden, so no error copy surfaces.
+        startup_load = bool(getattr(self, "_startup_restore_load_pending", False))
+        if startup_load:
+            self._startup_restore_load_pending = False
+            if result.status is not HistoryRequestStatus.LOADED:
+                return
         status = result.status
         if status is HistoryRequestStatus.LOADED:
             attach = self._ctrl.attach_history_session(result)
@@ -2500,9 +2573,25 @@ class RikuganPanelCore(QWidget):
         reviewer point #3).  Diagnostics are logged separately by the
         worker.
         """
+        status = result.status
+        # Startup auto-restore: a single hidden list request followed by
+        # a hidden load for the newest entry. Non-LISTED or empty outcomes
+        # clear the flag and suppress the History panel render so the
+        # blank draft tab remains the visible default with no error.
+        if getattr(self, "_startup_restore_pending", False):
+            self._startup_restore_pending = False
+            if status is HistoryRequestStatus.LISTED and result.entries:
+                sorted_entries = sorted(
+                    result.entries,
+                    key=lambda e: e.updated_at,
+                    reverse=True,
+                )
+                self._startup_restore_load_pending = True
+                self._start_history_load(sorted_entries[0].session_id)
+                return
+            return
         if self._history_panel is None:
             return
-        status = result.status
         if status == HistoryRequestStatus.LISTED:
             # Sort newest-first before handing to the widget (spec §8.1
             # "sort updated_at descending").  Controller listing is
@@ -3080,7 +3169,10 @@ class RikuganPanelCore(QWidget):
                     break
         # 6. Pending flag clear.
         self._history_pending = False
-        # 7. Clear the retry-load / last-load ids (reviewer MEDIUM #2):
+        # 6a. Startup auto-restore flags — the pending list/load for the
+        #     old IDB must not attach a session to the new IDB.
+        self._startup_restore_pending = False
+        self._startup_restore_load_pending = False
         #    the stashed ids belong to the old IDB.
         self._history_retry_load_session_id = None
         self._history_last_load_session_id = None

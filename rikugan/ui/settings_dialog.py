@@ -665,6 +665,15 @@ class SettingsDialog(QDialog):
             "Enable for deep RE sessions where losing decompilation context is worse than higher token cost."
         )
         behavior_form.addRow(self._preserve_context_cb)
+        # --- String analysis restriction ---
+        self._hide_strings_cb = QCheckBox("Hide strings from analysis (prefer disassembly/decompilation)")
+        self._hide_strings_cb.setChecked(bool(getattr(self._config, "hide_strings", False)))
+        self._hide_strings_cb.setToolTip(
+            "When enabled, list_strings and search_strings are withheld from the agent and any "
+            "stale direct call returns an error. The agent must use read_function_disassembly, "
+            "read_disassembly, decompile_function, or get_pseudocode to analyze behavior instead."
+        )
+        behavior_form.addRow(self._hide_strings_cb)
 
         # --- Raw knowledge memory ---
         self._knowledge_enabled_cb = QCheckBox("Enable raw knowledge memory")
@@ -1852,6 +1861,8 @@ class SettingsDialog(QDialog):
         self._config.oauth_consent_accepted = self._oauth_cb.isChecked()
         if hasattr(self, "_knowledge_enabled_cb"):
             self._config.knowledge_enabled = self._knowledge_enabled_cb.isChecked()
+        if hasattr(self, "_hide_strings_cb"):
+            self._config.hide_strings = self._hide_strings_cb.isChecked()
         if hasattr(self, "_docs_review_mode_cb"):
             self._config.docs_review_mode = self._docs_review_mode_cb.currentData()
         if hasattr(self, "_parallel_agent_cb"):

@@ -358,6 +358,9 @@ def _qt_class(name: str) -> type:
         "addItem": _layout_add_widget,
         "itemAt": _layout_item_at,
         "layout": _layout_getter,
+        "showEvent": _noop,
+        "hideEvent": _noop,
+
         "setToolButtonStyle": _noop,
         "setArrowType": _noop,
         "setPopupMode": _noop,

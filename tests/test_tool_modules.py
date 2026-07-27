@@ -27,17 +27,25 @@ importlib.reload(_db_mod)
 # --- Database tools --------------------------------------------------------
 
 class TestGetBinaryInfo(unittest.TestCase):
-    def test_returns_filename_and_function_count(self):
+    def test_omits_filename_emits_metadata(self):
         from rikugan.ida.tools.database import get_binary_info
         result = get_binary_info()
-        self.assertIn("test_binary", result)
+        # Filename must not appear — file names are untrusted labels.
+        self.assertNotIn("test_binary", result)
+        self.assertIn("Processor:", result)
+        self.assertIn("Bits:", result)
         self.assertIn("Functions:", result)
+
+    def test_does_not_emit_file_header(self):
+        from rikugan.ida.tools.database import get_binary_info
+        result = get_binary_info()
+        self.assertNotIn("File: test_binary", result)
+        self.assertNotIn("File:", result.splitlines()[0])
 
     def test_contains_processor_info(self):
         from rikugan.ida.tools.database import get_binary_info
         result = get_binary_info()
         self.assertTrue("Processor:" in result or "unavailable" in result)
-
 
 class TestListSegments(unittest.TestCase):
     def test_returns_segment_header(self):

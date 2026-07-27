@@ -137,7 +137,9 @@ class TestRegistryExecution(unittest.TestCase):
 
     def test_execute_get_binary_info(self):
         result = self.registry.execute("get_binary_info", {})
-        self.assertIn("test_binary", result)
+        # File name is intentionally hidden from the LLM-facing output.
+        self.assertNotIn("test_binary", result)
+        self.assertIn("Processor:", result)
 
     def test_execute_search_functions(self):
         result = self.registry.execute("search_functions", {"query": "sub"})

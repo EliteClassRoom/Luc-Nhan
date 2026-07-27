@@ -217,22 +217,26 @@ def list_exports() -> str:
 
 @tool(category="database")
 def get_binary_info() -> str:
-    """Return high-level metadata about the loaded binary (file name, processor, bitness, entry point, address range, file type, total function count).
+    """Return high-level metadata about the loaded binary (processor, bitness, entry point, address range, file type, total function count).
+
+    The on-disk file name is intentionally NOT emitted — file names are
+    untrusted labels and must not influence analysis. Conclusion about
+    the binary's purpose, family, or behavior must come from code, imports,
+    xrefs, disassembly, and decompilation.
 
     Output is plain text, one fact per line:
-    `File:`, `Processor:`, `Bits:`, `Entry point:`, `Min/Max address:`,
+    `Processor:`, `Bits:`, `Entry point:`, `Min/Max address:`,
     `File type:`, `Functions: <N>`.
 
     This is the right tool for the first turn of any new analysis —
-    it gives you the binary's identity and overall scale in one call.
+    it gives you the binary's processor, layout, and scale in one call.
     For per-function details, follow up with list_functions (paginated)
     or search_functions (substring match). For strings, use
     list_strings; for imports/exports, use list_imports/list_exports.
     Never reimplement these with execute_python.
     """
 
-    lines = [f"File: {ida_nalt.get_root_filename()}"]
-
+    lines: list[str] = []
     # IDA 9.x uses ida_ida.inf_get_procname() etc. instead of get_inf_structure()
     try:
         lines.append(f"Processor: {ida_ida.inf_get_procname()}")
