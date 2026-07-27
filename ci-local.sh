@@ -81,7 +81,7 @@ fi
 # ── 4. Pytest ─────────────────────────────────────────────────────────────────
 info "[4/5] Pytest..."
 if python3 -m pytest --version &>/dev/null; then
-    if python3 -m pytest tests/ --tb=short -q 2>&1; then
+    if python3 -m pytest --tb=short -q 2>&1; then
         ok "pytest"
     else
         fail "pytest" "see above"
