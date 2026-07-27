@@ -96,6 +96,20 @@ class TestListFacts:
         store, _ = _create_store(tmp_path)
         assert store.list_facts() == []
 
+    def test_create_update_and_list_expose_current_semantic_hash(self, tmp_path: Path) -> None:
+        from rikugan.memory.fact_identity import semantic_fact_hash
+
+        store, _ = _create_store(tmp_path)
+        fid = new_record_id("fact")
+        first = store.put_fact(fid, "algorithm", "RC4", "Uses RC4", 0.8, expected_revision=0)
+        second = store.put_fact(fid, "algorithm", "RC4", "Uses modified RC4", 0.9, expected_revision=1)
+        assert first.semantic_hash != second.semantic_hash
+        assert first.semantic_hash == semantic_fact_hash("algorithm", "Uses RC4")
+        assert second.semantic_hash == semantic_fact_hash("algorithm", "Uses modified RC4")
+        assert store.get_fact(fid).semantic_hash == second.semantic_hash
+        assert store.list_facts()[0].semantic_hash == second.semantic_hash
+        store.close()
+
 
 class TestEntityAndRelation:
     def test_put_and_get_entity(self, tmp_path: Path) -> None:

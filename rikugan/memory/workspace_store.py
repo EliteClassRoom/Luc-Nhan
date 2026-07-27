@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from typing import Any
 from ..constants import MEMORY_WORKSPACE_SCHEMA_VERSION
 from .sqlite_backend import begin_immediate_with_retry, open_sqlite
 from .workspace import WorkspacePaths, validate_record_id
+
+_SEMANTIC_HASH_RE = re.compile(r"[0-9a-f]{64}")
 
 
 class StaleRevisionError(RuntimeError):
@@ -35,6 +38,7 @@ class FactRecord:
     fact_type: str
     title: str
     content: str
+    semantic_hash: str
     confidence: float
     revision: int
     created_at: float
@@ -175,7 +179,63 @@ def _migrate_v1(conn: Any) -> None:
     conn.execute("INSERT OR IGNORE INTO projection_state(id) VALUES(1)")
 
 
-_MIGRATIONS = {1: _migrate_v1}
+def _migrate_v2(conn: Any) -> None:
+    """Workspace schema v2: add semantic_hash column and hash guards."""
+    from .fact_identity import semantic_fact_hash
+
+    conn.execute(
+        "ALTER TABLE facts ADD COLUMN semantic_hash TEXT CHECK(semantic_hash IS NULL OR length(semantic_hash) = 64)"
+    )
+    rows = conn.execute(
+        """
+        SELECT f.fact_id, f.fact_type, r.content
+        FROM facts f
+        JOIN fact_revisions r
+          ON r.fact_id = f.fact_id AND r.revision = f.current_revision
+        """
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            "UPDATE facts SET semantic_hash = ? WHERE fact_id = ?",
+            (semantic_fact_hash(row["fact_type"], row["content"]), row["fact_id"]),
+        )
+    # Do not use Connection.executescript() here: CPython sqlite3 may commit
+    # the outer migration transaction before executing the script.
+    conn.execute("CREATE INDEX idx_facts_semantic ON facts(semantic_hash)")
+    conn.execute(
+        """
+        CREATE TRIGGER facts_semantic_hash_insert_guard
+        BEFORE INSERT ON facts
+        WHEN NEW.semantic_hash IS NULL
+          OR length(NEW.semantic_hash) != 64
+          OR NEW.semantic_hash GLOB '*[^0-9a-f]*'
+        BEGIN
+          SELECT RAISE(ABORT, 'semantic_hash must be a 64-character lowercase SHA-256 hex digest');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER facts_semantic_hash_update_guard
+        BEFORE UPDATE OF semantic_hash ON facts
+        WHEN NEW.semantic_hash IS NULL
+          OR length(NEW.semantic_hash) != 64
+          OR NEW.semantic_hash GLOB '*[^0-9a-f]*'
+        BEGIN
+          SELECT RAISE(ABORT, 'semantic_hash must be a 64-character lowercase SHA-256 hex digest');
+        END
+        """
+    )
+    invalid = conn.execute(
+        "SELECT COUNT(*) FROM facts WHERE semantic_hash IS NULL OR semantic_hash GLOB '*[^0-9a-f]*' OR length(semantic_hash) != 64"
+    ).fetchone()[0]
+    if invalid:
+        raise RuntimeError(f"semantic hash backfill left {invalid} invalid fact(s)")
+    if conn.execute("PRAGMA foreign_key_check").fetchall():
+        raise RuntimeError("workspace v2 migration failed foreign key check")
+
+
+_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2}
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +329,7 @@ class WorkspaceStore:
         content: str,
         confidence: float,
         *,
+        semantic_hash: str | None = None,
         expected_revision: int,
     ) -> FactRecord:
         """Insert or update a fact with optimistic revision control.
@@ -285,6 +346,12 @@ class WorkspaceStore:
             raise ValueError("title must be a string")
         if not isinstance(content, str):
             raise ValueError("content must be a string")
+
+        from .fact_identity import semantic_fact_hash
+
+        current_semantic_hash = semantic_hash or semantic_fact_hash(fact_type, content)
+        if not _SEMANTIC_HASH_RE.fullmatch(current_semantic_hash):
+            raise ValueError("semantic_hash must be a 64-character lowercase SHA-256 hex digest")
 
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         now = time.time()
@@ -304,13 +371,15 @@ class WorkspaceStore:
 
             if current == 0:
                 self._conn.execute(
-                    "INSERT INTO facts(fact_id, fact_type, title, current_revision, created_at) VALUES(?, ?, ?, ?, ?)",
-                    (fact_id, fact_type, title, revision, now),
+                    "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, current_revision, created_at)"
+                    " VALUES(?, ?, ?, ?, ?, ?)",
+                    (fact_id, fact_type, title, current_semantic_hash, revision, now),
                 )
             else:
                 self._conn.execute(
-                    "UPDATE facts SET fact_type = ?, title = ?, current_revision = ? WHERE fact_id = ?",
-                    (fact_type, title, revision, fact_id),
+                    "UPDATE facts SET fact_type = ?, title = ?, semantic_hash = ?, current_revision = ?"
+                    " WHERE fact_id = ?",
+                    (fact_type, title, current_semantic_hash, revision, fact_id),
                 )
 
             self._conn.execute(
@@ -328,6 +397,7 @@ class WorkspaceStore:
             fact_type=fact_type,
             title=title,
             content=content,
+            semantic_hash=current_semantic_hash,
             confidence=confidence,
             revision=revision,
             created_at=now,
@@ -337,7 +407,8 @@ class WorkspaceStore:
         """Get a fact by ID, returning the current revision."""
         row = self._conn.execute(
             """
-            SELECT f.fact_id, f.fact_type, f.title, f.current_revision, f.created_at,
+            SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
+                   f.current_revision, f.created_at,
                    r.content, r.confidence
             FROM facts f
             JOIN fact_revisions r ON r.fact_id = f.fact_id AND r.revision = f.current_revision
@@ -352,6 +423,7 @@ class WorkspaceStore:
             fact_type=row["fact_type"],
             title=row["title"],
             content=row["content"],
+            semantic_hash=row["semantic_hash"],
             confidence=row["confidence"],
             revision=row["current_revision"],
             created_at=row["created_at"],
@@ -361,7 +433,8 @@ class WorkspaceStore:
         """List all current facts."""
         rows = self._conn.execute(
             """
-            SELECT f.fact_id, f.fact_type, f.title, f.current_revision, f.created_at,
+            SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
+                   f.current_revision, f.created_at,
                    r.content, r.confidence
             FROM facts f
             JOIN fact_revisions r ON r.fact_id = f.fact_id AND r.revision = f.current_revision
@@ -374,6 +447,7 @@ class WorkspaceStore:
                 fact_type=row["fact_type"],
                 title=row["title"],
                 content=row["content"],
+                semantic_hash=row["semantic_hash"],
                 confidence=row["confidence"],
                 revision=row["current_revision"],
                 created_at=row["created_at"],
