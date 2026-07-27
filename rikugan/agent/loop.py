@@ -159,6 +159,23 @@ _FAILURE_SUBSTRINGS = (
 )
 
 
+# Orchestra temporary safety gate. The Orchestra execution path is
+# disabled pending its shared execution-policy and context-isolation
+# hardening (see docs/superpowers/specs/2026-07-22-memory-durability-and-
+# orchestra-gate-design.md §10). The command remains recognized so users
+# receive a precise disabled message instead of an unknown-command error;
+# the early gate below returns one ``TEXT_DONE`` event and exits before
+# skill resolution, session append, prompt/schema construction, retrieval,
+# provider call, or tool execution.
+#
+# Focused legacy tests may monkeypatch this constant to ``True`` only
+# inside the test process; production defaults remain disabled.
+_ORCHESTRA_ENABLED = False
+_ORCHESTRA_DISABLED_MESSAGE = (
+    "Orchestra is temporarily disabled while its execution and context isolation contracts are being hardened."
+)
+
+
 def _result_indicates_failure(result: str) -> bool:
     """Heuristic check: does the tool result string indicate a clear failure?"""
     if not isinstance(result, str):
@@ -2603,6 +2620,16 @@ class AgentLoop:
                 return
             if cmd.direct_command == "/report":
                 yield from _handle_report_command(self, cmd.direct_arg)
+                return
+
+            # Orchestra early safety gate: yield one TEXT_DONE and
+            # exit BEFORE skill resolution, persisted-mode resumption,
+            # session append, prompt/schema construction, retrieval,
+            # provider call, tool execution, or child agent. This
+            # placement is critical — anything below it assumes the
+            # command is safe to run.
+            if cmd.use_orchestra_mode and not _ORCHESTRA_ENABLED:
+                yield TurnEvent.text_done(_ORCHESTRA_DISABLED_MESSAGE)
                 return
 
             user_message = cmd.message

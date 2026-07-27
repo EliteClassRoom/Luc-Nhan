@@ -8,6 +8,7 @@ import sys
 import unittest
 from collections.abc import Generator as GeneratorType
 from typing import Any
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -740,6 +741,34 @@ class TestAgentLoop(unittest.TestCase):
         reasoning_events = [e for e in _events if e.type == TurnEventType.REASONING_DELTA]
         assert len(reasoning_events) == 1
         assert "thinking" in reasoning_events[0].reasoning
+
+    def test_orchestra_gate_returns_before_session_prompt_retrieval_or_provider(self):
+        """``/orchestra`` is gated: returns one TEXT_DONE event and exits
+        before any skill resolution, system prompt, tool schema, session
+        append, or provider call. The runtime Orchestra path is currently
+        disabled pending its execution and context-isolation hardening.
+        """
+        provider = MockProvider(responses=[])
+        loop = self._make_loop(provider)
+        original_messages = list(loop.session.messages)
+        loop.session.metadata["active_mode"] = "research"
+
+        with (
+            patch.object(loop, "_resolve_skill", side_effect=AssertionError("skill resolution ran")),
+            patch.object(loop, "_build_system_prompt", side_effect=AssertionError("prompt built")),
+            patch.object(loop, "_build_tools_schema", side_effect=AssertionError("schemas built")),
+        ):
+            events = list(loop.run("/orchestra analyze this binary"))
+
+        assert [(event.type, event.text) for event in events] == [
+            (
+                TurnEventType.TEXT_DONE,
+                "Orchestra is temporarily disabled while its execution and context isolation contracts are being hardened.",
+            )
+        ]
+        assert loop.session.messages == original_messages
+        assert loop.session.metadata["active_mode"] == "research"
+        assert provider._call_count == 0
 
 
 class TestStreamOutcomeGuardIntegration(unittest.TestCase):
