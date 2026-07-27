@@ -16,7 +16,7 @@ import json
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from .bundle_schema import BundleLimits, validate_manifest
 from .fact_identity import (
@@ -163,9 +163,9 @@ def import_workspace_bundle(
         for record_type, origin_id, payload in envelopes:
             new_id = id_map[(record_type, origin_id)]
             if record_type == "fact":
-                existing = existing_facts.get(new_id)
-                if existing is not None:
-                    if not _fact_payload_matches(existing, payload):
+                existing_fact = existing_facts.get(new_id)
+                if existing_fact is not None:
+                    if not _fact_payload_matches(existing_fact, payload):
                         raise BundleImportConflictError(f"import destination conflict: {new_id}")
                     continue
                 staged_facts.append(
@@ -175,13 +175,13 @@ def import_workspace_bundle(
                         type=str(payload.get("type", "general")),
                         title=str(payload.get("title", "")),
                         content=str(payload.get("content", "")),
-                        confidence=float(payload.get("confidence", 0.5)),
+                        confidence=_payload_float(payload, "confidence", 0.5),
                     )
                 )
             elif record_type == "entity":
-                existing = existing_entities.get(new_id)
-                if existing is not None:
-                    if not _entity_payload_matches(existing, payload):
+                existing_entity = existing_entities.get(new_id)
+                if existing_entity is not None:
+                    if not _entity_payload_matches(existing_entity, payload):
                         raise BundleImportConflictError(f"import destination conflict: {new_id}")
                     continue
                 staged_entities.append(
@@ -195,9 +195,9 @@ def import_workspace_bundle(
                     )
                 )
             elif record_type == "relation":
-                existing = existing_relations.get(new_id)
-                if existing is not None:
-                    if not _relation_payload_matches(existing, payload, id_map):
+                existing_relation = existing_relations.get(new_id)
+                if existing_relation is not None:
+                    if not _relation_payload_matches(existing_relation, payload, id_map):
                         raise BundleImportConflictError(f"import destination conflict: {new_id}")
                     continue
                 src_id = id_map[("entity", str(payload.get("src", "")))]
@@ -209,7 +209,7 @@ def import_workspace_bundle(
                         src=src_id,
                         predicate=str(payload.get("predicate", "related_to")),
                         dst=dst_id,
-                        confidence=float(payload.get("confidence", 0.5)),
+                        confidence=_payload_float(payload, "confidence", 0.5),
                     )
                 )
 
@@ -247,7 +247,7 @@ def _fact_payload_matches(existing: KnowledgeMemory, payload: dict[str, object])
         canonicalize_fact_type(existing.type) == canonicalize_fact_type(str(payload.get("type", "general")))
         and canonicalize_fact_content(existing.content) == canonicalize_fact_content(str(payload.get("content", "")))
         and existing.title == str(payload.get("title", ""))
-        and existing.confidence == float(payload.get("confidence", 0.5))
+        and existing.confidence == _payload_float(payload, "confidence", 0.5)
     )
 
 
@@ -281,5 +281,32 @@ def _relation_payload_matches(
         existing.src == id_map[("entity", str(payload.get("src", "")))]
         and existing.predicate == str(payload.get("predicate", "related_to"))
         and existing.dst == id_map[("entity", str(payload.get("dst", "")))]
-        and existing.confidence == float(payload.get("confidence", 0.5))
+        and existing.confidence == _payload_float(payload, "confidence", 0.5)
     )
+
+
+def _payload_float(payload: dict[str, object], key: str, default: float) -> float:
+    """Coerce *payload*[*key*] to ``float``, falling back to *default*.
+
+    Bundle payloads are untyped ``dict[str, object]``; ``payload.get``
+    may return an ``int``, ``float``, ``str``, ``None``, or any other
+    JSON value. ``bool`` is rejected explicitly because Python's
+    ``bool`` is a subclass of ``int`` and silent bool-to-float
+    conversion would smuggle ``True`` / ``False`` past callers that
+    expect numeric confidence.
+    """
+    value = payload.get(key, default)
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if value is None:
+        return default
+    try:
+        # ``value`` is statically ``object`` after the isinstance narrowing
+        # above; ``float()`` accepts ``str`` and any ``SupportsFloat`` /
+        # ``SupportsIndex`` value at runtime, so we hand it the raw object
+        # and let the except clause guard the failure modes.
+        return float(cast(Any, value))
+    except (TypeError, ValueError):
+        return default
