@@ -593,6 +593,7 @@ class SessionControllerBase:
             from ..memory.manager import MemoryWorkspaceManager
             from ..memory.markdown import MemoryProjector
             from ..memory.repository import SQLiteKnowledgeRepository
+            from ..memory.workspace_open import open_workspace_for_write
             from ..memory.workspace_store import WorkspaceStore
 
             session = self._sessions.get(tid)
@@ -618,7 +619,11 @@ class SessionControllerBase:
 
             paths = manager.require_persistent_paths()
             if paths.database.exists():
-                store = WorkspaceStore.open(paths, owner_memory_id=result.binding.memory_id)
+                store = open_workspace_for_write(
+                    paths,
+                    result.binding.memory_id,
+                    manager.locator.backups(result.binding.memory_id),
+                )
             else:
                 store = WorkspaceStore.create(paths, owner_memory_id=result.binding.memory_id)
             repo = SQLiteKnowledgeRepository(store, owner_memory_id=result.binding.memory_id)

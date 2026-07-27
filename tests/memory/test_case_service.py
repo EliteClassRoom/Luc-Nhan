@@ -16,6 +16,8 @@ from rikugan.memory.service import BinaryMemoryService
 from rikugan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
 from rikugan.memory.workspace_store import WorkspaceStore
 
+from .test_workspace_migration_v2 import _create_v1_database
+
 
 def _setup_service(
     tmp_path: Path,
@@ -111,3 +113,29 @@ class TestSourceDrift:
         )
         result = case_service.evaluate_source_state(case_id, source)
         assert result.status == "source_not_member"
+
+
+class TestPromotionBackupGate:
+    def test_promote_on_v1_case_workspace_takes_backup_first(self, tmp_path: Path) -> None:
+        """Promotion on a stale v1 case DB must route through the backup helper."""
+        case_service, cases, service, issuer, context, case_id, _ = _setup_service(tmp_path)
+
+        # Save a fact so there is something to promote.
+        service.save_fact(
+            issuer.issue(context),
+            category="algorithm",
+            fact="Uses RC4",
+            source="save_memory",
+        )
+        fact_id = service.repository.list_memories()[0].id
+
+        # Overwrite the (empty) v2 case workspace with a v1 database.
+        case_paths = cases.locator.case(case_id)
+        _create_v1_database(case_paths.database, case_id)
+
+        authority = issuer.issue(context)
+        case_service.promote(authority, context, case_id, fact_id)
+
+        # After promotion a backup of the v1 case DB exists.
+        backups = list(cases.locator.backups(case_id).glob("memory_*.db"))
+        assert len(backups) == 1

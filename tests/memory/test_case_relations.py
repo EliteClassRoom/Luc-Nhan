@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -11,7 +13,10 @@ from rikugan.memory.case_schema import (
     CaseRelationType,
 )
 from rikugan.memory.registry import MemoryRegistry
+from rikugan.memory.sqlite_backend import SchemaMigrationRequired
 from rikugan.memory.workspace import MemoryLocator
+
+from .test_workspace_migration_v2 import _create_v1_database
 
 
 def _setup(tmp_path: Path) -> tuple[CaseRepository, MemoryRegistry, str, str]:
@@ -125,3 +130,46 @@ class TestCaseRelations:
                 CaseRelationType.COMMUNICATES_WITH,
                 outsider.memory_id,
             )
+
+    def test_put_relation_routes_through_backup_aware_open(self, tmp_path: Path) -> None:
+        """put_case_relation on an existing case DB must use open_workspace_for_write."""
+        from rikugan.memory import workspace_open
+        from rikugan.memory.workspace_store import WorkspaceStore
+
+        cases, _, mid_a, mid_b = _setup(tmp_path)
+        case = cases.list_cases()[0]
+        case_paths = cases.locator.case(case.case_id)
+
+        # Seed a v2 case workspace so we hit the existing-DB branch.
+        WorkspaceStore.create(case_paths, owner_memory_id=case.case_id, workspace_kind="case").close()
+
+        calls: list[tuple[object, str, object]] = []
+        real_open = workspace_open.open_workspace_for_write
+
+        def tracking_open(paths_arg, owner_arg, backup_dir_arg):
+            calls.append((paths_arg, owner_arg, backup_dir_arg))
+            return real_open(paths_arg, owner_arg, backup_dir_arg)
+
+        with patch.object(workspace_open, "open_workspace_for_write", tracking_open):
+            cases.put_case_relation(
+                case.case_id,
+                mid_a,
+                CaseRelationType.EMBEDS_OR_LOADS,
+                mid_b,
+                confidence=0.9,
+            )
+
+        assert len(calls) == 1
+        assert calls[0][1] == case.case_id
+
+
+def test_list_relations_does_not_migrate_stale_workspace(tmp_path: Path) -> None:
+    """Reading case relations on a stale v1 DB must not silently migrate."""
+    cases, _registry, _mid_a, _mid_b = _setup(tmp_path)
+    case = cases.list_cases()[0]
+    case_paths = cases.locator.case(case.case_id)
+    _create_v1_database(case_paths.database, case.case_id)
+    with pytest.raises(SchemaMigrationRequired):
+        cases.list_case_relations(case.case_id)
+    with sqlite3.connect(case_paths.database) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
