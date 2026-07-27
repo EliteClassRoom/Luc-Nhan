@@ -334,25 +334,27 @@ def build_input_area_stylesheet(tokens: object) -> str:
 
     Targets the ``QPlainTextEdit#input_area`` object name only, so
     the styles do not bleed into other plain text editors in the
-    host.  Returns an empty string in host/IDA-native mode.
+    host.  The stylesheet is applied in every theme mode — including
+    host/IDA-native — so the editor border, focus, and selection
+    colors are always token-driven.  Foreground/background/placeholder
+    colors are applied through ``InputArea.apply_palette`` via
+    ``QPalette`` roles because Qt does not expose those properties
+    as QSS sub-controls.
     """
-    if is_host_theme():
-        return ""
     base = getattr(tokens, "base", "#ffffff")
-    text = getattr(tokens, "text", "#1e1e1e")
     mid = getattr(tokens, "mid", "#cccccc")
     highlight = getattr(tokens, "highlight", "#0066cc")
     highlight_text = getattr(tokens, "highlight_text", "#ffffff")
     return (
         f"QPlainTextEdit#input_area {{"
-        f" background-color: {base}; color: {text};"
-        f" border: 1px solid {mid}; border-radius: 6px;"
-        f" padding: 6px; selection-background-color: {highlight};"
+        f" background-color: {base};"
+        f" selection-background-color: {highlight};"
         f" selection-color: {highlight_text};"
+        f" border: 1px solid {mid}; border-radius: 6px;"
+        f" padding: 6px;"
         f"}}"
-        f"QPlainTextEdit#input_area:focus {{"
-        f" border-color: {highlight};"
-        f"}}"
+        f"QPlainTextEdit#input_area QScrollBar {{ background: {base}; }}"
+        f"QPlainTextEdit#input_area:focus {{ border-color: {highlight}; }}"
     )
 
 

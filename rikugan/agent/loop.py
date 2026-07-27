@@ -573,6 +573,7 @@ class AgentLoop:
             tools_table=self.tools.tools_catalog(),
             structured_memory=structured_memory,
             manual_memory_notes=manual_memory_notes,
+            hide_strings=bool(self.config.hide_strings),
         )
 
     def _build_retrieved_knowledge_section(
@@ -1644,6 +1645,16 @@ class AgentLoop:
 
     def _execute_single_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle approval gating, mutation tracking, and execution of a real tool."""
+        # Config: hide string-list/search tools when analysis strings are
+        # disabled. Defense-in-depth: even if the schema filter is bypassed
+        # (stale provider schema, third-party schema) the agent cannot call
+        # these tools directly. Mirrors the profile.denied_tools guard.
+        if self.config.hide_strings and tc.name in {"list_strings", "search_strings"}:
+            content = "Error: String analysis is disabled by the active configuration."
+            log_debug(f"Blocked hidden string tool: {tc.name} (hide_strings=True)")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr
         # Profile: block denied tools at execution time (defense-in-depth —
         # the schema filter already hides them, but the LLM may still try)
         profile = self.config.get_active_profile()
@@ -2510,7 +2521,10 @@ class AgentLoop:
         if profile.denied_tools:
             denied = set(profile.denied_tools)
             tools_schema = [t for t in tools_schema if t.get("function", {}).get("name") not in denied]
-
+        # Config: hide string-list/search tools when analysis strings are disabled
+        if self.config.hide_strings:
+            _hidden = {"list_strings", "search_strings"}
+            tools_schema = [t for t in tools_schema if t.get("function", {}).get("name") not in _hidden]
         # activate_skill: dynamic because the slug enum depends on loaded skills
         if self.skills and self.skills.list_slugs():
             tools_schema.append(

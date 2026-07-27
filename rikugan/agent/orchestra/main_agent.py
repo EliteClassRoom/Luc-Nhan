@@ -146,6 +146,7 @@ class OrchestraMainAgent:
             tool_names=self.tools.list_names(),
             skill_summary=self.skills.get_summary_for_prompt() if self.skills else None,
             profile=profile,
+            hide_strings=bool(getattr(self.config, "hide_strings", False)),
         )
 
         pricing_table = build_pricing_table(self.orchestra_config.model_pricing)
@@ -253,7 +254,10 @@ class OrchestraMainAgent:
         if profile.denied_tools:
             denied = set(profile.denied_tools)
             base_schema = [t for t in base_schema if t.get("function", {}).get("name") not in denied]
-
+        # Config: hide string-list/search tools when analysis strings are disabled
+        if getattr(self.config, "hide_strings", False):
+            _hidden = {"list_strings", "search_strings"}
+            base_schema = [t for t in base_schema if t.get("function", {}).get("name") not in _hidden]
         seen: set = set()
         deduped: list = []
         for t in base_schema + orchestra_tools:

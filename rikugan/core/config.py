@@ -93,6 +93,8 @@ class RikuganConfig:
     theme: str = "auto"  # "auto" follows host theme; "dark" / "light" force Rikugan palettes; "ida" forces IDA-native
     font_family: str = ""  # empty = inherit from host; set to override (e.g. "Consolas")
     font_size_override: int = 0  # 0 = inherit from host; set to override point size
+    # Hide string-list/search tools from the agent (prefer disassembly/decompilation).
+    hide_strings: bool = False
 
     # Skills & MCP external integration
     disabled_skills: list[str] = field(default_factory=list)
@@ -220,6 +222,8 @@ class RikuganConfig:
             errors.append("knowledge_enabled must be a bool")
         if not isinstance(self.knowledge_show_retrieved_in_chat, bool):
             errors.append("knowledge_show_retrieved_in_chat must be a bool")
+        if not isinstance(self.hide_strings, bool):
+            errors.append("hide_strings must be a bool")
         if not (1 <= self.knowledge_max_context_items <= 100):
             errors.append(f"knowledge_max_context_items {self.knowledge_max_context_items} out of range [1, 100]")
         if not (1_000 <= self.knowledge_max_context_chars <= 60_000):
@@ -248,13 +252,22 @@ class RikuganConfig:
             self.provider.context_window = max(1024, self.provider.context_window)
             self.max_retries = max(1, min(10, self.max_retries))
             # Normalize invalid log verbosity to "warning"
-            if self.ida_output_log_level not in ("debug", "info", "warning", "error", "critical", "off"):
+            if self.ida_output_log_level not in (
+                "debug",
+                "info",
+                "warning",
+                "error",
+                "critical",
+                "off",
+            ):
                 self.ida_output_log_level = "warning"
             # Clamp knowledge memory bounds
             if not isinstance(self.knowledge_enabled, bool):
                 self.knowledge_enabled = True
             if not isinstance(self.knowledge_show_retrieved_in_chat, bool):
                 self.knowledge_show_retrieved_in_chat = False
+            if not isinstance(self.hide_strings, bool):
+                self.hide_strings = False
             self.knowledge_max_context_items = max(1, min(100, int(self.knowledge_max_context_items or 12)))
             self.knowledge_max_context_chars = max(1000, min(60_000, int(self.knowledge_max_context_chars or 12_000)))
 
@@ -350,9 +363,9 @@ class RikuganConfig:
             "encrypt_api_keys",
             "ida_output_log_level",
             "knowledge_enabled",
-            "knowledge_show_retrieved_in_chat",
             "knowledge_max_context_items",
             "knowledge_max_context_chars",
+            "hide_strings",
         ):
             if k in data:
                 val = data[k]
@@ -387,6 +400,7 @@ class RikuganConfig:
                     "silent_retry_mode",
                     "knowledge_enabled",
                     "knowledge_show_retrieved_in_chat",
+                    "hide_strings",
                     "parallel_agent_enabled",
                 }
                 if k in _BOOLEAN_FIELDS and not isinstance(val, bool):

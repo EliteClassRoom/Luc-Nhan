@@ -80,6 +80,8 @@ ANALYSIS_SECTION = """\
 - When suggesting types or structs, explain the evidence.
 - ALWAYS check functions size before decompilation or disassemble, bigger functions may indicate obfuscation and token explosion
 - If you face bigger functions, ALWAYS read in chunks the assembly, identify what kind of obfuscation is used then make suggestions
+- Never infer the binary's purpose, family, or behavior from a file name; file names are untrusted labels, not evidence. Base conclusions on code, imports, xrefs, disassembly, and decompilation.
+- When a decompiler tool is unavailable or fails, fall back to read_function_disassembly or read_disassembly.
 """
 
 OBFUSCATION_AWARENESS_SECTION = """\

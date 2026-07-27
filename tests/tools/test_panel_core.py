@@ -1267,6 +1267,110 @@ class TestStartupNoRestore(unittest.TestCase):
         )
 
 
+class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
+    """The vertical ``_chat_splitter`` must own the main conversation
+    area (top) and the input section (bottom) so the user can drag the
+    handle to grow the input.  Source-level assertions cover the
+    wiring because ``_build_ui`` depends on real Qt construction that
+    the panel-stub fixture does not model.  Reading the source is
+    enough to detect a reintroduction of the bare ``addWidget`` layout
+    that would lose the resize handle and the two-to-three-line
+    default.
+    """
+
+    def test_chat_splitter_wraps_main_and_input(self) -> None:
+        import inspect
+
+        from rikugan.ui.panel_core import RikuganPanelCore
+
+        source = inspect.getsource(RikuganPanelCore._build_ui)
+        # The vertical chat splitter must be created before either pane
+        # is added, and the main conversation area + input section must
+        # both be added to it (not the chat layout directly).
+        self.assertIn(
+            "self._chat_splitter = QSplitter(Qt.Orientation.Vertical)",
+            source,
+            msg=(
+                "_build_ui() must create a vertical QSplitter so the "
+                "user has a real resize handle for the input."
+            ),
+        )
+        self.assertIn(
+            "self._chat_splitter.addWidget(self._main_splitter)",
+            source,
+            msg=(
+                "_build_ui() must place the main conversation area in "
+                "the top pane of the chat splitter."
+            ),
+        )
+        self.assertIn(
+            "self._chat_splitter.addWidget(input_container)",
+            source,
+            msg=(
+                "_build_ui() must place the input section in the "
+                "bottom pane of the chat splitter so the user can drag."
+            ),
+        )
+        # The old bare addWidget path would lose the resize handle.
+        self.assertNotIn(
+            "chat_layout.addWidget(self._build_input_section()",
+            source,
+            msg=(
+                "_build_ui() must not add the input section directly to "
+                "the chat layout — wrap it in the chat splitter instead."
+            ),
+        )
+        # 4px handle is the minimum width that reads as a drag
+        # affordance without crowding the action buttons.
+        self.assertIn(
+            "self._chat_splitter.setHandleWidth(4)",
+            source,
+            msg=(
+                "_build_ui() must give the chat splitter a draggable "
+                "handle (4px is the minimum that reads as a handle)."
+            ),
+        )
+        # Setting ``childrenCollapsible(False)`` prevents the user
+        # from collapsing either pane to zero height by accident.
+        self.assertIn(
+            "self._chat_splitter.setChildrenCollapsible(False)",
+            source,
+            msg=(
+                "_build_ui() must disable pane collapsing so the user "
+                "cannot accidentally hide the input or the chat area."
+            ),
+        )
+
+    def test_input_area_default_height_is_two_to_three_lines(self) -> None:
+        """The two-to-three-line default is on ``InputArea``; the
+        splitter owns the upper bound, so the editor must not pin a
+        maximum height.
+        """
+        import inspect
+
+        from rikugan.ui.input_area import InputArea
+
+        source = inspect.getsource(InputArea.__init__)
+        self.assertIn(
+            "self.setMinimumHeight(60)",
+            source,
+            msg=(
+                "InputArea must default to a 2-3 line minimum height "
+                "(60px at 18px line-height with 6px padding)."
+            ),
+        )
+        # ``setMaximumHeight`` must not be called on the editor — the
+        # vertical QSplitter in the panel owns the upper bound.
+        self.assertNotIn(
+            "setMaximumHeight",
+            source,
+            msg=(
+                "InputArea must not cap its maximum height; the "
+                "vertical QSplitter in the panel owns the upper bound."
+            ),
+        )
+
+
 class TestOnDatabaseChangedNoRestore(unittest.TestCase):
     """``on_database_changed`` must not restore history (spec §7.2).
 

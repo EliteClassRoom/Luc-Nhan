@@ -36,6 +36,7 @@ def build_system_prompt(
     tools_table: str | None = None,
     structured_memory: str = "",
     manual_memory_notes: str = "",
+    hide_strings: bool = False,
 ) -> str:
     """Build the full system prompt with optional binary context."""
     base_prompt = IDA_BASE_PROMPT
@@ -133,5 +134,18 @@ def build_system_prompt(
                         "- If a value has been redacted, treat it as permanently unavailable.\n"
                     )
             parts.append(section)
+    # Optional: emit a hide-strings constraint when the user disabled
+    # string-list/search tools. The rule names the exact tools and the
+    # disassembly/decompiler fallbacks so the agent does not waste a
+    # turn trying the hidden tools.
+    if hide_strings:
+        parts.append(
+            "\n## String Analysis Constraint\n"
+            "String analysis is disabled by configuration. "
+            "Do not call list_strings or search_strings; analyze behavior with "
+            "read_function_disassembly, read_disassembly, decompile_function, "
+            "or get_pseudocode instead. If decompilation fails or is unavailable, "
+            "fall back to disassembly."
+        )
 
     return "\n".join(parts)
