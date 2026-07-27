@@ -8,6 +8,8 @@ Methodology and recognition patterns for each deobfuscation technique. This refe
 
 ## CFF — Control Flow Flattening Removal
 
+> **See also**: `cff-recovery.md` for the emulation / pattern-matching approach (complementary when static microcode rewriting is insufficient — e.g. combined CFF + opaque predicates, indirect-goto dispatchers, or when you need a quick BB coverage trace).
+
 ### Recognition
 
 Read the microcode at `MMAT_LOCOPT` or `MMAT_PREOPTIMIZED`. CFF has these signatures:

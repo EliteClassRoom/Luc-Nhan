@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Any
 
 from ..constants import HISTORY_TITLE_MAX_CHARS, SESSION_SCHEMA_VERSION
+from ..core.atomic_io import atomic_replace
 from ..core.config import RikuganConfig
 from ..core.logging import log_debug, log_warning
 from ..core.types import (
@@ -339,7 +340,7 @@ class SessionHistory:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 # Compact — manifest is parsed on every list_sessions() call.
                 json.dump(data, f, separators=(",", ":"), ensure_ascii=False)
-            os.replace(tmp_path, path)
+            atomic_replace(tmp_path, path)
         except Exception as e:
             log_warning(f"Failed to write session manifest: {e}")
             if tmp_path and os.path.exists(tmp_path):
@@ -573,7 +574,7 @@ class SessionHistory:
                 # (typical 200-message session drops ~30% on disk and is
                 # significantly faster to write/read).
                 json.dump(data, f, separators=(",", ":"), ensure_ascii=False)
-            os.replace(tmp_path, path)
+            atomic_replace(tmp_path, path)
         except Exception as e:
             log_warning(f"Failed to save session {session.id}: {e}")
             if tmp_path and os.path.exists(tmp_path):

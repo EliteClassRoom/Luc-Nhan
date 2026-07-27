@@ -80,6 +80,68 @@ class TestFrontmatterParser(unittest.TestCase):
         # stored as the raw scalar string.
         self.assertIsInstance(result["tags"], str)
 
+    # -- YAML folded / literal block scalars (>, |) ---------------------
+
+    def test_folded_scalar_strip_indicator(self):
+        # `>-` is the YAML folded block scalar with strip indicator.
+        # Newlines between non-empty lines fold into single spaces; the
+        # final trailing newline is stripped. This is what
+        # deobfuscation/SKILL.md uses for its description.
+        text = (
+            "name: Deobfuscation\n"
+            "description: >-\n"
+            "  Systematic binary deobfuscation — string decryption,\n"
+            "  control flow flattening (CFF) removal, opaque predicate\n"
+            "  elimination.\n"
+        )
+        result = _parse_frontmatter(text)
+        self.assertEqual(
+            result["description"],
+            "Systematic binary deobfuscation — string decryption, "
+            "control flow flattening (CFF) removal, opaque predicate "
+            "elimination.",
+        )
+
+    def test_folded_scalar_default_indicator(self):
+        # `>` alone (no chomping indicator) is the folded scalar with clip
+        # behavior: trailing newlines collapse to a single one. We strip
+        # it like the existing scalar parser does, so the value is the
+        # folded string with no trailing newline.
+        text = "notes: >\n  Line one of the note.\n  Line two of the note.\n"
+        result = _parse_frontmatter(text)
+        self.assertEqual(result["notes"], "Line one of the note. Line two of the note.")
+
+    def test_literal_scalar_strip_indicator(self):
+        # `|-` is the literal block scalar with strip indicator: newlines
+        # are preserved verbatim, trailing newline stripped.
+        text = "example: |-\n  First line of code.\n  Second line of code.\n"
+        result = _parse_frontmatter(text)
+        self.assertEqual(
+            result["example"],
+            "First line of code.\nSecond line of code.",
+        )
+
+    def test_folded_scalar_preserves_internal_blank_lines(self):
+        # In folded style, a blank line between content lines is preserved
+        # as a single newline (so paragraphs stay separated). The deobfus-
+        # cation SKILL.md relies on this between the main description and
+        # the Trigger: keyword.
+        text = "description: >-\n  First paragraph about the skill.\n\n  Second paragraph that should stay separate.\n"
+        result = _parse_frontmatter(text)
+        self.assertEqual(
+            result["description"],
+            "First paragraph about the skill.\nSecond paragraph that should stay separate.",
+        )
+
+    def test_folded_scalar_ignored_when_value_inline(self):
+        # If the indicator has content after it on the same line, it is
+        # NOT a folded scalar — YAML treats that as a comment-style or
+        # plain scalar. Our parser should treat it as a plain scalar
+        # (existing behavior, documented here for coverage).
+        text = "name: value with > in the middle"
+        result = _parse_frontmatter(text)
+        self.assertEqual(result["name"], "value with > in the middle")
+
 
 class TestSplitFrontmatter(unittest.TestCase):
     def test_with_frontmatter(self):

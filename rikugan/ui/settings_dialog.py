@@ -32,6 +32,8 @@ from ..providers.auth_cache import resolve_auth_cached
 from ..providers.ollama_provider import DEFAULT_OLLAMA_URL
 from ..providers.registry import ProviderRegistry
 from .qt_compat import (
+    OK_CANCEL_BUTTONS,
+    YES_NO_BUTTONS,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -119,7 +121,7 @@ def _prompt_zai_migration(parent: Any = None) -> bool:
             "If you decline, the connection continues as a generic\n"
             "OpenAI-compatible endpoint."
         ),
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        YES_NO_BUTTONS,
         QMessageBox.StandardButton.No,
     )
     return result == QMessageBox.StandardButton.Yes
@@ -232,7 +234,7 @@ class _AddProviderDialog(QDialog):
         self._error_label.hide()
         layout.addWidget(self._error_label)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(OK_CANCEL_BUTTONS)
         buttons.accepted.connect(self._validate)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -411,7 +413,7 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(self._tabs)
 
-        self._button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self._button_box = QDialogButtonBox(OK_CANCEL_BUTTONS)
         self._button_box.accepted.connect(self._on_accept)
         self._button_box.rejected.connect(self.reject)
         layout.addWidget(self._button_box)
@@ -727,6 +729,25 @@ class SettingsDialog(QDialog):
         )
         behavior_form.addRow("IDA Output verbosity:", self._ida_output_log_combo)
 
+        # --- Multi-tab parallel agent ---
+        self._parallel_agent_cb = QCheckBox("Run agents in parallel across tabs")
+        self._parallel_agent_cb.setChecked(self._config.parallel_agent_enabled)
+        self._parallel_agent_cb.setToolTip(
+            "When enabled, multiple chat tabs can run agents concurrently;\n"
+            "switching tabs does not cancel a running agent. Disable for the\n"
+            "legacy single-agent behavior (tab switch cancels)."
+        )
+        behavior_form.addRow(self._parallel_agent_cb)
+
+        self._parallel_max_spin = QSpinBox()
+        self._parallel_max_spin.setRange(1, 20)
+        self._parallel_max_spin.setValue(self._config.parallel_agent_max_concurrent)
+        self._parallel_max_spin.setToolTip(
+            "Maximum number of agents that may run simultaneously across all tabs.\n"
+            "Extra messages queue and start as slots free up."
+        )
+        behavior_form.addRow("Max concurrent agents:", self._parallel_max_spin)
+
         return behavior_group
 
     def _build_appearance_group(self) -> QGroupBox:
@@ -1002,7 +1023,7 @@ class SettingsDialog(QDialog):
                     self,
                     "Clear API Key?",
                     "Switching GLM endpoint type requires a different API key.\n\nClear the current key?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    YES_NO_BUTTONS,
                     QMessageBox.StandardButton.Yes,
                 )
                 if reply == QMessageBox.StandardButton.Yes:
@@ -1773,7 +1794,7 @@ class SettingsDialog(QDialog):
         from .qt_compat import QDialogButtonBox
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            OK_CANCEL_BUTTONS,
         )
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
@@ -1833,6 +1854,10 @@ class SettingsDialog(QDialog):
             self._config.knowledge_enabled = self._knowledge_enabled_cb.isChecked()
         if hasattr(self, "_docs_review_mode_cb"):
             self._config.docs_review_mode = self._docs_review_mode_cb.currentData()
+        if hasattr(self, "_parallel_agent_cb"):
+            self._config.parallel_agent_enabled = self._parallel_agent_cb.isChecked()
+        if hasattr(self, "_parallel_max_spin"):
+            self._config.parallel_agent_max_concurrent = self._parallel_max_spin.value()
         # Persist the selected theme.  ``_on_theme_changed`` already
         # wrote it when the user changed the combo, but we re-write
         # here so even users who accepted the dialog without touching

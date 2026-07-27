@@ -98,6 +98,34 @@ recommend deobfuscation first (suggest the /deobfuscation skill):
 Do NOT try to understand obfuscated code directly — it will mislead.
 """
 
+EMULATION_AWARENESS_SECTION = """\
+## Emulation Awareness
+You have two bounded, read-only emulation tools — `emulate_code` and
+`resolve_emulated_string` — that run a self-contained IDA code range
+through a per-call Unicorn engine. They never modify the IDB, never run
+the target binary, and never spawn processes.
+
+**Reach for emulation** when the question is "what does this specific
+small routine actually compute?" and the routine is self-contained:
+- String decoder stubs (XOR, RC4, custom) where you can name the input
+  buffer, key, and output buffer addresses.
+- Custom crypto helpers whose output you want to recover concretely.
+- Opaque predicates you want to resolve with specific register inputs.
+- Any small range (≤ a few hundred instructions) where static analysis
+  is ambiguous but bounded dynamic execution would be conclusive.
+
+**Do NOT emulate** when the routine calls external APIs, issues syscalls
+(`syscall`/`sysenter`/`int 0x2e`/`int 0x80`), or branches outside the
+range you can map — the run will report `range_exit`,
+`unsupported_instruction`, or `unmapped_memory`. Use `execute_python`
+or an optimizer-based approach instead.
+
+Key discipline: `stop_address` is **exclusive**; `registers` must be
+non-empty and must not include `eip`/`rip`; map every input buffer in
+`memory_ranges`. For the full workflow (recon → register setup →
+status interpretation → annotation), activate the `/emulator` skill.
+"""
+
 SAFETY_SECTION = """\
 ## Safety
 You're an analysis tool, not an exploitation tool. You help people
@@ -253,6 +281,8 @@ def assemble_system_prompt(
         + ANALYSIS_SECTION
         + "\n"
         + OBFUSCATION_AWARENESS_SECTION
+        + "\n"
+        + EMULATION_AWARENESS_SECTION
         + "\n"
         + SAFETY_SECTION
         + "\n"

@@ -603,10 +603,12 @@ class TestOnUndoRequested(unittest.TestCase):
         mock_view = MagicMock()
         panel._chat_views["t1"] = mock_view
         panel._ctrl.start_agent.return_value = None  # no error
+        panel._ctrl.has_free_slot.return_value = True
         # Pre-inject a mock poll_timer so _ensure_poll_timer returns early
         panel._poll_timer = MagicMock()
         panel._on_undo_requested(2)
-        panel._ctrl.start_agent.assert_called_once_with("/undo 2")
+        # Multi-tab: start_agent now receives the target tab_id.
+        panel._ctrl.start_agent.assert_called_once_with("/undo 2", tab_id="t1")
 
 
 class TestOnOrchestraApproval(unittest.TestCase):
@@ -878,11 +880,13 @@ class TestCreateTabSignalWiring(unittest.TestCase):
         chat_view.setProperty.assert_called_with("tab_id", "tab-x")
         # Tab widget must have received the new view + label.
         panel._tab_widget.addTab.assert_called_with(chat_view, "New Chat")
-        # The three Qt signals must each be connected exactly
-        # once to the matching panel slot.
-        chat_view.tool_approval_submitted.connect.assert_called_once_with(panel._on_tool_approval)
-        chat_view.user_answer_submitted.connect.assert_called_once_with(panel._on_user_answer_submitted)
-        chat_view.orchestra_approval_decided.connect.assert_called_once_with(panel._on_orchestra_approval)
+        # The three Qt signals must each be connected exactly once.
+        # Multi-tab wiring binds the tab_id via a lambda closure so approval
+        # answers route to the correct runner — so we assert connection
+        # happened (once), not the exact target identity.
+        self.assertEqual(chat_view.tool_approval_submitted.connect.call_count, 1)
+        self.assertEqual(chat_view.user_answer_submitted.connect.call_count, 1)
+        self.assertEqual(chat_view.orchestra_approval_decided.connect.call_count, 1)
         # The legacy callback methods must NOT be called.
         # ``MagicMock`` auto-creates attributes on access, so we
         # verify by checking the call list on the mock.

@@ -43,6 +43,8 @@ tool is almost always already there.
 - Getting xrefs (use xrefs_to, xrefs_from, function_xrefs)
 - Renaming anything (use rename_function, rename_variable, rename_address)
 - Setting types (use set_type, set_function_prototype, create_struct)
+- Reading struct layout (use get_struct_info)
+- Reading global values/bytes (use read_bytes, read_global_value)
 - Reading strings (use list_strings, search_strings, get_string_at)
 - Listing imports (use list_imports)
 - Searching/filtering imports (use search_imports, imports_by_module)

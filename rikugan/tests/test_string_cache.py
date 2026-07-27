@@ -34,6 +34,7 @@ from typing import Any
 
 import pytest
 
+from rikugan.core import atomic_io
 from rikugan.tools import cache as tool_cache
 from rikugan.tools import string_cache
 
@@ -304,6 +305,108 @@ def test_search_returns_sanitized_matches(tmp_path: Any, monkeypatch: pytest.Mon
     assert results, "search should find at least one match"
     for r in results:
         assert "[SYSTEM]" not in r.text
+
+
+# ---------------------------------------------------------------------------
+# Windows transient file-lock (AV/indexer) retry on os.replace
+# ---------------------------------------------------------------------------
+
+
+def _winerror_32_replace_factory(monkeypatch: pytest.MonkeyPatch, fails_per_dst: int):
+    """Patch ``os.replace`` to fail ``fails_per_dst`` times per *destination*.
+
+    Simulates Windows Defender / Search Indexer briefly holding each freshly
+    written cache file open (ERROR_SHARING_VIOLATION / 32), which previously
+    aborted the whole cache build with a ``[WinError 32]`` warning.  Each
+    destination independently recovers after a couple of retries, exactly as a
+    real AV scan releases a file handle.
+    """
+    real_replace = os.replace
+    calls = {"n": 0}
+    failures = {"n": 0}
+    per_dst: dict[str, int] = {}
+    state = {"calls": calls, "failures": failures, "per_dst": per_dst}
+
+    def flaky_replace(src: str, dst: str) -> None:
+        calls["n"] += 1
+        seen = per_dst.get(dst, 0)
+        if seen < fails_per_dst:
+            per_dst[dst] = seen + 1
+            failures["n"] += 1
+            exc = PermissionError(32, "The process cannot access the file")
+            exc.winerror = 32
+            raise exc
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(atomic_io.os, "replace", flaky_replace)
+    return state
+
+
+def test_build_retries_through_transient_winerror_32(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A transient WinError 32 during ``os.replace`` must be retried, not fatal.
+
+    Regression for the malware-analysis report where AV scanning freshly
+    written cache shards made the final ``<shard>.jsonl.new`` ->
+    ``<shard>.jsonl`` rename fail and aborted the whole string cache build.
+    """
+    cache_dir = str(tmp_path)
+    _patch_active_key(monkeypatch, cache_dir, "idb-winerror32")
+    # Each destination fails twice then recovers — the retry must absorb it.
+    state = _winerror_32_replace_factory(monkeypatch, fails_per_dst=2)
+    monkeypatch.setattr(atomic_io, "_DEFAULT_INITIAL_BACKOFF_SEC", 0.0)
+
+    idx = _build_tiny_cache(
+        cache_dir,
+        "idb-winerror32",
+        [
+            (0x401000, 11, "hello world"),
+            (0x401020, 8, "goodbye!"),
+        ],
+    )
+    # The flaky replace must have actually fired its failures and recovered.
+    assert state["failures"]["n"] > 0
+    # And the cache must be complete and queryable.
+    assert idx.total == 2
+    rec = idx.get_at(0x401000)
+    assert rec is not None
+    assert rec.text == "hello world"
+    assert idx.search("hello")
+
+
+def test_build_raises_when_winerror_32_is_persistent(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If WinError 32 never clears after all retries, the build fails loudly.
+
+    The retry must not mask a permanently-locked file into a silent hang or
+    a corrupt cache — it re-raises the original error, same as before the fix.
+    """
+    cache_dir = str(tmp_path)
+    _patch_active_key(monkeypatch, cache_dir, "idb-winerror32-stuck")
+    # More failures per dst than retries => never recovers.
+    _winerror_32_replace_factory(monkeypatch, fails_per_dst=10_000)
+    monkeypatch.setattr(atomic_io, "_DEFAULT_INITIAL_BACKOFF_SEC", 0.0)
+    monkeypatch.setattr(atomic_io, "_DEFAULT_ATTEMPTS", 3)
+
+    with pytest.raises(OSError):
+        _build_tiny_cache(cache_dir, "idb-winerror32-stuck", [(0x401000, 5, "alpha")])
+
+
+def test_non_winerror_replace_failure_is_not_retried(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-transient error (e.g. ENOENT) must propagate immediately, no retry."""
+    cache_dir = str(tmp_path)
+    _patch_active_key(monkeypatch, cache_dir, "idb-enoent")
+    state = {"calls": 0}
+
+    def always_enoent(src: str, dst: str) -> None:
+        state["calls"] += 1
+        raise FileNotFoundError(2, "no such file")
+
+    monkeypatch.setattr(atomic_io.os, "replace", always_enoent)
+    monkeypatch.setattr(atomic_io, "_DEFAULT_INITIAL_BACKOFF_SEC", 0.0)
+
+    with pytest.raises(OSError):
+        _build_tiny_cache(cache_dir, "idb-enoent", [(0x401000, 5, "alpha")])
+    # Exactly one attempt — no retry on a non-sharing-violation error.
+    assert state["calls"] == 1
 
 
 # ---------------------------------------------------------------------------

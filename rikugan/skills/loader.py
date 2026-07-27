@@ -14,6 +14,107 @@ from ..core.logging import log_debug, log_error
 # Minimal frontmatter parser (no PyYAML dependency)
 # ---------------------------------------------------------------------------
 
+# YAML block scalar indicators: `>` = folded (newlines → spaces), `|` =
+# literal (newlines preserved). Optional chomping indicator: `-` strip,
+# `+` keep, none = clip. Examples handled: `>`, `>-`, `>+`, `|`, `|-`, `|+`.
+_BLOCK_SCALAR_RE = re.compile(r"^[>|]([-+]?)")
+
+
+def _parse_block_scalar(
+    lines: list[str],
+    start: int,
+    indicator: str,
+    chomp: str,
+) -> tuple[str, int]:
+    """Collect an indented block scalar starting after ``lines[start-1]``.
+
+    Parameters
+    ----------
+    lines
+        All frontmatter lines.
+    start
+        Index of the first line *after* the indicator line.
+    indicator
+        ``">"`` (folded — newlines become spaces, blank lines become a
+        single newline) or ``"|"`` (literal — newlines preserved).
+    chomp
+        ``"-"`` strip trailing newlines, ``"+"`` keep all trailing
+        newlines, ``""`` clip to a single trailing newline.
+
+    Returns
+    -------
+    (value, next_index)
+        The decoded scalar text and the index of the first line *after*
+        the block (so the caller can continue parsing).
+    """
+
+    # Determine the block's indentation from the first content line.
+    indent = 0
+    body_lines: list[str] = []
+    j = start
+    while j < len(lines):
+        bline = lines[j]
+        # A non-empty line at column 0 ends the block.
+        if bline and not bline[0].isspace() and bline.strip():
+            break
+        # A line with less indentation than the first content line ends
+        # the block (covers dedented keys, the closing ``---``, etc.).
+        if bline.strip() and indent == 0:
+            indent = len(bline) - len(bline.lstrip())
+        if bline.strip():
+            current_indent = len(bline) - len(bline.lstrip())
+            if current_indent < indent:
+                break
+            body_lines.append(bline[indent:])
+        else:
+            # Blank line — preserve as empty string so paragraph breaks
+            # survive the fold step below.
+            body_lines.append("")
+        j += 1
+
+    if indicator == ">":
+        # Folded: join lines with spaces, but blank lines become a newline
+        # so paragraph breaks survive. Two consecutive non-empty lines
+        # collapse to one space.
+        folded_parts: list[str] = []
+        for bl in body_lines:
+            if bl == "":
+                folded_parts.append("\n")
+            else:
+                if folded_parts and not folded_parts[-1].endswith("\n"):
+                    folded_parts.append(" ")
+                folded_parts.append(bl)
+        value = "".join(folded_parts)
+    else:
+        # Literal: preserve newlines verbatim.
+        value = "\n".join(body_lines)
+
+    # Strip a single trailing blank-line artifact left by join.
+    value = value.rstrip("\n")
+
+    # Apply chomping.
+    if chomp == "-":
+        pass  # already stripped
+    elif chomp == "+":
+        # Keep all trailing newlines from the raw block. We stripped them
+        # above, so re-add by counting trailing empty body lines.
+        trailing = 0
+        for bl in reversed(body_lines):
+            if bl == "":
+                trailing += 1
+            else:
+                break
+        value = value + ("\n" * trailing) if trailing else value
+    else:
+        # Clip: single trailing newline. Skills store these in a dict that
+        # is later compared as a plain Python str, so we follow the existing
+        # scalar-parser convention of stripping it (the surrounding `.strip()`
+        # calls in `_parse_frontmatter` for inline scalars drop trailing
+        # whitespace; matching that here keeps the dict values consistent).
+        pass
+
+    return value, j
+
 
 def _parse_frontmatter(text: str) -> dict[str, Any]:
     """Parse YAML-like frontmatter between --- markers.
@@ -27,6 +128,12 @@ def _parse_frontmatter(text: str) -> dict[str, Any]:
       key:                     → dict (nested key-value)
         subkey: value
         subkey2: value2
+      key: >-                  → str (YAML folded block scalar)
+        Multi-line content
+        folded onto one line.
+      key: |-                  → str (YAML literal block scalar)
+        Verbatim line 1
+        Verbatim line 2
     """
     result: dict[str, Any] = {}
     lines = text.strip().splitlines()
@@ -48,6 +155,18 @@ def _parse_frontmatter(text: str) -> dict[str, Any]:
 
         key = m.group(1).strip()
         value_part = m.group(2).strip()
+
+        # YAML block scalar (`>`, `|-`, etc.) — value must be exactly the
+        # indicator with no inline content. The actual text lives on the
+        # following indented lines.
+        block_match = _BLOCK_SCALAR_RE.match(value_part)
+        if block_match and value_part == block_match.group(0):
+            indicator = value_part[0]
+            chomp = block_match.group(1)
+            value, next_i = _parse_block_scalar(lines, i + 1, indicator, chomp)
+            result[key] = value
+            i = next_i
+            continue
 
         if value_part:
             # Inline list: [a, b, c]

@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..constants import STRING_CACHE_SCHEMA_VERSION
+from ..core.atomic_io import atomic_replace
 from ..core.host import get_database_instance_id, get_database_path
 from ..core.logging import log_debug, log_warning
 from ..core.sanitize import strip_injection_markers
@@ -172,7 +173,7 @@ def _atomic_write_text(path: str, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
     except Exception:
         try:
             os.unlink(tmp)
@@ -191,7 +192,7 @@ def _atomic_write_jsonl(path: str, records: Iterable[dict[str, Any]]) -> None:
             for rec in records:
                 f.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")))
                 f.write("\n")
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
     except Exception:
         try:
             os.unlink(tmp)
@@ -620,7 +621,7 @@ def _build_cache(
                 for rec in record_iter:
                     f.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")))
                     f.write("\n")
-            os.replace(tmp, new_path)
+            atomic_replace(tmp, new_path)
             staged.append(new_path)
         except Exception:
             try:
@@ -638,7 +639,7 @@ def _build_cache(
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)
-            os.replace(tmp, new_path)
+            atomic_replace(tmp, new_path)
             staged.append(new_path)
         except Exception:
             try:
@@ -651,7 +652,7 @@ def _build_cache(
         """Atomically rename a staged ``<path>.new`` to its final *path*."""
         new_path = f"{path}.new"
         if os.path.exists(new_path):
-            os.replace(new_path, path)
+            atomic_replace(new_path, path)
 
     def _cleanup_staged() -> None:
         for p in staged:

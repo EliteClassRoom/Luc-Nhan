@@ -79,3 +79,11 @@ from PySide6.QtWidgets import (  # noqa: F401
     QVBoxLayout,
     QWidget,
 )
+
+# IDA 9.x's legacy PyQt5 shim intercepts Qt flag ``|`` and emits a
+# RuntimeWarning (breaking if the shim is absent). OR-ing ``.value`` and
+# rebuilding the flag sidesteps the shim. Only these two combos are used.
+OK_CANCEL_BUTTONS = QDialogButtonBox.StandardButton(
+    QDialogButtonBox.StandardButton.Ok.value | QDialogButtonBox.StandardButton.Cancel.value
+)
+YES_NO_BUTTONS = QMessageBox.StandardButton(QMessageBox.StandardButton.Yes.value | QMessageBox.StandardButton.No.value)

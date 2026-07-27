@@ -117,6 +117,14 @@ class RikuganConfig:
     bulk_renamer_batch_size: int = 10
     bulk_renamer_max_concurrent: int = 3
 
+    # Multi-tab parallel agent. When enabled, multiple chat tabs can run
+    # agents concurrently (one runner per tab); switching tabs does not
+    # cancel a running agent. ``max_concurrent`` caps simultaneous agents
+    # (default 3, mirrors bulk renamer). Disable for the legacy single-
+    # agent behavior (cap=1, tab switch cancels) — a safe A/B fallback.
+    parallel_agent_enabled: bool = True
+    parallel_agent_max_concurrent: int = 3
+
     # IDA Output window verbosity.  Controls which log records appear in
     # IDA's Output window via ``HostOutputHandler``.  File and JSON
     # logging are unaffected — full DEBUG output continues to land in
@@ -336,6 +344,8 @@ class RikuganConfig:
             "a2a_agents",
             "bulk_renamer_batch_size",
             "bulk_renamer_max_concurrent",
+            "parallel_agent_enabled",
+            "parallel_agent_max_concurrent",
             "oauth_consent_accepted",
             "encrypt_api_keys",
             "ida_output_log_level",
@@ -377,6 +387,7 @@ class RikuganConfig:
                     "silent_retry_mode",
                     "knowledge_enabled",
                     "knowledge_show_retrieved_in_chat",
+                    "parallel_agent_enabled",
                 }
                 if k in _BOOLEAN_FIELDS and not isinstance(val, bool):
                     continue

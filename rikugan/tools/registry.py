@@ -47,6 +47,10 @@ class ToolRegistry:
         self._capabilities: dict[str, bool] = {}
         self._dispatch_wrapper = dispatch_wrapper
         self._lock = threading.RLock()  # protects against MCP thread concurrent registration
+        # ponytail: global lock serializing mutating tools so concurrent agents
+        # don't interleave IDB writes (keeps the undo stack coherent). Upgrade to
+        # per-tool locks if mutation throughput ever matters.
+        self._mutate_lock = threading.Lock()
 
     @staticmethod
     def _coerce_arguments(defn: ToolDefinition, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -258,8 +262,15 @@ class ToolRegistry:
             handler = dispatch_wrapper(handler)
 
         try:
-            future = _executor.submit(handler, **arguments)
-            result = future.result(timeout=timeout)
+            # Mutating tools serialize so concurrent agents don't interleave IDB
+            # writes — this keeps capture_pre_state / undo records coherent.
+            if is_mutating:
+                with self._mutate_lock:
+                    future = _executor.submit(handler, **arguments)
+                    result = future.result(timeout=timeout)
+            else:
+                future = _executor.submit(handler, **arguments)
+                result = future.result(timeout=timeout)
         except FuturesTimeoutError:
             future.cancel()
             raise ToolError(
