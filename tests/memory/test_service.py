@@ -124,6 +124,26 @@ class TestSaveFact:
                 source="save_memory",
             )
 
+    def test_save_fact_reports_created_then_deduplicated(self, tmp_path: Path) -> None:
+        service, issuer, context = _create_service(tmp_path)
+        authority = issuer.issue(context)
+        created = service.save_fact(
+            authority,
+            category="protocol",
+            fact="Uses HTTP",
+            source="save_memory",
+        )
+        duplicate = service.save_fact(
+            authority,
+            category=" Protocol ",
+            fact="Uses HTTP\r\n",
+            source="save_memory",
+        )
+        assert created.outcome == "created"
+        assert duplicate.outcome == "deduplicated"
+        assert duplicate.record_id == created.record_id
+        assert len(service.repository.list_memories()) == 1
+
 
 class TestSavePlan:
     def test_save_plan_creates_structured_fact(self, tmp_path: Path) -> None:

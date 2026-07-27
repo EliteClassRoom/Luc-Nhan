@@ -1952,10 +1952,10 @@ class AgentLoop:
                     fact=fact,
                     source="save_memory",
                 )
+                label = "Memory created" if result.outcome == "created" else "Memory already exists"
+                content = f"{label}: {result.record_id} [{category}]"
                 if result.projection_dirty:
-                    content = f"Saved to MEMORY.md (projection pending): [{category}] {fact}"
-                else:
-                    content = f"Saved to MEMORY.md: [{category}] {fact}"
+                    content += " (MEMORY.md projection pending)"
                 is_err = False
                 log_info(f"save_memory: [{category}] {fact[:80]}")
             except Exception as e:

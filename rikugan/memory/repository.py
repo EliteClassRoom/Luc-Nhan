@@ -252,20 +252,3 @@ class SQLiteKnowledgeRepository:
             ),
             outcome=outcome,
         )
-
-    def upsert_memory_fact(
-        self,
-        category: str,
-        fact: str,
-        source: str,
-    ) -> KnowledgeMemory:
-        """Deprecated shim preserved for callers that still expect a
-        ``KnowledgeMemory`` return shape.
-
-        Forwards to :meth:`save_memory_fact`, which uses exact-semantic
-        dedup and **no longer overwrites other facts in the same
-        category**. New code should call :meth:`save_memory_fact` directly
-        and consume the :class:`SavedKnowledgeMemory` outcome.
-        """
-        result = self.save_memory_fact(category, fact, source)
-        return result.record
