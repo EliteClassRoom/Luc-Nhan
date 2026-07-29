@@ -537,6 +537,20 @@ def _safe_rmtree(path: str) -> None:
         log_warning(f"Failed to remove partial cache {path}: {e}")
 
 
+# Process-local memo so the O(n) line-count cross-check below runs at most
+# once per (meta, strings, addr) file-state.  Keyed by version_dir -> (sig, total).
+# ponytail: mtime/size signature; upgrade to a content hash if a tamper that
+# preserves size+mtime ever becomes a realistic threat.
+_COMPLETE_MEMO: dict[str, tuple[tuple[Any, ...], int]] = {}
+_COMPLETE_MEMO_LOCK = threading.Lock()
+
+
+def _invalidate_complete_memo(version_dir: str) -> None:
+    """Drop the cached completeness result (call after rebuilding)."""
+    with _COMPLETE_MEMO_LOCK:
+        _COMPLETE_MEMO.pop(version_dir, None)
+
+
 def _is_cache_complete(version_dir: str) -> tuple[bool, int]:
     """Return ``(complete, total)`` for the on-disk cache.
 
@@ -544,12 +558,34 @@ def _is_cache_complete(version_dir: str) -> tuple[bool, int]:
     all exist and parse cleanly.  Total comes from ``meta.json`` when valid.
     Also enforces that ``meta.json`` and the on-disk corpus agree, so a
     tampered/leftover ``meta.json`` cannot validate mismatched files.
+
+    The full validation counts every line of ``strings.jsonl`` — expensive on
+    a multi-million-string cache — so it is memoized on a (mtime, size)
+    signature of the three files and only re-run when they change.
     """
     meta_path = os.path.join(version_dir, "meta.json")
     strings_path = os.path.join(version_dir, "strings.jsonl")
     addr_path = os.path.join(version_dir, "addr_index.json")
     if not (os.path.exists(meta_path) and os.path.exists(strings_path) and os.path.exists(addr_path)):
         return False, 0
+    try:
+        meta_st = os.stat(meta_path)
+        strings_st = os.stat(strings_path)
+        addr_st = os.stat(addr_path)
+    except OSError:
+        return False, 0
+    sig = (
+        meta_st.st_mtime_ns,
+        meta_st.st_size,
+        strings_st.st_mtime_ns,
+        strings_st.st_size,
+        addr_st.st_mtime_ns,
+        addr_st.st_size,
+    )
+    with _COMPLETE_MEMO_LOCK:
+        memo = _COMPLETE_MEMO.get(version_dir)
+        if memo is not None and memo[0] == sig:
+            return True, memo[1]
     try:
         with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
@@ -576,41 +612,39 @@ def _is_cache_complete(version_dir: str) -> tuple[bool, int]:
         return False, 0
     if line_count != total:
         return False, 0
+    with _COMPLETE_MEMO_LOCK:
+        _COMPLETE_MEMO[version_dir] = (sig, total)
     return True, total
 
 
-def _build_cache(
-    version_dir: str,
-    records_factory: Callable[[], Iterable[tuple[int, int, str]]],
-    cache_key: str,
-    idb_path: str,
-    db_instance_id: str,
-) -> StringCacheIndex:
-    """Build (or rebuild) the cache for *version_dir* from a records factory.
+# ---------------------------------------------------------------------------
+# Two-phase build
+# ---------------------------------------------------------------------------
+#
+# The cold build is split into two phases so a huge binary's index can be
+# built off the IDA main thread:
+#
+#   phase 1  ``_stage_corpus``             enumerate the factory -> stage
+#                                          strings.jsonl.new (needs the IDA
+#                                          main thread; the factory touches
+#                                          ``idautils.Strings()``)
+#   phase 2  ``_stage_and_commit_indices`` read strings.jsonl.new -> build
+#                                          addr_index + trigram grams + meta,
+#                                          then commit all atomically.
+#                                          NO IDA access - runs on any thread.
+#
+# Both phases share one :class:`_Stager` so a single cleanup reclaims every
+# partial ``.new`` file on failure, and one commit sequence promotes them in
+# dependency order (grams -> strings -> addr -> meta, meta last).
 
-    *records_factory* yields ``(ea, length, text)`` tuples from the host
-    string enumerator.  Each output file is staged as ``<name>.new`` inside
-    ``version_dir`` and then atomically renamed via ``os.replace``.  This
-    avoids the Windows directory-replace pitfall (see plan notes) and means
-    readers can rely on file presence as a completeness signal — ``meta.json``
-    is written last so a complete cache always has it.
 
-    On failure, partially-written ``.new`` files are removed.  Commit order
-    is: grams → strings.jsonl → addr_index.json → meta.json.  ``meta.json``
-    is removed *before* commit so a stale meta can never validate files
-    from a different build attempt.
-    """
-    start = time.monotonic()
-    cache_root = os.path.dirname(version_dir)
-    os.makedirs(cache_root, exist_ok=True)
-    os.makedirs(version_dir, exist_ok=True)
-    grams_subdir = grams_dir(version_dir)
-    os.makedirs(grams_subdir, exist_ok=True)
+class _Stager:
+    """Tracks staged ``<name>.new`` files for an atomic multi-file commit."""
 
-    # Track .new files so we can clean them up on failure.
-    staged: list[str] = []
+    def __init__(self) -> None:
+        self.staged: list[str] = []
 
-    def _stage_jsonl(text_path: str, record_iter: Iterable[dict[str, Any]]) -> None:
+    def stage_jsonl(self, text_path: str, record_iter: Iterable[dict[str, Any]]) -> None:
         """Stream-write JSONL records to ``<path>.new`` then atomic-rename."""
         parent = os.path.dirname(text_path) or "."
         os.makedirs(parent, exist_ok=True)
@@ -622,7 +656,7 @@ def _build_cache(
                     f.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")))
                     f.write("\n")
             atomic_replace(tmp, new_path)
-            staged.append(new_path)
+            self.staged.append(new_path)
         except Exception:
             try:
                 os.unlink(tmp)
@@ -630,8 +664,8 @@ def _build_cache(
                 pass
             raise
 
-    def _stage(text_path: str, text: str) -> None:
-        """Write *text* to ``<path>.new`` then atomically rename to *path*."""
+    def stage(self, text_path: str, text: str) -> None:
+        """Write *text* to ``<path>.new`` then atomic-rename to the staged name."""
         parent = os.path.dirname(text_path) or "."
         os.makedirs(parent, exist_ok=True)
         new_path = f"{text_path}.new"
@@ -640,7 +674,7 @@ def _build_cache(
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)
             atomic_replace(tmp, new_path)
-            staged.append(new_path)
+            self.staged.append(new_path)
         except Exception:
             try:
                 os.unlink(tmp)
@@ -648,33 +682,42 @@ def _build_cache(
                 pass
             raise
 
-    def _commit(path: str) -> None:
+    def commit(self, path: str) -> None:
         """Atomically rename a staged ``<path>.new`` to its final *path*."""
         new_path = f"{path}.new"
         if os.path.exists(new_path):
             atomic_replace(new_path, path)
 
-    def _cleanup_staged() -> None:
-        for p in staged:
+    def cleanup(self) -> None:
+        """Remove every staged ``.new`` file (best-effort)."""
+        for p in self.staged:
             try:
                 if os.path.exists(p):
                     os.unlink(p)
             except OSError:
                 pass
 
-    string_count = 0
-    addr_index: dict[str, int] = {}
-    postings: dict[str, list[int]] = {}
 
-    def _emit_iter():
-        """Yield string documents one at a time so we can stream-write them."""
-        nonlocal string_count
+def _stage_corpus(
+    version_dir: str,
+    records_factory: Callable[[], Iterable[tuple[int, int, str]]],
+    stager: _Stager,
+    on_progress: Callable[[int], None] | None = None,
+) -> int:
+    """Phase 1: enumerate *records_factory* and stage ``strings.jsonl.new``.
+
+    Runs on the IDA main thread (the factory touches IDA).  Returns the
+    document count.  Nothing is committed - callers run phase 2 next.
+    """
+    strings_path = os.path.join(version_dir, "strings.jsonl")
+    count_holder = {"n": 0}
+
+    def _emit() -> Iterable[dict[str, Any]]:
         for i, (ea, length, text) in enumerate(records_factory()):
             sanitized = strip_injection_markers(str(text))
-            addr_index[f"0x{ea:x}"] = i
-            for gram in _extract_trigrams(sanitized.lower()):
-                postings.setdefault(gram, []).append(i)
-            string_count = i + 1
+            count_holder["n"] = i + 1
+            if on_progress is not None and (count_holder["n"] % _PROGRESS_EVERY) == 0:
+                on_progress(count_holder["n"])
             yield {
                 "i": i,
                 "ea": int(ea),
@@ -682,83 +725,154 @@ def _build_cache(
                 "text": sanitized,
                 "text_lc": sanitized.lower(),
             }
+        if on_progress is not None and count_holder["n"]:
+            on_progress(count_holder["n"])
 
+    stager.stage_jsonl(strings_path, _emit())
+    return count_holder["n"]
+
+
+def _stage_and_commit_indices(
+    version_dir: str,
+    cache_key: str,
+    idb_path: str,
+    db_instance_id: str,
+    stager: _Stager,
+) -> int:
+    """Phase 2: build addr_index + trigram grams from the staged corpus, commit.
+
+    No IDA access - safe to run off the main thread.  Reads
+    ``strings.jsonl.new`` (written by phase 1), stages addr/grams/meta, then
+    atomically commits grams -> strings -> addr -> meta.  Returns the total
+    string count.
+    """
+    start = time.monotonic()
+    strings_path = os.path.join(version_dir, "strings.jsonl")
+    grams_subdir = grams_dir(version_dir)
+
+    addr_index: dict[str, int] = {}
+    postings: dict[str, list[int]] = {}
+    # Document id == line number in strings.jsonl (matches _verify_candidates,
+    # which keys candidates by line number).  Count every line, even
+    # unparseable ones, so ids stay aligned with line offsets.
+    doc_id = 0
+    new_strings = f"{strings_path}.new"
     try:
-        # 1) strings.jsonl — streamed, no full corpus list kept in memory.
-        strings_path = os.path.join(version_dir, "strings.jsonl")
-        _stage_jsonl(strings_path, _emit_iter())
+        with open(new_strings, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    doc_id += 1
+                    continue
+                ea = int(rec.get("ea", 0))
+                text_lc = str(rec.get("text_lc", ""))
+                addr_index[f"0x{ea:x}"] = doc_id
+                for gram in _extract_trigrams(text_lc):
+                    postings.setdefault(gram, []).append(doc_id)
+                doc_id += 1
+    except OSError as e:
+        log_warning(f"String cache index build failed reading corpus: {e}")
+        raise
+    string_count = doc_id
 
-        # 2) addr_index.json
-        addr_path = os.path.join(version_dir, "addr_index.json")
-        _stage(addr_path, json.dumps(addr_index, ensure_ascii=False, separators=(",", ":")))
+    # addr_index.json
+    addr_path = os.path.join(version_dir, "addr_index.json")
+    stager.stage(addr_path, json.dumps(addr_index, ensure_ascii=False, separators=(",", ":")))
 
-        # 3) grams/*.jsonl — shard by safe prefix.
-        gram_count = 0
-        shards: dict[str, list[tuple[str, list[int]]]] = {}
-        for gram, ids in postings.items():
-            ids.sort()
-            shard_name = _safe_gram_shard(gram)
-            shards.setdefault(shard_name, []).append((gram, ids))
-        for shard_name, gram_entries in shards.items():
-            shard_path = os.path.join(grams_subdir, shard_name)
-            shard_lines = [
-                json.dumps(
-                    {"g": gram, "ids": ids},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                for gram, ids in gram_entries
-            ]
-            _stage(shard_path, "\n".join(shard_lines) + "\n")
-            gram_count += len(gram_entries)
+    # grams/*.jsonl - shard by safe prefix.
+    gram_count = 0
+    shards: dict[str, list[tuple[str, list[int]]]] = {}
+    for gram, ids in postings.items():
+        ids.sort()
+        shards.setdefault(_safe_gram_shard(gram), []).append((gram, ids))
+    for shard_name, gram_entries in shards.items():
+        shard_path = os.path.join(grams_subdir, shard_name)
+        shard_lines = [
+            json.dumps(
+                {"g": gram, "ids": ids},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            for gram, ids in gram_entries
+        ]
+        stager.stage(shard_path, "\n".join(shard_lines) + "\n")
+        gram_count += len(gram_entries)
 
-        # 4) meta.json LAST so readers never see partial caches.
-        meta = {
-            "schema_version": STRING_CACHE_SCHEMA_VERSION,
-            "created_at": time.time(),
-            "refreshed_at": time.time(),
-            "db_instance_id": db_instance_id,
-            "idb_path": _normalize_db_path(idb_path),
-            "cache_key": cache_key,
-            "string_count": string_count,
-            "gram_count": gram_count,
-            "source": "idautils.Strings",
-        }
-        meta_path = os.path.join(version_dir, "meta.json")
-        _stage(
-            meta_path,
-            json.dumps(meta, ensure_ascii=False, indent=2),
-        )
+    # meta.json LAST so readers never see partial caches.
+    meta = {
+        "schema_version": STRING_CACHE_SCHEMA_VERSION,
+        "created_at": time.time(),
+        "refreshed_at": time.time(),
+        "db_instance_id": db_instance_id,
+        "idb_path": _normalize_db_path(idb_path),
+        "cache_key": cache_key,
+        "string_count": string_count,
+        "gram_count": gram_count,
+        "source": "idautils.Strings",
+    }
+    meta_path = os.path.join(version_dir, "meta.json")
+    stager.stage(
+        meta_path,
+        json.dumps(meta, ensure_ascii=False, indent=2),
+    )
 
-        # 5) Commit: invalidate any stale meta.json first, then promote
-        # files in dependency order.  Removing meta.json here guarantees a
-        # reader that observes meta.json present after this point can trust
-        # it — it cannot be a leftover from a previous (different) build.
-        try:
-            os.unlink(meta_path)
-        except OSError:
-            pass
-        for p in (os.path.join(grams_subdir, shard_name) for shard_name in shards):
-            _commit(p)
-        _commit(strings_path)
-        _commit(addr_path)
-        _commit(meta_path)
+    # Commit: invalidate any stale meta.json first, then promote files in
+    # dependency order.  Removing meta.json here guarantees a reader that
+    # observes meta.json present after this point can trust it - it cannot
+    # be a leftover from a previous (different) build.
+    try:
+        os.unlink(meta_path)
+    except OSError:
+        pass
+    for shard_name in shards:
+        stager.commit(os.path.join(grams_subdir, shard_name))
+    stager.commit(strings_path)
+    stager.commit(addr_path)
+    stager.commit(meta_path)
 
-        duration = time.monotonic() - start
-        log_debug(
-            f"String cache built: {string_count} strings, {gram_count} trigram shards, "
-            f"key={cache_key} in {duration:.2f}s"
-        )
+    # Fresh files -> new mtime/size -> memo auto-invalidates, but drop it
+    # explicitly so the very next read re-validates from disk.
+    _invalidate_complete_memo(version_dir)
+
+    duration = time.monotonic() - start
+    log_debug(
+        f"String cache built: {string_count} strings, {gram_count} trigram shards, key={cache_key} in {duration:.2f}s"
+    )
+    return string_count
+
+
+def _build_sync(
+    version_dir: str,
+    records_factory: Callable[[], Iterable[tuple[int, int, str]]],
+    cache_key: str,
+    idb_path: str,
+    db_instance_id: str,
+) -> StringCacheIndex:
+    """Synchronous two-phase build (phase 1 + phase 2 inline on one thread).
+
+    Used by :func:`get_or_build_string_cache` / :func:`refresh_string_cache`
+    and by the headless path, where there is no UI to keep responsive.  The
+    factory is consumed inline (no main-thread marshalling) - callers that
+    need IDA main-thread access must already be running on it.
+    """
+    os.makedirs(os.path.dirname(version_dir) or ".", exist_ok=True)
+    os.makedirs(version_dir, exist_ok=True)
+    os.makedirs(grams_dir(version_dir), exist_ok=True)
+    stager = _Stager()
+    try:
+        _stage_corpus(version_dir, records_factory, stager)
+        total = _stage_and_commit_indices(version_dir, cache_key, idb_path, db_instance_id, stager)
         return StringCacheIndex(
             version_dir=version_dir,
             cache_key=cache_key,
             idb_path=idb_path,
             db_instance_id=db_instance_id,
-            total=string_count,
+            total=total,
         )
     except Exception as e:
         log_warning(f"String cache build failed: {e}")
-        _cleanup_staged()
+        stager.cleanup()
         raise
 
 
@@ -776,6 +890,10 @@ def get_or_build_string_cache(
 
     Returns ``None`` when no usable cache identity can be derived (caller
     should fall back to non-persistent behavior).
+
+    This is the **synchronous** path: the build runs inline on the calling
+    thread.  UI hosts that must not freeze the IDA main thread should use
+    :func:`trigger_background_build` instead.
     """
     cache_key, idb_path, db_instance_id = resolve_active_cache_key()
     if not cache_key:
@@ -788,7 +906,8 @@ def get_or_build_string_cache(
             # Wipe any existing version_dir before rebuilding.
             if os.path.exists(version_dir):
                 _safe_rmtree(version_dir)
-            return _build_cache(version_dir, records_factory, cache_key, idb_path, db_instance_id)
+                _invalidate_complete_memo(version_dir)
+            return _build_sync(version_dir, records_factory, cache_key, idb_path, db_instance_id)
 
         complete, total = _is_cache_complete(version_dir)
         if complete:
@@ -799,8 +918,8 @@ def get_or_build_string_cache(
                 db_instance_id=db_instance_id,
                 total=total,
             )
-        # Stale or missing — rebuild from the factory.
-        return _build_cache(version_dir, records_factory, cache_key, idb_path, db_instance_id)
+        # Stale or missing - rebuild from the factory.
+        return _build_sync(version_dir, records_factory, cache_key, idb_path, db_instance_id)
 
 
 def get_existing_string_cache(cache_dir: str) -> StringCacheIndex | None:
@@ -835,13 +954,140 @@ def refresh_string_cache(
     records_factory: Callable[[], Iterable[tuple[int, int, str]]],
     cache_dir: str,
 ) -> StringCacheIndex | None:
-    """Force-rebuild the cache.  See :func:`get_or_build_string_cache`."""
+    """Force-rebuild the cache synchronously.  See :func:`get_or_build_string_cache`."""
     return get_or_build_string_cache(records_factory, cache_dir, refresh=True)
+
+
+# ---------------------------------------------------------------------------
+# Background build coordinator (UI mode)
+# ---------------------------------------------------------------------------
+#
+# In UI mode the cold build must not freeze the IDA main thread or trip the
+# per-tool timeout.  trigger_background_build() kicks off a daemon thread that
+# runs phase 1 (enumerate) on the main thread via an injected *main_runner*
+# and phase 2 (indexing - the heavy part) on its own thread.  Tools poll
+# background_build_status() and return a "still indexing, retry" message
+# instead of blocking, so no tool call ever times out on the build.
+
+# ponytail: process-local per-cache_key build state. Upgrade to a real
+# scheduler if multiple IDBs are ever analyzed in one process (rare).
+
+
+@dataclass
+class _BgState:
+    """Snapshot of one cache's background-build progress."""
+
+    status: str  # "building" | "ready" | "failed"
+    total: int = 0
+    error: str = ""
+
+
+_BG_LOCK = threading.Lock()
+_BG_STATE: dict[str, _BgState] = {}
+_PROGRESS_EVERY = 50_000
+
+
+def trigger_background_build(
+    records_factory: Callable[[], Iterable[tuple[int, int, str]]],
+    cache_dir: str,
+    *,
+    force_refresh: bool = False,
+    main_runner: Callable[[Callable[[], Any]], Any] | None = None,
+) -> str:
+    """Ensure a background build is running for the active cache; return status.
+
+    Returns one of ``"ready"`` (a complete cache already exists), ``"building"``
+    (a build was just started or is already in progress), ``"failed"`` (a prior
+    build failed - a fresh attempt is kicked off), or ``"no_identity"`` when no
+    cache key can be derived.
+
+    Never blocks on the build itself: the daemon thread runs phase 1
+    (enumerate) on the main thread via *main_runner* and phase 2 (indexing)
+    on its own thread.  *main_runner* defaults to inline execution
+    (headless/standalone); UI hosts pass an ``idasync``-style runner so IDA
+    API access is marshalled onto the main thread.
+    """
+    cache_key, idb_path, db_instance_id = resolve_active_cache_key()
+    if not cache_key:
+        return "no_identity"
+    version_dir = cache_version_dir(cache_dir, cache_key)
+    runner = main_runner if main_runner is not None else (lambda thunk: thunk())
+
+    with _BG_LOCK:
+        # Already complete and not forcing a refresh?
+        if not force_refresh:
+            existing = get_existing_string_cache(cache_dir)
+            if existing is not None:
+                _BG_STATE[cache_key] = _BgState(status="ready", total=existing.total)
+                return "ready"
+        st = _BG_STATE.get(cache_key)
+        if st is not None and st.status == "building":
+            # A build is already in flight - don't start a second one.
+            return "building"
+        # Mark building before releasing the lock so a concurrent caller
+        # observes "building" immediately.
+        _BG_STATE[cache_key] = _BgState(status="building")
+
+    lock = _get_build_lock(cache_key)
+
+    def _work() -> None:
+        with lock:
+            stager = _Stager()
+            try:
+                if force_refresh and os.path.exists(version_dir):
+                    _safe_rmtree(version_dir)
+                os.makedirs(os.path.dirname(version_dir) or ".", exist_ok=True)
+                os.makedirs(version_dir, exist_ok=True)
+                os.makedirs(grams_dir(version_dir), exist_ok=True)
+
+                def _on_progress(count: int) -> None:
+                    with _BG_LOCK:
+                        cur = _BG_STATE.get(cache_key)
+                        if cur is not None and cur.status == "building":
+                            cur.total = count
+
+                # Phase 1: enumerate on the main thread (factory touches IDA).
+                runner(lambda: _stage_corpus(version_dir, records_factory, stager, _on_progress))
+                # Phase 2: index off-main (no IDA access).
+                total = _stage_and_commit_indices(version_dir, cache_key, idb_path, db_instance_id, stager)
+                with _BG_LOCK:
+                    _BG_STATE[cache_key] = _BgState(status="ready", total=total)
+            except Exception as e:
+                log_warning(f"Background string cache build failed: {e}")
+                try:
+                    stager.cleanup()
+                except Exception:
+                    pass
+                with _BG_LOCK:
+                    _BG_STATE[cache_key] = _BgState(status="failed", error=str(e))
+
+    threading.Thread(target=_work, name=f"strcache-build-{cache_key}", daemon=True).start()
+    return "building"
+
+
+def background_build_status(cache_dir: str) -> tuple[str, int]:
+    """Return ``(status, total_so_far)`` for the active cache's background build.
+
+    *status* is ``"building"`` / ``"ready"`` / ``"failed"`` / ``"unknown"``
+    (no build has been triggered this session) / ``"no_identity"``.  When
+    ``"ready"``, a complete on-disk cache is available via
+    :func:`get_existing_string_cache`.  *total_so_far* is an approximate
+    enumeration progress while ``"building"``.
+    """
+    cache_key, _, _ = resolve_active_cache_key()
+    if not cache_key:
+        return "no_identity", 0
+    with _BG_LOCK:
+        st = _BG_STATE.get(cache_key)
+        if st is None:
+            return "unknown", 0
+        return st.status, st.total
 
 
 __all__ = [
     "StringCacheIndex",
     "StringRecord",
+    "background_build_status",
     "cache_root_dir",
     "cache_version_dir",
     "derive_cache_key",
@@ -849,4 +1095,5 @@ __all__ = [
     "get_or_build_string_cache",
     "refresh_string_cache",
     "resolve_active_cache_key",
+    "trigger_background_build",
 ]

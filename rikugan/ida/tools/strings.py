@@ -11,19 +11,24 @@ invoke :func:`refresh_string_cache` after redefining strings in IDA.
 from __future__ import annotations
 
 import importlib
-from typing import Annotated
+from collections.abc import Callable
+from typing import Annotated, Any
 
 from ...constants import STRING_CACHE_BUILD_TIMEOUT
 from ...core.config import RikuganConfig
+from ...core.host import is_ida_headless
 from ...core.logging import log_debug, log_warning
 from ...core.sanitize import strip_injection_markers
+from ...core.thread_safety import idasync
 from ...tools.base import parse_addr, tool
 from ...tools.pagination import format_page
 from ...tools.string_cache import (
     StringCacheIndex,
     StringRecord,
+    background_build_status,
     get_existing_string_cache,
     get_or_build_string_cache,
+    trigger_background_build,
 )
 from ...tools.string_cache import (
     refresh_string_cache as _refresh_string_cache_helper,
@@ -72,21 +77,89 @@ def _iter_ida_strings():
         yield (int(s.ea), int(s.length), text)
 
 
-def _ensure_cache(refresh: bool = False) -> StringCacheIndex | None:
-    """Return a cache index, rebuilding if *refresh* is True.
+def _run_on_main_thread(thunk: Callable[[], Any]) -> Any:
+    """Run *thunk* on the IDA main thread (UI mode) or inline otherwise.
 
-    Wraps :func:`get_or_build_string_cache` / :func:`refresh_string_cache`
-    so a cache failure degrades gracefully (returns ``None``).
+    The background string-cache build uses this so phase 1 (enumerate
+    ``idautils.Strings()``) is marshalled onto the main thread while phase 2
+    (indexing) runs off it.  ``idasync`` already short-circuits to an inline
+    call outside UI-mode IDA.
+    """
+    return idasync(thunk)()
+
+
+def _building_message(progress: int) -> str:
+    """Standard non-blocking 'still indexing, retry' notice for huge binaries."""
+    if progress:
+        return (
+            "The string cache is still being built for this large binary "
+            f"(indexed ~{progress} strings so far). This is a one-time cost that "
+            "runs in the background; the IDA UI stays usable. Retry the same "
+            "call in a few seconds to get results."
+        )
+    return (
+        "The string cache is being built for this large binary. This is a "
+        "one-time cost that runs in the background; the IDA UI stays usable. "
+        "Retry the same call in a few seconds to get results."
+    )
+
+
+def _ensure_cache(refresh: bool = False) -> tuple[StringCacheIndex | None, str, int]:
+    """Resolve the active string cache without blocking on a cold build.
+
+    Returns ``(cache, status, progress)`` where *status* is one of:
+      - ``"ready"``       -- *cache* is a usable index, *progress* = total.
+      - ``"building"``    -- a background build is running; *cache* is None,
+                              *progress* = strings indexed so far.
+      - ``"failed"``      -- the last background build failed; *cache* is None.
+      - ``"no_identity"`` -- no cache key derivable; *cache* is None.
+
+    Headless/standalone hosts build synchronously (no UI to freeze) and so
+    never report ``"building"``.
     """
     factory = _iter_ida_strings
     cache_dir = _config_factory().cache_dir
+    # Fast path: a complete cache already exists on disk (read-only, no build).
     try:
-        if refresh:
-            return _refresh_string_cache_helper(factory, cache_dir)
-        return get_or_build_string_cache(factory, cache_dir, refresh=False)
+        existing = get_existing_string_cache(cache_dir)
     except Exception as e:
-        log_warning(f"String cache unavailable: {e}")
-        return None
+        log_warning(f"String cache lookup failed: {e}")
+        existing = None
+    if existing is not None:
+        return existing, "ready", existing.total
+
+    if is_ida_headless():
+        # No Qt event loop -> no UI to freeze and execute_sync would not pump.
+        # Build synchronously, bounded by the per-tool timeout.
+        try:
+            cache = (
+                _refresh_string_cache_helper(factory, cache_dir)
+                if refresh
+                else get_or_build_string_cache(factory, cache_dir, refresh=False)
+            )
+        except Exception as e:
+            log_warning(f"String cache build failed: {e}")
+            return None, "no_identity", 0
+        if cache is None:
+            return None, "no_identity", 0
+        return cache, "ready", cache.total
+
+    # UI mode: kick off a background build and return immediately so the
+    # tool call never blocks / times out on a huge binary.  Phase 1
+    # (enumerate) runs on the main thread via _run_on_main_thread; phase 2
+    # (indexing) runs on the daemon thread and keeps the UI responsive.
+    try:
+        status = trigger_background_build(
+            factory,
+            cache_dir,
+            force_refresh=refresh,
+            main_runner=_run_on_main_thread,
+        )
+    except Exception as e:
+        log_warning(f"Background string cache trigger failed: {e}")
+        return None, "no_identity", 0
+    progress = background_build_status(cache_dir)[1] if status == "building" else 0
+    return None, status, progress
 
 
 def _format_record_line(rec: StringRecord) -> str:
@@ -120,26 +193,29 @@ def list_strings(
     reflects the new state.
     """
 
-    cache = _ensure_cache(refresh=refresh)
-    if cache is None:
-        # Persistent cache unavailable — fall back to a direct enumeration
-        # (no pagination guarantee for very large binaries, but this only
-        # happens when no IDB identity is available, which is uncommon).
-        # Sanitize the untrusted binary strings before returning to the LLM.
-        records = list(_iter_ida_strings())
-        rows = [f"  0x{ea:x}  [{length}] {strip_injection_markers(text)}" for (ea, length, text) in records]
+    cache, status, progress = _ensure_cache(refresh=refresh)
+    if cache is not None:
+        page, total = cache.list(offset=offset, limit=limit)
+        rows = [_format_record_line(r) for r in page]
+        # Preserve the historical ``title="Strings"`` header for backward
+        # compatibility; cache status is appended as a suffix line instead.
         out = format_page(rows, offset=offset, limit=limit, title="Strings")
-        out += "\n  (no persistent cache — direct enumeration)"
+        out += f"\n  (served from persistent cache: {total} total)"
+        if refresh and total:
+            out += f"\n  String cache rebuilt: {total} strings indexed."
         return out
 
-    page, total = cache.list(offset=offset, limit=limit)
-    rows = [_format_record_line(r) for r in page]
-    # Preserve the historical ``title="Strings"`` header for backward
-    # compatibility; cache status is appended as a suffix line instead.
+    if status == "building":
+        return _building_message(progress)
+
+    # no_identity / failed / unknown -- fall back to a direct enumeration
+    # (no pagination guarantee for very large binaries, but this only
+    # happens when no IDB identity is available, which is uncommon).
+    # Sanitize the untrusted binary strings before returning to the LLM.
+    records = list(_iter_ida_strings())
+    rows = [f"  0x{ea:x}  [{length}] {strip_injection_markers(text)}" for (ea, length, text) in records]
     out = format_page(rows, offset=offset, limit=limit, title="Strings")
-    out += f"\n  (served from persistent cache: {total} total)"
-    if refresh and total:
-        out += f"\n  String cache rebuilt: {total} strings indexed."
+    out += "\n  (no persistent cache \u2014 direct enumeration)"
     return out
 
 
@@ -156,25 +232,29 @@ def search_strings(
     ``refresh=True`` after redefining strings in IDA.
     """
 
-    cache = _ensure_cache(refresh=refresh)
-    if cache is None:
-        # Direct fallback.  Sanitize before returning to the LLM.
-        q = (query or "").lower()
-        results: list[str] = []
-        for ea, length, text in _iter_ida_strings():
-            if q in text.lower():
-                results.append(f"  0x{ea:x}  [{length}] {strip_injection_markers(text)}")
-                if len(results) >= limit:
-                    break
+    cache, status, progress = _ensure_cache(refresh=refresh)
+    if cache is not None:
+        results = cache.search(query, limit=limit)
         if not results:
             return f"No strings matching '{query}'"
-        return f"Found {len(results)} string(s) (no persistent cache):\n" + "\n".join(results)
+        body = "\n".join(_format_record_line(r) for r in results)
+        return f"Found {len(results)} string(s):\n{body}"
 
-    results = cache.search(query, limit=limit)
-    if not results:
+    if status == "building":
+        return _building_message(progress)
+
+    # no_identity / failed / unknown -- direct search fallback.  Sanitize
+    # before returning to the LLM.
+    q = (query or "").lower()
+    hits: list[str] = []
+    for ea, length, text in _iter_ida_strings():
+        if q in text.lower():
+            hits.append(f"  0x{ea:x}  [{length}] {strip_injection_markers(text)}")
+            if len(hits) >= limit:
+                break
+    if not hits:
         return f"No strings matching '{query}'"
-    body = "\n".join(_format_record_line(r) for r in results)
-    return f"Found {len(results)} string(s):\n{body}"
+    return f"Found {len(hits)} string(s) (no persistent cache):\n" + "\n".join(hits)
 
 
 @tool(category="strings")
@@ -220,10 +300,12 @@ def refresh_string_cache() -> str:
     exposed to the LLM.
     """
 
-    cache = _ensure_cache(refresh=True)
-    if cache is None:
-        return "Persistent string cache unavailable: no IDB identity. Strings will be enumerated directly."
-    return f"String cache rebuilt: {cache.total} strings indexed."
+    cache, status, progress = _ensure_cache(refresh=True)
+    if cache is not None:
+        return f"String cache rebuilt: {cache.total} strings indexed."
+    if status == "building":
+        return _building_message(progress)
+    return "Persistent string cache unavailable: no IDB identity. Strings will be enumerated directly."
 
 
 __all__ = [

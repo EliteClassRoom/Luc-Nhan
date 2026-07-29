@@ -29,6 +29,8 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import threading
+import time as _time
 from collections.abc import Iterable
 from typing import Any
 
@@ -454,3 +456,160 @@ def test_fallback_direct_enumeration_is_sanitized() -> None:
     src_search = inspect.getsource(_ida_strings_module().search_strings)
     assert "strip_injection_markers" in src_list
     assert "strip_injection_markers" in src_search
+
+
+# ---------------------------------------------------------------------------
+# Background build coordinator (UI-mode decoupling)
+# ---------------------------------------------------------------------------
+#
+# These exercise trigger_background_build / background_build_status with a
+# default inline *main_runner* (no IDA, no Qt) so the daemon thread runs the
+# two-phase build synchronously.  They verify the tool-facing contract:
+# a cold build never blocks the caller (returns "building" immediately),
+# exactly one build runs per cache_key, a complete cache short-circuits to
+# "ready", and a failed build is reported and cleaned up.
+
+
+def _wait_status(
+    cache_dir: str,
+    expected: str,
+    timeout: float = 10.0,
+) -> tuple[str, int]:
+    """Poll background_build_status until it reaches *expected* (or timeout)."""
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        status, total = string_cache.background_build_status(cache_dir)
+        if status == expected:
+            return status, total
+        _time.sleep(0.01)
+    return string_cache.background_build_status(cache_dir)
+
+
+def _reset_bg_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear process-level background state so tests are independent."""
+    with string_cache._BG_LOCK:
+        string_cache._BG_STATE.clear()
+    # Drop any build threads left over from prior tests (best-effort).
+    for t in threading.enumerate():
+        if t.name.startswith("strcache-build-"):
+            t.join(timeout=2.0)
+
+
+def test_background_build_runs_to_ready(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cold call returns 'building' immediately and finishes 'ready'."""
+    _reset_bg_state(monkeypatch)
+    cache_dir = str(tmp_path)
+    _patch_active_key(monkeypatch, cache_dir, "idb-bg-ready")
+    records = [
+        (0x401000, 11, "hello world"),
+        (0x401020, 5, "bravo"),
+        (0x401040, 6, "charlie"),
+    ]
+
+    status = string_cache.trigger_background_build(lambda: iter(records), cache_dir)
+    assert status == "building"
+
+    status, total = _wait_status(cache_dir, "ready")
+    assert status == "ready"
+    assert total == 3
+    # The on-disk cache must be complete and queryable.
+    idx = string_cache.get_existing_string_cache(cache_dir)
+    assert idx is not None
+    assert idx.search("hello")
+    assert idx.get_at(0x401020).text == "bravo"
+
+
+def test_background_build_short_circuits_when_complete(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If a complete cache already exists, no build is started."""
+    _reset_bg_state(monkeypatch)
+    cache_dir = str(tmp_path)
+    _patch_active_key(monkeypatch, cache_dir, "idb-bg-short")
+    # Pre-build synchronously so a complete cache is on disk.
+    _build_tiny_cache(cache_dir, "idb-bg-short", [(0x401000, 5, "alpha")])
+
+    started = {"n": 0}
+
+    def factory() -> Iterable[tuple[int, int, str]]:
+        started["n"] += 1
+        return iter([(0xDEAD, 1, "x")])
+
+    status = string_cache.trigger_background_build(factory, cache_dir)
+    assert status == "ready"
+    # The factory must never have been consumed.
+    assert started["n"] == 0
+
+
+def test_background_build_no_second_build_while_running(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A concurrent caller sees 'building' and does not start a second build."""
+    _reset_bg_state(monkeypatch)
+    cache_dir = str(tmp_path)
+    _patch_active_key(monkeypatch, cache_dir, "idb-bg-dedupe")
+    started = {"n": 0}
+    gate = threading.Event()
+
+    def factory() -> Iterable[tuple[int, int, str]]:
+        # Increment before blocking so the caller can observe the build started.
+        started["n"] += 1
+        # Block enumeration so the build stays 'building' long enough to
+        # observe a second trigger.
+        gate.wait(timeout=5.0)
+        return iter([(0x401000, 5, "alpha")])
+
+    status = string_cache.trigger_background_build(factory, cache_dir)
+    assert status == "building"
+    # A second trigger while the first is running must not start another build.
+    status2 = string_cache.trigger_background_build(lambda: iter([]), cache_dir)
+    assert status2 == "building"
+    # Release the gate so the daemon thread can finish and not leak.
+    gate.set()
+    _wait_status(cache_dir, "ready")
+    # The factory ran exactly once: the second trigger was deduped, not built.
+    assert started["n"] == 1
+
+
+def test_background_build_reports_failure_and_cleans_up(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A factory that raises leaves status 'failed' and no committed cache."""
+    _reset_bg_state(monkeypatch)
+    cache_dir = str(tmp_path)
+    _patch_active_key(monkeypatch, cache_dir, "idb-bg-fail")
+
+    def factory() -> Iterable[tuple[int, int, str]]:
+        raise RuntimeError("boom")
+
+    status = string_cache.trigger_background_build(factory, cache_dir)
+    assert status == "building"
+    status, _total = _wait_status(cache_dir, "failed")
+    assert status == "failed"
+    # No complete cache committed.
+    assert string_cache.get_existing_string_cache(cache_dir) is None
+
+
+def test_background_force_refresh_rebuilds(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """force_refresh=True wipes and rebuilds even when a cache exists."""
+    _reset_bg_state(monkeypatch)
+    cache_dir = str(tmp_path)
+    _patch_active_key(monkeypatch, cache_dir, "idb-bg-refresh")
+    idx = _build_tiny_cache(cache_dir, "idb-bg-refresh", [(0x401000, 5, "alpha")])
+    assert idx.total == 1
+
+    new_records = [
+        (0x401000, 5, "alpha"),
+        (0x401020, 5, "bravo"),
+        (0x401040, 7, "charlie"),
+    ]
+    status = string_cache.trigger_background_build(lambda: iter(new_records), cache_dir, force_refresh=True)
+    assert status == "building"
+    status, total = _wait_status(cache_dir, "ready")
+    assert status == "ready"
+    assert total == 3
+    fresh = string_cache.get_existing_string_cache(cache_dir)
+    assert fresh is not None and fresh.total == 3
+
+
+def test_background_build_status_unknown_until_triggered(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Before any build is triggered, status is 'unknown'."""
+    _reset_bg_state(monkeypatch)
+    cache_dir = str(tmp_path)
+    _patch_active_key(monkeypatch, cache_dir, "idb-bg-unknown")
+    status, _total = string_cache.background_build_status(cache_dir)
+    assert status == "unknown"
