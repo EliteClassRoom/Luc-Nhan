@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 from rikugan.memory.markdown import (
+    ManagedEntry,
     ManagedRegionError,
     MemoryProjector,
     parse_memory_document,
     render_memory_document,
 )
+from rikugan.memory.repository import SQLiteKnowledgeRepository
+from rikugan.memory.schema import KnowledgeMemory
 from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
 from rikugan.memory.workspace_store import WorkspaceStore
 
@@ -84,7 +88,6 @@ class TestRenderMemoryDocument:
 
     def test_render_includes_record_markers(self) -> None:
         """Managed entries carry hidden stable record ID/revision markers."""
-        from rikugan.memory.markdown import ManagedEntry
 
         doc = parse_memory_document("# Memory\n")
         entries = [
@@ -188,4 +191,63 @@ class TestMemoryProjector:
 
         content = paths.markdown.read_text(encoding="utf-8")
         assert "# Memory" in content
+        store.close()
+
+    def test_projection_preserves_multiple_same_category_facts_in_existing_order(self, tmp_path: Path) -> None:
+        """Two independent ``function_purpose`` facts both appear in the projection."""
+        memory_id = new_memory_id()
+        paths = MemoryLocator(tmp_path).binary(memory_id)
+        store = WorkspaceStore.create(paths, owner_memory_id=memory_id)
+        repo = SQLiteKnowledgeRepository(store, owner_memory_id=memory_id)
+
+        first_id = new_record_id("fact")
+        second_id = new_record_id("fact")
+        first_content = "Initializes the RC4 key schedule"
+        second_content = "XORs the plaintext against the keystream"
+        first_title = "RC4 init"
+        second_title = "RC4 crypt"
+        repo.upsert_memory(
+            KnowledgeMemory(
+                id=first_id,
+                binary_id=memory_id,
+                type="function_purpose",
+                title=first_title,
+                content=first_content,
+                confidence=0.7,
+            )
+        )
+        repo.upsert_memory(
+            KnowledgeMemory(
+                id=second_id,
+                binary_id=memory_id,
+                type="function_purpose",
+                title=second_title,
+                content=second_content,
+                confidence=0.7,
+            )
+        )
+
+        projector = MemoryProjector()
+        projector.project(paths, store)
+
+        content = paths.markdown.read_text(encoding="utf-8")
+        # Each fact ID and content must appear exactly once in the projection.
+        assert content.count(first_id) == 1
+        assert content.count(second_id) == 1
+        assert content.count(first_content) == 1
+        assert content.count(second_content) == 1
+
+        # Parse managed entries and assert deterministic sort uses
+        # (fact_type, title, fact_id). The two facts share fact_type, so
+        # the sort resolves on title: "RC4 crypt" < "RC4 init".
+        doc = parse_memory_document(content)
+        record_re = re.compile(r"<!-- rikugan:record id=([A-Za-z0-9._:-]+) rev=([1-9][0-9]*) -->")
+        fact_ids = [match.group(1) for match in record_re.finditer(doc.managed)]
+        assert len(fact_ids) == 2
+        # The two facts share fact_type, so the title sort is the active key:
+        # ``RC4 crypt`` < ``RC4 init`` → second_id appears before first_id.
+        assert fact_ids == [second_id, first_id]
+        # And the order is NOT the insertion order (which would put
+        # first_id before second_id, since the IDs are random UUIDs).
+        assert fact_ids != [first_id, second_id]
         store.close()

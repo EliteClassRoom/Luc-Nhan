@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from ..core.sanitize import strip_injection_markers
 from .authority import MemoryAuthorityIssuer, MemoryWriteAuthority
@@ -29,6 +30,7 @@ class SaveMemoryResult:
 
     record_id: str
     revision: int
+    outcome: Literal["created", "deduplicated"]
     projection_dirty: bool
     warning: str
 
@@ -145,22 +147,24 @@ class BinaryMemoryService:
         if not normalized_fact:
             raise ValueError("fact must not be empty after sanitization")
 
-        record = self.repository.upsert_memory_fact(
+        saved = self.repository.save_memory_fact(
             normalized_category,
             normalized_fact,
             source,
         )
+        record = saved.record
         # Verify the fact was actually committed before returning success
         verify = self.repository._store.get_fact(record.id)
         if verify is None:
             from ..core.logging import log_error as _le
 
-            _le(f"save_fact BUG: fact {record.id} not found after upsert_memory_fact!")
+            _le(f"save_fact BUG: fact {record.id} not found after save_memory_fact!")
         try:
             self.projector.project(self.paths, self.store)
             return SaveMemoryResult(
                 record_id=record.id,
-                revision=getattr(record, "revision", 1),
+                revision=verify.revision if verify is not None else getattr(record, "revision", 1),
+                outcome=saved.outcome,
                 projection_dirty=False,
                 warning="",
             )
@@ -171,7 +175,8 @@ class BinaryMemoryService:
             self.store.mark_projection_dirty()
             return SaveMemoryResult(
                 record_id=record.id,
-                revision=getattr(record, "revision", 1),
+                revision=verify.revision if verify is not None else getattr(record, "revision", 1),
+                outcome=saved.outcome,
                 projection_dirty=True,
                 warning=str(exc),
             )

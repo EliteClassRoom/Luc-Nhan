@@ -86,3 +86,25 @@ class TestSaveMemoryCentralDispatch:
         assert not legacy_path.exists()  # no legacy file written
         tr = events[-1] if events else None
         assert tr is not None
+
+    def test_save_memory_tool_returns_compact_created_and_duplicate_messages(self, tmp_path: Path) -> None:
+        """Tool result is compact: 'Memory created: fact-...' / 'Memory already exists: fact-...'.
+
+        The long fact body must NOT be echoed into the tool result.
+        """
+        loop, _service = _make_loop_with_central_memory(tmp_path)
+        fact = "Uses HTTP " + "X" * 900
+        first = list(
+            loop._handle_save_memory_tool(
+                ToolCall(id="one", name="save_memory", arguments={"category": "protocol", "fact": fact})
+            )
+        )
+        second = list(
+            loop._handle_save_memory_tool(
+                ToolCall(id="two", name="save_memory", arguments={"category": "protocol", "fact": fact})
+            )
+        )
+        assert first[-1].tool_result.startswith("Memory created: fact-")
+        assert second[-1].tool_result.startswith("Memory already exists: fact-")
+        assert fact not in first[-1].tool_result
+        assert fact not in second[-1].tool_result

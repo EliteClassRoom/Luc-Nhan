@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.repository import SQLiteKnowledgeRepository
+from rikugan.memory.fact_identity import semantic_fact_hash
+from rikugan.memory.repository import SavedKnowledgeMemory, SQLiteKnowledgeRepository
 from rikugan.memory.schema import (
     KnowledgeEntity,
     KnowledgeMemory,
@@ -117,3 +118,47 @@ class TestRepositoryProtocol:
         assert hasattr(repo, "list_relations")
         assert hasattr(repo, "count_observations")
         assert hasattr(repo, "append_observation")
+
+
+class TestSaveMemoryFact:
+    """Exact-dedup + same-category preservation for ``save_memory_fact``."""
+
+    def test_save_two_facts_in_same_category_preserves_both(self, tmp_path: Path) -> None:
+        repo, _ = _create_repo(tmp_path)
+        first = repo.save_memory_fact("function_purpose", "0x401000 parses config", "save_memory")
+        second = repo.save_memory_fact("function_purpose", "0x402000 decrypts packets", "save_memory")
+        assert isinstance(first, SavedKnowledgeMemory)
+        assert first.outcome == "created"
+        assert second.outcome == "created"
+        assert first.record.id != second.record.id
+        assert {m.content for m in repo.list_memories()} == {
+            "0x401000 parses config",
+            "0x402000 decrypts packets",
+        }
+
+    def test_exact_semantic_duplicate_reuses_identity_without_revision(self, tmp_path: Path) -> None:
+        repo, _ = _create_repo(tmp_path)
+        first = repo.save_memory_fact(" Function  Purpose ", "Uses RC4\r\n", "save_memory")
+        second = repo.save_memory_fact("function purpose", "Uses RC4\n", "save_memory")
+        assert first.outcome == "created"
+        assert second.outcome == "deduplicated"
+        assert second.record.id == first.record.id
+        stored = repo._store.get_fact(first.record.id)
+        assert stored is not None
+        assert stored.revision == 1
+        assert repo.count_observations() == 2
+        assert stored.semantic_hash == semantic_fact_hash("function purpose", "Uses RC4")
+
+    def test_save_memory_fact_returns_immutable_result(self, tmp_path: Path) -> None:
+        repo, _ = _create_repo(tmp_path)
+        first = repo.save_memory_fact("algorithm", "Uses RC4", "save_memory")
+        assert isinstance(first, SavedKnowledgeMemory)
+        assert isinstance(first.record, KnowledgeMemory)
+        with pytest.raises((AttributeError, TypeError)):
+            first.outcome = "recreated"  # type: ignore[misc]
+
+    def test_save_memory_fact_appends_observation_each_call(self, tmp_path: Path) -> None:
+        repo, _ = _create_repo(tmp_path)
+        repo.save_memory_fact("algorithm", "Uses RC4", "save_memory")
+        repo.save_memory_fact("algorithm", "Uses RC4", "save_memory")
+        assert repo.count_observations() == 2

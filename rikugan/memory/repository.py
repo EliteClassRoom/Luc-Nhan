@@ -13,8 +13,10 @@ retrieval and sanitize code works unchanged during the cutover.
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Literal, Protocol
 
+from .fact_identity import canonicalize_fact_content, canonicalize_fact_type, semantic_fact_hash
 from .schema import (
     KnowledgeEntity,
     KnowledgeMemory,
@@ -22,6 +24,21 @@ from .schema import (
     KnowledgeRelation,
 )
 from .workspace_store import WorkspaceStore
+
+
+@dataclass(frozen=True)
+class SavedKnowledgeMemory:
+    """Result of :meth:`SQLiteKnowledgeRepository.save_memory_fact`.
+
+    ``record`` carries the persisted (or existing) :class:`KnowledgeMemory`,
+    and ``outcome`` distinguishes first-write from exact-dedup.
+    """
+
+    record: KnowledgeMemory
+    outcome: Literal["created", "deduplicated"]
+
+
+_FACT_WRITE_CONFIDENCE = 0.7
 
 
 class KnowledgeRepository(Protocol):
@@ -184,64 +201,54 @@ class SQLiteKnowledgeRepository:
     # Convenience: allocate-and-append
     # ------------------------------------------------------------------
 
-    def upsert_memory_fact(
+    def save_memory_fact(
         self,
         category: str,
         fact: str,
         source: str,
-    ) -> KnowledgeMemory:
-        """Allocate or update one fact and append an observation atomically.
+    ) -> SavedKnowledgeMemory:
+        """Save a fact using exact-semantic dedup (no category overwrite).
 
-        Creates a new fact ID (or updates the latest fact of the same
-        category if one exists), then appends an observation recording the
-        source. Returns the resulting :class:`KnowledgeMemory`.
+        Canonicalizes *category* and *fact* via the fact identity helpers,
+        computes a stable SHA-256 digest, and delegates to
+        :meth:`WorkspaceStore.save_fact_if_semantically_absent` so lookup,
+        optional insert, and the observation append run inside one
+        ``BEGIN IMMEDIATE`` transaction.
+
+        Returns a :class:`SavedKnowledgeMemory` whose ``outcome`` is
+        ``"created"`` for a new fact and ``"deduplicated"`` when an exact
+        semantic match already existed. In both branches the caller-
+        provided category is recorded as taxonomy only and never selects
+        an implicit update target.
         """
         from .workspace import new_record_id
 
-        # Find an existing fact with the same category to update
-        existing = None
-        for mem in self.list_memories():
-            if mem.type == category:
-                existing = mem
-                break
-
-        if existing is not None:
-            # Update existing fact with new content
-            current = self._store.get_fact(existing.id)
-            expected_rev = current.revision if current else 0
-            self._store.put_fact(
-                existing.id,
-                category,
-                existing.title,
-                fact,
-                0.7,
-                expected_revision=expected_rev,
-            )
-            result = KnowledgeMemory(
-                id=existing.id,
-                binary_id=self.owner_memory_id,
-                type=category,
-                title=existing.title,
-                content=fact,
-                confidence=0.7,
-            )
-        else:
-            fid = new_record_id("fact")
-            self._store.put_fact(fid, category, category, fact, 0.7, expected_revision=0)
-            result = KnowledgeMemory(
-                id=fid,
-                binary_id=self.owner_memory_id,
-                type=category,
-                title=category,
-                content=fact,
-                confidence=0.7,
-            )
-
-        # Append observation
-        oid = new_record_id("observation")
-        self._store.append_observation(
-            oid,
-            source,
-            json.dumps({"category": category}, ensure_ascii=False, sort_keys=True),
+        canonical_type = canonicalize_fact_type(category)
+        canonical_content = canonicalize_fact_content(fact)
+        digest = semantic_fact_hash(canonical_type, canonical_content)
+        record, outcome = self._store.save_fact_if_semantically_absent(
+            fact_id=new_record_id("fact"),
+            fact_type=canonical_type,
+            title=canonical_type,
+            content=canonical_content,
+            semantic_hash=digest,
+            confidence=_FACT_WRITE_CONFIDENCE,
+            observation_id=new_record_id("observation"),
+            observation_type=source,
+            observation_payload=json.dumps(
+                {"category": canonical_type, "semantic_hash": digest},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         )
-        return result
+        return SavedKnowledgeMemory(
+            record=KnowledgeMemory(
+                id=record.fact_id,
+                binary_id=self.owner_memory_id,
+                type=record.fact_type,
+                title=record.title,
+                content=record.content,
+                confidence=record.confidence,
+            ),
+            outcome=outcome,
+        )

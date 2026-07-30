@@ -126,9 +126,11 @@ class CaseMemoryService:
         case_fact_id = new_record_id("fact")
 
         # Persist in case workspace DB
-        case_paths = self._cases._locator.case(case_id)
+        from .workspace_open import open_workspace_for_write
+
+        case_paths = self._cases.locator.case(case_id)
         if case_paths.database.exists():
-            case_store = WorkspaceStore.open(case_paths, owner_memory_id=case_id)
+            case_store = open_workspace_for_write(case_paths, case_id, self._cases.locator.backups(case_id))
         else:
             case_store = WorkspaceStore.create(case_paths, owner_memory_id=case_id, workspace_kind="case")
         case_store.put_fact(
