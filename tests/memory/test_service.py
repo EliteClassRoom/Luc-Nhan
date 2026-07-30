@@ -124,6 +124,26 @@ class TestSaveFact:
                 source="save_memory",
             )
 
+    def test_save_fact_reports_created_then_deduplicated(self, tmp_path: Path) -> None:
+        service, issuer, context = _create_service(tmp_path)
+        authority = issuer.issue(context)
+        created = service.save_fact(
+            authority,
+            category="protocol",
+            fact="Uses HTTP",
+            source="save_memory",
+        )
+        duplicate = service.save_fact(
+            authority,
+            category=" Protocol ",
+            fact="Uses HTTP\r\n",
+            source="save_memory",
+        )
+        assert created.outcome == "created"
+        assert duplicate.outcome == "deduplicated"
+        assert duplicate.record_id == created.record_id
+        assert len(service.repository.list_memories()) == 1
+
 
 class TestSavePlan:
     def test_save_plan_creates_structured_fact(self, tmp_path: Path) -> None:
@@ -151,3 +171,23 @@ class TestContextValidation:
                 fact="x",
                 source="test",
             )
+
+
+def test_save_exploration_finding_returns_outcome_and_persists_metadata(tmp_path: Path) -> None:
+    service, issuer, context = _create_service(tmp_path)
+    authority = issuer.issue(context)
+    result = service.save_exploration_finding(
+        authority,
+        category="function_purpose",
+        title="main",
+        content="main parses config",
+        confidence=0.8,
+        entity_refs=["func:0x401000"],
+        tags=["parser"],
+        source="exploration",
+    )
+    assert result.outcome == "created"
+    stored = service.repository._store.get_fact(result.record_id)
+    assert stored is not None
+    assert stored.entity_refs == ["func:0x401000"]
+    assert stored.tags == ["parser"]

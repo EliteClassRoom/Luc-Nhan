@@ -186,6 +186,17 @@ class MemoryLocator:
         """Paths for a case workspace."""
         return self._workspace("cases", validate_case_id(case_id))
 
+    def backups(self, workspace_id: str) -> Path:
+        """Directory holding pre-migration backups for *workspace_id*.
+
+        Accepts both binary (``mem-...``) and case (``case-...``)
+        workspace IDs. The directory is *not* created — callers (or
+        :func:`_exclusive_backup_path`) materialize it lazily.
+        """
+        if not (_MEMORY_ID_RE.fullmatch(workspace_id) or _CASE_ID_RE.fullmatch(workspace_id)):
+            raise ValueError(f"invalid workspace ID: {workspace_id!r}")
+        return self.root / "backups" / workspace_id
+
     def _workspace(self, group: str, workspace_id: str) -> WorkspacePaths:
         root = self.root / group / workspace_id
         notes = root / "notes"

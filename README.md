@@ -60,7 +60,7 @@ The agent really ***lives*** and ***breaths*** reversing.
 
 **Plan / explore / modify workflows** — `/plan`, `/modify`, and `/explore` enter structured workflows with approval gates. Every mutating tool records a `MutationRecord` so changes can be undone with `/undo` or via the Mutation Log panel.
 
-**Subagents and orchestration** — The orchestrator maps the binary (imports, exports, strings, key functions), then spawns isolated subagents to analyze in parallel. Each reports back, and the orchestrator synthesizes a complete picture.
+**Subagents and orchestration** — The orchestrator maps the binary (imports, exports, strings, key functions), then spawns isolated subagents to analyze in parallel. Each reports back, and the orchestrator synthesizes a complete picture. Experimental — temporarily disabled pending shared execution-policy and context-isolation hardening.
 
 |![alt text](assets/subagents_example_3.png)|
 |:--:|

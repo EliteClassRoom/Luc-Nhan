@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import zipfile
 from pathlib import Path
 
 from rikugan.memory.bundle_export import export_workspace
+from rikugan.memory.bundle_import import import_workspace_bundle
 from rikugan.memory.repository import SQLiteKnowledgeRepository
 from rikugan.memory.schema import KnowledgeEntity, KnowledgeMemory
 from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
@@ -101,3 +103,48 @@ class TestExport:
             facts1 = zf1.read("records/facts.jsonl")
             facts2 = zf2.read("records/facts.jsonl")
             assert facts1 == facts2
+
+    def test_export_import_round_trip_same_category_facts(self, tmp_path: Path) -> None:
+        """Two independent facts of the same category survive export then import."""
+        _store, repo, locator, mid = _seed_workspace(tmp_path)
+        repo.upsert_memory(
+            KnowledgeMemory(
+                id=new_record_id("fact"),
+                binary_id=mid,
+                type="function_purpose",
+                title="RC4 init",
+                content="Initializes the RC4 key schedule",
+                confidence=0.7,
+            )
+        )
+        repo.upsert_memory(
+            KnowledgeMemory(
+                id=new_record_id("fact"),
+                binary_id=mid,
+                type="function_purpose",
+                title="RC4 crypt",
+                content="XORs the plaintext against the keystream",
+                confidence=0.7,
+            )
+        )
+
+        output = tmp_path / "bundle.zip"
+        export_workspace(locator.binary(mid), repo, output)
+        _store.close()
+
+        # Import into a fresh target workspace.
+        target_mid = new_memory_id()
+        target_paths = MemoryLocator(tmp_path / "target").binary(target_mid)
+        target_store = WorkspaceStore.create(target_paths, owner_memory_id=target_mid)
+        target_repo = SQLiteKnowledgeRepository(target_store, owner_memory_id=target_mid)
+
+        result = import_workspace_bundle(output, target_repo)
+        assert result.imported_count == 2
+
+        facts = target_repo.list_memories()
+        assert [f.type for f in facts].count("function_purpose") == 2
+        # Both facts survive with valid 64-char lowercase SHA-256 hashes.
+        assert len(target_store.list_facts()) == 2
+        for fact in target_store.list_facts():
+            assert re.fullmatch(r"[0-9a-f]{64}", fact.semantic_hash)
+        target_store.close()

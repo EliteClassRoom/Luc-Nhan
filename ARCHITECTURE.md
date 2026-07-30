@@ -557,6 +557,18 @@ When a subagent running in explore mode finishes:
 
 ---
 
+## Orchestra Mode (temporarily disabled)
+
+**File**: `rikugan/agent/modes/orchestra.py`, `rikugan/agent/orchestra/`
+
+**Status**: Experimental — temporarily disabled pending shared execution-policy and context-isolation hardening.
+
+The `/orchestra <message>` command remains recognized by `_parse_user_command()` so users receive a precise disabled message instead of an unknown-command error. `AgentLoop.run()` checks `_ORCHESTRA_ENABLED` (`rikugan.agent.loop`) immediately after direct-command handling and before skill resolution, session append, prompt/schema construction, retrieval, provider call, tool execution, or child agent. When disabled, the gate yields one `TurnEvent.text_done()` with the disabled message and returns.
+
+The implementation files (`rikugan/agent/modes/orchestra.py` and `rikugan/agent/orchestra/`) are retained unchanged so focused legacy tests can override the constant with `monkeypatch.setattr(rikugan.agent.loop, "_ORCHESTRA_ENABLED", True)` inside the test process. A2A remains available because it is a distinct execution path.
+
+---
+
 ## Mutation Tracking and Undo
 
 **File**: `rikugan/agent/mutation.py`

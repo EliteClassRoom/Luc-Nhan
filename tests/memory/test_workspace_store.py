@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from rikugan.memory.fact_identity import semantic_fact_hash
 from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
 from rikugan.memory.workspace_store import (
     FactRecord,
@@ -96,6 +98,49 @@ class TestListFacts:
         store, _ = _create_store(tmp_path)
         assert store.list_facts() == []
 
+    def test_create_update_and_list_expose_current_semantic_hash(self, tmp_path: Path) -> None:
+        from rikugan.memory.fact_identity import semantic_fact_hash
+
+        store, _ = _create_store(tmp_path)
+        fid = new_record_id("fact")
+        first = store.put_fact(fid, "algorithm", "RC4", "Uses RC4", 0.8, expected_revision=0)
+        second = store.put_fact(fid, "algorithm", "RC4", "Uses modified RC4", 0.9, expected_revision=1)
+        assert first.semantic_hash != second.semantic_hash
+        assert first.semantic_hash == semantic_fact_hash("algorithm", "Uses RC4")
+        assert second.semantic_hash == semantic_fact_hash("algorithm", "Uses modified RC4")
+        assert store.get_fact(fid).semantic_hash == second.semantic_hash
+        assert store.list_facts()[0].semantic_hash == second.semantic_hash
+        store.close()
+
+    def test_put_fact_with_entity_refs_and_tags_roundtrip(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        fid = new_record_id("fact")
+        store.put_fact(
+            fid,
+            "algorithm",
+            "RC4",
+            "Uses RC4",
+            0.8,
+            expected_revision=0,
+            entity_refs=["func:0x401000", "global:0x409000"],
+            tags=["crypto", "c2"],
+        )
+        fetched = store.get_fact(fid)
+        assert fetched is not None
+        assert fetched.entity_refs == ["func:0x401000", "global:0x409000"]
+        assert fetched.tags == ["crypto", "c2"]
+        store.close()
+
+    def test_put_fact_without_entity_refs_defaults_empty(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        fid = new_record_id("fact")
+        store.put_fact(fid, "algorithm", "RC4", "Uses RC4", 0.8, expected_revision=0)
+        fetched = store.get_fact(fid)
+        assert fetched is not None
+        assert fetched.entity_refs == []
+        assert fetched.tags == []
+        store.close()
+
 
 class TestEntityAndRelation:
     def test_put_and_get_entity(self, tmp_path: Path) -> None:
@@ -124,6 +169,41 @@ class TestEntityAndRelation:
         assert relations[0].predicate == "calls"
         assert relations[0].subject_id == e1
         assert relations[0].object_id == e2
+
+    def test_put_entity_with_tags_roundtrip(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        eid = new_record_id("entity")
+        store.put_entity(
+            eid,
+            "function",
+            "main",
+            metadata={"display_name": "main", "address": "0x401000"},
+            tags=["entry", "parser"],
+        )
+        fetched = store.get_entity(eid)
+        assert fetched is not None
+        assert fetched.tags == ["entry", "parser"]
+        store.close()
+
+    def test_put_relation_with_evidence_roundtrip(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        sid = new_record_id("entity")
+        oid = new_record_id("entity")
+        store.put_entity(sid, "function", "decrypt", {})
+        store.put_entity(oid, "function", "main", {})
+        rid = new_record_id("relation")
+        store.put_relation(
+            rid,
+            sid,
+            "calls",
+            oid,
+            0.9,
+            evidence="xref at 0x401020",
+        )
+        rels = store.list_relations()
+        assert len(rels) == 1
+        assert rels[0].evidence == "xref at 0x401020"
+        store.close()
 
 
 class TestObservation:
@@ -225,3 +305,208 @@ class TestConcurrency:
         store.put_fact(fid, "fact", "A", "third", 0.7, expected_revision=1)
         assert store.get_fact(fid).content == "third"
         store.close()
+
+
+class TestSaveFactIfSemanticallyAbsent:
+    """Exact-hash lookup + insert + observation append under one transaction."""
+
+    def test_first_call_creates_fact_and_appends_observation(self, tmp_path: Path) -> None:
+        store, _owner = _create_store(tmp_path)
+        try:
+            digest = semantic_fact_hash("function purpose", "Uses RC4")
+            record, outcome = store.save_fact_if_semantically_absent(
+                fact_id=new_record_id("fact"),
+                fact_type="function purpose",
+                title="Parser",
+                content="Uses RC4",
+                semantic_hash=digest,
+                confidence=0.7,
+                observation_id=new_record_id("observation"),
+                observation_type="save_memory",
+                observation_payload='{"category": "function purpose"}',
+            )
+            assert outcome == "created"
+            assert record.fact_id in {r.fact_id for r in store.list_facts()}
+            assert store.count_observations() == 1
+            row = store._conn.execute(
+                "SELECT content FROM observations WHERE observation_type = ?",
+                ("save_memory",),
+            ).fetchone()
+            assert row is not None
+            payload = json.loads(row["content"])
+            assert payload["fact_id"] == record.fact_id
+            assert payload["outcome"] == "created"
+        finally:
+            store.close()
+
+    def test_exact_duplicate_dedups_and_returns_oldest(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        canonical = semantic_fact_hash("algorithm", "Uses RC4")
+        first_fid = new_record_id("fact")
+        second_fid = new_record_id("fact")
+        try:
+            first, first_outcome = store.save_fact_if_semantically_absent(
+                fact_id=first_fid,
+                fact_type="algorithm",
+                title="Algo",
+                content="Uses RC4",
+                semantic_hash=canonical,
+                confidence=0.7,
+                observation_id=new_record_id("observation"),
+                observation_type="save_memory",
+                observation_payload='{"category": "algorithm"}',
+            )
+            second, second_outcome = store.save_fact_if_semantically_absent(
+                fact_id=second_fid,
+                fact_type="algorithm",
+                title="Algo",
+                content="Uses RC4",
+                semantic_hash=canonical,
+                confidence=0.7,
+                observation_id=new_record_id("observation"),
+                observation_type="save_memory",
+                observation_payload='{"category": "algorithm"}',
+            )
+            assert first_outcome == "created"
+            assert second_outcome == "deduplicated"
+            assert second.fact_id == first.fact_id
+            assert len(store.list_facts()) == 1
+            assert store.count_observations() == 2
+            fetched = store.get_fact(first.fact_id)
+            assert fetched is not None
+            assert fetched.revision == 1
+            assert (
+                store._conn.execute(
+                    "SELECT semantic_hash FROM facts WHERE fact_id = ?",
+                    (first.fact_id,),
+                ).fetchone()["semantic_hash"]
+                == canonical
+            )
+        finally:
+            store.close()
+
+    def test_invalid_inputs_rejected_before_transaction(self, tmp_path: Path) -> None:
+        import math as _math
+
+        store, _ = _create_store(tmp_path)
+        try:
+            with pytest.raises(ValueError, match="confidence"):
+                store.save_fact_if_semantically_absent(
+                    fact_id=new_record_id("fact"),
+                    fact_type="algorithm",
+                    title="Algo",
+                    content="Uses RC4",
+                    semantic_hash=semantic_fact_hash("algorithm", "Uses RC4"),
+                    confidence=float("nan"),
+                    observation_id=new_record_id("observation"),
+                    observation_type="save_memory",
+                    observation_payload="{}",
+                )
+            with pytest.raises(ValueError, match="empty string"):
+                store.save_fact_if_semantically_absent(
+                    fact_id=new_record_id("fact"),
+                    fact_type="",
+                    title="Algo",
+                    content="Uses RC4",
+                    semantic_hash=semantic_fact_hash("algorithm", "Uses RC4"),
+                    confidence=0.7,
+                    observation_id=new_record_id("observation"),
+                    observation_type="save_memory",
+                    observation_payload="{}",
+                )
+            with pytest.raises(ValueError, match="64-character"):
+                store.save_fact_if_semantically_absent(
+                    fact_id=new_record_id("fact"),
+                    fact_type="algorithm",
+                    title="Algo",
+                    content="Uses RC4",
+                    semantic_hash="not-a-digest",
+                    confidence=0.7,
+                    observation_id=new_record_id("observation"),
+                    observation_type="save_memory",
+                    observation_payload="{}",
+                )
+            with pytest.raises(ValueError, match="record ID"):
+                store.save_fact_if_semantically_absent(
+                    fact_id="bad:id",
+                    fact_type="algorithm",
+                    title="Algo",
+                    content="Uses RC4",
+                    semantic_hash=semantic_fact_hash("algorithm", "Uses RC4"),
+                    confidence=0.7,
+                    observation_id=new_record_id("observation"),
+                    observation_type="save_memory",
+                    observation_payload="{}",
+                )
+            # Ensure no partial write happened
+            assert store.list_facts() == []
+            assert store.count_observations() == 0
+            # Reference math to silence linter; not used directly here
+            assert _math.isfinite(0.7)
+        finally:
+            store.close()
+
+
+class TestExactSaveConcurrency:
+    """Multi-connection concurrency tests for ``save_fact_if_semantically_absent``."""
+
+    def test_concurrent_exact_saves_create_one_fact_and_two_observations(self, tmp_path: Path) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from rikugan.memory.repository import SQLiteKnowledgeRepository
+
+        owner = new_memory_id()
+        paths = MemoryLocator(tmp_path).binary(owner)
+        WorkspaceStore.create(paths, owner_memory_id=owner).close()
+
+        def save(_index: int) -> str:
+            store = WorkspaceStore.open(paths, owner_memory_id=owner)
+            try:
+                repo = SQLiteKnowledgeRepository(store, owner_memory_id=owner)
+                return repo.save_memory_fact("algorithm", "Uses RC4", "worker").record.id
+            finally:
+                store.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            ids = list(pool.map(save, range(2)))
+
+        assert len(set(ids)) == 1
+        final = WorkspaceStore.open(paths, owner_memory_id=owner)
+        try:
+            assert len(final.list_facts()) == 1
+            assert final.count_observations() == 2
+        finally:
+            final.close()
+
+    def test_concurrent_distinct_content_creates_two_facts(self, tmp_path: Path) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from rikugan.memory.repository import SQLiteKnowledgeRepository
+
+        owner = new_memory_id()
+        paths = MemoryLocator(tmp_path).binary(owner)
+        WorkspaceStore.create(paths, owner_memory_id=owner).close()
+
+        contents = (
+            "0x401000 parses config",
+            "0x402000 decrypts packets",
+        )
+
+        def save(index: int) -> str:
+            store = WorkspaceStore.open(paths, owner_memory_id=owner)
+            try:
+                repo = SQLiteKnowledgeRepository(store, owner_memory_id=owner)
+                return repo.save_memory_fact("function_purpose", contents[index], "worker").record.id
+            finally:
+                store.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            ids = list(pool.map(save, range(2)))
+
+        assert len(set(ids)) == 2
+        final = WorkspaceStore.open(paths, owner_memory_id=owner)
+        try:
+            assert len(final.list_facts()) == 2
+            assert final.count_observations() == 2
+        finally:
+            final.close()

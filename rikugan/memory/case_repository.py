@@ -31,6 +31,11 @@ class CaseRepository:
         self._registry = registry
         self._locator = locator
 
+    @property
+    def locator(self) -> MemoryLocator:
+        """Memory locator for case workspace path resolution."""
+        return self._locator
+
     def _connect(self, *, read_only: bool = False) -> Any:
         return self._registry._connect(read_only=read_only)
 
@@ -331,11 +336,12 @@ class CaseRepository:
             raise ValueError("both endpoints must be current case members")
 
         # Store relation in case workspace DB
+        from .workspace_open import open_workspace_for_write
         from .workspace_store import WorkspaceStore
 
         case_paths = self._locator.case(case_id)
         if case_paths.database.exists():
-            store = WorkspaceStore.open(case_paths, owner_memory_id=case_id)
+            store = open_workspace_for_write(case_paths, case_id, self._locator.backups(case_id))
         else:
             store = WorkspaceStore.create(case_paths, owner_memory_id=case_id, workspace_kind="case")
 
@@ -360,14 +366,19 @@ class CaseRepository:
         )
 
     def list_case_relations(self, case_id: str) -> list[CaseRelation]:
-        """List all relations in a case workspace."""
+        """List all relations in a case workspace.
+
+        Opens the case workspace in read-only mode so that a stale v1
+        database raises ``SchemaMigrationRequired`` instead of
+        silently migrating during a list operation.
+        """
         from .workspace_store import WorkspaceStore
 
         case_paths = self._locator.case(case_id)
         if not case_paths.database.exists():
             return []
 
-        store = WorkspaceStore.open(case_paths, owner_memory_id=case_id)
+        store = WorkspaceStore.open(case_paths, owner_memory_id=case_id, read_only=True)
         try:
             raw_relations = store.list_relations()
             entities = {

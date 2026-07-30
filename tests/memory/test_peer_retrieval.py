@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from rikugan.memory.case_repository import CaseRepository
 from rikugan.memory.case_schema import CaseRelationType
-from rikugan.memory.peer_retrieval import PeerMemoryRetriever
+from rikugan.memory.peer_retrieval import PeerContextPack, PeerMemoryRetriever
 from rikugan.memory.registry import MemoryRegistry
 from rikugan.memory.repository import SQLiteKnowledgeRepository
 from rikugan.memory.schema import KnowledgeMemory
 from rikugan.memory.workspace import MemoryLocator, new_record_id
 from rikugan.memory.workspace_store import WorkspaceStore
+
+from .test_workspace_migration_v2 import _create_v1_database
 
 
 def _setup(tmp_path: Path) -> tuple[CaseRepository, MemoryRegistry, MemoryLocator, str, str, str]:
@@ -147,3 +150,17 @@ class TestPeerRetrieval:
         # Query that matches fact content
         pack2 = retriever.retrieve(case_id, active_memory_id=mid_a, query="HTTP")
         assert len(pack2.records) > 0
+
+    def test_retrieve_on_stale_v1_case_db_does_not_migrate(self, tmp_path: Path) -> None:
+        """A stale v1 case workspace must not be silently migrated by retrieval."""
+        cases, _, locator, case_id, mid_a, _mid_b = _setup(tmp_path)
+        case_paths = cases.locator.case(case_id)
+        # Overwrite the (empty) v2 case workspace with a v1 database.
+        _create_v1_database(case_paths.database, case_id)
+
+        retriever = PeerMemoryRetriever(cases, locator)
+        pack = retriever.retrieve(case_id, active_memory_id=mid_a)
+
+        assert pack == PeerContextPack(peers=(), records=(), used_chars=0)
+        with sqlite3.connect(case_paths.database) as conn:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1

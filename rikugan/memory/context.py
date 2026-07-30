@@ -242,8 +242,28 @@ def build_retrieved_context_with_pack(
     except Exception:
         return "", None
 
-    if pack.total == 0:
-        return "", pack
+    section = build_section_from_pack(pack, budget=budget)
+    return section, pack
+
+
+def build_section_from_pack(
+    pack: RetrievalPack | None,
+    *,
+    budget: ContextBudget | None = None,
+) -> str:
+    """Render a pre-built :class:`RetrievalPack` into the Markdown section.
+
+    Returns ``""`` when *pack* is ``None`` or empty.  This is the
+    post-retrieve rendering half of :func:`build_retrieved_context_with_pack`,
+    extracted so the SQLite path (which already has a pack from
+    :func:`rikugan.memory.sqlite_retrieval.repository_to_retrieval_pack`)
+    and the JSONL path can share the same renderer without rerunning
+    retrieval.
+    """
+    if pack is None or pack.total == 0:
+        return ""
+
+    effective = budget or NORMAL_BUDGET
 
     parts = [
         "## Retrieved Knowledge",
@@ -282,9 +302,9 @@ def build_retrieved_context_with_pack(
     text = sanitize_knowledge_context(text)
 
     # Apply total char budget (rough — we don't tokenize).
-    if len(text) > budget.max_total_chars:
-        text = text[: budget.max_total_chars - 1].rstrip() + "…"
-    return text, pack
+    if len(text) > effective.max_total_chars:
+        text = text[: effective.max_total_chars - 1].rstrip() + "…"
+    return text
 
 
 def build_retrieval_metadata(pack: RetrievalPack | None) -> dict:
@@ -373,5 +393,6 @@ __all__ = [
     "build_retrieval_metadata",
     "build_retrieved_context",
     "build_retrieved_context_with_pack",
+    "build_section_from_pack",
     "sanitize_knowledge_context",
 ]

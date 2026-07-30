@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from .case_repository import CaseRepository
 from .case_schema import CaseRelationType
+from .sqlite_backend import SchemaMigrationRequired
 from .workspace import MemoryLocator
 from .workspace_store import WorkspaceStore
 
@@ -100,7 +101,12 @@ class PeerMemoryRetriever:
 
     def _find_eligible_peers(self, case_id: str, active_memory_id: str) -> list[PeerCandidate]:
         """Find peers eligible for retrieval based on relations."""
-        relations = self._cases.list_case_relations(case_id)
+        try:
+            relations = self._cases.list_case_relations(case_id)
+        except SchemaMigrationRequired:
+            # Reading a stale v1 case DB must not trigger migration; treat
+            # the workspace as having no eligible peers instead.
+            return []
         members = self._cases.list_members(case_id)
         member_names = {m.memory_id: m for m in members}
 
