@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from rikugan.agent.loop import AgentLoop
+from rikugan.agent.turn import TurnEventType
 from rikugan.core.config import RikuganConfig
 from rikugan.core.types import ToolCall
 from rikugan.memory.authority import MemoryAuthorityIssuer
@@ -108,3 +109,36 @@ class TestSaveMemoryCentralDispatch:
         assert second[-1].tool_result.startswith("Memory already exists: fact-")
         assert fact not in first[-1].tool_result
         assert fact not in second[-1].tool_result
+
+    def test_save_memory_emits_memory_saved_event(self, tmp_path: Path) -> None:
+        """A successful save_memory tool call emits a MEMORY_SAVED event.
+
+        Emitted on both `created` and `deduplicated` outcomes so the
+        knowledge panel can refresh after either path.
+        """
+        loop, _service = _make_loop_with_central_memory(tmp_path)
+
+        created_events = list(
+            loop._handle_save_memory_tool(
+                ToolCall(id="tc1", name="save_memory", arguments={"category": "protocol", "fact": "Uses HTTP"})
+            )
+        )
+        dedup_events = list(
+            loop._handle_save_memory_tool(
+                ToolCall(
+                    id="tc2",
+                    name="save_memory",
+                    arguments={"category": "protocol", "fact": "Uses HTTP"},
+                )
+            )
+        )
+
+        created_types = [e.type for e in created_events]
+        dedup_types = [e.type for e in dedup_events]
+        assert TurnEventType.MEMORY_SAVED in created_types
+        assert TurnEventType.MEMORY_SAVED in dedup_types
+
+        created_match = next(e for e in created_events if e.type == TurnEventType.MEMORY_SAVED)
+        dedup_match = next(e for e in dedup_events if e.type == TurnEventType.MEMORY_SAVED)
+        assert created_match.tool_call_id == "tc1"
+        assert dedup_match.tool_call_id == "tc2"

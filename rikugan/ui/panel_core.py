@@ -1818,6 +1818,7 @@ class RikuganPanelCore(QWidget):
         if event.type in (
             TurnEventType.RESEARCH_NOTE_SAVED,
             TurnEventType.EXPLORATION_FINDING,
+            TurnEventType.MEMORY_SAVED,
         ):
             self._on_knowledge_event_refresh(event.type.value)
         if event.usage:

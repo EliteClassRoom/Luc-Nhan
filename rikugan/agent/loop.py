@@ -2014,6 +2014,12 @@ class AgentLoop:
                     content += " (MEMORY.md projection pending)"
                 is_err = False
                 log_info(f"save_memory: [{category}] {fact[:80]}")
+                # Notify the UI that the knowledge store changed. Emitted
+                # on both ``created`` and ``deduplicated`` outcomes so the
+                # Knowledge panel refreshes regardless of duplicate
+                # detection. The UI pairs this with the originating tool
+                # call via ``tool_call_id``.
+                yield TurnEvent.memory_saved(tc.id)
             except Exception as e:
                 content = f"Error saving to central memory: {e}"
                 is_err = True
