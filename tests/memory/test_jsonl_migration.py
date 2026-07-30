@@ -6,13 +6,19 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from rikugan.memory.jsonl_migration import (
     jsonl_to_bundle_envelopes,
+    maybe_import_legacy_jsonl,
     write_envelopes_to_temp_bundle,
 )
 from rikugan.memory.paths import KnowledgePaths, derive_binary_id
 from rikugan.memory.raw_store import KnowledgeRawStore
+from rikugan.memory.repository import SQLiteKnowledgeRepository
 from rikugan.memory.schema import KnowledgeEntity, KnowledgeMemory, KnowledgeRelation
+from rikugan.memory.workspace import MemoryLocator, new_memory_id
+from rikugan.memory.workspace_store import WorkspaceStore
 
 
 def _make_paths(tmp_path: Path) -> KnowledgePaths:
@@ -114,3 +120,145 @@ def test_write_envelopes_to_temp_bundle_creates_valid_zip(tmp_path: Path) -> Non
         assert manifest["origin_memory_id"] == "mem-abc"
         assert any(n.startswith("records/") for n in names)
     bundle_path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Auto-import trigger (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def test_maybe_import_skips_when_marker_present(tmp_path: Path) -> None:
+    owner = new_memory_id()
+    paths = MemoryLocator(tmp_path).binary(owner)
+    store = WorkspaceStore.create(paths, owner_memory_id=owner)
+    store._conn.execute(
+        "INSERT INTO workspace_meta(key, value) VALUES('legacy_jsonl_imported', '2026-01-01T00:00:00Z')"
+    )
+    store._conn.commit()
+    jsonl_paths = _make_paths(tmp_path / "jsonl")
+    jsonl_paths.ensure()
+    # Add a record — it should NOT be imported because the marker exists.
+    raw = KnowledgeRawStore(jsonl_paths)
+    raw.upsert_memory(
+        KnowledgeMemory(
+            id="mem:x",
+            binary_id=jsonl_paths.binary_id,
+            type="general",
+            title="t",
+            content="c",
+        )
+    )
+    maybe_import_legacy_jsonl(store, owner, jsonl_paths)
+    repo = SQLiteKnowledgeRepository(store, owner_memory_id=owner)
+    assert repo.count_observations() == 0
+    assert len(repo.list_memories()) == 0
+    store.close()
+
+
+def test_maybe_import_imports_records_once(tmp_path: Path) -> None:
+    owner = new_memory_id()
+    workspace_paths = MemoryLocator(tmp_path / "ws").binary(owner)
+    store = WorkspaceStore.create(workspace_paths, owner_memory_id=owner)
+
+    jsonl_paths = _make_paths(tmp_path / "jsonl")
+    jsonl_paths.ensure()
+    raw = KnowledgeRawStore(jsonl_paths)
+    raw.upsert_memory(
+        KnowledgeMemory(
+            id="mem:function_purpose:0x401000:abc",
+            binary_id=jsonl_paths.binary_id,
+            type="function_purpose",
+            title="main",
+            content="main parses config",
+            entity_refs=["func:0x401000"],
+            tags=["parser"],
+        )
+    )
+
+    maybe_import_legacy_jsonl(store, owner, jsonl_paths)
+    repo = SQLiteKnowledgeRepository(store, owner_memory_id=owner)
+    memories = repo.list_memories()
+    assert len(memories) == 1
+    assert memories[0].content == "main parses config"
+
+    marker = store._conn.execute("SELECT value FROM workspace_meta WHERE key = 'legacy_jsonl_imported'").fetchone()
+    assert marker is not None
+    store.close()
+
+
+def test_maybe_import_does_not_delete_jsonl_files(tmp_path: Path) -> None:
+    owner = new_memory_id()
+    workspace_paths = MemoryLocator(tmp_path / "ws").binary(owner)
+    store = WorkspaceStore.create(workspace_paths, owner_memory_id=owner)
+
+    jsonl_paths = _make_paths(tmp_path / "jsonl")
+    jsonl_paths.ensure()
+    raw = KnowledgeRawStore(jsonl_paths)
+    raw.upsert_memory(
+        KnowledgeMemory(
+            id="mem:1",
+            binary_id=jsonl_paths.binary_id,
+            type="general",
+            title="t",
+            content="c",
+        )
+    )
+
+    maybe_import_legacy_jsonl(store, owner, jsonl_paths)
+    assert Path(jsonl_paths.memories_path).exists()
+    store.close()
+
+
+def test_maybe_import_idempotent_on_second_call(tmp_path: Path) -> None:
+    owner = new_memory_id()
+    workspace_paths = MemoryLocator(tmp_path / "ws").binary(owner)
+    store = WorkspaceStore.create(workspace_paths, owner_memory_id=owner)
+
+    jsonl_paths = _make_paths(tmp_path / "jsonl")
+    jsonl_paths.ensure()
+    raw = KnowledgeRawStore(jsonl_paths)
+    raw.upsert_memory(
+        KnowledgeMemory(
+            id="mem:1",
+            binary_id=jsonl_paths.binary_id,
+            type="general",
+            title="t",
+            content="c",
+        )
+    )
+
+    maybe_import_legacy_jsonl(store, owner, jsonl_paths)
+    maybe_import_legacy_jsonl(store, owner, jsonl_paths)
+    repo = SQLiteKnowledgeRepository(store, owner_memory_id=owner)
+    assert len(repo.list_memories()) == 1
+    store.close()
+
+
+def test_maybe_import_failed_leaves_marker_unset(tmp_path: Path, monkeypatch) -> None:
+    owner = new_memory_id()
+    workspace_paths = MemoryLocator(tmp_path / "ws").binary(owner)
+    store = WorkspaceStore.create(workspace_paths, owner_memory_id=owner)
+
+    jsonl_paths = _make_paths(tmp_path / "jsonl")
+    jsonl_paths.ensure()
+    raw = KnowledgeRawStore(jsonl_paths)
+    raw.upsert_memory(
+        KnowledgeMemory(
+            id="mem:1",
+            binary_id=jsonl_paths.binary_id,
+            type="general",
+            title="t",
+            content="c",
+        )
+    )
+
+    def boom(*a, **k):
+        raise RuntimeError("import crash")
+
+    monkeypatch.setattr("rikugan.memory.jsonl_migration.import_workspace_bundle", boom)
+
+    with pytest.raises(RuntimeError, match="import crash"):
+        maybe_import_legacy_jsonl(store, owner, jsonl_paths)
+    marker = store._conn.execute("SELECT value FROM workspace_meta WHERE key = 'legacy_jsonl_imported'").fetchone()
+    assert marker is None
+    store.close()

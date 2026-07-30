@@ -16,9 +16,58 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .bundle_import import import_workspace_bundle
 from .bundle_schema import MEMORY_BUNDLE_SCHEMA_VERSION, ManifestFile
 from .paths import KnowledgePaths
 from .raw_store import KnowledgeRawStore
+from .repository import SQLiteKnowledgeRepository
+from .workspace_store import WorkspaceStore
+
+_LEGACY_JSONL_IMPORTED_KEY = "legacy_jsonl_imported"
+
+
+def maybe_import_legacy_jsonl(
+    workspace_store: WorkspaceStore,
+    owner_memory_id: str,
+    jsonl_paths: KnowledgePaths,
+) -> None:
+    """Import JSONL records into SQLite once per workspace.
+
+    Idempotent via the ``legacy_jsonl_imported`` marker in ``workspace_meta``.
+    JSONL files are never deleted. If the JSONL store has no records the
+    marker is still written so the next open is a no-op. Any error
+    raised by ``import_workspace_bundle`` propagates and leaves the
+    marker unset, so the next open retries the migration.
+    """
+    row = workspace_store._conn.execute(
+        "SELECT value FROM workspace_meta WHERE key = ?",
+        (_LEGACY_JSONL_IMPORTED_KEY,),
+    ).fetchone()
+    if row is not None:
+        return
+
+    raw_store = KnowledgeRawStore(jsonl_paths)
+    envelopes = jsonl_to_bundle_envelopes(raw_store, jsonl_paths)
+    if not envelopes:
+        workspace_store._conn.execute(
+            "INSERT OR REPLACE INTO workspace_meta(key, value) VALUES(?, ?)",
+            (_LEGACY_JSONL_IMPORTED_KEY, datetime.now(UTC).isoformat()),
+        )
+        workspace_store._conn.commit()
+        return
+
+    bundle_path = write_envelopes_to_temp_bundle(envelopes, owner_memory_id)
+    try:
+        repo = SQLiteKnowledgeRepository(workspace_store, owner_memory_id=owner_memory_id)
+        import_workspace_bundle(bundle_path, repo)
+    finally:
+        bundle_path.unlink(missing_ok=True)
+
+    workspace_store._conn.execute(
+        "INSERT OR REPLACE INTO workspace_meta(key, value) VALUES(?, ?)",
+        (_LEGACY_JSONL_IMPORTED_KEY, datetime.now(UTC).isoformat()),
+    )
+    workspace_store._conn.commit()
 
 
 def jsonl_to_bundle_envelopes(

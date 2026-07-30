@@ -626,6 +626,19 @@ class SessionControllerBase:
                 )
             else:
                 store = WorkspaceStore.create(paths, owner_memory_id=result.binding.memory_id)
+
+            # Auto-import legacy JSONL records once per workspace. Best-effort:
+            # an exception here is logged but never blocks memory wiring.
+            try:
+                from ..memory.jsonl_migration import maybe_import_legacy_jsonl
+                from ..memory.paths import knowledge_paths
+
+                if session.idb_path:
+                    jsonl_paths = knowledge_paths(session.idb_path, session.db_instance_id or "")
+                    maybe_import_legacy_jsonl(store, result.binding.memory_id, jsonl_paths)
+            except Exception as e:
+                log_error(f"legacy JSONL import failed: {e}")
+
             repo = SQLiteKnowledgeRepository(store, owner_memory_id=result.binding.memory_id)
             projector = MemoryProjector()
             issuer = MemoryAuthorityIssuer()
