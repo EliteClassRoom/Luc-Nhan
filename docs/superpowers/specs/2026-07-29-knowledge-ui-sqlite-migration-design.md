@@ -131,6 +131,8 @@ def save_exploration_finding(
 
 Entities and relations gain symmetric extensions on `WorkspaceStore.put_entity` / `put_relation` (optional keyword-only `tags` and `evidence` respectively), with matching `EntityRecord.tags` / `RelationRecord.evidence` fields populated on read.
 
+The entities table already stores `tags` inside the `metadata` JSON blob (see `repository.py:104-108`). The new `tags` column is the canonical source going forward. The repository layer stops writing `tags` into `metadata` when the schema is v3, and `EntityRecord.tags` reads from the dedicated column. `metadata.tags` is preserved on existing rows for backward compatibility but no longer written; a later cleanup tranche can drop it once no consumer reads it. The dual location is documented as a transitional state, not a permanent design.
+
 ## 7. Legacy JSONL import
 
 ### 7.1 Adapter
@@ -187,15 +189,15 @@ The adapter does not delete JSONL files. They remain on disk as a fallback if a 
 
 ## 8. Knowledge panel read path
 
-`SessionControllerBase._refresh_knowledge_panel` prefers SQLite when `self._ctrl.memory_service` is not `None`:
+`SessionControllerBase._refresh_knowledge_panel` prefers SQLite when the active workspace's `BinaryMemoryService` is available. Because `SessionControllerBase` currently sets `loop.memory_service` directly (in `_wire_central_memory`) without exposing the service on the controller itself, this tranche adds a `memory_service` property (or equivalent accessor) on `SessionControllerBase` that returns the most recently wired `BinaryMemoryService` for the active tab, or `None` when identity resolution is ephemeral. The panel reads the property via `self._ctrl.memory_service`.
 
 - Read `service.repository.list_memories()`, `list_entities()`, `list_relations()`, and `count_observations()`.
-- Use `service.paths.notes` for the notes directory.
+- Use `service.paths.notes` (a `pathlib.Path`) for the notes directory. The existing `list_notes()` helper accepts `notes_dir: str`; this tranche updates the call to pass `str(service.paths.notes)`. The helper's signature is unchanged.
 - Call `panel.populate` and `panel.set_counts` exactly as today.
 
 When `memory_service` is `None`, the panel falls back to the existing `make_store` JSONL path. The fallback is the only production code path that continues to call `make_store` after this tranche.
 
-The Knowledge panel subscribes to a new event so it refreshes after a successful `save_memory` tool call. `AgentLoop._handle_save_memory_tool` emits the event when the save outcome is `created` (a new record) or `deduplicated` (a new observation landed). The event type is a new `TurnEventType.MEMORY_SAVED` constant. The existing 50 ms debounce in `_on_knowledge_event_refresh` coalesces bursts. Reusing `KNOWLEDGE_RETRIEVED` is rejected because retrieval is a read-side concept and conflating it with a write event would confuse the event stream semantics.
+The Knowledge panel subscribes to a new event so it refreshes after a successful `save_memory` tool call. This tranche adds a new `TurnEventType.MEMORY_SAVED = "memory_saved"` constant to the `TurnEventType` enum in `rikugan/agent/turn.py`. `AgentLoop._handle_save_memory_tool` emits a `TurnEvent` of that type when the save outcome is `created` (a new record) or `deduplicated` (a new observation landed). The existing 50 ms debounce in `_on_knowledge_event_refresh` coalesces bursts. The event-type check in `_on_event` (in `panel_core.py`) is extended to include `MEMORY_SAVED` alongside `EXPLORATION_FINDING` and the other existing triggers. Reusing `KNOWLEDGE_RETRIEVED` is rejected because retrieval is a read-side concept and conflating it with a write event would confuse the event stream semantics.
 
 ## 9. Retrieved knowledge section
 
@@ -216,8 +218,8 @@ def repository_to_retrieval_pack(
 
 The adapter reads repository records (already returned as `KnowledgeMemory` / `KnowledgeEntity` / `KnowledgeRelation` dataclasses) and feeds them into the existing ranker via a refactored entry point:
 
-- `retrieve.build_retrieval_pack_from_records(memories, entities, relations, notes, ...)` — accepts dataclasses, ranks, returns `RetrievalPack`.
-- `retrieve.build_retrieval_pack(store, paths, ...)` — thin wrapper that calls `store.list_*()` and delegates to the new entry point. Existing JSONL callers continue to work.
+- `retrieve.retrieve_from_records(memories, entities, relations, notes, query, *, max_memories, max_entities, max_relations, max_notes, expand_relations)` — accepts dataclasses, ranks, returns `RetrievalPack`. The ranking body (currently in `retrieve.retrieve` at `retrieve.py:168`) is extracted verbatim into this function.
+- `retrieve.retrieve(store, paths, query, ...)` — thin wrapper that calls `store.list_*()`, builds the record lists, and delegates to `retrieve_from_records`. Existing JSONL callers continue to work unchanged.
 
 When `memory_service` is `None`, the section falls back to the existing `make_store` JSONL path.
 
@@ -244,6 +246,8 @@ Implementation follows test-driven development. New modules require failing test
 - `NOT NULL` constraints reject malformed inserts.
 - `FactRecord`, `EntityRecord`, `RelationRecord` expose the new fields.
 - `put_fact`, `put_entity`, `put_relation`, `save_fact_if_semantically_absent` round-trip the new fields.
+- The repository layer reads `tags` from the dedicated column on v3, not from the `metadata` JSON blob.
+- New entity writes on v3 do not duplicate `tags` into `metadata`.
 
 ### 11.2 JSONL → bundle adapter
 
@@ -275,12 +279,16 @@ Implementation follows test-driven development. New modules require failing test
 - Panel reads SQLite when `memory_service` is wired.
 - Panel falls back to JSONL when `memory_service` is `None`.
 - A `save_memory` tool call surfaces in the panel after the new refresh event.
+- The new `SessionControllerBase.memory_service` accessor returns the wired service for the active tab.
+- The `list_notes` call receives `str(service.paths.notes)` (not a raw `Path`).
+- The panel refreshes when a `MEMORY_SAVED` event arrives.
 
 ### 11.6 Retrieved knowledge section
 
 - The SQLite adapter returns the same `RetrievalPack` the JSONL ranker returns for equivalent inputs.
 - The section uses SQLite when `memory_service` is wired.
 - The section falls back to JSONL otherwise.
+- `retrieve_from_records` produces identical output to `retrieve` for the same input records.
 
 ### 11.7 Integration
 
@@ -298,16 +306,17 @@ Implementation follows test-driven development. New modules require failing test
 
 ## 12. Rollout order
 
-1. Add schema v3 migration, extend record dataclasses, extend store write/read methods.
+1. Add schema v3 migration, extend record dataclasses, extend store write/read methods. Stop writing `tags` into `entities.metadata` on v3; add the dedicated column as canonical.
 2. Add `SQLiteKnowledgeRepository.save_exploration_finding` and `BinaryMemoryService.save_exploration_finding`.
 3. Add the JSONL → bundle adapter and temp bundle writer.
 4. Add the auto-import trigger and wire it into `_wire_central_memory`.
 5. Refactor `ingest_exploration_finding` and `ingest_research_note` for dual-write, behind the module flag.
-6. Refactor the ranker into `build_retrieval_pack_from_records` and add the SQLite retrieval adapter.
-7. Migrate `_refresh_knowledge_panel` to prefer SQLite.
-8. Migrate `_build_retrieved_knowledge_section` to prefer SQLite.
-9. Emit the panel-refresh event from `_handle_save_memory_tool` on `created` and `deduplicated` outcomes.
-10. Run focused tests, dual-root full suite, and the regression suite.
+6. Refactor the ranker into `retrieve_from_records` and add the SQLite retrieval adapter.
+7. Add the `memory_service` accessor on `SessionControllerBase`.
+8. Migrate `_refresh_knowledge_panel` to prefer SQLite; thread `str(service.paths.notes)` into `list_notes`.
+9. Migrate `_build_retrieved_knowledge_section` to prefer SQLite.
+10. Add `TurnEventType.MEMORY_SAVED`, emit it from `_handle_save_memory_tool`, and extend `_on_event`'s refresh trigger list.
+11. Run focused tests, dual-root full suite, and the regression suite.
 
 ## 13. Success criteria
 
