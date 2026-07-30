@@ -162,3 +162,20 @@ class TestSaveMemoryFact:
         repo.save_memory_fact("algorithm", "Uses RC4", "save_memory")
         repo.save_memory_fact("algorithm", "Uses RC4", "save_memory")
         assert repo.count_observations() == 2
+
+
+def test_save_exploration_finding_persists_entity_refs_and_tags(tmp_path: Path) -> None:
+    repo, _ = _create_repo(tmp_path)
+    saved = repo.save_exploration_finding(
+        "function_purpose",
+        "main parses config",
+        "exploration",
+        entity_refs=["func:0x401000"],
+        tags=["parser", "config"],
+    )
+    assert saved.outcome == "created"
+    stored = repo._store.get_fact(saved.record.id)
+    assert stored is not None
+    assert stored.entity_refs == ["func:0x401000"]
+    assert stored.tags == ["parser", "config"]
+    assert stored.semantic_hash == semantic_fact_hash("function_purpose", "main parses config")

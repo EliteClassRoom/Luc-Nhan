@@ -201,6 +201,77 @@ class BinaryMemoryService:
             source="approved_plan",
         )
 
+    def save_exploration_finding(
+        self,
+        authority: MemoryWriteAuthority | None,
+        *,
+        category: str,
+        title: str,
+        content: str,
+        confidence: float,
+        entity_refs: list[str],
+        tags: list[str],
+        source: str,
+    ) -> SaveMemoryResult:
+        """Save an exploration finding with graph metadata and project it.
+
+        Mirrors :meth:`save_fact` but forwards *entity_refs* and *tags* to
+        :meth:`SQLiteKnowledgeRepository.save_exploration_finding` so the
+        graph metadata columns on the underlying ``facts`` row are
+        populated on first write. *title* is preserved verbatim so the
+        caller can choose a human-readable label distinct from the
+        canonical *category*.
+
+        Verifies the fact was committed before returning and surfaces
+        projection failures via :attr:`SaveMemoryResult.projection_dirty`
+        + :attr:`SaveMemoryResult.warning` without rolling back the
+        SQLite write.
+        """
+        self.require_write_authority(authority)
+        normalized_category = _sanitize_category(category)
+        normalized_content = _sanitize_fact(content)
+        if not normalized_category:
+            raise ValueError("category must not be empty after sanitization")
+        if not normalized_content:
+            raise ValueError("content must not be empty after sanitization")
+
+        saved = self.repository.save_exploration_finding(
+            normalized_category,
+            normalized_content,
+            source,
+            entity_refs=list(entity_refs),
+            tags=list(tags),
+            title=title,
+            confidence=confidence,
+        )
+        record = saved.record
+        verify = self.repository._store.get_fact(record.id)
+        if verify is None:
+            from ..core.logging import log_error as _le
+
+            _le(f"save_exploration_finding BUG: fact {record.id} not found after save!")
+        try:
+            self.projector.project(self.paths, self.store)
+            return SaveMemoryResult(
+                record_id=record.id,
+                revision=verify.revision if verify is not None else getattr(record, "revision", 1),
+                outcome=saved.outcome,
+                projection_dirty=False,
+                warning="",
+            )
+        except Exception as exc:
+            from ..core.logging import log_error as _le
+
+            _le(f"MEMORY.md projection failed: {exc!r}")
+            self.store.mark_projection_dirty()
+            return SaveMemoryResult(
+                record_id=record.id,
+                revision=verify.revision if verify is not None else getattr(record, "revision", 1),
+                outcome=saved.outcome,
+                projection_dirty=True,
+                warning=str(exc),
+            )
+
 
 # ---------------------------------------------------------------------------
 # Sanitization helpers
