@@ -19,8 +19,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from rikugan.memory import ingest
 from rikugan.memory.paths import KnowledgePaths, derive_binary_id
 from rikugan.memory.raw_store import KnowledgeRawStore
