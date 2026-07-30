@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from .notes import list_notes
 from .paths import (
@@ -44,6 +45,18 @@ _MIN_ENTITY_SCORE = 1.0
 _MIN_RELATION_SCORE = 1.0
 
 
+class NoteExcerpt(NamedTuple):
+    """Minimal (title, body) carrier for the ranker's note stage.
+
+    Avoids leaking the heavier :class:`ParsedNote` (frontmatter, sections,
+    wiki links) through the ranker boundary. ``body`` is the full markdown
+    body; truncation to the prompt budget happens at storage time.
+    """
+
+    title: str
+    body: str
+
+
 @dataclass
 class RetrievalQuery:
     """Holds all the inputs the agent hands to the retriever."""
@@ -63,7 +76,7 @@ class RetrievalPack:
     memories: list[KnowledgeMemory] = field(default_factory=list)
     entities: list[KnowledgeEntity] = field(default_factory=list)
     relations: list[KnowledgeRelation] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)  # raw markdown excerpts
+    notes: list[str] = field(default_factory=list)  # markdown excerpts
     counts: dict[str, int] = field(default_factory=dict)
     query_terms: list[str] = field(default_factory=list)
 
@@ -169,7 +182,7 @@ def retrieve_from_records(
     memories: list[KnowledgeMemory],
     entities: list[KnowledgeEntity],
     relations: list[KnowledgeRelation],
-    notes: list[str],
+    notes: list[NoteExcerpt],
     query: RetrievalQuery,
     *,
     max_memories: int = 12,
@@ -182,8 +195,8 @@ def retrieve_from_records(
 
     Pure ranking body extracted from :func:`retrieve` so both the JSONL
     store and the SQLite repository can feed it the same dataclass
-    lists. Notes are passed in as already-extracted markdown excerpts
-    (filesystem parsing is the caller's responsibility).
+    lists. Notes are passed in as ``(title, body)`` excerpts; filesystem
+    parsing is the caller's responsibility.
     """
     pack = RetrievalPack()
 
@@ -256,14 +269,21 @@ def retrieve_from_records(
     rel_scored.sort(key=lambda x: x[0], reverse=True)
     pack.relations = [r for _, r in rel_scored[:max_relations]]
 
-    # --- Notes (raw excerpts supplied by caller) ---
-    if pack.memories and notes:
+    # --- Notes (parse on-demand for selected memory titles) ---
+    if pack.memories:
+        # Select notes whose title matches a memory title (cheap proxy).
+        memory_titles = {m.title.lower() for m in pack.memories}
         scored_notes: list[tuple[int, str]] = []
-        for body in notes:
-            body_l = body.lower()
-            hits = sum(1 for t in terms if t in body_l)
-            if hits:
-                scored_notes.append((hits, body))
+        for pn in notes:
+            title_l = pn.title.lower()
+            body_l = pn.body.lower()
+            if pn.title and title_l in memory_titles:
+                scored_notes.append((10, _note_excerpt(pn)))
+            else:
+                # Generic keyword hits in title/body
+                hits = sum(1 for t in terms if t in title_l or t in body_l)
+                if hits:
+                    scored_notes.append((hits, _note_excerpt(pn)))
         scored_notes.sort(key=lambda x: x[0], reverse=True)
         pack.notes = [body for _, body in scored_notes[:max_notes]]
 
@@ -295,11 +315,13 @@ def retrieve(
     memories = store.list_memories()
     entities = store.list_entities()
     relations = store.list_relations()
-    try:
-        parsed_notes = list_notes(paths.notes_dir)
-    except Exception:
-        parsed_notes = []
-    notes = [_note_excerpt(pn, 600) for pn in parsed_notes[: max_notes * 3]]
+    notes: list[NoteExcerpt] = []
+    if paths.notes_dir:
+        try:
+            parsed_notes = list_notes(paths.notes_dir)
+        except Exception:
+            parsed_notes = []
+        notes = [NoteExcerpt(title=pn.title or "", body=pn.body or "") for pn in parsed_notes]
     return retrieve_from_records(
         memories,
         entities,
@@ -364,6 +386,7 @@ def search_all(
 
 
 __all__ = [
+    "NoteExcerpt",
     "RetrievalPack",
     "RetrievalQuery",
     "retrieve",

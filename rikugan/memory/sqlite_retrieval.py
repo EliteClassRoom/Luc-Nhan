@@ -13,7 +13,12 @@ from __future__ import annotations
 
 from .context import NORMAL_BUDGET, ContextBudget
 from .repository import SQLiteKnowledgeRepository
-from .retrieve import RetrievalPack, RetrievalQuery, retrieve_from_records
+from .retrieve import (
+    NoteExcerpt,
+    RetrievalPack,
+    RetrievalQuery,
+    retrieve_from_records,
+)
 
 
 def repository_to_retrieval_pack(
@@ -29,7 +34,7 @@ def repository_to_retrieval_pack(
     memories = repo.list_memories()
     entities = repo.list_entities()
     relations = repo.list_relations()
-    notes: list[str] = []  # Notes remain filesystem-backed; empty here.
+    notes: list[NoteExcerpt] = []  # Notes remain filesystem-backed; empty here.
 
     effective = budget or NORMAL_BUDGET
     query = RetrievalQuery(
