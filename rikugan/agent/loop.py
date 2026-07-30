@@ -1885,6 +1885,7 @@ class AgentLoop:
                     relevance=relevance,
                     evidence=evidence,
                     function_name=func_name,
+                    memory_service=self.memory_service,
                 )
         except Exception as e:
             log_debug(f"knowledge ingest (exploration_report) failed: {e}")
@@ -2049,6 +2050,7 @@ class AgentLoop:
                     content=note.content,
                     related=note.related_notes,
                     review_passed=note.review_passed,
+                    memory_service=self.memory_service,
                 )
         except Exception as e:
             log_debug(f"knowledge ingest (research_note) failed: {e}")
