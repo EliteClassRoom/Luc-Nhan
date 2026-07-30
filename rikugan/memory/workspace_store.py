@@ -74,6 +74,8 @@ class FactRecord:
     confidence: float
     revision: int
     created_at: float
+    entity_refs: list[str]
+    tags: list[str]
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,7 @@ class EntityRecord:
     name: str
     metadata: dict[str, Any]
     revision: int
+    tags: list[str]
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,7 @@ class RelationRecord:
     object_id: str
     confidence: float
     revision: int
+    evidence: str
 
 
 @dataclass(frozen=True)
@@ -267,7 +271,17 @@ def _migrate_v2(conn: Any) -> None:
         raise RuntimeError("workspace v2 migration failed foreign key check")
 
 
-_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2}
+def _migrate_v3(conn: Any) -> None:
+    """Workspace schema v3: add graph metadata columns."""
+    conn.execute("ALTER TABLE facts ADD COLUMN entity_refs TEXT NOT NULL DEFAULT '[]'")
+    conn.execute("ALTER TABLE facts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+    conn.execute("ALTER TABLE entities ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+    conn.execute("ALTER TABLE relations ADD COLUMN evidence TEXT NOT NULL DEFAULT ''")
+    if conn.execute("PRAGMA foreign_key_check").fetchall():
+        raise RuntimeError("workspace v3 migration failed foreign key check")
+
+
+_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3}
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +376,8 @@ class WorkspaceStore:
         confidence: float,
         *,
         semantic_hash: str | None = None,
+        entity_refs: list[str] | None = None,
+        tags: list[str] | None = None,
         expected_revision: int,
     ) -> FactRecord:
         """Insert or update a fact with optimistic revision control.
@@ -379,6 +395,11 @@ class WorkspaceStore:
 
         current_semantic_hash = semantic_hash or semantic_fact_hash(fact_type, content)
         _validate_semantic_hash_shape(current_semantic_hash)
+
+        entity_refs_list = list(entity_refs) if entity_refs is not None else []
+        tags_list = list(tags) if tags is not None else []
+        entity_refs_json = json.dumps(entity_refs_list, ensure_ascii=False, sort_keys=True)
+        tags_json = json.dumps(tags_list, ensure_ascii=False, sort_keys=True)
 
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         now = time.time()
@@ -398,15 +419,34 @@ class WorkspaceStore:
 
             if current == 0:
                 self._conn.execute(
-                    "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, current_revision, created_at)"
-                    " VALUES(?, ?, ?, ?, ?, ?)",
-                    (fact_id, fact_type, title, current_semantic_hash, revision, now),
+                    "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, entity_refs, tags,"
+                    " current_revision, created_at)"
+                    " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        fact_id,
+                        fact_type,
+                        title,
+                        current_semantic_hash,
+                        entity_refs_json,
+                        tags_json,
+                        revision,
+                        now,
+                    ),
                 )
             else:
                 self._conn.execute(
-                    "UPDATE facts SET fact_type = ?, title = ?, semantic_hash = ?, current_revision = ?"
+                    "UPDATE facts SET fact_type = ?, title = ?, semantic_hash = ?,"
+                    " entity_refs = ?, tags = ?, current_revision = ?"
                     " WHERE fact_id = ?",
-                    (fact_type, title, current_semantic_hash, revision, fact_id),
+                    (
+                        fact_type,
+                        title,
+                        current_semantic_hash,
+                        entity_refs_json,
+                        tags_json,
+                        revision,
+                        fact_id,
+                    ),
                 )
 
             self._conn.execute(
@@ -428,6 +468,8 @@ class WorkspaceStore:
             confidence=confidence,
             revision=revision,
             created_at=now,
+            entity_refs=entity_refs_list,
+            tags=tags_list,
         )
 
     def get_fact(self, fact_id: str) -> FactRecord | None:
@@ -435,6 +477,7 @@ class WorkspaceStore:
         row = self._conn.execute(
             """
             SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
+                   f.entity_refs, f.tags,
                    f.current_revision, f.created_at,
                    r.content, r.confidence
             FROM facts f
@@ -454,6 +497,8 @@ class WorkspaceStore:
             confidence=row["confidence"],
             revision=row["current_revision"],
             created_at=row["created_at"],
+            entity_refs=json.loads(row["entity_refs"]),
+            tags=json.loads(row["tags"]),
         )
 
     def list_facts(self) -> list[FactRecord]:
@@ -461,6 +506,7 @@ class WorkspaceStore:
         rows = self._conn.execute(
             """
             SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
+                   f.entity_refs, f.tags,
                    f.current_revision, f.created_at,
                    r.content, r.confidence
             FROM facts f
@@ -478,6 +524,8 @@ class WorkspaceStore:
                 confidence=row["confidence"],
                 revision=row["current_revision"],
                 created_at=row["created_at"],
+                entity_refs=json.loads(row["entity_refs"]),
+                tags=json.loads(row["tags"]),
             )
             for row in rows
         ]
@@ -494,6 +542,8 @@ class WorkspaceStore:
         observation_id: str,
         observation_type: str,
         observation_payload: str,
+        entity_refs: list[str] | None = None,
+        tags: list[str] | None = None,
     ) -> tuple[FactRecord, FactSaveOutcome]:
         """Atomically dedup + insert + observation append under one transaction.
 
@@ -515,6 +565,11 @@ class WorkspaceStore:
         _validate_content(content)
         _validate_confidence(confidence)
         _validate_semantic_hash_shape(semantic_hash)
+
+        entity_refs_list = list(entity_refs) if entity_refs is not None else []
+        tags_list = list(tags) if tags is not None else []
+        entity_refs_json = json.dumps(entity_refs_list, ensure_ascii=False, sort_keys=True)
+        tags_json = json.dumps(tags_list, ensure_ascii=False, sort_keys=True)
 
         begin_immediate_with_retry(self._conn)
         try:
@@ -544,9 +599,18 @@ class WorkspaceStore:
                 # do not call put_fact(), which starts its own transaction.
                 now = time.time()
                 self._conn.execute(
-                    "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, current_revision, created_at)"
-                    " VALUES(?, ?, ?, ?, 1, ?)",
-                    (fact_id, fact_type, title, semantic_hash, now),
+                    "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, entity_refs, tags,"
+                    " current_revision, created_at)"
+                    " VALUES(?, ?, ?, ?, ?, ?, 1, ?)",
+                    (
+                        fact_id,
+                        fact_type,
+                        title,
+                        semantic_hash,
+                        entity_refs_json,
+                        tags_json,
+                        now,
+                    ),
                 )
                 self._conn.execute(
                     "INSERT INTO fact_revisions(fact_id, revision, content, content_hash, confidence, created_at)"
@@ -596,10 +660,14 @@ class WorkspaceStore:
         entity_type: str,
         name: str,
         metadata: dict[str, Any] | None = None,
+        *,
+        tags: list[str] | None = None,
     ) -> EntityRecord:
         """Insert or update an entity."""
         validate_record_id("entity", entity_id)
         meta_json = json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True)
+        tags_list = list(tags) if tags is not None else []
+        tags_json = json.dumps(tags_list, ensure_ascii=False, sort_keys=True)
         now = time.time()
 
         begin_immediate_with_retry(self._conn)
@@ -612,15 +680,16 @@ class WorkspaceStore:
 
             if row is None:
                 self._conn.execute(
-                    "INSERT INTO entities(entity_id, entity_type, name, metadata, current_revision, created_at)"
-                    " VALUES(?, ?, ?, ?, ?, ?)",
-                    (entity_id, entity_type, name, meta_json, revision, now),
+                    "INSERT INTO entities(entity_id, entity_type, name, metadata, tags,"
+                    " current_revision, created_at)"
+                    " VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (entity_id, entity_type, name, meta_json, tags_json, revision, now),
                 )
             else:
                 self._conn.execute(
-                    "UPDATE entities SET entity_type = ?, name = ?, metadata = ?, current_revision = ?"
-                    " WHERE entity_id = ?",
-                    (entity_type, name, meta_json, revision, entity_id),
+                    "UPDATE entities SET entity_type = ?, name = ?, metadata = ?, tags = ?,"
+                    " current_revision = ? WHERE entity_id = ?",
+                    (entity_type, name, meta_json, tags_json, revision, entity_id),
                 )
             self._conn.commit()
         except Exception:
@@ -633,6 +702,7 @@ class WorkspaceStore:
             name=name,
             metadata=metadata or {},
             revision=revision,
+            tags=tags_list,
         )
 
     def get_entity(self, entity_id: str) -> EntityRecord | None:
@@ -649,6 +719,7 @@ class WorkspaceStore:
             name=row["name"],
             metadata=json.loads(row["metadata"]),
             revision=row["current_revision"],
+            tags=json.loads(row["tags"]),
         )
 
     # ------------------------------------------------------------------
@@ -662,11 +733,15 @@ class WorkspaceStore:
         predicate: str,
         object_id: str,
         confidence: float,
+        *,
+        evidence: str = "",
     ) -> RelationRecord:
         """Insert or update a relation between two entities."""
         validate_record_id("relation", relation_id)
         if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
             raise ValueError("confidence must be finite and within [0, 1]")
+        if not isinstance(evidence, str):
+            raise ValueError("evidence must be a string")
         now = time.time()
 
         begin_immediate_with_retry(self._conn)
@@ -679,15 +754,33 @@ class WorkspaceStore:
 
             if row is None:
                 self._conn.execute(
-                    "INSERT INTO relations(relation_id, subject_id, predicate, object_id, confidence, current_revision, created_at)"
-                    " VALUES(?, ?, ?, ?, ?, ?, ?)",
-                    (relation_id, subject_id, predicate, object_id, confidence, revision, now),
+                    "INSERT INTO relations(relation_id, subject_id, predicate, object_id, confidence,"
+                    " evidence, current_revision, created_at)"
+                    " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        relation_id,
+                        subject_id,
+                        predicate,
+                        object_id,
+                        confidence,
+                        evidence,
+                        revision,
+                        now,
+                    ),
                 )
             else:
                 self._conn.execute(
-                    "UPDATE relations SET subject_id = ?, predicate = ?, object_id = ?, confidence = ?, current_revision = ?"
-                    " WHERE relation_id = ?",
-                    (subject_id, predicate, object_id, confidence, revision, relation_id),
+                    "UPDATE relations SET subject_id = ?, predicate = ?, object_id = ?, confidence = ?,"
+                    " evidence = ?, current_revision = ? WHERE relation_id = ?",
+                    (
+                        subject_id,
+                        predicate,
+                        object_id,
+                        confidence,
+                        evidence,
+                        revision,
+                        relation_id,
+                    ),
                 )
             self._conn.commit()
         except Exception:
@@ -701,6 +794,7 @@ class WorkspaceStore:
             object_id=object_id,
             confidence=confidence,
             revision=revision,
+            evidence=evidence,
         )
 
     def list_relations(self) -> list[RelationRecord]:
@@ -714,6 +808,7 @@ class WorkspaceStore:
                 object_id=row["object_id"],
                 confidence=row["confidence"],
                 revision=row["current_revision"],
+                evidence=row["evidence"],
             )
             for row in rows
         ]

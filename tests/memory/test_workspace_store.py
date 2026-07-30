@@ -112,6 +112,35 @@ class TestListFacts:
         assert store.list_facts()[0].semantic_hash == second.semantic_hash
         store.close()
 
+    def test_put_fact_with_entity_refs_and_tags_roundtrip(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        fid = new_record_id("fact")
+        store.put_fact(
+            fid,
+            "algorithm",
+            "RC4",
+            "Uses RC4",
+            0.8,
+            expected_revision=0,
+            entity_refs=["func:0x401000", "global:0x409000"],
+            tags=["crypto", "c2"],
+        )
+        fetched = store.get_fact(fid)
+        assert fetched is not None
+        assert fetched.entity_refs == ["func:0x401000", "global:0x409000"]
+        assert fetched.tags == ["crypto", "c2"]
+        store.close()
+
+    def test_put_fact_without_entity_refs_defaults_empty(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        fid = new_record_id("fact")
+        store.put_fact(fid, "algorithm", "RC4", "Uses RC4", 0.8, expected_revision=0)
+        fetched = store.get_fact(fid)
+        assert fetched is not None
+        assert fetched.entity_refs == []
+        assert fetched.tags == []
+        store.close()
+
 
 class TestEntityAndRelation:
     def test_put_and_get_entity(self, tmp_path: Path) -> None:
@@ -140,6 +169,41 @@ class TestEntityAndRelation:
         assert relations[0].predicate == "calls"
         assert relations[0].subject_id == e1
         assert relations[0].object_id == e2
+
+    def test_put_entity_with_tags_roundtrip(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        eid = new_record_id("entity")
+        store.put_entity(
+            eid,
+            "function",
+            "main",
+            metadata={"display_name": "main", "address": "0x401000"},
+            tags=["entry", "parser"],
+        )
+        fetched = store.get_entity(eid)
+        assert fetched is not None
+        assert fetched.tags == ["entry", "parser"]
+        store.close()
+
+    def test_put_relation_with_evidence_roundtrip(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        sid = new_record_id("entity")
+        oid = new_record_id("entity")
+        store.put_entity(sid, "function", "decrypt", {})
+        store.put_entity(oid, "function", "main", {})
+        rid = new_record_id("relation")
+        store.put_relation(
+            rid,
+            sid,
+            "calls",
+            oid,
+            0.9,
+            evidence="xref at 0x401020",
+        )
+        rels = store.list_relations()
+        assert len(rels) == 1
+        assert rels[0].evidence == "xref at 0x401020"
+        store.close()
 
 
 class TestObservation:
