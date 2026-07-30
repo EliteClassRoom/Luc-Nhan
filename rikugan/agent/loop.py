@@ -603,65 +603,92 @@ class AgentLoop:
         try:
             if not getattr(self.config, "knowledge_enabled", True):
                 return ""
-            from ..memory.context import (
-                RetrievalQuery,
-                budget_from_config,
-                build_retrieval_metadata,
-                build_retrieved_context_with_pack,
-            )
-            from ..memory.ingest import make_store
-
-            store, paths = make_store(self.session.idb_path)
-            if store is None:
-                return ""
 
             active_mode = self.session.metadata.get("active_mode", "normal") or "normal"
             active_goal = self.session.metadata.get(_GOAL_METADATA_KEY, "")
 
-            func_name = ""
-            if current_function:
-                # Try to extract a name like "func_name @ 0x401000" — the
-                # second line of ``get_current_function`` output is the
-                # name when present.
-                for line in (current_function or "").splitlines():
-                    line = line.strip()
-                    if not line or line.lower().startswith("address") or line.lower().startswith("function:"):
-                        continue
-                    func_name = line
-                    break
+            # Prefer SQLite when the central memory service is wired.
+            if self.memory_service is not None:
+                from ..memory.sqlite_retrieval import repository_to_retrieval_pack
 
-            query = RetrievalQuery(
-                text=" ".join(filter(None, [current_address or "", current_function or "", func_name, active_goal])),
-                address=current_address or "",
-                function_name=func_name,
-                active_goal=active_goal,
-                active_mode=active_mode,
-            )
+                pack = repository_to_retrieval_pack(
+                    self.memory_service.repository,
+                    current_address=current_address,
+                    current_function=current_function,
+                    active_mode=active_mode,
+                    active_goal=active_goal,
+                    budget=None,
+                )
+            else:
+                # Fallback: JSONL store via the legacy ingest/retrieve path.
+                from ..memory.context import (
+                    RetrievalQuery,
+                    budget_from_config,
+                )
+                from ..memory.ingest import make_store
+                from ..memory.retrieve import retrieve as jsonl_retrieve
 
-            # Build the section AND the underlying pack in a single
-            # retrieve() call.  ``budget_from_config`` honors
-            # knowledge_max_context_items / knowledge_max_context_chars
-            # so user-set caps actually take effect.
-            budget = budget_from_config(self.config, active_mode=active_mode)
-            section, pack = build_retrieved_context_with_pack(
-                store,
-                paths,
-                query=query,
-                budget=budget,
-                active_mode=active_mode,
-            )
-            if section and pack is not None:
-                # Emit a TurnEvent so the UI can display a compact
-                # retrieved-knowledge indicator when configured.  Reuse
-                # the same pack we just built — do NOT re-run retrieve.
-                try:
-                    meta = build_retrieval_metadata(pack)
-                    self.session.metadata["last_knowledge_retrieval"] = meta
-                except Exception:
-                    pass
+                store, paths = make_store(self.session.idb_path)
+                if store is None or paths is None:
+                    return ""
+
+                func_name = ""
+                if current_function:
+                    # Try to extract a name like "func_name @ 0x401000" —
+                    # the second line of ``get_current_function`` output
+                    # is the name when present.
+                    for line in (current_function or "").splitlines():
+                        line = line.strip()
+                        if not line or line.lower().startswith("address") or line.lower().startswith("function:"):
+                            continue
+                        func_name = line
+                        break
+
+                query = RetrievalQuery(
+                    text=" ".join(
+                        filter(
+                            None,
+                            [
+                                current_address or "",
+                                current_function or "",
+                                func_name,
+                                active_goal,
+                            ],
+                        )
+                    ),
+                    address=current_address or "",
+                    function_name=func_name,
+                    active_goal=active_goal,
+                    active_mode=active_mode,
+                )
+                budget = budget_from_config(self.config, active_mode=active_mode)
+                pack = jsonl_retrieve(
+                    store,
+                    paths,
+                    query,
+                    max_memories=budget.max_memories,
+                    max_entities=budget.max_entities,
+                    max_relations=budget.max_relations,
+                    max_notes=budget.max_notes,
+                    expand_relations=True,
+                )
+
+            # Both paths share the same renderer.
+            from ..memory.context import build_retrieval_metadata, build_section_from_pack
+
+            section = build_section_from_pack(pack)
+            # Record retrieval metadata so the UI can show a compact
+            # retrieved-knowledge indicator when configured.  Reuse the
+            # same pack we just built — do NOT re-run retrieve.
+            try:
+                meta = build_retrieval_metadata(pack)
+                self.session.metadata["last_knowledge_retrieval"] = meta
+            except Exception:
+                pass
+
             return section
         except Exception as e:
-            log_debug(f"retrieved-knowledge section failed: {e}")
+            log_debug(f"retrieved knowledge section failed: {e}")
             return ""
 
     def _resolve_skill(self, user_message: str) -> tuple:
