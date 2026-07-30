@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from ..agent.loop import AgentLoop, BackgroundAgentRunner
     from ..agent.turn import TurnEvent
     from ..mcp.manager import MCPManager
+    from ..memory.service import BinaryMemoryService
     from ..providers.base import LLMProvider
     from ..providers.registry import ProviderRegistry
     from ..skills.registry import SkillRegistry
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from ..tools.registry import ToolRegistry
 else:
     AgentLoop = BackgroundAgentRunner = TurnEvent = None  # type: ignore[assignment]
+    BinaryMemoryService = None  # type: ignore[assignment]
     MCPManager = ProviderRegistry = SkillRegistry = None  # type: ignore[assignment]
     SessionHistory = SessionState = None  # type: ignore[assignment]
     ToolRegistry = Any
@@ -374,6 +376,24 @@ class SessionControllerBase:
         """
         tid = tab_id if tab_id is not None else self._active_tab_id
         return self._runners.get(tid)
+
+    @property
+    def memory_service(self) -> BinaryMemoryService | None:
+        """Return the memory service wired into the active tab's runner, if any.
+
+        Returns ``None`` when no runner is active for the current tab or the
+        agent loop has not yet had a ``BinaryMemoryService`` injected by
+        :meth:`_wire_central_memory`. Used by the Knowledge panel and the
+        retrieved-knowledge section to access the wired service without
+        holding a direct reference to the loop.
+        """
+        runner = self._runners.get(self._active_tab_id)
+        if runner is None:
+            return None
+        loop = getattr(runner, "agent_loop", None)
+        if loop is None:
+            return None
+        return getattr(loop, "memory_service", None)
 
     def iter_runners(self):
         """Yield ``(tab_id, runner)`` for every live runner."""

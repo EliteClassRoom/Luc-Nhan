@@ -482,6 +482,10 @@ class TestIdaSessionController(unittest.TestCase):
         forked = self.ctrl._sessions[new_tab_id]
         self.assertEqual(forked.metadata.get("forked_from"), source_id)
 
+    def test_memory_service_property_returns_none_before_wiring(self) -> None:
+        """Before _wire_central_memory runs, the accessor returns None."""
+        self.assertIsNone(self.ctrl.memory_service)
+
 
 class TestEnsureAdvancedToolsReady(unittest.TestCase):
     """Regression tests for ``ensure_advanced_tools_ready``.
