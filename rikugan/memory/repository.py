@@ -105,6 +105,8 @@ class SQLiteKnowledgeRepository:
                 type=f.fact_type,
                 title=f.title,
                 content=f.content,
+                entity_refs=list(f.entity_refs),
+                tags=list(f.tags),
                 confidence=f.confidence,
             )
             for f in facts

@@ -165,9 +165,11 @@ def _score_relation(rel: KnowledgeRelation, terms: list[str]) -> float:
 # ---------------------------------------------------------------------------
 
 
-def retrieve(
-    store: KnowledgeRawStore,
-    paths: KnowledgePaths,
+def retrieve_from_records(
+    memories: list[KnowledgeMemory],
+    entities: list[KnowledgeEntity],
+    relations: list[KnowledgeRelation],
+    notes: list[str],
     query: RetrievalQuery,
     *,
     max_memories: int = 12,
@@ -176,7 +178,13 @@ def retrieve(
     max_notes: int = 3,
     expand_relations: bool = True,
 ) -> RetrievalPack:
-    """Build a ranked slice of the store relevant to the *query*."""
+    """Rank a fixed set of records against the *query*.
+
+    Pure ranking body extracted from :func:`retrieve` so both the JSONL
+    store and the SQLite repository can feed it the same dataclass
+    lists. Notes are passed in as already-extracted markdown excerpts
+    (filesystem parsing is the caller's responsibility).
+    """
     pack = RetrievalPack()
 
     terms = _terms_from(query.text) + _terms_from(query.function_name) + _terms_from(query.active_goal)
@@ -192,9 +200,9 @@ def retrieve(
     if not (terms or addresses):
         # Empty query — return the newest few records of each type so
         # the LLM still gets useful context (e.g., "what do we know?").
-        pack.memories = store.list_memories()[:max_memories]
-        pack.entities = store.list_entities()[:max_entities]
-        pack.relations = store.list_relations()[:max_relations]
+        pack.memories = memories[:max_memories]
+        pack.entities = entities[:max_entities]
+        pack.relations = relations[:max_relations]
         pack.counts = {
             "memories": len(pack.memories),
             "entities": len(pack.entities),
@@ -206,10 +214,9 @@ def retrieve(
     term_set = set(terms)
 
     # --- Memories ---
-    mems = store.list_memories()
     addr_func_ids = {function_entity_id(a) for a in addresses}
     scored: list[tuple[float, KnowledgeMemory]] = []
-    for m in mems:
+    for m in memories:
         s = _score_memory(m, terms, term_set)
         # Bonus when the memory references a known address-entity.
         if addr_func_ids and any(eid in addr_func_ids for eid in m.entity_refs):
@@ -220,9 +227,8 @@ def retrieve(
     pack.memories = [m for _, m in scored[:max_memories]]
 
     # --- Entities (also bring in address-matches first) ---
-    ents = store.list_entities()
     ent_scored: list[tuple[float, KnowledgeEntity]] = []
-    for e in ents:
+    for e in entities:
         s = _score_entity(e, terms, addresses)
         if s >= _MIN_ENTITY_SCORE:
             ent_scored.append((s, e))
@@ -230,18 +236,17 @@ def retrieve(
     pack.entities = [e for _, e in ent_scored[:max_entities]]
 
     # --- Relations (with one-hop expansion) ---
-    rels = store.list_relations()
     matched_entity_ids = {e.id for e in pack.entities}
     if expand_relations:
         # Pick up entities reached via relations we plan to include.
         for e in pack.entities:
-            for r in rels:
+            for r in relations:
                 if r.src == e.id or r.dst == e.id:
                     matched_entity_ids.add(r.src)
                     matched_entity_ids.add(r.dst)
 
     rel_scored: list[tuple[float, KnowledgeRelation]] = []
-    for r in rels:
+    for r in relations:
         s = _score_relation(r, terms)
         # Boost relations touching any matched entity.
         if r.src in matched_entity_ids or r.dst in matched_entity_ids:
@@ -251,24 +256,14 @@ def retrieve(
     rel_scored.sort(key=lambda x: x[0], reverse=True)
     pack.relations = [r for _, r in rel_scored[:max_relations]]
 
-    # --- Notes (parse on-demand for selected memory titles) ---
-    if pack.memories:
-        # Select notes whose entity_refs overlap with the matched entities
-        # AND whose title matches a memory title (cheap proxy).
-        memory_titles = {m.title.lower() for m in pack.memories}
-        try:
-            parsed_notes = list_notes(paths.notes_dir)
-        except Exception:
-            parsed_notes = []
+    # --- Notes (raw excerpts supplied by caller) ---
+    if pack.memories and notes:
         scored_notes: list[tuple[int, str]] = []
-        for pn in parsed_notes:
-            if pn.title and pn.title.lower() in memory_titles:
-                scored_notes.append((10, _note_excerpt(pn)))
-            else:
-                # Generic keyword hits in title/body
-                hits = sum(1 for t in terms if t in pn.title.lower() or t in pn.body.lower())
-                if hits:
-                    scored_notes.append((hits, _note_excerpt(pn)))
+        for body in notes:
+            body_l = body.lower()
+            hits = sum(1 for t in terms if t in body_l)
+            if hits:
+                scored_notes.append((hits, body))
         scored_notes.sort(key=lambda x: x[0], reverse=True)
         pack.notes = [body for _, body in scored_notes[:max_notes]]
 
@@ -279,6 +274,44 @@ def retrieve(
         "notes": len(pack.notes),
     }
     return pack
+
+
+def retrieve(
+    store: KnowledgeRawStore,
+    paths: KnowledgePaths,
+    query: RetrievalQuery,
+    *,
+    max_memories: int = 12,
+    max_entities: int = 8,
+    max_relations: int = 15,
+    max_notes: int = 3,
+    expand_relations: bool = True,
+) -> RetrievalPack:
+    """Build a ranked slice from the JSONL store.
+
+    Loads records from *store* + filesystem notes, then delegates to
+    :func:`retrieve_from_records` for the actual ranking.
+    """
+    memories = store.list_memories()
+    entities = store.list_entities()
+    relations = store.list_relations()
+    try:
+        parsed_notes = list_notes(paths.notes_dir)
+    except Exception:
+        parsed_notes = []
+    notes = [_note_excerpt(pn, 600) for pn in parsed_notes[: max_notes * 3]]
+    return retrieve_from_records(
+        memories,
+        entities,
+        relations,
+        notes,
+        query,
+        max_memories=max_memories,
+        max_entities=max_entities,
+        max_relations=max_relations,
+        max_notes=max_notes,
+        expand_relations=expand_relations,
+    )
 
 
 def _note_excerpt(parsed_note, limit: int = 600) -> str:
@@ -334,5 +367,6 @@ __all__ = [
     "RetrievalPack",
     "RetrievalQuery",
     "retrieve",
+    "retrieve_from_records",
     "search_all",
 ]
