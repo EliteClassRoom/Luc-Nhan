@@ -607,6 +607,15 @@ class AgentLoop:
             active_mode = self.session.metadata.get("active_mode", "normal") or "normal"
             active_goal = self.session.metadata.get(_GOAL_METADATA_KEY, "")
 
+            # Compute the retrieval budget ONCE so both the SQLite and JSONL
+            # paths honor the user's ``knowledge_max_context_items`` /
+            # ``knowledge_max_context_chars`` config. Previously the SQLite
+            # branch silently passed ``budget=None``, falling back to the
+            # default ``NORMAL_BUDGET`` and ignoring user caps.
+            from ..memory.context import budget_from_config
+
+            budget = budget_from_config(self.config, active_mode=active_mode)
+
             # Prefer SQLite when the central memory service is wired.
             if self.memory_service is not None:
                 from ..memory.sqlite_retrieval import repository_to_retrieval_pack
@@ -617,14 +626,11 @@ class AgentLoop:
                     current_function=current_function,
                     active_mode=active_mode,
                     active_goal=active_goal,
-                    budget=None,
+                    budget=budget,
                 )
             else:
                 # Fallback: JSONL store via the legacy ingest/retrieve path.
-                from ..memory.context import (
-                    RetrievalQuery,
-                    budget_from_config,
-                )
+                from ..memory.context import RetrievalQuery
                 from ..memory.ingest import make_store
                 from ..memory.retrieve import retrieve as jsonl_retrieve
 
@@ -661,7 +667,6 @@ class AgentLoop:
                     active_goal=active_goal,
                     active_mode=active_mode,
                 )
-                budget = budget_from_config(self.config, active_mode=active_mode)
                 pack = jsonl_retrieve(
                     store,
                     paths,

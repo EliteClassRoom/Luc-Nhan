@@ -795,6 +795,81 @@ class TestAgentLoop(unittest.TestCase):
         # that the repository was queried, proving the SQLite path was taken.
         mock_repo.list_memories.assert_called()
 
+    def test_build_retrieved_knowledge_section_sqlite_path_honors_budget(self):
+        """SQLite path passes the configured ``knowledge_max_context_*`` budget
+        to ``repository_to_retrieval_pack`` — not ``None``.
+
+        Regression guard: previously the SQLite branch hard-coded
+        ``budget=None``, silently ignoring the user's caps and falling back
+        to the default ``NORMAL_BUDGET``.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from rikugan.memory.context import NORMAL_BUDGET, budget_from_config
+
+        provider = MockProvider(responses=[_text_response("done")])
+        loop = self._make_loop(provider)
+
+        # Tighten the caps below the defaults so any budget-passthrough
+        # failure is observable in the captured kwargs.
+        loop.config.knowledge_max_context_items = 4
+        loop.config.knowledge_max_context_chars = 1_200
+
+        expected_budget = budget_from_config(loop.config, active_mode="normal")
+
+        mock_service = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.list_memories.return_value = []
+        mock_repo.list_entities.return_value = []
+        mock_repo.list_relations.return_value = []
+        mock_repo.count_observations.return_value = 0
+        mock_service.repository = mock_repo
+        loop.memory_service = mock_service
+
+        with patch("rikugan.memory.sqlite_retrieval.repository_to_retrieval_pack") as pack_mock:
+            # Return value must look like a RetrievalPack-shaped object so
+            # ``build_section_from_pack`` / ``build_retrieval_metadata`` do
+            # not blow up downstream.
+            from rikugan.memory.retrieve import RetrievalPack
+
+            pack_mock.return_value = RetrievalPack(
+                memories=[],
+                entities=[],
+                relations=[],
+                notes=[],
+            )
+            loop._build_retrieved_knowledge_section(
+                current_address="0x401000",
+                current_function="main @ 0x401000",
+                profile=loop.config.get_active_profile(),
+            )
+
+        pack_mock.assert_called_once()
+        kwargs = pack_mock.call_args.kwargs
+        passed_budget = kwargs.get("budget")
+        self.assertIsNotNone(
+            passed_budget,
+            "SQLite path must pass a non-None budget; the previous regression "
+            "hard-coded budget=None and silently bypassed user caps.",
+        )
+        # The configured items cap is 4; the default budget holds 12+6+6+2=26.
+        self.assertLess(
+            sum(
+                [
+                    passed_budget.max_memories,
+                    passed_budget.max_entities,
+                    passed_budget.max_relations,
+                    passed_budget.max_notes,
+                ]
+            ),
+            NORMAL_BUDGET.max_memories
+            + NORMAL_BUDGET.max_entities
+            + NORMAL_BUDGET.max_relations
+            + NORMAL_BUDGET.max_notes,
+            "Passed budget must reflect the tightened user caps, not defaults.",
+        )
+        self.assertEqual(passed_budget.max_total_chars, expected_budget.max_total_chars)
+
     def test_build_retrieved_knowledge_section_falls_back_to_jsonl_when_service_none(self):
         """When memory_service is None, the section reads from JSONL via make_store."""
         from unittest.mock import patch
