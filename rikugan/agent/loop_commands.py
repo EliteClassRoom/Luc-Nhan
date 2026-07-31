@@ -16,7 +16,7 @@ from collections.abc import Generator
 from typing import TYPE_CHECKING
 
 from ..core.errors import ToolError
-from ..core.logging import log_error, log_info
+from ..core.logging import log_debug, log_error, log_info
 from ..core.sanitize import strip_injection_markers
 from .turn import TurnEvent
 
@@ -26,9 +26,103 @@ if TYPE_CHECKING:
     from .loop import AgentLoop
 
 
+def _truncate_report_preview(body: str, cap: int = 1500) -> str:
+    """Truncate a report body for the chat draft without leaving
+    Markdown broken open.
+
+    Two failure modes the chat bubble must not show:
+
+    1. A character-cut that lands inside an opening triple-backtick
+       code fence.  The bubble then renders a ``<pre>`` block that
+       has no closing fence in the visible window, so the trailing
+       prose collapses into the code block — the user sees a
+       heading, a long source-code dump, and no body.
+    2. A character-cut that lands in the middle of a bullet,
+       heading, or paragraph — the user sees an unfinished sentence
+       with no period.
+
+    The fix cuts on a structural boundary (paragraph break, fence
+    close, or fence open = strip the trailing partial block) and
+    always balances fences so the rendered HTML closes every
+    ``<pre>`` it opens.
+    """
+    if len(body) <= cap:
+        return body
+    head = body[:cap]
+    # Split into lines for structural decisions.
+    lines = head.split("\n")
+    # Track fence balance.
+    fence_open = False
+    fence_marker_at: list[int] = []
+    for idx, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            if not fence_open:
+                fence_open = True
+                fence_marker_at.append(idx)
+            else:
+                # Closing fence for the current block.
+                fence_open = False
+    truncated_lines: list[str] = []
+    fence_open = False
+    kept_idx = 0
+    for idx, line in enumerate(lines):
+        kept_idx = idx
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            if fence_open:
+                fence_open = False
+            else:
+                fence_open = True
+            truncated_lines.append(line)
+            continue
+        truncated_lines.append(line)
+        if idx + 1 >= len(lines):
+            break
+        # If the next line is well past the cap, stop here on a
+        # paragraph-break / blank-line boundary so we don't end on
+        # a half sentence.
+        consumed = sum(len(x) + 1 for x in truncated_lines)
+        next_line = lines[idx + 1]
+        next_is_paragraph_break = next_line.strip() == ""
+        next_is_fence = next_line.lstrip().startswith("```")
+        is_inside_open_fence = fence_open
+        if (
+            consumed >= cap * 0.85
+            and not is_inside_open_fence
+            and (next_is_paragraph_break or next_is_fence)
+        ):
+            kept_idx = idx
+            break
+    # ``kept_idx`` is consumed; rebuild the truncated body.
+    out = "\n".join(truncated_lines[: kept_idx + 1])
+    # If we cut while a fence was still open, drop everything from
+    # the trailing open fence onward so the rendered HTML is balanced.
+    if fence_open:
+        last_open = max(fence_marker_at)
+        out = "\n".join(truncated_lines[:last_open]).rstrip()
+    out = out.rstrip()
+    return out + "\n\n…(truncated; write the full report to view the rest)…"
+
+
+
+def _report_draft_fingerprint(body: str) -> str:
+    """12-char SHA-256 prefix of the synthesized report body.
+
+    Diagnostic-only: lets a developer correlate "draft was empty in
+    the UI" with what the LLM actually returned, without writing
+    report contents (which may carry sensitive analysis) to the
+    persistent debug log.
+    """
+    if not body:
+        return ""
+    import hashlib
+
+    return hashlib.sha256(body.encode("utf-8", errors="replace")).hexdigest()[:12]
+
+
 _MAX_GOAL_CHARS = 1000
 ACTIVE_GOAL_METADATA_KEY = "active_goal"
-
 
 def normalize_goal(raw_goal: str) -> str:
     """Sanitize, trim, and cap a raw goal string.
@@ -216,6 +310,7 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
     from ..memory.report import (
         SUPPORTED_SCOPES,
         build_report_context,
+        save_report,
         synthesize_report,
     )
 
@@ -229,7 +324,6 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
         yield TurnEvent.text_done(f"Unknown report scope: `{scope}`. Supported: {', '.join(SUPPORTED_SCOPES)}.")
         return
 
-    # Validate there is something to report *before* the LLM call.
     try:
         ctx = build_report_context(store, paths, scope=scope)
     except Exception as e:
@@ -248,28 +342,77 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
         return
 
     try:
-        _, report_md, file_path = synthesize_report(
+        ctx, report_md = synthesize_report(
             store,
             paths,
             scope=scope,
             provider=provider,
             config=loop.config,
+            # Pass the current chat history so the writer can use it
+            # for narrative and ordering. The report helper sanitizes
+            # and bounds this input; verified facts come only from the
+            # knowledge store.
+            conversation_context=getattr(loop.session, "messages", ()),
         )
     except Exception as e:
         yield TurnEvent.error_event(f"Report generation failed: {e}")
         return
+    draft = (report_md or "").strip()
+    if not draft:
+        yield TurnEvent.error_event(
+            "Report generation returned an empty draft. "
+            "The LLM did not produce a body — nothing to write."
+        )
+        return
+    preview = _truncate_report_preview(report_md)
 
-    # Return a compact chat message: path + a short preview.
-    preview = report_md
-    if len(preview) > 1500:
-        preview = preview[:1500].rstrip() + "\n…(truncated)…"
+    draft_event_text = (
+        "**Report draft** — review the verified report below before choosing whether to write it.\n\n"
+        f"{preview}"
+    )
+    # Diagnostic: log lengths (not bodies — reports may carry sensitive
+    # analysis) plus a SHA-256 prefix for cross-run correlation. This
+    # tells us whether the text the user "saw" as empty was actually
+    # emitted to ChatView in the first place.
+    log_debug(
+        f"REPORT_DRAFT: synthesized={len(report_md)} preview={len(preview)} "
+        f"event={len(draft_event_text)} sha={_report_draft_fingerprint(report_md)}"
+    )
+    yield TurnEvent.text_done(draft_event_text)
+    yield TurnEvent.user_question(
+        "Write the verified report to disk?",
+        ["Write report", "Cancel"],
+        tool_call_id="report_write",
+        allow_text=True,
+    )
+    answer = loop._wait_for_queue(loop._user_answer_queue).strip().lower()
+    if answer not in {"write report", "write", "yes", "save", "1"}:
+        yield TurnEvent.text_done(
+            "**Report discarded** — no file was written.\n\n"
+            f"Scope: `{scope}` · Counts: {ctx.counts['memories']} memories · "
+            f"{ctx.counts['entities']} entities · {ctx.counts['relations']} relations · "
+            f"{ctx.counts['notes']} notes"
+        )
+        return
+
+    try:
+        result = save_report(store, paths, report_md, scope=scope)
+    except Exception as e:
+        yield TurnEvent.error_event(f"Failed to write report file: {e}")
+        return
+    if not result.ingested:
+        yield TurnEvent.error_event(
+            f"Report file written to `{result.file_path}` but ingestion failed: {result.ingest_error}"
+        )
+        return
     yield TurnEvent.text_done(
-        f"**Report saved** — `{file_path}`\n\nScope: `{scope}` · "
+        f"**Report saved** — `{result.file_path}`\n\nScope: `{scope}` · "
         f"Counts: {ctx.counts['memories']} memories · "
         f"{ctx.counts['entities']} entities · "
         f"{ctx.counts['relations']} relations · "
-        f"{ctx.counts['notes']} notes\n\n```markdown\n{preview}\n```"
+        f"{ctx.counts['notes']} notes\n\n{preview}"
     )
+
 
 
 def _handle_knowledge_command(loop: AgentLoop, raw_query: str) -> Generator[TurnEvent, None, None]:

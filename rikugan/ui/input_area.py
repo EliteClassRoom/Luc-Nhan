@@ -9,17 +9,32 @@ from .qt_compat import (
     QLabel,
     QPalette,
     QPlainTextEdit,
+    QScrollArea,
     QSizePolicy,
-    Qt,
     QVBoxLayout,
     QWidget,
+    Qt,
 )
 from .styles import build_input_area_stylesheet
 from .theme.manager import ThemeManager
 
 logger = get_logger()
+# Maximum number of visible rows in the autocomplete popup. When the
+# filtered list is longer, the popup becomes scrollable so every
+# built-in slash command (including /report) remains reachable.
+_SKILL_POPUP_MAX_VISIBLE = 8
+_SKILL_POPUP_MAX_HEIGHT = 240
+_SKILL_POPUP_ROW_HEIGHT = 24
 
 
+def _skill_popup_height(slug_count: int) -> int:
+    """Compute the bounded popup viewport height for *slug_count* items.
+
+    Centralizes the row-height formula so tests can lock in the
+    bounded behavior without spinning up a real ``QScrollArea``.
+    """
+    visible = min(max(slug_count, 1), _SKILL_POPUP_MAX_VISIBLE)
+    return min(_SKILL_POPUP_MAX_HEIGHT, visible * _SKILL_POPUP_ROW_HEIGHT + 8)
 def _skill_popup_style() -> str:
     """Inline QSS for the ``_SkillPopup`` — always applied, never gated on host theme.
 
@@ -58,9 +73,29 @@ class _SkillPopup(QFrame):
         # is_host_theme() is True and host_stylesheet would return a bald
         # fallback. Rebuilt by apply_theme() on every themeChanged signal.
         self.setStyleSheet(_skill_popup_style())
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(2, 2, 2, 2)
+        # Outer layout: self → QScrollArea → inner QWidget → inner
+        # QVBoxLayout. The scroll area keeps the popup's visible
+        # height bounded while still allowing every built-in command
+        # to be reached by scrolling.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(2, 2, 2, 2)
+        outer.setSpacing(0)
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._container = QWidget(self._scroll)
+        self._layout = QVBoxLayout(self._container)
+        self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
+        self._scroll.setWidget(self._container)
+        outer.addWidget(self._scroll)
+        self.setMaximumHeight(_SKILL_POPUP_MAX_HEIGHT)
         self._labels: list[QLabel] = []
         self._slugs: list[str] = []
         self._selected_idx = 0
@@ -71,20 +106,22 @@ class _SkillPopup(QFrame):
 
     def set_items(self, slugs: list[str]) -> None:
         """Replace popup contents with filtered slugs."""
-        # Clear old labels
         for lbl in self._labels:
             self._layout.removeWidget(lbl)
             lbl.setParent(None)
         self._labels.clear()
         self._slugs = list(slugs)
         self._selected_idx = 0
-
         for slug in slugs:
             lbl = QLabel(f"/{slug}")
             self._labels.append(lbl)
             self._layout.addWidget(lbl)
-
         self._update_highlight()
+        # Bound the scroll viewport so a long built-in list scrolls
+        # instead of overflowing the panel. The viewport is sized
+        # deterministically via the shared helper so tests can lock
+        # in the bounded behavior without spinning up Qt.
+        self._scroll.setFixedHeight(_skill_popup_height(len(slugs)))
         self.adjustSize()
 
     def _update_highlight(self) -> None:
@@ -98,6 +135,13 @@ class _SkillPopup(QFrame):
             return
         self._selected_idx = (self._selected_idx + delta) % len(self._slugs)
         self._update_highlight()
+        # Ensure the selected label is visible inside the scroll
+        # viewport; without this, Down-arrow on a long list can
+        # select commands that are off-screen.
+        if 0 <= self._selected_idx < len(self._labels):
+            self._scroll.ensureWidgetVisible(
+                self._labels[self._selected_idx], 0, 4
+            )
 
     def current_slug(self) -> str | None:
         if 0 <= self._selected_idx < len(self._slugs):
@@ -109,7 +153,7 @@ class _SkillPopup(QFrame):
 
 
 class InputArea(QPlainTextEdit):
-    """Chat input area with keyboard shortcuts.
+    """Multi-line chat input area with Enter/Shift+Enter and ``/`` skill autocomplete.
 
     - Enter: submit message
     - Shift+Enter: newline
@@ -231,10 +275,33 @@ class InputArea(QPlainTextEdit):
     def set_skill_slugs(self, slugs: list[str]) -> None:
         """Set the list of available skill slugs for autocomplete.
 
-        Automatically includes /goal, /plan, /modify, /explore, and /research as built-in commands.
+        Automatically includes the built-in slash commands so typing
+        ``/`` in the prompt surfaces every option regardless of which
+        skills are loaded.
         """
         combined = set(slugs)
-        combined.update(("goal", "plan", "modify", "explore", "research"))
+        # Built-in slash commands whose handlers are wired in
+        # AgentLoop: goal, plan, modify, explore, research, knowledge,
+        # memory, undo, mcp, doctor. The "report" command is now a
+        # registered built-in skill; callers that want the full
+        # autocomplete must merge SkillRegistry.list_slugs() in
+        # before calling set_skill_slugs. This avoids duplicate
+        # definitions that would let a future refactor of the
+        # /report handler diverge from the autocomplete source.
+        combined.update(
+            (
+                "goal",
+                "plan",
+                "modify",
+                "explore",
+                "research",
+                "knowledge",
+                "memory",
+                "undo",
+                "mcp",
+                "doctor",
+            )
+        )
         self._skill_slugs = sorted(combined)
 
     def focusOutEvent(self, event) -> None:

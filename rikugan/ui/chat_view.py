@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from .. import constants
 from ..agent.turn import TurnEvent, TurnEventType
+from ..core.logging import log_debug
 from ..core.types import Message, Role, ToolResult
 from .markdown import md_to_html
 from .message_widgets import (
@@ -771,6 +772,24 @@ class ChatView(QScrollArea):
         # Live turn events must not be appended under an older paged
         # window, and any history nav must be removed before we start
         # inserting live widgets so a stray click cannot wipe the tail.
+        # Diagnostic: every TEXT_DONE reaching the chat panel is
+        # logged with length only so we can confirm the ``/report``
+        # draft event actually arrived without writing the body
+        # (which may carry sensitive analysis) to the persistent
+        # debug log. ``container_width`` is the chat's actual visible
+        # pixel budget — a value << 400 suggests the chat docked
+        # narrower than the Markdown wrapper expects and may clip
+        # body content for that reason.
+        if event.type == TurnEventType.TEXT_DONE:
+            try:
+                cw = self._container.width() if self._container is not None else 0
+            except RuntimeError:
+                cw = -1
+            log_debug(
+                f"CHAT_TEXT_DONE: text_len={len(event.text or '')} "
+                f"head={repr((event.text or '')[:60] if event.text else '')} "
+                f"container_width={cw}"
+            )
         self._begin_live_tail_append()
         etype = event.type
         if etype in (TurnEventType.TEXT_DELTA, TurnEventType.TEXT_DONE):
@@ -965,11 +984,15 @@ class ChatView(QScrollArea):
                 # If only thinking is present, skip rendering — we
                 # don't want a blank bubble. The user will see the
                 # thinking panel alone.
-
-            self._current_assistant = None
-            self._message_thinking = None
-            self._think_buffer = ""
-            self._waiting_think_close = False
+            # Standalone TEXT_DONE (slash-command acks, /report draft,
+            # etc.) must scroll the chat to the new bubble or the user
+            # will sit looking at the previous turn and report "no
+            # draft" even though the bubble is correctly rendered
+            # below the visible viewport. ``_scroll_to_bottom`` is
+            # coalesced via the panel-level scroll timer; calling it
+            # here is safe even if a normal-turn delta path also calls
+            # it (the timer just resets).
+            self._scroll_to_bottom()
 
     def _handle_tool_event(self, event: TurnEvent) -> None:
         etype = event.type

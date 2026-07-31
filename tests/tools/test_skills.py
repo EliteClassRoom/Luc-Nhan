@@ -270,6 +270,20 @@ class TestSkillRegistry(unittest.TestCase):
         self.assertIsNone(skill)
         self.assertEqual(remaining, "/unknown-skill do something")
 
+    def test_report_skill_is_discoverable(self):
+        # The /report built-in skill must be discovered from
+        # rikugan/skills/builtins/report/ with the documented slug
+        # and description, so the migration from a hard-coded
+        # autocomplete entry to a real registered skill is locked in.
+        reg = SkillRegistry()
+        reg.discover()
+        skill = reg.get("report")
+        self.assertIsNotNone(skill, "report skill not discovered")
+        self.assertEqual(skill.slug, "report")
+        self.assertEqual(skill.name, "Verified Report")
+        self.assertIn("verified", skill.description.lower())
+        self.assertIn("/report", skill.body)
+
 
 class TestBuiltinTriggerMatching(unittest.TestCase):
     """Regression: ensure the merged ida-scripting skill wins IDAPython scripting

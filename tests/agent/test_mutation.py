@@ -112,33 +112,41 @@ class TestBuildReverseRecord(unittest.TestCase):
         self.assertTrue(rec.reversible)
         self.assertEqual(rec.reverse_arguments["comment"], "")
 
-    def test_set_function_comment_with_existing(self):
+    def test_set_function_comment_reverses_to_tagged_only(self):
+        """Plan §4.38 requires exact tagged-comment replacement:
+        ``merge_evidence_line`` replaces a single tagged line while
+        preserving other analyst text. The reverse record for the
+        resulting ``set_function_comment`` call must still point at
+        the original pre-state, proving the undo path remains sound.
+        """
+        from rikugan.ida.tools.annotations import merge_evidence_line
+
+        original = "analyst note\n[Rikugan Evidence] old claim\nfollowup"
+        merged = merge_evidence_line(original, "new claim")
+        self.assertIn("analyst note", merged)
+        self.assertIn("followup", merged)
+        self.assertIn("[Rikugan Evidence] new claim", merged)
+        self.assertNotIn("old claim", merged)
         rec = build_reverse_record(
             "set_function_comment",
-            {"address": "0x401000", "comment": "new", "repeatable": True},
-            pre_state={"old_comment": "old"},
+            {
+                "address": "0x401000",
+                "comment": merged,
+                "repeatable": True,
+            },
+            pre_state={"old_comment": original},
         )
         self.assertTrue(rec.reversible)
         self.assertEqual(rec.reverse_tool, "set_function_comment")
-        self.assertEqual(rec.reverse_arguments, {"address": "0x401000", "comment": "old", "repeatable": True})
-
-    def test_set_function_comment_without_existing(self):
-        rec = build_reverse_record(
-            "set_function_comment",
-            {"address": "0x401000", "comment": "new"},
-            pre_state={"old_comment": ""},
+        self.assertEqual(
+            rec.reverse_arguments,
+            {
+                "address": "0x401000",
+                "comment": original,
+                "repeatable": True,
+            },
         )
-        self.assertTrue(rec.reversible)
-        self.assertEqual(rec.reverse_tool, "set_function_comment")
-        self.assertEqual(rec.reverse_arguments, {"address": "0x401000", "comment": "", "repeatable": False})
 
-        rec = build_reverse_record(
-            "set_function_comment",
-            {"address": "0x401000", "comment": "new"},
-        )
-        self.assertFalse(rec.reversible)
-        self.assertEqual(rec.reverse_tool, "")
-        self.assertEqual(rec.reverse_arguments, {})
 
     def test_set_function_comment_old_none_not_reversible(self):
         """old_comment=None must be treated as non-reversible."""

@@ -115,6 +115,25 @@ def register_host_sink(sink: Callable[[str, int], None]) -> None:
     _host_sink = sink
 
 
+def _stderr_write(line: str) -> None:
+    """Write to ``sys.stderr`` without crashing on cp1252 streams.
+
+    Windows default ``sys.stderr`` uses cp1252 and rejects non-Latin1
+    code points (e.g. ``→`` U+2192). Replace un-encodable chars so
+    the log line is emitted instead of crashing the logging thread.
+    """
+    stream = sys.stderr
+    try:
+        encoding = getattr(stream, "encoding", None) or "ascii"
+        stream.write(line.encode(encoding, errors="replace").decode(encoding))
+    except Exception:
+        # Last-resort: drop the message rather than crash.
+        try:
+            stream.write(line.encode("ascii", errors="replace").decode("ascii"))
+        except Exception:
+            pass
+
+
 def _resolve_host_sink() -> Callable[[str, int], None] | None:
     """Auto-detect and register host sink on first use."""
     global _host_sink
@@ -136,12 +155,12 @@ def _resolve_host_sink() -> Callable[[str, int], None] | None:
                 try:
                     ida_kernwin.msg(f"{msg}\n")
                 except RuntimeError as e:
-                    sys.stderr.write(f"[Lục nhãn] IDA output window unavailable: {e}\n")
+                    _stderr_write(f"[Lục nhãn] IDA output window unavailable: {e}\n")
 
             _host_sink = _ida_sink
             return _host_sink
         except ImportError as exc:
-            sys.stderr.write(f"[Lục nhãn] ida_kernwin import failed: {exc}\n")
+            _stderr_write(f"[Lục nhãn] ida_kernwin import failed: {exc}\n")
 
     return None
 
@@ -160,7 +179,7 @@ class HostOutputHandler(logging.Handler):
         if sink is not None:
             sink(msg, record.levelno)
         else:
-            sys.stderr.write(f"{msg}\n")
+            _stderr_write(f"{msg}\n")
 
 
 # Keep old name as alias for backwards compatibility

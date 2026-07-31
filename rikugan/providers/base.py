@@ -8,7 +8,7 @@ from collections.abc import Generator
 from dataclasses import replace as dataclass_replace
 from typing import Any, NoReturn
 
-from ..core.logging import log_debug
+from ..core.logging import log_debug, silence_sdk_debug_loggers
 from ..core.sanitize import (
     sanitize_messages_for_provider,
     strip_lone_surrogates,
@@ -270,6 +270,7 @@ class LLMProvider(ABC):
             effective_system,
             request_context=context,
         )
+        silence_sdk_debug_loggers()
         try:
             raw = self._call_api(client, kwargs)
         except Exception as e:
@@ -325,6 +326,7 @@ class LLMProvider(ABC):
             effective_system,
             request_context=context,
         )
+        silence_sdk_debug_loggers()
         yield from self._stream_chunks(client, kwargs, cancel_event=cancel_event)
 
     # -- Concrete shared implementations ---------------------------------------

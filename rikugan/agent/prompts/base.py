@@ -170,9 +170,19 @@ so anything you save persists across conversations.
 - Trivially obvious information (e.g., "main is the entry point")
 - Temporary debugging notes
 
+**Verification flow:** `/explore` does NOT auto-persist findings. The
+post-explore finalizer independently verifies each finding with IDA
+tools before persisting it. A `/report` request runs the same
+independent verification on every non-report candidate before
+drafting the Markdown; only fully verified findings reach the
+writer, and the report is written only after the user confirms.
+
 **Use it proactively.** After renaming functions or completing exploration, save a \
 brief summary of what you learned so future sessions start with context.
 """
+
+
+
 
 MUTATION_PLANNING_SECTION = """\
 ## Mutation Safety — Always Plan Before Patching

@@ -10,7 +10,7 @@ import queue
 import threading
 import time
 import traceback
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -421,11 +421,18 @@ class AgentLoop:
         )
 
     def _ensure_exploration_state(self) -> ExplorationState:
-        """Lazily create a minimal ExplorationState for continuation after cancel."""
-        if self._exploration_state is None:
-            self._exploration_state = ExplorationState(explore_only=True)
-        return self._exploration_state
+        """Lazily create a minimal ExplorationState for continuation after cancel.
 
+        ``explore_only`` must match the active mode so resumed
+        research findings still auto-ingest (Plan §5.46) while
+        resumed ``/explore`` findings remain provisional until the
+        post-explore finalizer verifies them.
+        """
+        if self._exploration_state is None:
+            active = self.session.metadata.get("active_mode", "")
+            explore_only = active == "exploration"
+            self._exploration_state = ExplorationState(explore_only=explore_only)
+        return self._exploration_state
     def cancel(self) -> None:
         """Cancel the current run."""
         self._cancelled.set()
@@ -1851,26 +1858,29 @@ class AgentLoop:
                 )
             )
 
-        # Auto-ingest every exploration_report finding into the raw
-        # knowledge store. Best-effort: never block or fail the agent
-        # loop on memory I/O errors.
-        try:
-            from ..memory.ingest import ingest_exploration_finding, make_store
+        # Defer ingestion until the post-explore verifier confirms the
+        # finding. ``/explore`` is explore-only; ingestion for those
+        # findings happens in ``_finalize_explore_memory`` after review.
+        # ``/modify`` continues to ingest immediately because its
+ # planning phase needs the durable record.
+        if not getattr(state, "explore_only", False):
+            try:
+                from ..memory.ingest import ingest_exploration_finding, make_store
 
-            store, paths = make_store(self.session.idb_path)
-            if store is not None:
-                ingest_exploration_finding(
-                    store,
-                    paths,
-                    category=category,
-                    summary=summary,
-                    address=address,
-                    relevance=relevance,
-                    evidence=evidence,
-                    function_name=func_name,
-                )
-        except Exception as e:
-            log_debug(f"knowledge ingest (exploration_report) failed: {e}")
+                store, paths = make_store(self.session.idb_path)
+                if store is not None:
+                    ingest_exploration_finding(
+                        store,
+                        paths,
+                        category=category,
+                        summary=summary,
+                        address=address,
+                        relevance=relevance,
+                        evidence=evidence,
+                        function_name=func_name,
+                    )
+            except Exception as e:
+                log_debug(f"knowledge ingest (exploration_report) failed: {e}")
         if category == "patch_result" and address is not None:
             original_hex = tc.arguments.get("original_hex", "")
             new_hex = tc.arguments.get("new_hex", "")
@@ -2242,7 +2252,6 @@ class AgentLoop:
                     str(actual) == str(new_name),
                     f"expected {new_name!r}, got {str(actual)!r}",
                 )
-
             elif tool_name == "set_comment":
                 addr = args.get("address", "")
                 comment = args.get("comment", "")
@@ -2581,6 +2590,44 @@ class AgentLoop:
                 deduped.append(t)
         return deduped
 
+    def _resolve_direct_handler(self, cmd) -> Callable[[], Any] | None:
+        """Return a zero-arg callable for the chosen direct command, or None."""
+        if cmd.direct_command == "/goal":
+            return lambda: _handle_goal_command(self, cmd.direct_arg)
+        if cmd.direct_command == "/memory":
+            return lambda: _handle_memory_command(self)
+        if cmd.direct_command == "/case":
+            return lambda: self._handle_case_command(user_message)
+        if cmd.direct_command == "/undo":
+            return lambda: _handle_undo_command(self, cmd.direct_arg)
+        if cmd.direct_command == "/mcp":
+            return lambda: _handle_mcp_command(self)
+        if cmd.direct_command == "/doctor":
+            return lambda: _handle_doctor_command(self)
+        if cmd.direct_command == "/knowledge":
+            return lambda: _handle_knowledge_command(self, cmd.direct_arg)
+        if cmd.direct_command == "/report":
+            return lambda: _handle_report_command(self, cmd.direct_arg)
+        return None
+
+    def _dispatch_direct(
+        self,
+        handler: Callable[[], Any],
+    ) -> Generator[TurnEvent, None, None]:
+        """Wrap a direct-command handler in paired turn lifecycle events.
+
+        Emits ``TURN_START(1)`` before the handler runs and ``TURN_END(1)``
+        in a ``finally`` so the UI shows its "thinking" indicator while
+        direct commands like ``/report`` are in flight (including the
+        user-question wait) and the indicator is always hidden on error
+        or cancellation.
+        """
+        yield TurnEvent.turn_start(1)
+        try:
+            yield from handler()
+        finally:
+            yield TurnEvent.turn_end(1)
+
     def run(self, user_message: str) -> Generator[TurnEvent, None, None]:
         """Run the agent loop for a user message. Yields TurnEvents.
 
@@ -2594,29 +2641,15 @@ class AgentLoop:
 
         try:
             cmd = _parse_user_command(user_message)
-            if cmd.direct_command == "/goal":
-                yield from _handle_goal_command(self, cmd.direct_arg)
-                return
-            if cmd.direct_command == "/memory":
-                yield from _handle_memory_command(self)
-                return
-            if cmd.direct_command == "/case":
-                yield from self._handle_case_command(user_message)
-                return
-            if cmd.direct_command == "/undo":
-                yield from _handle_undo_command(self, cmd.direct_arg)
-                return
-            if cmd.direct_command == "/mcp":
-                yield from _handle_mcp_command(self)
-                return
-            if cmd.direct_command == "/doctor":
-                yield from _handle_doctor_command(self)
-                return
-            if cmd.direct_command == "/knowledge":
-                yield from _handle_knowledge_command(self, cmd.direct_arg)
-                return
-            if cmd.direct_command == "/report":
-                yield from _handle_report_command(self, cmd.direct_arg)
+            # Map each direct command to its handler. Wrapping the
+            # dispatch in a single ``_dispatch_direct`` helper emits
+            # paired ``TURN_START``/``TURN_END`` events so the UI
+            # shows a "thinking" indicator while direct commands
+            # like ``/report`` are running, including the long wait
+            # on the user-question queue.
+            direct_handler = self._resolve_direct_handler(cmd)
+            if direct_handler is not None:
+                yield from self._dispatch_direct(direct_handler)
                 return
 
             user_message = cmd.message

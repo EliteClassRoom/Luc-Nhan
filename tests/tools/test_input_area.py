@@ -125,11 +125,15 @@ class TestInputAreaSetCallbacks(unittest.TestCase):
 class TestInputAreaSetSkillSlugs(unittest.TestCase):
     def test_includes_builtin_commands(self):
         area = _make_input()
-        area.set_skill_slugs([])
+        # /report is a registered built-in skill (SkillRegistry); the
+        # controller merges registry slugs into set_skill_slugs so the
+        # input area surfaces it. Passing it explicitly here models
+        # that contract and locks the migration in.
+        area.set_skill_slugs(["report"])
         self.assertIn("plan", area._skill_slugs)
         self.assertIn("modify", area._skill_slugs)
         self.assertIn("explore", area._skill_slugs)
-
+        self.assertIn("report", area._skill_slugs)
     def test_merges_custom_slugs(self):
         area = _make_input()
         area.set_skill_slugs(["decompile", "rename"])

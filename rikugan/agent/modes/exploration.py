@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from ... import constants
 from ...core.errors import ToolError
-from ...core.logging import log_error, log_info
+from ...core.logging import log_debug, log_error, log_info
 from ...core.types import (
     Message,
     Role,
@@ -32,12 +32,271 @@ from ..turn import TurnEvent
 from .phase_tracker import ModePhaseTracker
 from .turn_helpers import execute_single_turn
 
-if TYPE_CHECKING:
-    from ..loop import AgentLoop
+
+def _id_for_pair(finding) -> str:
+    from ...memory.ingest import _stable_hash
+
+    cat = (finding.category or "general").strip().lower()
+    addr_part = (
+        f"0x{int(finding.address):x}" if finding.address is not None else "noaddr"
+    )
+    return f"mem:explore:{cat}:{addr_part}:{_stable_hash(cat, finding.summary, finding.address)}"
+
+def _build_central_index(
+    goal: str,
+    review,
+    persisted_count: int,
+    finding_by_id: dict[str, Any] | None = None,
+) -> str:
+    """Build a bounded sanitized verified-only index for central memory.
+
+    The plan forbids unverified hypotheses; only corrected records
+    from a fully-passed review contribute. Every field is sanitized
+    with ``strip_injection_markers`` and capped in length; the
+    total record count is bounded so a large finding set cannot
+    blow out the prompt injection envelope. ``finding_by_id`` lets
+    the index surface the original ``Finding.evidence`` and address
+    alongside each verified record.
+    """
+    from ...core.sanitize import strip_injection_markers
+    from ..report_review import ReviewResult
+
+    def _safe(value: object, limit: int = 200) -> str:
+        text = strip_injection_markers(str(value or "")).strip()
+        if len(text) > limit:
+            text = text[: limit - 1].rstrip() + "…"
+        return text
+
+    max_records = 50
+    effective_count = (
+        len(review.records) if isinstance(review, ReviewResult) and persisted_count == 0 else persisted_count
+    )
+    parts = [
+        f"goal: {_safe(goal, 400)}",
+        f"verified_finding_count: {int(effective_count)}",
+        f"review_cycles: {int(review.cycles) if isinstance(review, ReviewResult) else 0}",
+        "",
+        "verified_findings:",
+    ]
+    if isinstance(review, ReviewResult):
+        for mem in review.records[:max_records]:
+            finding = (finding_by_id or {}).get(mem.id) if finding_by_id else None
+            addr = ""
+            evidence = ""
+            if finding is not None:
+                if finding.address is not None:
+                    addr = f"0x{int(finding.address):x}"
+                evidence = finding.evidence or ""
+            elif mem.entity_refs:
+                addr = mem.entity_refs[0]
+            content = (mem.content or "").strip().replace("\n", " ")
+            parts.append(
+                f"- [{_safe(mem.type, 32)}] id={_safe(mem.id, 80)} "
+                f"addr={_safe(addr, 40)} title={_safe(mem.title, 80)}: "
+                f"{_safe(content, 200)} evidence={_safe(evidence, 200)}"
+            )
+        if len(review.records) > max_records:
+            parts.append(
+                f"… ({len(review.records) - max_records} more verified findings truncated)"
+            )
+    return "\n".join(parts).strip()
 
 
-def _parse_plan(text: str) -> list[str]:
-    return _parse_plan_impl(text)
+def finalize_explore_memory(
+    loop: AgentLoop, state: ExplorationState
+) -> tuple[bool, str]:
+    """Synchronous wrapper around :func:`_finalize_explore_memory`.
+
+    Drains the event generator and returns ``(persisted, message)``
+    so callers/tests can use the public contract specified in the
+    plan. ``persisted`` is True only when at least one verified
+    finding made it to the raw store or the central index.
+    """
+    persisted = False
+    last_message = ""
+    for event in _finalize_explore_memory(loop, state):
+        text = getattr(event, "text", "") or ""
+        if text:
+            last_message = text
+        if getattr(event, "type", None) and getattr(event.type, "value", "") == "text_done":
+            lowered = text.lower()
+            if "saved" in lowered or "central index only" in lowered:
+                persisted = True
+            if "persisted" in text.lower():
+                persisted = True
+    return persisted, last_message
+
+
+def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEvent, None, None]:
+    """Review and persist verified findings at the end of /explore.
+
+    Only runs for ``/explore`` (inline mode). Reviews every finding
+    with the same independent verifier used by ``/report``. Persists
+    verified findings to the raw store; saves a compact central fact
+    when the controller has bound a memory authority. A failed review
+    keeps the in-memory summary but surfaces a warning to the user.
+    """
+    findings = list(state.knowledge_base.findings)
+    if not findings:
+        return
+    from ...memory.ingest import (
+        _stable_hash,
+        ingest_exploration_finding,
+        make_store,
+    )
+    from ...memory.paths import function_entity_id
+    from ...memory.schema import KnowledgeMemory
+    from ..report_review import review_memories
+
+    candidates: list[KnowledgeMemory] = []
+    for f in findings:
+        cat = (f.category or "general").strip().lower()
+        addr_part = (
+            f"0x{int(f.address):x}" if f.address is not None else "noaddr"
+        )
+        mem_id = f"mem:explore:{cat}:{addr_part}:{_stable_hash(cat, f.summary, f.address)}"
+        entity_refs: list[str] = []
+        if f.address is not None:
+            entity_refs.append(function_entity_id(f.address))
+        candidates.append(
+            KnowledgeMemory(
+                id=mem_id,
+                binary_id="",
+                type=cat,
+                title=(f.summary or mem_id).splitlines()[0][:80],
+                content=f.summary or "",
+                entity_refs=entity_refs,
+                relation_refs=[],
+                source_refs=[f"exploration_report:{mem_id}"],
+                tags=[cat, "exploration"],
+                confidence=0.6,
+                importance=0.5,
+                verified=False,
+            )
+        )
+
+    store, paths = make_store(loop.session.idb_path)
+    raw_store_available = store is not None and paths is not None
+    if not raw_store_available:
+        log_debug("explore memory finalizer: raw store unavailable; ingest will be skipped")
+    for mem in candidates:
+        if paths is not None:
+            mem.binary_id = paths.binary_id
+
+    yield TurnEvent.text_done(
+        f"Verifying {len(candidates)} finding(s) before persisting exploration memory…"
+    )
+    review = review_memories(loop, candidates, max_cycles=3)
+    if not review.passed:
+        ids = ", ".join(sorted(review.unresolved.keys())) or "(none)"
+        yield TurnEvent.error_event(
+            f"Exploration memory not persisted: {len(review.unresolved)} finding(s) "
+            f"unverified after {review.cycles} cycle(s). IDs: {ids}."
+        )
+        return
+    finding_by_id: dict[str, Any] = {
+        mem.id: finding for mem, finding in zip(candidates, findings)
+    }
+    persisted = 0
+    raw_errors: list[str] = []
+    if raw_store_available:
+        for mem, finding in zip(review.records, findings):
+            corrected_summary = mem.content or finding.summary
+            try:
+                ingest_exploration_finding(
+                    store,
+                    paths,
+                    category=mem.type,
+                    summary=corrected_summary,
+                    address=finding.address,
+                    relevance="high",
+                    evidence=finding.evidence,
+                    function_name=(
+                        finding.summary[:40]
+                        if finding.category == "function_purpose"
+                        else ""
+                    ),
+                    # Prebuilt id keeps the raw store and the
+                    # central index referencing the same record
+                    # after content correction; explicit
+                    # title/confidence persist reviewer-corrected
+                    # fields (Plan §5.43).
+                    memory_id=mem.id,
+                    title=mem.title,
+                    confidence=mem.confidence,
+                )
+                persisted += 1
+            except Exception as exc:
+                raw_errors.append(f"{mem.id}: {exc!r}")
+                log_debug(f"explore memory finalizer ingest failed: {exc!r}")
+    else:
+        raw_errors.append("raw store: unavailable")
+    central_saved = False
+    if loop.memory_service is not None and loop._memory_authority is not None:
+        try:
+            index_fact = _build_central_index(
+                state.knowledge_base.user_goal,
+                review,
+                persisted,
+                finding_by_id,
+            )
+            loop.memory_service.save_fact(
+                loop._memory_authority,
+                category="exploration_index",
+                fact=index_fact,
+                source="explore_verified",
+            )
+            central_saved = True
+        except Exception as exc:
+            raw_errors.append(f"central memory: {exc!r}")
+            log_debug(f"explore memory finalizer central save failed: {exc!r}")
+
+    verified_summary = _build_central_index(
+        state.knowledge_base.user_goal,
+        review,
+        persisted,
+        finding_by_id,
+    )
+    if persisted == 0 and not central_saved:
+        joined = "; ".join(raw_errors) or "no persistence path succeeded"
+        yield TurnEvent.error_event(
+            f"Exploration memory not persisted: {joined}"
+        )
+        return
+    if central_saved and persisted > 0:
+        status_msg = (
+            f"Verified exploration memory saved to raw store and "
+            f"central index ({persisted} finding(s))."
+        )
+        body = (
+            f"[SYSTEM] Verified exploration memory saved to raw store and "
+            f"central index ({persisted} finding(s)).\n\n{verified_summary}"
+        )
+    elif central_saved:
+        status_msg = (
+            f"Verified exploration memory saved to central index only "
+            f"(raw store unavailable)."
+        )
+        body = (
+            f"[SYSTEM] Verified exploration memory saved to central index only "
+            f"(raw store unavailable).\n\n{verified_summary}"
+        )
+    else:
+        status_msg = (
+            f"Verified exploration memory saved to raw store "
+            f"({persisted} finding(s))."
+        )
+        body = (
+            f"[SYSTEM] Verified exploration memory saved to raw store "
+            f"({persisted} finding(s)).\n\n{verified_summary}"
+        )
+    loop.session.add_message(Message(role=Role.USER, content=body))
+    yield TurnEvent.text_done(status_msg)
+    if raw_errors:
+        yield TurnEvent.error_event(
+            "Exploration memory persistence had partial failures: "
+            + "; ".join(raw_errors)
+        )
 
 
 def _run_phase1_subagent(
@@ -413,14 +672,7 @@ def run_exploration_mode(
             yield from run_phase1_inline(loop, state, exploration_system, tools_schema, explore_only)
 
         if explore_only:
-            summary = state.knowledge_base.to_summary()
-            if summary:
-                loop.session.add_message(
-                    Message(
-                        role=Role.USER,
-                        content=("[SYSTEM] Exploration complete. Here is a summary of findings:\n\n" + summary),
-                    )
-                )
+            yield from _finalize_explore_memory(loop, state)
             log_info("Exploration mode finished (explore-only)")
             loop._clear_exploration_state()
             tracker.complete()

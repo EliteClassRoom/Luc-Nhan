@@ -184,6 +184,220 @@ class TestFlushFileHandler(unittest.TestCase):
         self.assertTrue(path.endswith("rikugan_debug.log"))
 
 
+class TestSilenceSDKDebugLoggers(unittest.TestCase):
+    """Regression: ``silence_sdk_debug_loggers`` must raise the level on
+    chat-halting SDK loggers so an OpenAI request that contains non-ASCII
+    content does not crash the logging thread with UnicodeEncodeError on
+    Windows cp1252 streams. The test snapshots only the four SDK logger
+    levels so it does not interfere with the rikugan.core.logging
+    singleton, the Rikugan logger's handler set, or any sibling tests.
+    """
+
+    _SDK_LOGGERS = ("openai", "openai._base_client", "httpx", "httpcore")
+
+    def setUp(self):
+        self._prior_levels = {
+            name: logging.getLogger(name).level for name in self._SDK_LOGGERS
+        }
+        for name in self._SDK_LOGGERS:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+
+    def tearDown(self):
+        for name, level in self._prior_levels.items():
+            logging.getLogger(name).setLevel(level)
+
+    def test_openai_logger_level_is_warning(self):
+        from rikugan.core.logging import silence_sdk_debug_loggers
+
+        silence_sdk_debug_loggers()
+        self.assertEqual(logging.getLogger("openai").level, logging.WARNING)
+
+    def test_httpx_logger_level_is_warning(self):
+        from rikugan.core.logging import silence_sdk_debug_loggers
+
+        silence_sdk_debug_loggers()
+        self.assertEqual(logging.getLogger("httpx").level, logging.WARNING)
+
+    def test_helper_is_idempotent(self):
+        from rikugan.core.logging import silence_sdk_debug_loggers
+
+        silence_sdk_debug_loggers()
+        silence_sdk_debug_loggers()
+        self.assertEqual(logging.getLogger("openai").level, logging.WARNING)
+        self.assertEqual(logging.getLogger("httpx").level, logging.WARNING)
+
+
+class TestRikuganLoggerDoesNotPropagate(unittest.TestCase):
+    """Regression: rikugan records must not propagate to the root logger.
+    Otherwise an inherited cp1252 StreamHandler (e.g. the one IDA Pro
+    installs on sys.stderr) crashes on Unicode in the message.
+
+    Concretely: install a root StreamHandler that uses the cp1252
+    codec, emit a record whose text contains ``→`` (U+2192), and
+    assert no UnicodeEncodeError is raised.
+    """
+
+    def test_codepage_root_handler_does_not_crash(self):
+        import io
+
+        from rikugan.core import logging as rikugan_logging_module
+        from rikugan.core.logging import get_logger
+
+        # Reset the singleton so get_logger() rebuilds from scratch;
+        # otherwise an already-cached logger from an earlier test could
+        # mask the create-time propagate=False setting. Snapshot the
+        # pre-existing handler set so we can detach and close only the
+        # handlers the rebuild appended.
+        named = logging.getLogger("Rikugan")
+        prior_handlers = list(named.handlers)
+        prior_singleton = rikugan_logging_module._logger
+        rikugan_logging_module._logger = None
+        try:
+            rikugan_logger = get_logger()
+        finally:
+            current = logging.getLogger("Rikugan")
+            for handler in list(current.handlers):
+                if handler not in prior_handlers:
+                    current.removeHandler(handler)
+                    try:
+                        handler.close()
+                    except Exception:
+                        pass
+            rikugan_logging_module._logger = prior_singleton
+
+        self.assertFalse(
+            rikugan_logger.propagate,
+            "get_logger() must set propagate=False at creation",
+        )
+        root_logger = logging.getLogger()
+
+        class _CP1252Stream(io.TextIOBase):
+            encoding = "cp1252"
+
+            def __init__(self):
+                self._buf = io.StringIO()
+
+            def write(self, s):
+                self._buf.write(s)
+                return len(s)
+
+            def flush(self):
+                self._buf.flush()
+
+            def getvalue(self):
+                return self._buf.getvalue()
+
+        sink = _CP1252Stream()
+        root_handler = logging.StreamHandler(sink)
+        root_handler.setLevel(logging.DEBUG)
+        prior_root_handlers = list(root_logger.handlers)
+        root_logger.addHandler(root_handler)
+        try:
+            try:
+                rikugan_logger.debug("skill: /test → arrow glyph")
+            except UnicodeEncodeError as exc:  # pragma: no cover
+                self.fail(f"propagation to cp1252 handler crashed: {exc}")
+        finally:
+            root_logger.removeHandler(root_handler)
+            for handler in list(root_logger.handlers):
+                if handler not in prior_root_handlers:
+                    root_logger.removeHandler(handler)
+
+        # The root handler is never invoked when propagate is False,
+        # so the cp1252 sink stays empty.
+        self.assertEqual(
+            sink.getvalue(),
+            "",
+            "root cp1252 handler must not receive rikugan records when propagate=False",
+        )
+
+    def test_propagate_is_false_by_default(self):
+        from rikugan.core.logging import get_logger
+
+        self.assertFalse(
+            get_logger().propagate,
+            "get_logger() must disable propagation so root handlers do not crash",
+        )
+
+
+class TestProviderBoundarySilencesSDKLoggers(unittest.TestCase):
+    """Regression: ``LLMProvider.chat`` must call
+    ``silence_sdk_debug_loggers`` immediately before ``_call_api`` so the
+    safeguard holds even when ``get_logger`` was never called. This proves
+    the direct /report provider path, not just the helper in isolation.
+    """
+
+    _SDK_LOGGERS = ("openai", "openai._base_client", "httpx", "httpcore")
+
+    def setUp(self):
+        self._prior_levels = {
+            name: logging.getLogger(name).level for name in self._SDK_LOGGERS
+        }
+        for name in self._SDK_LOGGERS:
+            logging.getLogger(name).setLevel(logging.DEBUG)
+
+    def tearDown(self):
+        for name, level in self._prior_levels.items():
+            logging.getLogger(name).setLevel(level)
+
+    def test_chat_silences_openai_before_call_api(self):
+        from rikugan.providers.base import LLMProvider
+
+        observed_level: dict[str, int] = {}
+
+        class _RecordingProvider(LLMProvider):
+            def __init__(self):
+                super().__init__(api_key="", model="dummy")
+
+            @property
+            def name(self) -> str:
+                return "dummy"
+
+            @property
+            def capabilities(self):
+                return None  # type: ignore[return-value]
+
+            def _get_client(self):
+                return None
+
+            def _call_api(self, client, kwargs):
+                observed_level["openai"] = logging.getLogger("openai").level
+                return None
+
+            def _normalize_response(self, raw):
+                from rikugan.core.types import Message
+
+                return Message(role="assistant", content="")
+
+            def _format_messages(self, messages):
+                return []
+
+            def _build_request_kwargs(self, *_args, **_kwargs):
+                return {}
+
+            def _handle_api_error(self, _e):
+                raise NotImplementedError
+
+            def _stream_chunks(self, *_args, **_kwargs):
+                return iter(())
+
+            @staticmethod
+            def _builtin_models():
+                return []
+
+            def _fetch_models_live(self):
+                return []
+
+        provider = _RecordingProvider()
+        provider.chat(messages=[])
+
+        self.assertEqual(
+            observed_level["openai"],
+            logging.WARNING,
+            "LLMProvider.chat must call silence_sdk_debug_loggers before _call_api",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Structured attempt logging (telemetry allowlist)
 # ---------------------------------------------------------------------------

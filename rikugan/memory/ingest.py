@@ -179,8 +179,22 @@ def ingest_exploration_finding(
     relevance: str,
     evidence: str = "",
     function_name: str = "",
+    memory_id: str | None = None,
+    title: str | None = None,
+    confidence: float | None = None,
 ) -> None:
-    """Upsert a memory + entity/relation record for a single finding."""
+    """Upsert a memory + entity/relation record for a single finding.
+
+    ``memory_id`` lets the caller supply a precomputed id; when
+    omitted the function falls back to the deterministic id derived
+    from the (corrected) ``summary`` and ``address``.
+
+    ``title`` and ``confidence`` override the derived values so the
+    caller can persist reviewer-corrected fields (e.g. a renamed
+    function title or a recalibrated confidence after a correction
+    cycle). When omitted, ``title`` is the first summary line and
+    ``confidence`` follows the legacy ``relevance`` map.
+    """
     if not store:
         return
     summary = (summary or "").strip()
@@ -192,8 +206,17 @@ def ingest_exploration_finding(
         addr_part = addr_norm
     else:
         addr_part = "noaddr"
-    mem_id = f"mem:explore:{cat}:{addr_part}:{_stable_hash(cat, summary, address)}"
+    if memory_id:
+        mem_id = memory_id
+    else:
+        mem_id = f"mem:explore:{cat}:{addr_part}:{_stable_hash(cat, summary, address)}"
     importance = _importance_from_relevance(relevance)
+    resolved_title = title if title is not None and title.strip() else _memory_title(summary)
+    resolved_confidence = (
+        confidence
+        if confidence is not None and 0.0 <= float(confidence) <= 1.0
+        else (0.8 if relevance == "high" else 0.6)
+    )
 
     entity_refs: list[str] = []
     if addr_norm:
@@ -223,12 +246,12 @@ def ingest_exploration_finding(
         id=mem_id,
         binary_id=paths.binary_id,
         type=cat,
-        title=_memory_title(summary),
+        title=resolved_title,
         content=summary,
         entity_refs=entity_refs,
         source_refs=[f"exploration_report:{mem_id}"],
         tags=[cat, "exploration"],
-        confidence=0.6 if relevance != "high" else 0.8,
+        confidence=resolved_confidence,
         importance=importance,
         verified=relevance == "high",
         created_at=_now_iso(),
@@ -461,8 +484,15 @@ def ingest_report(
     slug: str,
     scope: str,
     body_excerpt: str,
+    raise_on_error: bool = False,
 ) -> None:
-    """Store a memory + observation for a generated report."""
+    """Store a memory + observation for a generated report.
+
+    When ``raise_on_error`` is True, storage failures propagate so
+    callers like :func:`save_report` can report them to the user.
+    Default is False to preserve the best-effort contract for older
+    best-effort callers.
+    """
     if not store:
         return
     eid = relation_id("report", scope, slug)
@@ -513,8 +543,12 @@ def ingest_report(
                 },
             )
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        if raise_on_error:
+            raise
+        # Best-effort: a write error should not undo a successful file.
+        # Callers that need strictness pass ``raise_on_error=True``.
+        return
 
 
 __all__ = [

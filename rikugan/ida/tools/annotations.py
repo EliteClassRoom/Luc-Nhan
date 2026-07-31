@@ -161,6 +161,38 @@ def get_function_comment(
     return ida_funcs.get_func_cmt(func, repeatable) or ""
 
 
+RUGUGAN_EVIDENCE_TAG = "[Rikugan Evidence]"
+
+
+def merge_evidence_line(existing: str, evidence: str) -> str:
+    """Merge a single ``[Rikugan Evidence]`` line into *existing*.
+
+    Replaces the previous tagged line if present; otherwise appends
+    it. Other analyst text is preserved untouched. ``evidence`` is
+    expected to be a single non-empty line.
+    """
+    if not evidence or not evidence.strip():
+        return existing
+    tag = RUGUGAN_EVIDENCE_TAG
+    new_line = f"{tag} {evidence.strip()}"
+    if tag in existing:
+        head, _sep, tail = existing.partition(tag)
+        rest = tail.split("\n", 1)
+        after = rest[1] if len(rest) == 2 else ""
+        # Avoid emitting a leading blank line when the existing
+        # comment starts exactly with the tagged line.
+        if head.rstrip():
+            merged = head.rstrip() + "\n" + new_line
+        else:
+            merged = new_line
+        if after:
+            merged = merged + "\n" + after
+        return merged
+    if existing:
+        return existing.rstrip() + "\n" + new_line
+    return new_line
+
+
 @tool(category="annotations")
 def get_address_name(
     address: Annotated[str, "Address (hex string)"],
@@ -172,3 +204,17 @@ def get_address_name(
     """
     ea = parse_addr(address)
     return ida_name.get_name(ea) or ""
+
+__all__ = [
+    "RUGUGAN_EVIDENCE_TAG",
+    "rename_function",
+    "rename_variable",
+    "rename_address",
+    "set_comment",
+    "set_function_comment",
+    "merge_evidence_line",
+    "set_type",
+    "get_comment",
+    "get_function_comment",
+    "get_address_name",
+]

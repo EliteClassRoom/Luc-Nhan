@@ -25,12 +25,12 @@ from . import (
     annotations,
     database,
     disassembly,
+    file_io,
     functions,
     navigation,
     strings,
     xrefs,
 )
-
 _BOOT_TOOL_MODULES = (
     navigation,
     functions,
@@ -39,7 +39,10 @@ _BOOT_TOOL_MODULES = (
     disassembly,
     xrefs,
     annotations,
+    file_io,
 )
+
+
 
 # ---------------------------------------------------------------------------
 # Advanced tool modules — imported lazily on first tool schema build.

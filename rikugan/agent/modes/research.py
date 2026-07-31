@@ -159,11 +159,27 @@ ones. Batch renames of local variables (multiple `rename_variable` calls) are al
 when decompiling a key function.
 
 ### Persist your findings:
-Use `save_memory` to persist confirmed findings to central memory (MEMORY.md) so future sessions \
-start with context. Do this as you go — don't wait until the end.
+Use `save_memory` to persist confirmed findings to central memory
+(MEMORY.md) so future sessions start with context. Do this as you
+go — don't wait until the end.
 
-Log every significant finding with `exploration_report`. Keep exploring the binary \
-until you have thoroughly investigated the user's goal.
+### Verified-before-durable distinction:
+`exploration_report` calls you make during research are PROVISIONAL
+until verified. Persistence paths:
+
+- For `/modify` and other non-explore-only modes, findings are
+  auto-ingested immediately (Plan §5.46) so the planning phase
+  can use them. Use `save_memory` for facts you have independently
+  confirmed with tool calls and want durable in central MEMORY.md.
+- `/report` performs its own independent verification on every
+  non-report candidate before drafting. The Markdown report is
+  written only after the user confirms.
+
+Treat unverified `exploration_report` calls as findings-in-progress;
+do not present them as verified. Independently confirmed research
+facts may be saved normally with `save_memory`.
+Log every significant finding with `exploration_report`. Keep exploring
+the binary until you have thoroughly investigated the user's goal.
 """
 
 NOTE_WRITING_PROMPT = """\
@@ -444,8 +460,13 @@ def run_research_mode(
     research_state.knowledge_base.user_goal = user_message
     loop._research_state = research_state
 
-    # Also set up exploration state so exploration_report calls are handled
-    explore_state = ExplorationState(explore_only=True)
+    # Research mode keeps `explore_only=False` so that every
+    # `exploration_report` call is auto-ingested into the raw store
+    # immediately (Plan §5.46). Research findings are PROVISIONAL
+    # from the model's perspective (the addendum says so) but they
+    # still need to land in `.rikugan-kb` so subsequent planning
+    # phases and the verified `/report` flow can reach them.
+    explore_state = ExplorationState(explore_only=False)
     explore_state.max_explore_turns = research_state.max_explore_turns
     explore_state.knowledge_base.user_goal = user_message
     loop._exploration_state = explore_state
@@ -463,12 +484,12 @@ def run_research_mode(
     if tracker.should_run("explore"):
         tracker.enter("explore")
         if not tracker.is_continuing("explore"):
-            yield TurnEvent.exploration_phase_change("", "explore", f"Starting research: {user_message[:60]}")
-
+            yield TurnEvent.exploration_phase_change(
+                "", "explore", f"Starting research: {user_message[:60]}"
+            )
         from .exploration import run_phase1_inline
 
-        yield from run_phase1_inline(loop, explore_state, research_system, explore_tools, explore_only=True)
-
+        yield from run_phase1_inline(loop, explore_state, research_system, explore_tools, explore_only=False)
         # Merge exploration KB into research state
         research_state.knowledge_base = explore_state.knowledge_base
         research_state.knowledge_base.user_goal = user_message

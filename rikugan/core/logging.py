@@ -36,12 +36,40 @@ from .log_sinks import (  # noqa: F401 — re-exported for tests
 _logger: logging.Logger | None = None
 
 
+# Third-party SDKs (openai, httpx, httpcore) emit DEBUG records that
+# dump full request bodies. On Windows cp1252 streams this triggers
+# UnicodeEncodeError when the body contains non-ASCII content, which
+# crashes the logging thread mid-turn. Centralized here so both
+# ``get_logger`` (UI bootstrap) and the LLM provider boundary call
+# the same idempotent helper without duplicating handlers.
+_SUPPRESSED_SDK_LOGGERS: tuple[str, ...] = (
+    "openai",
+    "openai._base_client",
+    "httpx",
+    "httpcore",
+)
+
+
+def silence_sdk_debug_loggers() -> None:
+    """Raise the level on chat-halting SDK loggers. Idempotent."""
+    for _name in _SUPPRESSED_SDK_LOGGERS:
+        logging.getLogger(_name).setLevel(logging.WARNING)
+
+
 def get_logger() -> logging.Logger:
+    # Idempotent safeguard against chat-halting SDK DEBUG records.
+    silence_sdk_debug_loggers()
     global _logger
     if _logger is not None:
         return _logger
     _logger = logging.getLogger("Rikugan")
     _logger.setLevel(logging.DEBUG)
+    # Stop propagation so the record is not also delivered to the
+    # root logger's handlers (a cp1252 StreamHandler installed by the
+    # IDA Python runtime, for example). Rikugan owns all of its own
+    # handlers below; falling back to the root would also re-emit
+    # the record and crash on Unicode it cannot encode.
+    _logger.propagate = False
 
     fmt = logging.Formatter(
         "[Lục nhãn %(asctime)s.%(msecs)03d %(levelname)s %(threadName)s] %(message)s",

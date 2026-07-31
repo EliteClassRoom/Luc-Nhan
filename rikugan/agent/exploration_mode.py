@@ -291,21 +291,48 @@ something relevant.
 3. **Dive** — Decompile candidates, trace data flow, find exact constants/logic
 4. **Hypothesize** — Form concrete hypotheses about what to change
 
-### Rename as you go:
-As you explore, **rename functions whose purpose you have confidently identified**. \
-Use `rename_function` to replace generic names (sub_XXXX, FUN_XXXX) with descriptive \
-ones. This makes subsequent analysis clearer for you and the user. \
-Only rename when you are certain — if unsure, leave the original name and note your \
-hypothesis in an `exploration_report` instead. Batch renames of local variables \
-(multiple `rename_variable` calls per local) are also encouraged when decompiling a key function.
+### Rename and comment policy (evidence-preserving):
+Function renames and evidence comments must reflect actual tool findings.
+Do not rename without first running `decompile_function`, `xrefs_to`,
+and `search_functions` (or `list_strings`). The confidence gates
+below are mandatory:
 
-### Persist your findings:
-Use `save_memory` to persist confirmed findings so future sessions \
-start with context. Save function purposes, architecture notes, and data structures \
-you've confidently identified. Do this as you go — don't wait until the end.
+- Confidence **> 0.90** (decompile + xrefs + strings agree): call
+  `rename_function` directly. No new evidence comment required.
+- Confidence **0.70 – 0.90**: rename only together with a
+  repeatable function-level evidence comment. The exact order is:
+  1. Call `get_function_comment(address, repeatable=True)` to read.
+  2. Construct the merged text in-line: replace the prior
+     ``[Rikugan Evidence]`` line if present, append a new tagged
+     line otherwise, and preserve every other line of analyst text
+     untouched. The tagged line must read
+     ``[Rikugan Evidence] <one-line tool-grounded evidence>``.
+  3. Call `set_function_comment(address, merged, repeatable=True)`.
+  4. Re-read with `get_function_comment(address, repeatable=True)`
+     and confirm the returned text exactly matches the merged
+     text you sent. If the readback fails or is missing, do NOT
+     call `rename_function`; log an
+     `exploration_report(category="hypothesis")` instead.
+- Confidence **< 0.70**: do not rename. Log the hypothesis with
+  `exploration_report`.
 
-Log every significant finding with `exploration_report`. When you have enough \
-understanding, call `phase_transition(to_phase="plan")`.
+All non-tagged analyst text in the existing repeatable function
+comment must be preserved. Follow the established `naming-convention`
+skill for edge cases (wrappers, thunks, C++ mangling, Go/Rust).
+Functions are PascalCase. Do not call any non-registered tool.
+
+### Persist your findings (verified before durable storage):
+Use `exploration_report` for every significant discovery. The
+post-explore finalizer independently verifies each finding with
+IDA tools (up to three correction cycles); only fully verified
+findings reach the raw store, and a compact sanitized index is
+saved to central memory under `category=exploration_index`.
+Provisional `exploration_report` calls are not auto-persisted; the
+finalizer owns the verified persistence path. Do not call any
+helper that is not in the registered tool list.
+
+Log every significant finding with `exploration_report`. When you have
+enough understanding, call `phase_transition(to_phase="plan")`.
 """
 
 PLAN_SYNTHESIS_PROMPT = """\
