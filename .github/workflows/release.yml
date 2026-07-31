@@ -101,7 +101,7 @@ jobs:
           python -m mypy rikugan/core rikugan/providers
 
           echo "── pytest ──"
-          python -m pytest tests/ --tb=short -q
+          python -m pytest --tb=short -q
 
           echo "── desloppify (objective score) ──"
           desloppify scan --profile objective --no-badge

@@ -12,6 +12,16 @@ store. The functions here are **best-effort**: they never raise, never
 block the agent loop, and silently skip writes when no IDB path is
 available. Failure to write a memory does not undo what already landed
 on disk.
+
+Dual-write (SQLite + JSONL) overview
+------------------------------------
+
+After the SQLite-first migration (`SQLiteKnowledgeRepository` +
+`BinaryMemoryService`) the canonical write path for exploration findings
+and research notes is the SQLite service. The JSONL raw store is kept as
+a fallback + audit trail, controlled by the module-level flag
+``_LEGACY_JSONL_DUAL_WRITE``. When ``True`` (default) both paths are
+written; either path's failure is logged but never blocks the other.
 """
 
 from __future__ import annotations
@@ -20,7 +30,7 @@ import hashlib
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .notes import extract_inline_addresses, extract_inline_tags, parse_note
 from .paths import (
@@ -40,6 +50,24 @@ from .schema import (
     KnowledgeMemory,
     KnowledgeObservation,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .service import BinaryMemoryService
+
+# ---------------------------------------------------------------------------
+# Dual-write toggle
+# ---------------------------------------------------------------------------
+
+
+#: When ``True`` (default), ``ingest_exploration_finding`` and
+#: ``ingest_research_note`` write to BOTH the SQLite
+#: ``BinaryMemoryService`` (when supplied) and the legacy JSONL store.
+#: When ``False`` only the SQLite service is written. When no
+#: ``memory_service`` is supplied the legacy JSONL-only path is always
+#: taken so callers that pre-date the migration (notably the knowledge
+#: test suite) keep working unchanged.
+_LEGACY_JSONL_DUAL_WRITE = True
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -170,7 +198,60 @@ _CATEGORY_TO_ENTITY_TYPE = {
 }
 
 
-def ingest_exploration_finding(
+def _relevance_to_confidence(relevance: str) -> float:
+    """Map the agent's low/medium/high relevance tag to a confidence score.
+
+    Used by the SQLite write path so the structured ``facts`` row carries
+    a comparable value to the JSONL memory's ``confidence`` field. The
+    values intentionally differ from
+    :func:`_importance_from_relevance` to preserve the existing JSONL
+    semantics on the legacy path.
+    """
+    rel = (relevance or "medium").strip().lower()
+    if rel == "high":
+        return 0.9
+    if rel == "low":
+        return 0.5
+    return 0.7
+
+
+def _write_exploration_to_sqlite(
+    memory_service: BinaryMemoryService,
+    category: str,
+    summary: str,
+    address: int | None,
+    relevance: str,
+    evidence: str = "",
+) -> None:
+    """Write a single exploration finding to the SQLite memory service.
+
+    Failures are logged via ``log_error`` and swallowed — the JSONL
+    fallback path is owned by the caller and may still succeed.
+    """
+    from ..core.logging import log_error
+
+    entity_refs: list[str] = []
+    if address is not None:
+        entity_refs.append(f"func:0x{int(address):x}")
+    cat = (category or "general").strip().lower() or "general"
+    tags = [cat] if cat else ["general"]
+    title = _memory_title(summary)
+    try:
+        memory_service.save_exploration_finding(
+            None,
+            category=cat,
+            title=title,
+            content=summary,
+            confidence=_relevance_to_confidence(relevance),
+            entity_refs=entity_refs,
+            tags=tags,
+            source="exploration",
+        )
+    except Exception as e:
+        log_error(f"SQLite exploration write failed: {e}")
+
+
+def _write_exploration_to_jsonl(
     store: KnowledgeRawStore,
     paths: KnowledgePaths,
     category: str,
@@ -223,8 +304,6 @@ def ingest_exploration_finding(
         entity_type = _CATEGORY_TO_ENTITY_TYPE.get(cat, "concept")
         eid = _entity_id_for(category=cat, entity_type=entity_type, address=address, name=function_name or summary[:40])
     else:
-        # No address → synthesize a stable concept entity so the memory
-        # still has something to point at.
         entity_type = "concept"
         eid = _entity_id_for(category=cat, entity_type=entity_type, address=None, name=function_name or summary[:60])
     ent = KnowledgeEntity(
@@ -277,6 +356,43 @@ def ingest_exploration_finding(
         pass
 
 
+def ingest_exploration_finding(
+    store: KnowledgeRawStore,
+    paths: KnowledgePaths,
+    category: str,
+    summary: str,
+    address: int | None,
+    relevance: str,
+    evidence: str = "",
+    function_name: str = "",
+    *,
+    memory_service: BinaryMemoryService | None = None,
+) -> None:
+    """Upsert a memory + entity/relation record for a single finding.
+
+    Dual-write behavior: when *memory_service* is supplied the SQLite
+    path is attempted first (failures are logged but never raised); when
+    :data:`_LEGACY_JSONL_DUAL_WRITE` is ``True`` the JSONL path is then
+    attempted (also failure-tolerant). When *memory_service* is
+    ``None`` the function falls back to the legacy JSONL-only path
+    regardless of the flag, preserving call sites in
+    ``rikugan/tests/knowledge/test_ingest.py`` and other pre-migration
+    sources.
+    """
+    if memory_service is not None:
+        _write_exploration_to_sqlite(memory_service, category, summary, address, relevance, evidence)
+    if not _LEGACY_JSONL_DUAL_WRITE:
+        return
+    if not store:
+        return
+    try:
+        _write_exploration_to_jsonl(store, paths, category, summary, address, relevance, evidence, function_name)
+    except Exception as e:
+        from ..core.logging import log_error
+
+        log_error(f"JSONL exploration write failed: {e}")
+
+
 def _normalize_addr_for_id(address: int | None) -> str:
     """Deprecated: thin wrapper kept for back-compat.
 
@@ -307,7 +423,39 @@ def _entity_id_for(category: str, entity_type: str, address: int | None, name: s
 # ---------------------------------------------------------------------------
 
 
-def ingest_research_note(
+def _write_research_to_sqlite(
+    memory_service: BinaryMemoryService,
+    *,
+    note_path: str,
+    genre: str,
+    title: str,
+    content: str,
+    related: list[str] | None,
+    review_passed: bool,
+) -> None:
+    """Write a finished research note as a structured SQLite fact.
+
+    Research notes don't carry explicit graph metadata (entity refs /
+    tags are derived from the note body by the JSONL path), so the
+    SQLite path uses :meth:`BinaryMemoryService.save_fact` to keep the
+    note's body as a single category-tagged fact.
+    """
+    from ..core.logging import log_error
+
+    cat = (genre or "general").strip().lower() or "general"
+    fact = f"{title}\n\n{content}" if title else content
+    try:
+        memory_service.save_fact(
+            None,
+            category=cat,
+            fact=fact,
+            source="research_note",
+        )
+    except Exception as e:
+        log_error(f"SQLite research_note write failed: {e}")
+
+
+def _write_research_to_jsonl(
     store: KnowledgeRawStore,
     paths: KnowledgePaths,
     *,
@@ -315,12 +463,10 @@ def ingest_research_note(
     genre: str,
     title: str,
     content: str,
-    related: list[str] | None = None,
-    review_passed: bool = False,
+    related: list[str] | None,
+    review_passed: bool,
 ) -> None:
-    """Ingest a finished research note into memories, entities, and relations."""
-    if not store:
-        return
+    """Existing JSONL write logic — extracted verbatim from the prior body."""
     try:
         parsed = parse_note(content or "", path=note_path)
     except Exception:
@@ -448,6 +594,57 @@ def ingest_research_note(
         )
     except Exception:
         pass
+
+
+def ingest_research_note(
+    store: KnowledgeRawStore,
+    paths: KnowledgePaths,
+    *,
+    note_path: str,
+    genre: str,
+    title: str,
+    content: str,
+    related: list[str] | None = None,
+    review_passed: bool = False,
+    memory_service: BinaryMemoryService | None = None,
+) -> None:
+    """Ingest a finished research note into memories, entities, and relations.
+
+    Dual-write behavior mirrors
+    :func:`ingest_exploration_finding`: when *memory_service* is
+    supplied the SQLite path is attempted first; the JSONL path is
+    attempted when :data:`_LEGACY_JSONL_DUAL_WRITE` is ``True``. Each
+    path logs but swallows errors so the other can still succeed.
+    """
+    if memory_service is not None:
+        _write_research_to_sqlite(
+            memory_service,
+            note_path=note_path,
+            genre=genre,
+            title=title,
+            content=content,
+            related=related,
+            review_passed=review_passed,
+        )
+    if not _LEGACY_JSONL_DUAL_WRITE:
+        return
+    if not store:
+        return
+    try:
+        _write_research_to_jsonl(
+            store,
+            paths,
+            note_path=note_path,
+            genre=genre,
+            title=title,
+            content=content,
+            related=related,
+            review_passed=review_passed,
+        )
+    except Exception as e:
+        from ..core.logging import log_error
+
+        log_error(f"JSONL research_note write failed: {e}")
 
 
 def _memory_excerpt(content: str, limit: int = 400) -> str:

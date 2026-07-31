@@ -82,6 +82,19 @@ class TestParser(unittest.TestCase):
             self.assertTrue(getattr(cmd, attr), f"{prefix} did not set {attr}")
             self.assertFalse(cmd.use_a2a_mode)
 
+    def test_orchestra_command_remains_recognized_while_runtime_is_gated(self) -> None:
+        """Parser compatibility: ``/orchestra`` still sets
+        ``use_orchestra_mode=True`` and the message body is preserved
+        unchanged. The runtime Orchestra path is currently disabled,
+        but the parser must continue to recognize the command so users
+        receive a precise disabled message instead of an
+        unknown-command error.
+        """
+        cmd = _parse_user_command("/orchestra inspect imports")
+        self.assertTrue(cmd.use_orchestra_mode)
+        self.assertEqual(cmd.message, "inspect imports")
+        self.assertFalse(cmd.use_a2a_mode)
+
 
 class TestModeRunnerValidation(unittest.TestCase):
     """The mode runner surfaces friendly errors for malformed input."""
@@ -155,21 +168,28 @@ class TestModeRunnerDispatch(unittest.TestCase):
         from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
 
         loop = self._fake_loop()
-        agents = [ExternalAgentConfig(
-            name="claude", transport="subprocess", endpoint="claude",
-            capabilities=["code_generation"],
-        )]
+        agents = [
+            ExternalAgentConfig(
+                name="claude",
+                transport="subprocess",
+                endpoint="claude",
+                capabilities=["code_generation"],
+            )
+        ]
 
         def fake_run(*args, **kwargs):
             yield A2AEvent(type="stdout", text="working...\n")
             yield A2AEvent(type="completed", text="done!", done=True)
 
-        with patch(
-            "rikugan.agent.a2a.dispatcher.SubprocessBridge.discover",
-            return_value=agents,
-        ), patch(
-            "rikugan.agent.a2a.dispatcher.SubprocessBridge.run_task",
-            new=fake_run,
+        with (
+            patch(
+                "rikugan.agent.a2a.dispatcher.SubprocessBridge.discover",
+                return_value=agents,
+            ),
+            patch(
+                "rikugan.agent.a2a.dispatcher.SubprocessBridge.run_task",
+                new=fake_run,
+            ),
         ):
             events, _ = _drain(run_a2a_mode(loop, "claude do thing", "", []))
 
@@ -209,6 +229,7 @@ class TestModeRunnerDispatch(unittest.TestCase):
 
         # Capture what the dispatcher was constructed with.
         from rikugan.agent.modes import a2a as a2a_mode
+
         with patch.object(a2a_mode, "A2ADispatcher") as mock_dispatcher_cls:
             mock_dispatcher_cls.return_value.discover.return_value = agents
             mock_dispatcher_cls.return_value.run_task.return_value = iter([])

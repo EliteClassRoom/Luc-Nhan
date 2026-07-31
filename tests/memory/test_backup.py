@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
 
-from rikugan.memory.backup import create_backup, list_backups, restore_from_backup
+from rikugan.memory.backup import (
+    BackupResult,
+    BackupVerificationError,
+    create_backup,
+    list_backups,
+    restore_from_backup,
+    verify_backup,
+)
 from rikugan.memory.workspace import MemoryLocator, WorkspacePaths, new_memory_id, new_record_id
 from rikugan.memory.workspace_store import WorkspaceStore
 
@@ -44,8 +52,6 @@ class TestBackup:
         _store, paths, mid = _create_workspace(tmp_path)
         backup_dir = tmp_path / "backups"
 
-        import time
-
         create_backup(paths, mid, backup_dir)
         time.sleep(1.2)  # ensure distinct timestamps
         create_backup(paths, mid, backup_dir)
@@ -69,7 +75,7 @@ class TestBackup:
         new_mid = new_memory_id()
         new_locator = MemoryLocator(tmp_path / "restored")
         new_paths = new_locator.binary(new_mid)
-        restored = restore_from_backup(result.backup_path, new_paths, new_mid)
+        restored = restore_from_backup(result.backup_path, new_paths, new_mid, migration_backup_dir=backup_dir)
 
         # Verify restored data
         facts = restored.list_facts()
@@ -83,3 +89,60 @@ class TestBackup:
         paths = locator.binary(mid)
         with pytest.raises(FileNotFoundError):
             create_backup(paths, mid, tmp_path / "backups")
+
+    def test_two_backups_in_same_clock_tick_never_overwrite(self, tmp_path: Path, monkeypatch) -> None:
+        store, paths, mid = _create_workspace(tmp_path)
+        monkeypatch.setattr("time.time_ns", lambda: 123)
+        first = create_backup(paths, mid, tmp_path / "backups")
+        second = create_backup(paths, mid, tmp_path / "backups")
+        assert first.backup_path != second.backup_path
+        assert first.backup_path.exists() and second.backup_path.exists()
+        store.close()
+
+    def test_verify_backup_corrupt_header_raises(self, tmp_path: Path) -> None:
+        store, paths, mid = _create_workspace(tmp_path)
+        backup_dir = tmp_path / "backups"
+        result = create_backup(paths, mid, backup_dir)
+        # Corrupt the SQLite magic header.
+        with result.backup_path.open("r+b") as stream:
+            stream.write(b"NOT-SQLITE-XXXXXX")
+        with pytest.raises(BackupVerificationError, match="header"):
+            verify_backup(result, mid)
+        store.close()
+
+    def test_verify_backup_wrong_owner_raises(self, tmp_path: Path) -> None:
+        store, paths, mid = _create_workspace(tmp_path)
+        backup_dir = tmp_path / "backups"
+        result = create_backup(paths, mid, backup_dir)
+        with pytest.raises(BackupVerificationError, match="owner"):
+            verify_backup(result, new_memory_id())
+        store.close()
+
+    def test_verify_backup_hash_mismatch_raises(self, tmp_path: Path) -> None:
+        store, paths, mid = _create_workspace(tmp_path)
+        backup_dir = tmp_path / "backups"
+        result = create_backup(paths, mid, backup_dir)
+        tampered = BackupResult(
+            backup_path=result.backup_path,
+            manifest_hash="0" * 64,
+            db_size=result.db_size,
+        )
+        with pytest.raises(BackupVerificationError, match="hash"):
+            verify_backup(tampered, mid)
+        store.close()
+
+    def test_verify_backup_accepts_valid(self, tmp_path: Path) -> None:
+        store, paths, mid = _create_workspace(tmp_path)
+        backup_dir = tmp_path / "backups"
+        result = create_backup(paths, mid, backup_dir)
+        verify_backup(result, mid)
+        store.close()
+
+    def test_verify_backup_missing_file_raises(self, tmp_path: Path) -> None:
+        store, paths, mid = _create_workspace(tmp_path)
+        backup_dir = tmp_path / "backups"
+        result = create_backup(paths, mid, backup_dir)
+        result.backup_path.unlink()
+        with pytest.raises(BackupVerificationError, match="missing or empty"):
+            verify_backup(result, mid)
+        store.close()

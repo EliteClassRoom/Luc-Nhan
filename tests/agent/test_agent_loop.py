@@ -8,6 +8,7 @@ import sys
 import unittest
 from collections.abc import Generator as GeneratorType
 from typing import Any
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -740,6 +741,182 @@ class TestAgentLoop(unittest.TestCase):
         reasoning_events = [e for e in _events if e.type == TurnEventType.REASONING_DELTA]
         assert len(reasoning_events) == 1
         assert "thinking" in reasoning_events[0].reasoning
+
+    def test_orchestra_gate_returns_before_session_prompt_retrieval_or_provider(self):
+        """``/orchestra`` is gated: returns one TEXT_DONE event and exits
+        before any skill resolution, system prompt, tool schema, session
+        append, or provider call. The runtime Orchestra path is currently
+        disabled pending its execution and context-isolation hardening.
+        """
+        provider = MockProvider(responses=[])
+        loop = self._make_loop(provider)
+        original_messages = list(loop.session.messages)
+        loop.session.metadata["active_mode"] = "research"
+
+        with (
+            patch.object(loop, "_resolve_skill", side_effect=AssertionError("skill resolution ran")),
+            patch.object(loop, "_build_system_prompt", side_effect=AssertionError("prompt built")),
+            patch.object(loop, "_build_tools_schema", side_effect=AssertionError("schemas built")),
+        ):
+            events = list(loop.run("/orchestra analyze this binary"))
+
+        assert [(event.type, event.text) for event in events] == [
+            (
+                TurnEventType.TEXT_DONE,
+                "Orchestra is temporarily disabled while its execution and context isolation contracts are being hardened.",
+            )
+        ]
+        assert loop.session.messages == original_messages
+        assert loop.session.metadata["active_mode"] == "research"
+        assert provider._call_count == 0
+
+    def test_build_retrieved_knowledge_section_uses_sqlite_when_service_wired(self):
+        """When memory_service is not None, the section reads from SQLite."""
+        from unittest.mock import MagicMock
+
+        provider = MockProvider(responses=[_text_response("done")])
+        loop = self._make_loop(provider)
+
+        mock_service = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.list_memories.return_value = []
+        mock_repo.list_entities.return_value = []
+        mock_repo.list_relations.return_value = []
+        mock_repo.count_observations.return_value = 0
+        mock_service.repository = mock_repo
+        loop.memory_service = mock_service
+
+        loop._build_retrieved_knowledge_section(
+            current_address="0x401000",
+            current_function="main @ 0x401000",
+            profile=loop.config.get_active_profile(),
+        )
+        # The section may be empty (no memories), but the key assertion is
+        # that the repository was queried, proving the SQLite path was taken.
+        mock_repo.list_memories.assert_called()
+
+    def test_build_retrieved_knowledge_section_sqlite_path_honors_budget(self):
+        """SQLite path passes the configured ``knowledge_max_context_*`` budget
+        to ``repository_to_retrieval_pack`` — not ``None``.
+
+        Regression guard: previously the SQLite branch hard-coded
+        ``budget=None``, silently ignoring the user's caps and falling back
+        to the default ``NORMAL_BUDGET``.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from rikugan.memory.context import NORMAL_BUDGET, budget_from_config
+
+        provider = MockProvider(responses=[_text_response("done")])
+        loop = self._make_loop(provider)
+
+        # Tighten the caps below the defaults so any budget-passthrough
+        # failure is observable in the captured kwargs.
+        loop.config.knowledge_max_context_items = 4
+        loop.config.knowledge_max_context_chars = 1_200
+
+        expected_budget = budget_from_config(loop.config, active_mode="normal")
+
+        mock_service = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.list_memories.return_value = []
+        mock_repo.list_entities.return_value = []
+        mock_repo.list_relations.return_value = []
+        mock_repo.count_observations.return_value = 0
+        mock_service.repository = mock_repo
+        loop.memory_service = mock_service
+
+        with patch("rikugan.memory.sqlite_retrieval.repository_to_retrieval_pack") as pack_mock:
+            # Return value must look like a RetrievalPack-shaped object so
+            # ``build_section_from_pack`` / ``build_retrieval_metadata`` do
+            # not blow up downstream.
+            from rikugan.memory.retrieve import RetrievalPack
+
+            pack_mock.return_value = RetrievalPack(
+                memories=[],
+                entities=[],
+                relations=[],
+                notes=[],
+            )
+            loop._build_retrieved_knowledge_section(
+                current_address="0x401000",
+                current_function="main @ 0x401000",
+                profile=loop.config.get_active_profile(),
+            )
+
+        pack_mock.assert_called_once()
+        kwargs = pack_mock.call_args.kwargs
+        passed_budget = kwargs.get("budget")
+        self.assertIsNotNone(
+            passed_budget,
+            "SQLite path must pass a non-None budget; the previous regression "
+            "hard-coded budget=None and silently bypassed user caps.",
+        )
+        # The configured items cap is 4; the default budget holds 12+6+6+2=26.
+        self.assertLess(
+            sum(
+                [
+                    passed_budget.max_memories,
+                    passed_budget.max_entities,
+                    passed_budget.max_relations,
+                    passed_budget.max_notes,
+                ]
+            ),
+            NORMAL_BUDGET.max_memories
+            + NORMAL_BUDGET.max_entities
+            + NORMAL_BUDGET.max_relations
+            + NORMAL_BUDGET.max_notes,
+            "Passed budget must reflect the tightened user caps, not defaults.",
+        )
+        self.assertEqual(passed_budget.max_total_chars, expected_budget.max_total_chars)
+
+    def test_build_retrieved_knowledge_section_falls_back_to_jsonl_when_service_none(self):
+        """When memory_service is None, the section reads from JSONL via make_store."""
+        from unittest.mock import patch
+
+        provider = MockProvider(responses=[_text_response("done")])
+        loop = self._make_loop(provider)
+        loop.memory_service = None
+
+        # Patch make_store so we don't actually touch the filesystem.
+        with patch("rikugan.memory.ingest.make_store") as make_store_mock:
+            make_store_mock.return_value = (None, None)
+            section = loop._build_retrieved_knowledge_section(
+                current_address="0x401000",
+                current_function="main",
+                profile=loop.config.get_active_profile(),
+            )
+        # make_store was called (JSONL path was taken), and no error was raised.
+        make_store_mock.assert_called()
+        # With make_store returning (None, None) the section collapses to "".
+        self.assertEqual(section, "")
+
+    def test_build_retrieved_knowledge_section_empty_pack_metadata(self):
+        """An empty SQLite pack produces empty counts metadata and empty section."""
+        from unittest.mock import MagicMock
+
+        provider = MockProvider(responses=[_text_response("done")])
+        loop = self._make_loop(provider)
+
+        mock_service = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.list_memories.return_value = []
+        mock_repo.list_entities.return_value = []
+        mock_repo.list_relations.return_value = []
+        mock_repo.count_observations.return_value = 0
+        mock_service.repository = mock_repo
+        loop.memory_service = mock_service
+
+        section = loop._build_retrieved_knowledge_section(
+            current_address="0x401000",
+            current_function="main @ 0x401000",
+            profile=loop.config.get_active_profile(),
+        )
+        # session metadata should record the (empty) retrieval counts.
+        self.assertIn("last_knowledge_retrieval", loop.session.metadata)
+        meta = loop.session.metadata["last_knowledge_retrieval"]
+        self.assertIn("counts", meta)
+        self.assertEqual(section, "")
 
 
 class TestStreamOutcomeGuardIntegration(unittest.TestCase):

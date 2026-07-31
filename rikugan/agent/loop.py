@@ -159,6 +159,23 @@ _FAILURE_SUBSTRINGS = (
 )
 
 
+# Orchestra temporary safety gate. The Orchestra execution path is
+# disabled pending its shared execution-policy and context-isolation
+# hardening (see docs/superpowers/specs/2026-07-22-memory-durability-and-
+# orchestra-gate-design.md §10). The command remains recognized so users
+# receive a precise disabled message instead of an unknown-command error;
+# the early gate below returns one ``TEXT_DONE`` event and exits before
+# skill resolution, session append, prompt/schema construction, retrieval,
+# provider call, or tool execution.
+#
+# Focused legacy tests may monkeypatch this constant to ``True`` only
+# inside the test process; production defaults remain disabled.
+_ORCHESTRA_ENABLED = False
+_ORCHESTRA_DISABLED_MESSAGE = (
+    "Orchestra is temporarily disabled while its execution and context isolation contracts are being hardened."
+)
+
+
 def _result_indicates_failure(result: str) -> bool:
     """Heuristic check: does the tool result string indicate a clear failure?"""
     if not isinstance(result, str):
@@ -593,65 +610,97 @@ class AgentLoop:
         try:
             if not getattr(self.config, "knowledge_enabled", True):
                 return ""
-            from ..memory.context import (
-                RetrievalQuery,
-                budget_from_config,
-                build_retrieval_metadata,
-                build_retrieved_context_with_pack,
-            )
-            from ..memory.ingest import make_store
-
-            store, paths = make_store(self.session.idb_path)
-            if store is None:
-                return ""
 
             active_mode = self.session.metadata.get("active_mode", "normal") or "normal"
             active_goal = self.session.metadata.get(_GOAL_METADATA_KEY, "")
 
-            func_name = ""
-            if current_function:
-                # Try to extract a name like "func_name @ 0x401000" — the
-                # second line of ``get_current_function`` output is the
-                # name when present.
-                for line in (current_function or "").splitlines():
-                    line = line.strip()
-                    if not line or line.lower().startswith("address") or line.lower().startswith("function:"):
-                        continue
-                    func_name = line
-                    break
+            # Compute the retrieval budget ONCE so both the SQLite and JSONL
+            # paths honor the user's ``knowledge_max_context_items`` /
+            # ``knowledge_max_context_chars`` config. Previously the SQLite
+            # branch silently passed ``budget=None``, falling back to the
+            # default ``NORMAL_BUDGET`` and ignoring user caps.
+            from ..memory.context import budget_from_config
 
-            query = RetrievalQuery(
-                text=" ".join(filter(None, [current_address or "", current_function or "", func_name, active_goal])),
-                address=current_address or "",
-                function_name=func_name,
-                active_goal=active_goal,
-                active_mode=active_mode,
-            )
-
-            # Build the section AND the underlying pack in a single
-            # retrieve() call.  ``budget_from_config`` honors
-            # knowledge_max_context_items / knowledge_max_context_chars
-            # so user-set caps actually take effect.
             budget = budget_from_config(self.config, active_mode=active_mode)
-            section, pack = build_retrieved_context_with_pack(
-                store,
-                paths,
-                query=query,
-                budget=budget,
-                active_mode=active_mode,
-            )
-            if section and pack is not None:
-                # Emit a TurnEvent so the UI can display a compact
-                # retrieved-knowledge indicator when configured.  Reuse
-                # the same pack we just built — do NOT re-run retrieve.
-                try:
-                    meta = build_retrieval_metadata(pack)
-                    self.session.metadata["last_knowledge_retrieval"] = meta
-                except Exception:
-                    pass
+
+            # Prefer SQLite when the central memory service is wired.
+            if self.memory_service is not None:
+                from ..memory.sqlite_retrieval import repository_to_retrieval_pack
+
+                pack = repository_to_retrieval_pack(
+                    self.memory_service.repository,
+                    current_address=current_address,
+                    current_function=current_function,
+                    active_mode=active_mode,
+                    active_goal=active_goal,
+                    budget=budget,
+                )
+            else:
+                # Fallback: JSONL store via the legacy ingest/retrieve path.
+                from ..memory.context import RetrievalQuery
+                from ..memory.ingest import make_store
+                from ..memory.retrieve import retrieve as jsonl_retrieve
+
+                store, paths = make_store(self.session.idb_path)
+                if store is None or paths is None:
+                    return ""
+
+                func_name = ""
+                if current_function:
+                    # Try to extract a name like "func_name @ 0x401000" —
+                    # the second line of ``get_current_function`` output
+                    # is the name when present.
+                    for line in (current_function or "").splitlines():
+                        line = line.strip()
+                        if not line or line.lower().startswith("address") or line.lower().startswith("function:"):
+                            continue
+                        func_name = line
+                        break
+
+                query = RetrievalQuery(
+                    text=" ".join(
+                        filter(
+                            None,
+                            [
+                                current_address or "",
+                                current_function or "",
+                                func_name,
+                                active_goal,
+                            ],
+                        )
+                    ),
+                    address=current_address or "",
+                    function_name=func_name,
+                    active_goal=active_goal,
+                    active_mode=active_mode,
+                )
+                pack = jsonl_retrieve(
+                    store,
+                    paths,
+                    query,
+                    max_memories=budget.max_memories,
+                    max_entities=budget.max_entities,
+                    max_relations=budget.max_relations,
+                    max_notes=budget.max_notes,
+                    expand_relations=True,
+                )
+
+            # Both paths share the same renderer.
+            from ..memory.context import build_retrieval_metadata, build_section_from_pack
+
+            section = build_section_from_pack(pack)
+            # Record retrieval metadata so the UI can show a compact
+            # retrieved-knowledge indicator when configured.  Reuse the
+            # same pack we just built — do NOT re-run retrieve.
+            try:
+                meta = build_retrieval_metadata(pack)
+                self.session.metadata["last_knowledge_retrieval"] = meta
+            except Exception:
+                pass
+
             return section
         except Exception as e:
-            log_debug(f"retrieved-knowledge section failed: {e}")
+            log_debug(f"retrieved knowledge section failed: {e}")
             return ""
 
     def _resolve_skill(self, user_message: str) -> tuple:
@@ -1867,20 +1916,21 @@ class AgentLoop:
             try:
                 from ..memory.ingest import ingest_exploration_finding, make_store
 
-                store, paths = make_store(self.session.idb_path)
-                if store is not None:
-                    ingest_exploration_finding(
-                        store,
-                        paths,
-                        category=category,
-                        summary=summary,
-                        address=address,
-                        relevance=relevance,
-                        evidence=evidence,
-                        function_name=func_name,
-                    )
-            except Exception as e:
-                log_debug(f"knowledge ingest (exploration_report) failed: {e}")
+            store, paths = make_store(self.session.idb_path)
+            if store is not None:
+                ingest_exploration_finding(
+                    store,
+                    paths,
+                    category=category,
+                    summary=summary,
+                    address=address,
+                    relevance=relevance,
+                    evidence=evidence,
+                    function_name=func_name,
+                    memory_service=self.memory_service,
+                )
+        except Exception as e:
+            log_debug(f"knowledge ingest (exploration_report) failed: {e}")
         if category == "patch_result" and address is not None:
             original_hex = tc.arguments.get("original_hex", "")
             new_hex = tc.arguments.get("new_hex", "")
@@ -1973,12 +2023,18 @@ class AgentLoop:
                     fact=fact,
                     source="save_memory",
                 )
+                label = "Memory created" if result.outcome == "created" else "Memory already exists"
+                content = f"{label}: {result.record_id} [{category}]"
                 if result.projection_dirty:
-                    content = f"Saved to MEMORY.md (projection pending): [{category}] {fact}"
-                else:
-                    content = f"Saved to MEMORY.md: [{category}] {fact}"
+                    content += " (MEMORY.md projection pending)"
                 is_err = False
                 log_info(f"save_memory: [{category}] {fact[:80]}")
+                # Notify the UI that the knowledge store changed. Emitted
+                # on both ``created`` and ``deduplicated`` outcomes so the
+                # Knowledge panel refreshes regardless of duplicate
+                # detection. The UI pairs this with the originating tool
+                # call via ``tool_call_id``.
+                yield TurnEvent.memory_saved(tc.id)
             except Exception as e:
                 content = f"Error saving to central memory: {e}"
                 is_err = True
@@ -2042,6 +2098,7 @@ class AgentLoop:
                     content=note.content,
                     related=note.related_notes,
                     review_passed=note.review_passed,
+                    memory_service=self.memory_service,
                 )
         except Exception as e:
             log_debug(f"knowledge ingest (research_note) failed: {e}")
@@ -2650,6 +2707,16 @@ class AgentLoop:
             direct_handler = self._resolve_direct_handler(cmd)
             if direct_handler is not None:
                 yield from self._dispatch_direct(direct_handler)
+                return
+
+            # Orchestra early safety gate: yield one TEXT_DONE and
+            # exit BEFORE skill resolution, persisted-mode resumption,
+            # session append, prompt/schema construction, retrieval,
+            # provider call, tool execution, or child agent. This
+            # placement is critical — anything below it assumes the
+            # command is safe to run.
+            if cmd.use_orchestra_mode and not _ORCHESTRA_ENABLED:
+                yield TurnEvent.text_done(_ORCHESTRA_DISABLED_MESSAGE)
                 return
 
             user_message = cmd.message

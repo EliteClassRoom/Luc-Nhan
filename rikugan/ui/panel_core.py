@@ -556,6 +556,7 @@ class RikuganPanelCore(QWidget):
         """
         t = ThemeManager.instance().tokens()
         return f"QSplitter#chat_splitter::handle {{ background: {t.mid}; }}"
+
     # directly get the themed value at access time.
 
     def _build_ui(self) -> None:
@@ -628,9 +629,7 @@ class RikuganPanelCore(QWidget):
         self._chat_splitter.setObjectName("chat_splitter")
         self._chat_splitter.setHandleWidth(4)
         self._chat_splitter.setChildrenCollapsible(False)
-        self._chat_splitter.setStyleSheet(
-            maybe_host_stylesheet(self._chat_splitter_style())
-        )
+        self._chat_splitter.setStyleSheet(maybe_host_stylesheet(self._chat_splitter_style()))
         self._chat_splitter.addWidget(self._main_splitter)
         self._chat_splitter.addWidget(input_container)
         self._chat_splitter.setStretchFactor(0, 1)
@@ -685,7 +684,7 @@ class RikuganPanelCore(QWidget):
         self._install_shortcuts()
         _early_log("panel_core:build_ui:done")
 
-    def showEvent(self, event) -> None:  # noqa: D401
+    def showEvent(self, event) -> None:
         """Seed the chat-splitter default sizes on first show.
 
         ``setSizes`` is meaningless before the widget is laid out, so
@@ -726,6 +725,7 @@ class RikuganPanelCore(QWidget):
         close_tab_sc = QShortcut(QKeySequence("Ctrl+W"), self)
         close_tab_sc.setContext(Qt.ShortcutContext.WindowShortcut)
         close_tab_sc.activated.connect(self._close_current_tab)
+
     def _close_current_tab(self) -> None:
         """Close the active chat tab (Ctrl+W handler)."""
         self._on_close_tab(self._tab_widget.currentIndex())
@@ -946,9 +946,7 @@ class RikuganPanelCore(QWidget):
             if hasattr(self, "_main_splitter") and self._main_splitter is not None:
                 self._main_splitter.setStyleSheet(maybe_host_stylesheet(self._main_splitter_style()))
             if hasattr(self, "_chat_splitter") and self._chat_splitter is not None:
-                self._chat_splitter.setStyleSheet(
-                    maybe_host_stylesheet(self._chat_splitter_style())
-                )
+                self._chat_splitter.setStyleSheet(maybe_host_stylesheet(self._chat_splitter_style()))
             # The add-tab '+' button lives on the tab bar, not on the
             # panel itself.  Guard against the tab bar not being
             # constructed yet (early emit) and against the button
@@ -1820,6 +1818,7 @@ class RikuganPanelCore(QWidget):
         if event.type in (
             TurnEventType.RESEARCH_NOTE_SAVED,
             TurnEventType.EXPLORATION_FINDING,
+            TurnEventType.MEMORY_SAVED,
         ):
             self._on_knowledge_event_refresh(event.type.value)
         if event.usage:
@@ -3650,13 +3649,12 @@ class RikuganPanelCore(QWidget):
     def _refresh_knowledge_panel(self) -> None:
         """Re-populate the Knowledge tab from the current IDB path.
 
-        Reads each JSONL record type exactly ONCE per refresh.  The
-        previous implementation called ``store.counts()`` (which reads
-        all four files) and then ``list_memories()`` / ``list_entities()``
-        / ``list_relations()`` (three more reads).  Now we read the
-        three queryable record types once, derive their counts from
-        the in-memory list, and use ``store.count_observations()`` for
-        the observation count.
+        Prefers the SQLite repository exposed by
+        ``SessionControllerBase.memory_service`` (Task 7) when the
+        memory service is wired.  Falls back to the legacy JSONL
+        ``make_store`` path when ``memory_service`` is ``None`` or the
+        SQLite read raises; SQLite failures are logged at debug level
+        so the panel degrades gracefully on a corrupted repository.
         """
         if self._is_shutdown:
             return
@@ -3679,6 +3677,37 @@ class RikuganPanelCore(QWidget):
             panel.set_disabled_message("No IDB path is set. Open a binary to populate the knowledge store.")
             return
 
+        # Prefer SQLite when the memory service is wired (Task 8).
+        memory_service = getattr(self._ctrl, "memory_service", None)
+        if memory_service is not None:
+            try:
+                from ..memory.notes import list_notes
+
+                memories = memory_service.repository.list_memories()
+                entities = memory_service.repository.list_entities()
+                relations = memory_service.repository.list_relations()
+                obs_count = memory_service.repository.count_observations()
+                notes_dir = str(memory_service.paths.notes)
+                panel.set_disabled_state(False)
+                panel.set_counts(
+                    {
+                        "memories": len(memories),
+                        "entities": len(entities),
+                        "relations": len(relations),
+                        "observations": obs_count,
+                    }
+                )
+                panel.populate(
+                    memories=memories,
+                    entities=entities,
+                    relations=relations,
+                    notes=[f"{(n.title or '')}: {(n.body or '').strip()[:400]}" for n in list_notes(notes_dir)[:20]],
+                )
+                return
+            except Exception as e:
+                log_debug(f"knowledge panel SQLite refresh failed: {e}, falling back to JSONL")
+
+        # Fallback: JSONL store.
         try:
             from ..memory.ingest import make_store
             from ..memory.notes import list_notes

@@ -151,6 +151,9 @@ ignore_errors = true
 module = ["rikugan.tests.test_settings_dialog_fixes"]
 ignore_errors = true
 
+[tool.pytest.ini_options]
+testpaths = ["tests", "rikugan/tests"]
+
 [dependency-groups]
 dev = [
   "desloppify>=1.0",

@@ -94,7 +94,7 @@ jobs:
           pip install PySide6
 
       - name: Run tests
-        run: python -m pytest tests/ --tb=short -q
+        run: python -m pytest --tb=short -q
 
   quality:
     name: Desloppify

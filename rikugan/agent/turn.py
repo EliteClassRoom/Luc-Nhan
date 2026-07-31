@@ -43,6 +43,7 @@ class TurnEventType(str, Enum):
     COMMAND_ORCHESTRA = "command_orchestra"
     KNOWLEDGE_RETRIEVED = "knowledge_retrieved"
     DOCS_GATE_STATUS = "docs_gate_status"
+    MEMORY_SAVED = "memory_saved"
     # GLM reasoning-resilience events (consumed by stream/UI/recovery tasks).
     REASONING_DELTA = "reasoning_delta"
     RECOVERY_START = "recovery_start"
@@ -445,6 +446,19 @@ class TurnEvent:
             type=TurnEventType.KNOWLEDGE_RETRIEVED,
             text=summary,
             metadata={"counts": dict(counts or {}), "items": list(items or [])},
+        )
+
+    @staticmethod
+    def memory_saved(tool_call_id: str) -> TurnEvent:
+        """Emit a write-side signal that the knowledge store changed.
+
+        Fires after a successful ``save_memory`` tool call (on both
+        ``created`` and ``deduplicated`` outcomes). The Knowledge panel
+        listens for this event to refresh its view.
+        """
+        return TurnEvent(
+            type=TurnEventType.MEMORY_SAVED,
+            tool_call_id=tool_call_id,
         )
 
     # ------------------------------------------------------------------

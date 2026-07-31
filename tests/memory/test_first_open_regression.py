@@ -14,7 +14,11 @@ from rikugan.memory.manager import MemoryWorkspaceManager
 from rikugan.memory.workspace import (
     FilesystemIdentity,
     IdentityRequest,
+    MemoryLocator,
+    new_memory_id,
+    new_record_id,
 )
+from rikugan.memory.workspace_open import open_workspace_for_write
 from rikugan.memory.workspace_store import WorkspaceStore
 
 
@@ -39,15 +43,18 @@ class TestFirstOpenCreatesDb:
         assert result.binding.state == "active"
 
         paths = manager.require_persistent_paths()
+        locator = MemoryLocator(config.memory_dir)
+        backup_dir = locator.backups(result.binding.memory_id)
 
         # At this point, the workspace row exists in registry but
         # memory.db does NOT exist on disk yet.
         assert not paths.database.exists()
 
-        # The controller checks existence and calls create() on first open.
-        # This is the exact logic from _wire_central_memory.
+        # The controller checks existence and uses the production helper
+        # on the second-run path; on the first-run path it falls back to
+        # WorkspaceStore.create.
         if paths.database.exists():
-            store = WorkspaceStore.open(paths, owner_memory_id=result.binding.memory_id)
+            store = open_workspace_for_write(paths, result.binding.memory_id, backup_dir)
         else:
             store = WorkspaceStore.create(paths, owner_memory_id=result.binding.memory_id)
 
@@ -55,14 +62,12 @@ class TestFirstOpenCreatesDb:
         assert paths.database.exists()
 
         # The store can accept writes immediately.
-        from rikugan.memory.workspace import new_record_id
-
         store.put_fact(new_record_id("fact"), "test", "T", "content", 0.5, expected_revision=0)
         assert len(store.list_facts()) == 1
         store.close()
 
     def test_reopen_existing_db_uses_open_not_create(self, tmp_path: Path) -> None:
-        """Second agent run: DB already exists, open() succeeds."""
+        """Second agent run: DB already exists, open() succeeds via the helper."""
         config = RikuganConfig()
         config._config_dir = str(tmp_path)
 
@@ -76,14 +81,16 @@ class TestFirstOpenCreatesDb:
         )
         result = manager.bind(request)
         paths = manager.require_persistent_paths()
+        locator = MemoryLocator(config.memory_dir)
+        backup_dir = locator.backups(result.binding.memory_id)
 
         # First open: create
         store1 = WorkspaceStore.create(paths, owner_memory_id=result.binding.memory_id)
         store1.close()
 
-        # Second open: file exists, open() should work
+        # Second open: file exists, helper should work
         assert paths.database.exists()
-        store2 = WorkspaceStore.open(paths, owner_memory_id=result.binding.memory_id)
+        store2 = open_workspace_for_write(paths, result.binding.memory_id, backup_dir)
         store2.close()
 
     def test_save_fact_through_service_on_first_open(self, tmp_path: Path) -> None:
@@ -108,10 +115,12 @@ class TestFirstOpenCreatesDb:
         assert result.binding is not None
 
         paths = manager.require_persistent_paths()
+        locator = MemoryLocator(config.memory_dir)
+        backup_dir = locator.backups(result.binding.memory_id)
 
         # First-open logic: file doesn't exist → create
         if paths.database.exists():
-            store = WorkspaceStore.open(paths, owner_memory_id=result.binding.memory_id)
+            store = open_workspace_for_write(paths, result.binding.memory_id, backup_dir)
         else:
             store = WorkspaceStore.create(paths, owner_memory_id=result.binding.memory_id)
 
@@ -141,3 +150,25 @@ class TestFirstOpenCreatesDb:
         assert "Uses RC4" in content
         assert "rikugan:managed:start" in content
         store.close()
+
+
+def test_existing_binary_workspace_uses_backup_aware_open(tmp_path, monkeypatch) -> None:
+    """Direct call to open_workspace_for_write must be the writable path used."""
+    from rikugan.memory import workspace_open
+
+    owner = new_memory_id()
+    locator = MemoryLocator(tmp_path / "memory")
+    paths = locator.binary(owner)
+    WorkspaceStore.create(paths, owner_memory_id=owner).close()
+
+    calls: list[tuple[object, str, object]] = []
+    real_open = workspace_open.open_workspace_for_write
+
+    def tracking_open(paths_arg, owner_arg, backup_dir_arg):
+        calls.append((paths_arg, owner_arg, backup_dir_arg))
+        return real_open(paths_arg, owner_arg, backup_dir_arg)
+
+    monkeypatch.setattr(workspace_open, "open_workspace_for_write", tracking_open)
+    store = workspace_open.open_workspace_for_write(paths, owner, locator.backups(owner))
+    store.close()
+    assert calls == [(paths, owner, locator.backups(owner))]

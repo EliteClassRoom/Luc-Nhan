@@ -398,6 +398,49 @@ class TestIdaSessionController(unittest.TestCase):
         self.ctrl.shutdown()
         self.ctrl.shutdown()  # Should not raise
 
+    def test_wire_central_memory_routes_existing_workspace_through_backup_helper(self) -> None:
+        """Second-run _wire_central_memory must open via open_workspace_for_write."""
+        from unittest.mock import MagicMock
+        from unittest.mock import patch as mock_patch
+
+        from rikugan.memory import workspace_open
+        from rikugan.memory.workspace import FilesystemIdentity
+
+        # Force the controller to bind to a stable identity that the
+        # registry will accept; the in-memory mock's filesystem identity
+        # would otherwise resolve as "ephemeral" and _wire_central_memory
+        # would bail before reaching the open branch.
+        self.ctrl._db_instance_id = "a" * 32
+        self.ctrl._idb_path = "/fake/test.i64"
+        # _wire_central_memory reads from session.idb_path / session.db_instance_id,
+        # not from the controller attributes, so mirror the values onto the active
+        # tab's session for the duration of this test.
+        session = self.ctrl.session
+        session.idb_path = self.ctrl._idb_path
+        session.db_instance_id = self.ctrl._db_instance_id
+
+        def _fake_fs_identity(_path: str) -> FilesystemIdentity:
+            return FilesystemIdentity("vol", "test-volume")
+
+        with mock_patch("rikugan.memory.identity.get_filesystem_identity", _fake_fs_identity):
+            # First call seeds memory.db on disk (first-run create path).
+            self.ctrl._wire_central_memory(MagicMock())
+
+            calls: list[tuple] = []
+            real_open = workspace_open.open_workspace_for_write
+
+            def _tracking_open(paths_arg, owner_arg, backup_dir_arg):
+                calls.append((paths_arg, owner_arg, backup_dir_arg))
+                return real_open(paths_arg, owner_arg, backup_dir_arg)
+
+            with mock_patch.object(workspace_open, "open_workspace_for_write", _tracking_open):
+                self.ctrl._wire_central_memory(MagicMock())
+
+            self.assertEqual(len(calls), 1)
+            _paths, owner, _backup_dir = calls[0]
+            # Owner memory_id is whatever binding resolved in the first call.
+            self.assertTrue(isinstance(owner, str) and len(owner) > 0)
+
     def test_fork_session_copies_messages(self):
         """Forking should create a new tab with a deep copy of messages."""
         self.ctrl.session.add_message(Message(role=Role.USER, content="hello"))
@@ -438,6 +481,10 @@ class TestIdaSessionController(unittest.TestCase):
         new_tab_id = self.ctrl.fork_session(source_tab)
         forked = self.ctrl._sessions[new_tab_id]
         self.assertEqual(forked.metadata.get("forked_from"), source_id)
+
+    def test_memory_service_property_returns_none_before_wiring(self) -> None:
+        """Before _wire_central_memory runs, the accessor returns None."""
+        self.assertIsNone(self.ctrl.memory_service)
 
 
 class TestEnsureAdvancedToolsReady(unittest.TestCase):
