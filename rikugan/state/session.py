@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 from ..core.logging import log_debug
 from ..core.sanitize import strip_injection_markers
@@ -73,7 +74,7 @@ class SessionState:
     # Populated by the MemoryWorkspaceManager when central memory is enabled.
     binary_memory_id: str = ""
     active_case_id: str = ""
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     # Subagent message logs, keyed by the spawn_subagent tool_call_id.
     # Stored separately from main messages to avoid burning context tokens.
     subagent_logs: dict[str, list[Message]] = field(default_factory=dict)

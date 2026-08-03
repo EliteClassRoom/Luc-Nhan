@@ -37,6 +37,39 @@ from .session import SessionState
 # them for identifiers and metadata values.
 
 
+def _sanitize_metadata_value(value: Any) -> Any:
+    """Recursively sanitize a persisted metadata value.
+
+    ``SessionState.metadata`` may hold nested dicts/lists (e.g. the
+    ``last_knowledge_retrieval`` pack recorded by the retrieved-knowledge
+    indicator). The previous code path ran every value through
+    :func:`_safe_persisted_identifier`, which coerces non-strings via
+    ``str(value)`` — turning ``{"counts": {...}}`` into the literal
+    string ``"{'counts': {...}}"`` and silently corrupting the structure
+    on every save/load round-trip.
+
+    This helper preserves JSON-safe containers (``dict``/``list``) by
+    recursing into them, while still running scalar values through the
+    strict identifier sanitizer so injected markers/angle brackets are
+    stripped from leaf strings.
+    """
+    if isinstance(value, dict):
+        return {
+            _safe_persisted_identifier(k): _sanitize_metadata_value(v) for k, v in value.items() if isinstance(k, str)
+        }
+    if isinstance(value, list):
+        return [_sanitize_metadata_value(item) for item in value]
+    if isinstance(value, str | int | float | bool) or value is None:
+        # bool is a subclass of int — keep ordering so we don't coerce
+        # ``True`` to the string ``"True"`` and break JSON round-trips.
+        if isinstance(value, str):
+            return _safe_persisted_identifier(value)
+        return value
+    # Anything else (e.g. tuple, set, custom object) — coerce to a
+    # sanitized string so we never smuggle unsanitized bytes into a leaf.
+    return _safe_persisted_identifier(str(value))
+
+
 MANIFEST_FILE = "_session_manifest.json"
 #: Title-aware manifest shape (spec §9.2). The bump from 1 → 2 introduces
 #: ``updated_at`` (whole-seconds mtime) on each entry and forces a one-time
@@ -658,11 +691,15 @@ class SessionHistory:
         raw_metadata = data.get("metadata") or {}
         if not isinstance(raw_metadata, dict):
             raw_metadata = {}
-        safe_metadata: dict[str, str] = {}
-        for k, v in raw_metadata.items():
-            if not isinstance(k, str):
-                continue
-            safe_metadata[_safe_persisted_identifier(k)] = _safe_persisted_identifier(v)
+        # ``metadata`` may hold nested containers (e.g. the retrieved-
+        # knowledge pack); use the recursive helper so dicts/lists keep
+        # their shape across save/load round-trips instead of being
+        # flattened to ``str(dict)`` by ``_safe_persisted_identifier``.
+        safe_metadata: dict[str, Any] = {
+            _safe_persisted_identifier(k): _sanitize_metadata_value(v)
+            for k, v in raw_metadata.items()
+            if isinstance(k, str)
+        }
 
         session = SessionState(
             id=_safe_persisted_identifier(data.get("id")) or session_id,
