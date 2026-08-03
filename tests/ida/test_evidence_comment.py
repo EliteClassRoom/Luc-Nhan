@@ -12,7 +12,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 install_ida_mocks()
 
 from rikugan.ida.tools import annotations
-from rikugan.ida.tools.annotations import RUGUGAN_EVIDENCE_TAG, merge_evidence_line
+from rikugan.ida.tools.annotations import RIKUGAN_EVIDENCE_TAG, merge_evidence_line
 from rikugan.tools.registry import ToolRegistry
 
 
@@ -20,22 +20,20 @@ class TestMergeEvidenceLine(unittest.TestCase):
     def test_appends_when_empty(self):
         self.assertEqual(
             merge_evidence_line("", "calls recv"),
-            f"{RUGUGAN_EVIDENCE_TAG} calls recv",
+            f"{RIKUGAN_EVIDENCE_TAG} calls recv",
         )
 
     def test_appends_when_other_text_preserves_analyst_note(self):
         merged = merge_evidence_line("analyst note", "calls recv")
         self.assertIn("analyst note", merged)
-        self.assertIn(f"{RUGUGAN_EVIDENCE_TAG} calls recv", merged)
+        self.assertIn(f"{RIKUGAN_EVIDENCE_TAG} calls recv", merged)
 
     def test_replaces_existing_tagged_line_preserves_following(self):
-        existing = (
-            f"analyst note\n{RUGUGAN_EVIDENCE_TAG} old claim\nfollowup analyst"
-        )
+        existing = f"analyst note\n{RIKUGAN_EVIDENCE_TAG} old claim\nfollowup analyst"
         merged = merge_evidence_line(existing, "new claim")
         self.assertIn("analyst note", merged)
         self.assertIn("followup analyst", merged)
-        self.assertIn(f"{RUGUGAN_EVIDENCE_TAG} new claim", merged)
+        self.assertIn(f"{RIKUGAN_EVIDENCE_TAG} new claim", merged)
         self.assertNotIn("old claim", merged)
 
     def test_blank_evidence_returns_existing(self):
@@ -43,7 +41,7 @@ class TestMergeEvidenceLine(unittest.TestCase):
         self.assertEqual(merge_evidence_line("hello", "   "), "hello")
 
     def test_tag_constant_matches_helper(self):
-        self.assertEqual(RUGUGAN_EVIDENCE_TAG, "[Rikugan Evidence]")
+        self.assertEqual(RIKUGAN_EVIDENCE_TAG, "[Rikugan Evidence]")
 
     def test_helper_not_registered_as_tool(self):
         """merge_evidence_line must NOT be a @tool-registered function."""
@@ -74,12 +72,8 @@ class TestExplorationAddendumContract(unittest.TestCase):
             text.index("Confidence **0.70 – 0.90**"),
         )
         # The numbered mid-confidence sequence must be in order.
-        idx_get = text.index(
-            "Call `get_function_comment(address, repeatable=True)` to read."
-        )
-        idx_set = text.index(
-            "Call `set_function_comment(address, merged, repeatable=True)`."
-        )
+        idx_get = text.index("Call `get_function_comment(address, repeatable=True)` to read.")
+        idx_set = text.index("Call `set_function_comment(address, merged, repeatable=True)`.")
         idx_re = text.index("Re-read with `get_function_comment")
         idx_skip = text.index("do NOT call `rename_function`")
         self.assertLess(idx_get, idx_set)
@@ -91,9 +85,7 @@ class TestExplorationAddendumContract(unittest.TestCase):
             text.index("Confidence **< 0.70**"),
         )
         # Coverage: <0.70 must forbid renames and persist hypothesis.
-        self.assertIn(
-            "Confidence **< 0.70**: do not rename", text
-        )
+        self.assertIn("Confidence **< 0.70**: do not rename", text)
         # Coverage: verified persistence gate (Plan §1/§5).
         self.assertIn("verified", text.lower())
         # Coverage: readback-failure must log a hypothesis, not rename.

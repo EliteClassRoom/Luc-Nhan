@@ -161,7 +161,7 @@ def get_function_comment(
     return ida_funcs.get_func_cmt(func, repeatable) or ""
 
 
-RUGUGAN_EVIDENCE_TAG = "[Rikugan Evidence]"
+RIKUGAN_EVIDENCE_TAG = "[Rikugan Evidence]"
 
 
 def merge_evidence_line(existing: str, evidence: str) -> str:
@@ -173,7 +173,7 @@ def merge_evidence_line(existing: str, evidence: str) -> str:
     """
     if not evidence or not evidence.strip():
         return existing
-    tag = RUGUGAN_EVIDENCE_TAG
+    tag = RIKUGAN_EVIDENCE_TAG
     new_line = f"{tag} {evidence.strip()}"
     if tag in existing:
         head, _sep, tail = existing.partition(tag)
@@ -205,8 +205,9 @@ def get_address_name(
     ea = parse_addr(address)
     return ida_name.get_name(ea) or ""
 
+
 __all__ = [
-    "RUGUGAN_EVIDENCE_TAG",
+    "RIKUGAN_EVIDENCE_TAG",
     "rename_function",
     "rename_variable",
     "rename_address",
