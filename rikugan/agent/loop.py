@@ -388,13 +388,11 @@ class AgentLoop:
             compaction_threshold=0.8,
         )
 
-        # Mutation log for /undo support
-        self._mutation_log: list = []
-
         # Central memory service (set by controller when binary identity is resolved).
         # When None, save_memory and /memory report central memory unavailable.
         self.memory_service = None
         self._memory_authority = None
+        # Mutation log for /undo support — typed once (see MutationRecord).
         self._mutation_log: list[MutationRecord] = []
 
         # Exploration mode state (populated when /modify or /explore is used)
@@ -450,6 +448,7 @@ class AgentLoop:
             explore_only = active == "exploration"
             self._exploration_state = ExplorationState(explore_only=explore_only)
         return self._exploration_state
+
     def cancel(self) -> None:
         """Cancel the current run."""
         self._cancelled.set()
@@ -1911,26 +1910,26 @@ class AgentLoop:
         # finding. ``/explore`` is explore-only; ingestion for those
         # findings happens in ``_finalize_explore_memory`` after review.
         # ``/modify`` continues to ingest immediately because its
- # planning phase needs the durable record.
+        # planning phase needs the durable record.
         if not getattr(state, "explore_only", False):
             try:
                 from ..memory.ingest import ingest_exploration_finding, make_store
 
-            store, paths = make_store(self.session.idb_path)
-            if store is not None:
-                ingest_exploration_finding(
-                    store,
-                    paths,
-                    category=category,
-                    summary=summary,
-                    address=address,
-                    relevance=relevance,
-                    evidence=evidence,
-                    function_name=func_name,
-                    memory_service=self.memory_service,
-                )
-        except Exception as e:
-            log_debug(f"knowledge ingest (exploration_report) failed: {e}")
+                store, paths = make_store(self.session.idb_path)
+                if store is not None:
+                    ingest_exploration_finding(
+                        store,
+                        paths,
+                        category=category,
+                        summary=summary,
+                        address=address,
+                        relevance=relevance,
+                        evidence=evidence,
+                        function_name=func_name,
+                        memory_service=self.memory_service,
+                    )
+            except Exception as e:
+                log_debug(f"knowledge ingest (exploration_report) failed: {e}")
         if category == "patch_result" and address is not None:
             original_hex = tc.arguments.get("original_hex", "")
             new_hex = tc.arguments.get("new_hex", "")
@@ -2370,165 +2369,6 @@ class AgentLoop:
 
         return _MutationVerification(True)
 
-    def _execute_single_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
-        """Handle approval gating, mutation tracking, and execution of a real tool."""
-        # Profile: block denied tools at execution time (defense-in-depth —
-        # the schema filter already hides them, but the LLM may still try)
-        profile = self.config.get_active_profile()
-        if profile.denied_tools and tc.name in profile.denied_tools:
-            content = f"Error: Tool '{tc.name}' is denied by the active profile."
-            log_debug(f"Blocked denied tool: {tc.name} (profile: {profile.name})")
-            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
-            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
-            return tr
-
-        # execute_python always requires explicit approval.
-        # Static validator (validate_idapython) still runs pre-execute to
-        # block known-hallucinated APIs. The docs-reviewer now runs
-        # POST-error (see the except block below) instead of pre-execute.
-        if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
-            code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
-            if isinstance(code, str) and code.strip():
-                try:
-                    validation = validate_idapython(code)
-                except Exception as e:  # pragma: no cover — defensive
-                    log_error(f"docs-gate validation failed: {e}")
-                    validation = None
-
-                if validation is not None and validation.is_blocked:
-                    # Hard block: hallucinated API detected pre-execute.
-                    block_msg = (
-                        "Script blocked by static validator (hallucinated API detected):\n"
-                        f"{validation.format_for_agent()}\n"
-                        "Fix the API usage and resubmit."
-                    )
-                    tr = ToolResult(
-                        tool_call_id=tc.id,
-                        name=tc.name,
-                        content=block_msg,
-                        is_error=True,
-                    )
-                    yield TurnEvent.tool_result_event(tc.id, tc.name, block_msg, True)
-                    return tr
-
-            approved = yield from self._wait_for_approval(tc)
-            if not approved:
-                content = "Tool execution denied by user."
-                tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
-                yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
-                return tr
-
-        defn = self.tools.get(tc.name)
-        is_mutating = defn is not None and defn.mutating
-
-        if is_mutating and self.config.approve_mutations:
-            approved = yield from self._wait_for_approval(tc)
-            if not approved:
-                content = "Mutation denied by user."
-                tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
-                yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
-                return tr
-
-        pre_state: dict[str, Any] = {}
-        exec_args: dict[str, Any] = dict(tc.arguments)
-        if is_mutating:
-            exec_args = self.tools.coerce_arguments_for(tc.name, tc.arguments)
-            pre_state = capture_pre_state(
-                tc.name,
-                exec_args,
-                lambda name, args: self.tools.execute(name, args),
-            )
-
-        log_debug(f"Executing tool {tc.name}")
-        try:
-            result = self.tools.execute_coerced(tc.name, exec_args)
-            is_error = False
-            # Hysteresis: decrement instead of resetting so a single success
-            # after several failures doesn't fully clear the counter.
-            self._consecutive_errors = max(0, self._consecutive_errors - 1)
-            if is_mutating:
-                record = build_reverse_record(tc.name, exec_args, pre_state)
-                verification = self._verify_mutation(tc.name, exec_args, result)
-                if not verification.ok:
-                    # Post-state verification failed — do not append to the
-                    # undo stack.  Log the reason so it is still available
-                    # for debugging but does not consume /undo slots.
-                    log_debug(f"mutation recording skipped for {tc.name}: {verification.reason}")
-                elif not record.reversible:
-                    # Successful mutation but non-reversible — emit a UI-only
-                    # diagnostic event but do NOT append to the undo stack.
-                    log_debug(f"mutation not added to undo stack because it is not reversible: {record.description}")
-                    yield TurnEvent.mutation_recorded(
-                        tool_name=record.tool_name,
-                        description=record.description,
-                        reversible=record.reversible,
-                        reverse_tool=record.reverse_tool,
-                        reverse_args=record.reverse_arguments,
-                    )
-                else:
-                    self._mutation_log.append(record)
-                    log_debug(f"Mutation recorded: {record.description}")
-                    yield TurnEvent.mutation_recorded(
-                        tool_name=record.tool_name,
-                        description=record.description,
-                        reversible=record.reversible,
-                        reverse_tool=record.reverse_tool,
-                        reverse_args=record.reverse_arguments,
-                    )
-        except ToolError as e:
-            result = f"Error: {e}"
-            is_error = True
-            self._consecutive_errors += 1
-            log_error(f"Tool {tc.name} error: {e}")
-        except Exception as e:
-            tb = traceback.format_exc()
-            is_error = True
-            self._consecutive_errors += 1
-            log_error(f"Tool {tc.name} unexpected error: {e}\n{tb}")
-            # Only include the full traceback in the tool result for
-            # execute_python (the docs-review classifier consumes it). For
-            # other tools, keep the one-liner so internal paths/line numbers
-            # never leak into the LLM context.
-            if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
-                result = f"Unexpected error: {e}\n{tb}"
-            else:
-                result = f"Unexpected error: {e}"
-
-            # Post-error docs review for execute_python: spawn reviewer only
-            # when the exception is API-shaped (AttributeError, ImportError,
-            # NameError) and the reviewer hasn't been invoked for this task yet.
-            # Configurable via ``docs_review_mode`` ("on_error" / "off").
-            if (
-                tc.name == constants.EXECUTE_PYTHON_TOOL_NAME
-                and getattr(self.config, "docs_review_mode", "on_error") == "on_error"
-                and not self._docs_reviewer_invoked
-            ):
-                from ..tools.traceback_classifier import classify_traceback
-
-                code = tc.arguments.get("code", "") or tc.arguments.get("script", "") or ""
-                classification = classify_traceback(tb, code)
-                if classification.is_api_shaped:
-                    augmented = yield from self._review_failed_script(tc, tb, code, classification)
-                    if augmented:
-                        result = augmented
-
-        # Sanitize tool output before it enters the conversation.
-        # Error messages may contain attacker-controlled content (e.g. function
-        # names), so strip injection markers even though we skip full wrapping.
-        sanitized = sanitize_tool_result(result, tc.name) if not is_error else strip_injection_markers(result)
-
-        # Profile: strip IOCs from tool results when any IOC filter is enabled
-        profile = self.config.get_active_profile()
-        if profile.has_any_ioc_filter:
-            sanitized = strip_iocs(sanitized, profile.ioc_filters, profile.custom_filter_rules)
-
-        tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=sanitized, is_error=is_error)
-        # Use sanitized content for the UI event too — the raw `result`
-        # could contain injection strings (e.g. ANTHROPIC_MAGIC_STRING from
-        # a malicious binary) that must never reach the display layer.
-        yield TurnEvent.tool_result_event(tc.id, tc.name, sanitized, is_error)
-        return tr
-
     def _execute_tool_calls(
         self,
         tool_calls: list[ToolCall],
@@ -2654,7 +2494,7 @@ class AgentLoop:
         if cmd.direct_command == "/memory":
             return lambda: _handle_memory_command(self)
         if cmd.direct_command == "/case":
-            return lambda: self._handle_case_command(user_message)
+            return lambda: self._handle_case_command(cmd.direct_arg)
         if cmd.direct_command == "/undo":
             return lambda: _handle_undo_command(self, cmd.direct_arg)
         if cmd.direct_command == "/mcp":
