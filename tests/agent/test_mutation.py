@@ -147,7 +147,6 @@ class TestBuildReverseRecord(unittest.TestCase):
             },
         )
 
-
     def test_set_function_comment_old_none_not_reversible(self):
         """old_comment=None must be treated as non-reversible."""
         rec = build_reverse_record(
@@ -251,6 +250,68 @@ class TestBuildReverseRecord(unittest.TestCase):
             self.assertFalse(incomplete.reversible)
             self.assertEqual(incomplete.reverse_tool, "")
             self.assertEqual(incomplete.reverse_arguments, {})
+
+    # ------------------------------------------------------------------
+    # write_file (file_io tool) — reversing is best-effort because the
+    # agent has no ``delete_file`` tool. Pre-state capture is what keeps
+    # ``/undo`` honest: it records the old content when ``write_file``
+    # overwrote an existing file, and marks creation-of-new-file as
+    # non-reversible so the user knows to delete the file by hand.
+    # ------------------------------------------------------------------
+
+    def test_write_file_overwrite_is_reversible(self):
+        """write_file with overwrite=True on an existing file restores the old content."""
+        rec = build_reverse_record(
+            "write_file",
+            {"path": "notes.txt", "content": "new content", "overwrite": True},
+            pre_state={"old_content": "old content", "existed": True},
+        )
+        self.assertTrue(rec.reversible)
+        self.assertEqual(rec.reverse_tool, "write_file")
+        self.assertEqual(
+            rec.reverse_arguments,
+            {
+                "path": "notes.txt",
+                "content": "old content",
+                "overwrite": True,
+            },
+        )
+
+    def test_write_file_create_new_is_not_reversible(self):
+        """write_file that created a brand-new file is non-reversible.
+
+        The agent has no ``delete_file`` tool, so ``/undo`` cannot
+        remove the file automatically. The record still carries the
+        path so the user knows what to delete by hand.
+        """
+        rec = build_reverse_record(
+            "write_file",
+            {"path": "new_notes.txt", "content": "first"},
+            pre_state={"existed": False},
+        )
+        self.assertFalse(rec.reversible)
+        self.assertEqual(rec.reverse_tool, "")
+        self.assertEqual(rec.reverse_arguments, {})
+        # Description must mention the path so the user can clean up manually.
+        self.assertIn("new_notes.txt", rec.description)
+
+    def test_write_file_missing_pre_state_not_reversible(self):
+        """When capture_pre_state could not read the old file, treat as non-reversible."""
+        rec = build_reverse_record(
+            "write_file",
+            {"path": "x.txt", "content": "new"},
+            pre_state={},  # existed key missing entirely
+        )
+        self.assertFalse(rec.reversible)
+
+    def test_write_file_overwrite_without_old_content_not_reversible(self):
+        """overwrite=True but old_content missing → non-reversible (getter failed)."""
+        rec = build_reverse_record(
+            "write_file",
+            {"path": "x.txt", "content": "new", "overwrite": True},
+            pre_state={"existed": True},  # existed but no old_content
+        )
+        self.assertFalse(rec.reversible)
 
     def test_pseudocode_comment_old_none_not_reversible(self):
         """old_comment=None from failed decompile must not be reversible."""
@@ -484,6 +545,67 @@ class TestCapturePreState(unittest.TestCase):
         )
         self.assertTrue(rec.reversible)
         self.assertEqual(rec.reverse_arguments["comment"], " hello ")
+
+    # ------------------------------------------------------------------
+    # write_file capture — reads existing file content via the
+    # ``read_file`` tool. ``read_file`` returns a formatted string
+    # ``"Read <rel> (N chars, M bytes):\n<text>"``; capture_pre_state
+    # must parse out the body so the reverse record can restore it.
+    # ------------------------------------------------------------------
+
+    def test_write_file_capture_existing_file(self):
+        """capture_pre_state reads old content via read_file and records existed=True."""
+        calls = []
+
+        def mock_executor(name, args):
+            calls.append((name, args))
+            if name == "read_file":
+                return "Read notes.txt (11 chars, 11 bytes):\nold content"
+            return ""
+
+        pre = capture_pre_state(
+            "write_file",
+            {"path": "notes.txt", "content": "new"},
+            mock_executor,
+        )
+        self.assertTrue(pre["existed"])
+        self.assertEqual(pre["old_content"], "old content")
+        self.assertEqual(
+            calls,
+            [("read_file", {"path": "notes.txt"})],
+        )
+
+    def test_write_file_capture_new_file(self):
+        """When read_file reports file-not-found, capture existed=False and no old_content."""
+        calls = []
+
+        def mock_executor(name, args):
+            calls.append((name, args))
+            if name == "read_file":
+                return "Error: file not found: notes.txt"
+            return ""
+
+        pre = capture_pre_state(
+            "write_file",
+            {"path": "notes.txt", "content": "new"},
+            mock_executor,
+        )
+        self.assertFalse(pre["existed"])
+        self.assertNotIn("old_content", pre)
+
+    def test_write_file_capture_read_failure(self):
+        """When read_file raises, capture_pre_state swallows the error (best-effort)."""
+
+        def mock_executor(name, args):
+            raise RuntimeError("tool not available")
+
+        pre = capture_pre_state(
+            "write_file",
+            {"path": "notes.txt", "content": "new"},
+            mock_executor,
+        )
+        # Empty pre-state → build_reverse_record will mark non-reversible.
+        self.assertEqual(pre, {})
 
 
 class TestMutationRecord(unittest.TestCase):

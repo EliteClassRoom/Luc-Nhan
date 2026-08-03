@@ -285,6 +285,78 @@ def _reverse_apply_type_to_variable(args: dict[str, Any], pre: dict[str, Any]) -
     )
 
 
+def _parse_read_file_output(raw: Any) -> tuple[bool, str]:
+    """Parse a ``read_file`` tool result into ``(existed, content)``.
+
+    ``read_file`` returns a formatted string ``"Read <rel> (N chars, M
+    bytes):\\n<text>"`` on success, or an ``"Error: ..."`` line on
+    failure (including file-not-found). Returns:
+
+    * ``(True, <text>)``  — file exists; ``<text>`` is the decoded body.
+    * ``(False, "")``     — file does not exist or read failed; the
+      reverse record must be non-reversible since there is nothing to
+      restore.
+    """
+    if not isinstance(raw, str) or not raw:
+        return False, ""
+    # ``read_file`` emits ``"Error: ..."`` for any failure path
+    # (missing file, non-UTF-8, too large, path rejection). Any such
+    # result means there is no prior content to restore.
+    error_prefixes = (
+        "Error: file not found",
+        "Error: not a regular file",
+        "Error: refusing symlink",
+        "Error: file is too large",
+        "Error: file is not valid UTF-8",
+        "Error: failed to read file",
+    )
+    if raw.startswith(error_prefixes):
+        return False, ""
+    marker = ":\n"
+    idx = raw.find(marker)
+    if idx < 0:
+        # No header/body separator — treat as no content to restore.
+        return True, ""
+    return True, raw[idx + len(marker) :]
+
+
+def _reverse_write_file(args: dict[str, Any], pre: dict[str, Any]) -> MutationRecord:
+    """Build reverse record for ``write_file``.
+
+    ``write_file`` has two semantically distinct cases:
+
+    1. **Overwrite** (``existed=True`` and ``old_content`` captured):
+       reversible — replay ``write_file`` with ``overwrite=True`` and
+       the captured body.
+    2. **Create new file** (``existed=False``) or **unknown pre-state**
+       (capture failed): non-reversible. The agent has no
+       ``delete_file`` tool, so ``/undo`` cannot remove the created
+       file. The description names the path so the user can clean up
+       by hand.
+    """
+    path = args.get("path", "")
+    existed = pre.get("existed", False)
+    old_content = pre.get("old_content")
+    if existed and isinstance(old_content, str):
+        return MutationRecord(
+            tool_name="write_file",
+            arguments=args,
+            reverse_tool="write_file",
+            reverse_arguments={
+                "path": path,
+                "content": old_content,
+                "overwrite": True,
+            },
+            description=f"Overwrite {path} back to pre-write content",
+        )
+    reason = "file did not exist before write" if not existed else "pre-write content unavailable (getter failed)"
+    return _not_reversible(
+        "write_file",
+        args,
+        f"Write {path} — not reversible: {reason}; delete the file manually to undo",
+    )
+
+
 # Dispatch table: tool_name → handler(args, pre) -> MutationRecord
 # Only contains tools that actually exist in the IDA registry.
 # Unknown tools fall through to build_reverse_record() non-reversible default.
@@ -297,6 +369,7 @@ _REVERSE_BUILDERS: dict[str, Any] = {
     "set_pseudocode_comment": _reverse_set_pseudocode_comment,
     "set_function_prototype": _reverse_set_function_prototype,
     "apply_type_to_variable": _reverse_apply_type_to_variable,
+    "write_file": _reverse_write_file,
 }
 
 
@@ -373,6 +446,19 @@ def capture_pre_state(
             var = arguments.get("var_name", "")
             if _has_value(func) and _has_value(var):
                 pre["old_type"] = tool_executor("get_variable_type", {"func_address": func, "var_name": var})
+        elif tool_name == "write_file":
+            # Read prior content via the ``read_file`` getter so the
+            # reverse record can replay an overwrite. ``read_file``
+            # returns an ``"Error: ..."`` string when the file does not
+            # exist (or is unreadable); ``_parse_read_file_output``
+            # distinguishes the two cases.
+            path = arguments.get("path", "")
+            if _has_value(path):
+                raw = tool_executor("read_file", {"path": path})
+                existed, old_content = _parse_read_file_output(raw)
+                pre["existed"] = existed
+                if existed:
+                    pre["old_content"] = old_content
     except Exception as e:
         log_debug(f"capture_pre_state failed for {tool_name}: {e}")
 
