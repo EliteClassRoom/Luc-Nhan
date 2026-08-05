@@ -23,6 +23,7 @@ import importlib.util as _importlib_util
 import re as _re
 from typing import Any
 
+from ..core.logging import log_debug
 from .profiling import probe as ui_probe
 from .styles import is_host_theme
 from .theme.manager import ThemeManager, blend_hex
@@ -109,6 +110,37 @@ def _resolve_markdown_it() -> Any | None:
     md = MarkdownIt("commonmark", {"html": False}).enable("table").enable("strikethrough")
     _md_instance = md
     return md
+
+
+def prewarm_markdown() -> None:
+    """Import + first-render markdown-it off the UI thread.
+
+    Cold-start ``md_to_html`` costs 250-550 ms (import markdown_it 85 ms,
+    import markdown_renderer/pygments 50 ms, first QtRenderer.render 150 ms).
+    When the user sends their first message, this entire cost lands on one
+    main-thread ``_render()`` call and visibly freezes IDA.  Calling
+    ``prewarm_markdown()`` on a background thread right after the panel is
+    built moves that cost off the UI thread so the first real render is
+    a warm-cache hit (~0.1 ms).
+
+    Idempotent: if the parser is already resolved this returns immediately.
+    Errors are swallowed and logged — worst case the first user-facing
+    render pays the cold cost as before.
+    """
+    try:
+        md = _resolve_markdown_it()
+        if md is None:
+            return
+        # Import the renderer module so pygments (pulled in transitively)
+        # is also warm.  A throwaway render exercises the full token-walk
+        # path and JITs CPython's bytecode for ``QtRenderer.render_*``.
+        from .markdown_renderer import QtRenderer, _build_theme_styles
+
+        tokens = md.parse("warmup")
+        styles = _build_theme_styles(None)
+        QtRenderer(md).render_with_styles(tokens, md.options, {}, styles)
+    except Exception as e:
+        log_debug(f"markdown prewarm failed (will cold-start on first render): {e}")
 
 
 def _render_with_markdown_it(text: str, source=None) -> str | None:

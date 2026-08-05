@@ -682,6 +682,15 @@ class RikuganPanelCore(QWidget):
         self._startup_restore_load_pending = False
         self._start_history_list_request()
         self._install_shortcuts()
+        # Pre-warm markdown-it renderer on a background thread so the
+        # first user-facing ``_render()`` is a warm-cache hit, not a
+        # 250-550 ms cold-start import+render on the main thread.
+        import threading as _threading
+
+        from .markdown import prewarm_markdown
+
+        _prewarm_thread = _threading.Thread(target=prewarm_markdown, daemon=True)
+        _prewarm_thread.start()
         _early_log("panel_core:build_ui:done")
 
     def showEvent(self, event) -> None:
