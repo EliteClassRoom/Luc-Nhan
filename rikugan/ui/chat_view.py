@@ -787,7 +787,7 @@ class ChatView(QScrollArea):
                 cw = -1
             log_debug(
                 f"CHAT_TEXT_DONE: text_len={len(event.text or '')} "
-                f"head={repr((event.text or '')[:60] if event.text else '')} "
+                f"head={(event.text or '')[:60] if event.text else ''!r} "
                 f"container_width={cw}"
             )
         self._begin_live_tail_append()
@@ -984,14 +984,15 @@ class ChatView(QScrollArea):
                 # If only thinking is present, skip rendering — we
                 # don't want a blank bubble. The user will see the
                 # thinking panel alone.
-            # Standalone TEXT_DONE (slash-command acks, /report draft,
-            # etc.) must scroll the chat to the new bubble or the user
-            # will sit looking at the previous turn and report "no
-            # draft" even though the bubble is correctly rendered
-            # below the visible viewport. ``_scroll_to_bottom`` is
-            # coalesced via the panel-level scroll timer; calling it
-            # here is safe even if a normal-turn delta path also calls
-            # it (the timer just resets).
+            # Reset per-turn reasoning state so the next turn starts
+            # fresh.  Without this, _message_thinking retains the
+            # previous turn's _ThinkingBlock and subsequent
+            # REASONING_DELTA events append to the stale widget
+            # instead of creating a new one.
+            self._current_assistant = None
+            self._message_thinking = None
+            self._think_buffer = ""
+            self._waiting_think_close = False
             self._scroll_to_bottom()
 
     def _handle_tool_event(self, event: TurnEvent) -> None:

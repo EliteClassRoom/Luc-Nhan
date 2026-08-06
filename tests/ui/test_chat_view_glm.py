@@ -359,5 +359,60 @@ class TestReasoningAwareRestore(unittest.TestCase):
         assert "visible only" in spec.content_html or spec.content_html == ""
 
 
+class TestReasoningResetBetweenTurns(unittest.TestCase):
+    """After TEXT_DONE, reasoning state must reset so the next turn's
+    REASONING_DELTA creates a fresh _ThinkingBlock instead of appending
+    to the previous turn's finalised block."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        cls._qapp = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        self._view = _ChatViewHarness.make()
+
+    def test_text_done_clears_message_thinking(self):
+        """_message_thinking must be None after TEXT_DONE so the next
+        REASONING_DELTA starts a fresh block."""
+        self._view.handle_event(TurnEvent.reasoning_event("first reasoning"))
+        assert self._view._message_thinking is not None
+
+        self._view.handle_event(TurnEvent.text_delta("visible answer"))
+        self._view.handle_event(TurnEvent.text_done("visible answer"))
+
+        assert self._view._message_thinking is None
+
+    def test_second_turn_reasoning_creates_new_block(self):
+        """Full two-turn cycle: turn1 reasoning + text + TEXT_DONE +
+        TURN_END, then turn2 REASONING_DELTA must create a NEW block."""
+        # Turn 1
+        self._view.handle_event(TurnEvent.reasoning_event("reasoning A"))
+        block_a = self._view._message_thinking
+        assert block_a is not None
+        self._view.handle_event(TurnEvent.text_delta("answer A"))
+        self._view.handle_event(TurnEvent.text_done("answer A"))
+        self._view.handle_event(TurnEvent.turn_end(1))
+
+        # Turn 2
+        self._view.handle_event(TurnEvent.reasoning_event("reasoning B"))
+        block_b = self._view._message_thinking
+        assert block_b is not None
+        # Must be a different widget instance, not the stale one from turn 1
+        assert block_b is not block_a, "second-turn reasoning reused the first turn's _ThinkingBlock"
+        assert block_b._source_text == "reasoning B"
+
+    def test_text_done_clears_think_buffer(self):
+        """_think_buffer and _waiting_think_close must reset after TEXT_DONE."""
+        self._view._think_buffer = "stale"
+        self._view._waiting_think_close = True
+
+        self._view.handle_event(TurnEvent.text_done("done"))
+
+        assert self._view._think_buffer == ""
+        assert self._view._waiting_think_close is False
+
+
 if __name__ == "__main__":
     unittest.main()
