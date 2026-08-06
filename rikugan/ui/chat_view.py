@@ -1122,8 +1122,17 @@ class ChatView(QScrollArea):
         if self._message_thinking is None:
             self._message_thinking = _ThinkingBlock()
             self._insert_widget(self._message_thinking)
-        existing = self._message_thinking._source_text
-        self._message_thinking.set_thinking(existing + delta, in_progress=True)
+            # First delta — render immediately so the block shows up.
+            self._message_thinking.set_thinking(delta, in_progress=True)
+        else:
+            # Subsequent deltas — use the gated path so md_to_html is
+            # not called on every single delta (50+ /s from GLM).
+            self._message_thinking.append_reasoning(delta)
+            # Ensure the "Thinking…" header is set (append_reasoning
+            # does not touch the label to stay focused on rendering).
+            if not self._message_thinking._in_progress:
+                self._message_thinking._in_progress = True
+                self._message_thinking._header_label.setText("Thinking…")
         self._scroll_to_bottom()
 
     def _handle_recovery_start(self, event: TurnEvent) -> None:
