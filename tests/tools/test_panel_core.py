@@ -1266,6 +1266,31 @@ class TestStartupNoRestore(unittest.TestCase):
             msg="_build_ui() must not seed _pending_restore_messages on startup.",
         )
 
+    def test_build_ui_source_does_not_trigger_startup_auto_restore(self) -> None:
+        """``_build_ui`` must not auto-restore the latest session.
+
+        A hidden history-list request followed by a hidden load was
+        re-introduced by the upstream merge (commit 90f6d4d), causing
+        the plugin to replace the blank ``New Chat`` tab with the
+        most recent saved session every time the panel opens.  The
+        user must open History explicitly to restore a past chat.
+        """
+        import inspect
+
+        from rikugan.ui.panel_core import RikuganPanelCore
+
+        source = inspect.getsource(RikuganPanelCore._build_ui)
+        self.assertNotIn(
+            "_startup_restore_pending = True",
+            source,
+            msg="_build_ui() must not set _startup_restore_pending; startup must be fresh.",
+        )
+        self.assertNotIn(
+            "_start_history_list_request",
+            source,
+            msg="_build_ui() must not trigger a hidden history list request on startup.",
+        )
+
 
 class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
     """The vertical ``_chat_splitter`` must own the main conversation
@@ -1290,25 +1315,18 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
         self.assertIn(
             "self._chat_splitter = QSplitter(Qt.Orientation.Vertical)",
             source,
-            msg=(
-                "_build_ui() must create a vertical QSplitter so the "
-                "user has a real resize handle for the input."
-            ),
+            msg=("_build_ui() must create a vertical QSplitter so the user has a real resize handle for the input."),
         )
         self.assertIn(
             "self._chat_splitter.addWidget(self._main_splitter)",
             source,
-            msg=(
-                "_build_ui() must place the main conversation area in "
-                "the top pane of the chat splitter."
-            ),
+            msg=("_build_ui() must place the main conversation area in the top pane of the chat splitter."),
         )
         self.assertIn(
             "self._chat_splitter.addWidget(input_container)",
             source,
             msg=(
-                "_build_ui() must place the input section in the "
-                "bottom pane of the chat splitter so the user can drag."
+                "_build_ui() must place the input section in the bottom pane of the chat splitter so the user can drag."
             ),
         )
         # The old bare addWidget path would lose the resize handle.
@@ -1354,10 +1372,7 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
         self.assertIn(
             "self.setMinimumHeight(60)",
             source,
-            msg=(
-                "InputArea must default to a 2-3 line minimum height "
-                "(60px at 18px line-height with 6px padding)."
-            ),
+            msg=("InputArea must default to a 2-3 line minimum height (60px at 18px line-height with 6px padding)."),
         )
         # ``setMaximumHeight`` must not be called on the editor — the
         # vertical QSplitter in the panel owns the upper bound.
@@ -1365,8 +1380,7 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
             "setMaximumHeight",
             source,
             msg=(
-                "InputArea must not cap its maximum height; the "
-                "vertical QSplitter in the panel owns the upper bound."
+                "InputArea must not cap its maximum height; the vertical QSplitter in the panel owns the upper bound."
             ),
         )
 

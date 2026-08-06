@@ -672,16 +672,20 @@ class RikuganPanelCore(QWidget):
                 log_debug(f"UI hook setup failed: {e}")
                 self._ui_hooks = None
         _early_log("panel_core:build_ui:ui_hooks:done")
-        # Auto-restore: schedule a single hidden history list request so
-        # the newest saved chat replaces the blank draft tab. The flag
-        # gates ``_apply_history_list_result`` and is cleared on any
-        # non-LISTED status, so failure leaves the blank tab intact.
-        # The visible History panel stays hidden during this path; the
-        # user can still open History explicitly at any time.
-        self._startup_restore_pending = True
-        self._startup_restore_load_pending = False
-        self._start_history_list_request()
+        # No auto-restore — the user opens History explicitly when
+        # they want a previous chat.  (Re-introducing auto-restore here
+        # was a merge regression from commit 90f6d4d; see
+        # TestStartupNoRestore.)
         self._install_shortcuts()
+        # Pre-warm markdown-it renderer on a background thread so the
+        # first user-facing ``_render()`` is a warm-cache hit, not a
+        # 250-550 ms cold-start import+render on the main thread.
+        import threading as _threading
+
+        from .markdown import prewarm_markdown
+
+        _prewarm_thread = _threading.Thread(target=prewarm_markdown, daemon=True)
+        _prewarm_thread.start()
         _early_log("panel_core:build_ui:done")
 
     def showEvent(self, event) -> None:

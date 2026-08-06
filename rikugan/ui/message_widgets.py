@@ -664,6 +664,14 @@ class AssistantMessageWidget(QFrame):
     # Unconditional render threshold — ensures we flush even when the interval
     # hasn't elapsed (e.g. burst of 500+ chars in a single poll tick).
     _RENDER_BATCH_MAX: int = 500
+    # Adaptive interval: when ``_full_text`` exceeds this many chars, raise the
+    # time gate to ``_RENDER_INTERVAL_LONG_S``.  md_to_html is O(n) per call, so
+    # a 30k-char message paying ~100ms per render at 10 fps freezes the main
+    # thread for ~1s every 10s of streaming.  Slowing the intermediate renders
+    # to ~3 fps once the message is long keeps the UI responsive; the final
+    # ``set_text`` on TEXT_DONE still renders the full content once.
+    _RENDER_LONG_THRESHOLD: int = 8_000
+    _RENDER_INTERVAL_LONG_S: float = 0.35
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -790,13 +798,17 @@ class AssistantMessageWidget(QFrame):
         if self._pending_delta >= self._RENDER_BATCH_MAX:
             self._render()
             return
-        # Time-gated render: fire once per interval when enough chars are pending.
-        # This caps md_to_html cost to ~10 fps regardless of how long the message
-        # has grown — avoids O(n²) total render work over a long response.
-        if (
-            self._pending_delta >= self._RENDER_BATCH_MIN
-            and _time.monotonic() - self._last_render_time >= self._RENDER_INTERVAL_S
-        ):
+        # Adaptive time gate: once the message is long enough that a single
+        # render costs ~50ms+ (see PROFILE log), slow the intermediate
+        # renders from 10fps to ~3fps so the main thread is not blocked for
+        # ~1s out of every 10s of streaming.  The final ``set_text`` on
+        # TEXT_DONE still renders the full content once.
+        interval = (
+            self._RENDER_INTERVAL_LONG_S
+            if len(self._full_text) >= self._RENDER_LONG_THRESHOLD
+            else self._RENDER_INTERVAL_S
+        )
+        if self._pending_delta >= self._RENDER_BATCH_MIN and _time.monotonic() - self._last_render_time >= interval:
             self._render()
 
     def set_text(self, text: str) -> None:
