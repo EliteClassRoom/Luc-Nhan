@@ -39,6 +39,7 @@ database or a Unicorn engine.
 from __future__ import annotations
 
 import importlib
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, Any
@@ -207,6 +208,43 @@ def is_hex_or_int(value: Any) -> bool:
         return True
     except (TypeError, ValueError):
         return False
+
+
+def _coerce_addr(value: Any, *, ctx: str) -> int:
+    """Coerce an address the LLM supplied as int, integral float, or hex/decimal string.
+
+    Addresses are always integers; ``is_hex_or_int`` rejects integral floats
+    (e.g. ``4198400.0``) which LLMs routinely emit in JSON.
+    """
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            return int(value, 0)
+    except (TypeError, ValueError):
+        pass
+    raise ToolError(f"{ctx} must be an integer or hex string", tool_name="emulate_code")
+
+
+def _unwrap_range_item(item: Any) -> Any:
+    """Unwrap a ``{"$text": "<json>"}`` wrapper.
+
+    Some LLM providers serialize nested structured tool args (lists of
+    objects like ``memory_ranges``) as a ``$text`` JSON string. Unwrap it
+    so the real object reaches range parsing.
+    """
+    if isinstance(item, Mapping) and len(item) == 1 and "$text" in item:
+        raw = item["$text"]
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except (ValueError, TypeError):
+                return item
+    return item
 
 
 def coerce_register_value(value: Any, ptr_size: int) -> int:
@@ -1016,25 +1054,20 @@ def _normalize_memory_ranges(
 ) -> list[tuple[int, int]]:
     out: list[tuple[int, int]] = []
     for idx, item in enumerate(memory_ranges or ()):
+        item = _unwrap_range_item(item)
         if not isinstance(item, Mapping):
             raise ToolError(
                 f"{tool_name}: memory_ranges[{idx}] must be an object with 'address' and 'size'",
                 tool_name=tool_name,
             )
-        addr = item.get("address")
+        addr = _coerce_addr(item.get("address"), ctx=f"{tool_name}: memory_ranges[{idx}].address")
         size = item.get("size")
-        if not is_hex_or_int(addr):
-            raise ToolError(
-                f"{tool_name}: memory_ranges[{idx}].address must be an integer or hex string",
-                tool_name=tool_name,
-            )
         if not isinstance(size, int) or size <= 0:
             raise ToolError(
                 f"{tool_name}: memory_ranges[{idx}].size must be a positive integer",
                 tool_name=tool_name,
             )
-        coerced = int(addr, 0) if isinstance(addr, str) else int(addr)
-        out.append((coerced, int(size)))
+        out.append((addr, int(size)))
     return out
 
 
@@ -1046,26 +1079,21 @@ def _normalize_capture_ranges(
 ) -> list[CaptureRequest]:
     out: list[CaptureRequest] = []
     for idx, item in enumerate(capture_ranges or ()):
+        item = _unwrap_range_item(item)
         if not isinstance(item, Mapping):
             raise ToolError(
                 f"{tool_name}: capture_ranges[{idx}] must be an object with 'address' and 'size'",
                 tool_name=tool_name,
             )
-        addr = item.get("address")
+        addr = _coerce_addr(item.get("address"), ctx=f"{tool_name}: capture_ranges[{idx}].address")
         size = item.get("size")
         label = item.get("label") or f"{default_label}_{idx}"
-        if not is_hex_or_int(addr):
-            raise ToolError(
-                f"{tool_name}: capture_ranges[{idx}].address must be an integer or hex string",
-                tool_name=tool_name,
-            )
         if not isinstance(size, int) or size <= 0 or size > _MAX_OUTPUT_BYTES:
             raise ToolError(
                 f"{tool_name}: capture_ranges[{idx}].size must be in 1..{_MAX_OUTPUT_BYTES}",
                 tool_name=tool_name,
             )
-        coerced = int(addr, 0) if isinstance(addr, str) else int(addr)
-        out.append(CaptureRequest(address=coerced, size=int(size), label=str(label)))
+        out.append(CaptureRequest(address=addr, size=int(size), label=str(label)))
     return out
 
 
