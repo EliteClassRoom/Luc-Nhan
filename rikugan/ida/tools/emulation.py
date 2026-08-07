@@ -303,6 +303,22 @@ def _load_unicorn() -> Any:
         ) from e
 
 
+def _ida_bitness() -> int:
+    """Return binary bitness (16/32/64) via ``ida_ida.inf_get_app_bitness()``.
+
+    IDA 9.x has no ``inf_is_32bit`` module function (only ``inf_is_32bit_exactly`` /
+    ``inf_is_32bit_or_higher`` — the legacy ``is_32bit()`` meant "32-or-higher"), and
+    ``get_inf_structure()`` was removed in 9.0. ``inf_get_app_bitness()`` (added in
+    7.6) returns the exact bitness directly and is the single reliable source.
+    """
+    if ida_ida is None:
+        raise ToolError(
+            "IDA bitness API unavailable — cannot resolve x86/x64 mode",
+            tool_name="emulate_code",
+        )
+    return int(ida_ida.inf_get_app_bitness())
+
+
 def _resolve_arch(unicorn: Any) -> ArchMode:
     """Resolve architecture/mode pair from IDA's inf and known Unicorn consts."""
 
@@ -313,10 +329,11 @@ def _resolve_arch(unicorn: Any) -> ArchMode:
         )
     try:
         procname = str(ida_ida.inf_get_procname() or "")
-        is_64 = bool(ida_ida.inf_is_64bit())
-        is_32 = bool(ida_ida.inf_is_32bit())
     except AttributeError as e:
-        raise ToolError(f"IDA bitness query failed: {e}", tool_name="emulate_code") from e
+        raise ToolError(f"IDA processor query failed: {e}", tool_name="emulate_code") from e
+    bits = _ida_bitness()
+    is_64 = bits == 64
+    is_32 = bits == 32
 
     if procname.lower() not in ("metapc", "pc"):
         raise ToolError(

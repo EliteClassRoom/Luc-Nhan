@@ -47,18 +47,21 @@ def _set_x86() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "metapc"
     sys.modules["ida_ida"].inf_is_64bit.return_value = False
     sys.modules["ida_ida"].inf_is_32bit.return_value = True
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 32
 
 
 def _set_x64() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "metapc"
     sys.modules["ida_ida"].inf_is_64bit.return_value = True
     sys.modules["ida_ida"].inf_is_32bit.return_value = False
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 64
 
 
 def _set_unsupported_arch() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "ARM"
     sys.modules["ida_ida"].inf_is_64bit.return_value = True
     sys.modules["ida_ida"].inf_is_32bit.return_value = False
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 64
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +200,36 @@ class TestPureHelpers(unittest.TestCase):
         start, size, _perms, _is_stack = non_stack[0]
         self.assertEqual(start, 0x401000)
         self.assertEqual(size, 0x2000)
+
+
+# ---------------------------------------------------------------------------
+# Bitness detection via ida_ida.inf_get_app_bitness() (the IDA >=7.6 API).
+# IDA 9.x has no inf_is_32bit() and removed get_inf_structure();
+# inf_get_app_bitness() is the single reliable source returning 16/32/64.
+# ---------------------------------------------------------------------------
+
+
+class TestBitnessDetection(unittest.TestCase):
+    """``_ida_bitness`` reads ``ida_ida.inf_get_app_bitness()`` and returns
+    the exact bitness. Configures ``emu.ida_ida`` directly so the test stays
+    robust when another module re-installs the mocks."""
+
+    def tearDown(self) -> None:
+        # Restore the bound mock to its default (64-bit) state.
+        emu.ida_ida.inf_get_app_bitness.return_value = 64
+
+    def test_32bit_db(self) -> None:
+        # Regression for the user's reported error on a 32-bit IDB in IDA 9.4.
+        emu.ida_ida.inf_get_app_bitness.return_value = 32
+        self.assertEqual(emu._ida_bitness(), 32)
+
+    def test_64bit_db(self) -> None:
+        emu.ida_ida.inf_get_app_bitness.return_value = 64
+        self.assertEqual(emu._ida_bitness(), 64)
+
+    def test_16bit_db(self) -> None:
+        emu.ida_ida.inf_get_app_bitness.return_value = 16
+        self.assertEqual(emu._ida_bitness(), 16)
 
 
 # ---------------------------------------------------------------------------
