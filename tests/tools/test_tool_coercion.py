@@ -11,9 +11,9 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.tools.base import ParameterSchema, ToolDefinition
-from rikugan.tools.coercion import coerce_bool
-from rikugan.tools.registry import ToolRegistry
+from rikugan.tools.base import ParameterSchema, ToolDefinition  # noqa: E402
+from rikugan.tools.coercion import coerce_bool  # noqa: E402
+from rikugan.tools.registry import ToolRegistry  # noqa: E402
 
 
 def _make_defn(params: list[ParameterSchema]) -> ToolDefinition:
@@ -39,6 +39,11 @@ class TestCoerceArguments(unittest.TestCase):
         defn = _make_defn([ParameterSchema(name="count", type="integer")])
         result = ToolRegistry._coerce_arguments(defn, {"count": "30.0"})
         self.assertEqual(result["count"], 30)
+
+    def test_hex_string_to_int(self):
+        defn = _make_defn([ParameterSchema(name="count", type="integer")])
+        result = ToolRegistry._coerce_arguments(defn, {"count": "0x47"})
+        self.assertEqual(result["count"], 71)
 
     def test_bool_true_to_int(self):
         """bool is a subclass of int — should be coerced to plain int."""
