@@ -76,8 +76,10 @@ class ToolRegistry:
                     if isinstance(value, bool):
                         coerced[key] = int(value)
                     elif not isinstance(value, int):
-                        # Handle "30", "30.0", etc.
-                        coerced[key] = int(float(value))
+                        try:
+                            coerced[key] = int(value, 0)
+                        except (TypeError, ValueError):
+                            coerced[key] = int(float(value))
                 elif expected == "number" and not isinstance(value, (int, float)):
                     coerced[key] = float(value)
                 elif expected == "boolean" and not isinstance(value, bool):
@@ -126,8 +128,9 @@ class ToolRegistry:
         defs: list[ToolDefinition] = []
         for name in dir(module):
             obj = getattr(module, name)
-            if callable(obj) and isinstance(getattr(obj, "_tool_definition", None), ToolDefinition):
-                defs.append(obj._tool_definition)
+            defn = getattr(obj, "_tool_definition", None)
+            if callable(obj) and isinstance(defn, ToolDefinition):
+                defs.append(defn)
         if defs:
             with self._lock:
                 for d in defs:
@@ -261,6 +264,7 @@ class ToolRegistry:
         if dispatch_wrapper is not None:
             handler = dispatch_wrapper(handler)
 
+        future = None
         try:
             # Mutating tools serialize so concurrent agents don't interleave IDB
             # writes — this keeps capture_pre_state / undo records coherent.
@@ -272,7 +276,8 @@ class ToolRegistry:
                 future = _executor.submit(handler, **arguments)
                 result = future.result(timeout=timeout)
         except FuturesTimeoutError:
-            future.cancel()
+            if future is not None:
+                future.cancel()
             raise ToolError(
                 f"Tool {name} timed out after {timeout}s",
                 tool_name=name,
@@ -344,11 +349,13 @@ class ToolRegistry:
         if dispatch_wrapper is not None:
             handler = dispatch_wrapper(handler)
 
+        future = None
         try:
             future = _executor.submit(handler, **arguments)
             result = future.result(timeout=timeout)
         except FuturesTimeoutError:
-            future.cancel()
+            if future is not None:
+                future.cancel()
             raise ToolError(
                 f"Tool {name} timed out after {timeout}s",
                 tool_name=name,

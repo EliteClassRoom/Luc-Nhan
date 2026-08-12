@@ -47,18 +47,21 @@ def _set_x86() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "metapc"
     sys.modules["ida_ida"].inf_is_64bit.return_value = False
     sys.modules["ida_ida"].inf_is_32bit.return_value = True
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 32
 
 
 def _set_x64() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "metapc"
     sys.modules["ida_ida"].inf_is_64bit.return_value = True
     sys.modules["ida_ida"].inf_is_32bit.return_value = False
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 64
 
 
 def _set_unsupported_arch() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "ARM"
     sys.modules["ida_ida"].inf_is_64bit.return_value = True
     sys.modules["ida_ida"].inf_is_32bit.return_value = False
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 64
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +99,32 @@ class TestPureHelpers(unittest.TestCase):
         self.assertFalse(emu.is_hex_or_int(None))
         self.assertFalse(emu.is_hex_or_int(""))
         self.assertFalse(emu.is_hex_or_int("xyz"))
+
+    def test_coerce_addr_accepts_int_hex_dec_and_integral_float(self) -> None:
+        # Regression: LLMs emit addresses as floats in JSON; is_hex_or_int
+        # rejects them but _coerce_addr must accept the integral form.
+        self.assertEqual(emu._coerce_addr(0x401000, ctx="t"), 0x401000)
+        self.assertEqual(emu._coerce_addr("0x401000", ctx="t"), 0x401000)
+        self.assertEqual(emu._coerce_addr("4198400", ctx="t"), 4198400)
+        self.assertEqual(emu._coerce_addr(4198400.0, ctx="t"), 4198400)  # integral float
+        self.assertEqual(emu._coerce_addr("0x00401000", ctx="t"), 0x401000)  # padded hex
+
+    def test_coerce_addr_rejects_garbage(self) -> None:
+        for bad in (True, None, "", "xyz", 4198400.5, [1]):
+            with self.assertRaises(ToolError):
+                emu._coerce_addr(bad, ctx="t")
+
+    def test_normalize_memory_ranges_unwraps_text_and_accepts_float(self) -> None:
+        # Regression: LLM providers serialize nested range args as {"$text": "<json>"}.
+        out = emu._normalize_memory_ranges(
+            [{"$text": '{"address": 268734464, "size": 45056}'}], tool_name="emulate_code"
+        )
+        self.assertEqual(out, [(268734464, 45056)])
+        # Plain dicts and integral-float addresses also work.
+        self.assertEqual(
+            emu._normalize_memory_ranges([{"address": 4198400.0, "size": 16}], tool_name="emulate_code"),
+            [(4198400, 16)],
+        )
 
     def test_coerce_register_value_masks(self) -> None:
         self.assertEqual(emu.coerce_register_value(0xFFFFFFFF, 4), 0xFFFFFFFF)
@@ -197,6 +226,36 @@ class TestPureHelpers(unittest.TestCase):
         start, size, _perms, _is_stack = non_stack[0]
         self.assertEqual(start, 0x401000)
         self.assertEqual(size, 0x2000)
+
+
+# ---------------------------------------------------------------------------
+# Bitness detection via ida_ida.inf_get_app_bitness() (the IDA >=7.6 API).
+# IDA 9.x has no inf_is_32bit() and removed get_inf_structure();
+# inf_get_app_bitness() is the single reliable source returning 16/32/64.
+# ---------------------------------------------------------------------------
+
+
+class TestBitnessDetection(unittest.TestCase):
+    """``_ida_bitness`` reads ``ida_ida.inf_get_app_bitness()`` and returns
+    the exact bitness. Configures ``emu.ida_ida`` directly so the test stays
+    robust when another module re-installs the mocks."""
+
+    def tearDown(self) -> None:
+        # Restore the bound mock to its default (64-bit) state.
+        emu.ida_ida.inf_get_app_bitness.return_value = 64
+
+    def test_32bit_db(self) -> None:
+        # Regression for the user's reported error on a 32-bit IDB in IDA 9.4.
+        emu.ida_ida.inf_get_app_bitness.return_value = 32
+        self.assertEqual(emu._ida_bitness(), 32)
+
+    def test_64bit_db(self) -> None:
+        emu.ida_ida.inf_get_app_bitness.return_value = 64
+        self.assertEqual(emu._ida_bitness(), 64)
+
+    def test_16bit_db(self) -> None:
+        emu.ida_ida.inf_get_app_bitness.return_value = 16
+        self.assertEqual(emu._ida_bitness(), 16)
 
 
 # ---------------------------------------------------------------------------
