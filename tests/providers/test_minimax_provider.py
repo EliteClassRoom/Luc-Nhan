@@ -380,15 +380,16 @@ class TestMiniMaxNativeToolCallRecovery(unittest.TestCase):
         self.assertIn("All done now.", text)
 
     def test_server_tool_use_chunks_disable_filter(self):
-        """Server sent real tool_use chunks — text must pass through raw."""
+        """Server converted one invoke but leaked a second into text —
+        the leaked one must still be recovered (multi-invoke turns)."""
         from rikugan.providers.minimax_provider import _NativeToolCallFilter
 
         flt = _NativeToolCallFilter()
         chunks = list(flt.feed(StreamChunk(tool_call_id="srv_1", tool_name="f", is_tool_call_start=True)))
         chunks += list(flt.feed(StreamChunk(text=_USER_REPORTED_OUTPUT)))
         chunks += list(flt.flush())
-        self.assertEqual(len([c for c in chunks if c.is_tool_call_start]), 1)
-        self.assertIn("<invoke", "".join(c.text for c in chunks if c.text))  # passthrough
+        self.assertEqual(len([c for c in chunks if c.is_tool_call_start]), 3)  # server + 2 recovered
+        self.assertNotIn("<invoke", "".join(c.text for c in chunks if c.text))  # no raw XML leaked
 
     def test_raw_parts_rewritten_for_next_turn(self):
         """raw_parts: text cleaned + tool_use blocks with matching ids."""

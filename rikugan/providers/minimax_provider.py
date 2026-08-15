@@ -190,19 +190,15 @@ class _NativeToolCallFilter:
         self._in_tool = False
         # Parsed calls as (id, name, args) for raw_parts rewriting.
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
-        # Set when the server itself sent structured tool-call chunks; the
-        # text filter then stands down entirely to avoid double execution.
-        self._server_tool_calls = False
 
     # -- streaming interface ---------------------------------------------
 
     def feed(self, chunk: StreamChunk) -> Generator[StreamChunk, None, None]:
         """Process one upstream chunk, yielding filtered chunks."""
-        if chunk.is_tool_call_start:
-            self._server_tool_calls = True
-        if self._server_tool_calls:
-            yield chunk
-            return
+        # No stand-down after server-side tool_use chunks: an invoke leaked
+        # into the text channel was provably NOT converted by the server
+        # (multi-invoke turns: one converted, one leaked), so recovering it
+        # cannot double-execute.  Each invoke is emitted exactly once.
         if chunk.raw_parts is not None:
             yield StreamChunk(raw_parts=self._rewrite_raw_parts(chunk.raw_parts))
             return
