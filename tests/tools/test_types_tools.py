@@ -202,6 +202,112 @@ class TestCreateStructIda9Path(unittest.TestCase):
         finally:
             types_tools.ida_typeinf = orig_t
 
+    def test_offsetless_fields_append_sequentially_and_pass_may_destroy(self):
+        """Regression: fields without an offset must not pile up at bit 0,
+        and ETF_MAY_DESTROY must be forwarded to add_udm (else TERR_OVERLAP)."""
+        calls = []
+
+        class _FakeTif:
+            def __init__(self):
+                self._size = 0
+
+            def create_udt(self, union):
+                return True
+
+            def get_size(self):
+                return self._size
+
+            def add_udm(self, *args):
+                # 2nd form: (name, type, offset_bits, etf_flags)
+                calls.append(args)
+                self._size += 4
+                return 0
+
+            def set_named_type(self, til, name):
+                return 0
+
+            def is_udt(self):
+                return True
+
+            def get_named_type(self, til, name):
+                return False
+
+        fake_ti = MagicMock()
+        fake_ti.TERR_OK = 0
+        fake_ti.ETF_MAY_DESTROY = 4
+        fake_ti.tinfo_t = _FakeTif
+        # _parse_type fallback path helpers (not reached when str path works)
+        fake_ti.PT_SIL = 0
+        fake_ti.parse_decl.return_value = False
+
+        orig_t = types_tools.ida_typeinf
+        try:
+            types_tools.ida_typeinf = fake_ti
+            result = types_tools.create_struct("Foo", '[{"name": "a", "type": "int"}, {"name": "b", "type": "int"}]')
+            self.assertIn("Created", result)
+            # two add_udm calls recorded
+            self.assertEqual(len(calls), 2)
+            # field a at bit 0
+            self.assertEqual(calls[0][0], "a")
+            self.assertEqual(calls[0][2], 0)
+            # ETF_MAY_DESTROY forwarded on both
+            self.assertEqual(calls[0][3], 4)
+            self.assertEqual(calls[1][3], 4)
+            # field b appended after a (offset 32 bits, not 0)
+            self.assertEqual(calls[1][0], "b")
+            self.assertEqual(calls[1][2], 32)
+        finally:
+            types_tools.ida_typeinf = orig_t
+
+    def test_overlap_explicit_offset_returns_message_not_raw_traceback(self):
+        """Regression: a TERR_OVERLAP must surface as a message, not an exception."""
+
+        class _OverlapTif:
+            def __init__(self):
+                self._size = 0
+
+            def create_udt(self, union):
+                return True
+
+            def get_size(self):
+                return self._size
+
+            def set_named_type(self, til, name):
+                return 0
+
+            def is_udt(self):
+                return True
+
+            def get_named_type(self, til, name):
+                return False
+
+            def add_udm(self, *args):
+                raise ValueError("Invalid input data: the member overlaps ...")
+
+        def _raising_udm_t(*a, **k):
+            raise ValueError("Invalid input data: the member overlaps ...")
+
+        fake_ti = MagicMock()
+        fake_ti.TERR_OK = 0
+        fake_ti.ETF_MAY_DESTROY = 4
+        fake_ti.PT_SIL = 0
+        fake_ti.tinfo_t = _OverlapTif
+        fake_ti.udm_t = _raising_udm_t
+
+        orig_t = types_tools.ida_typeinf
+        orig_parse = types_tools._parse_type
+        try:
+            types_tools.ida_typeinf = fake_ti
+            types_tools._parse_type = lambda s: MagicMock()
+            result = types_tools.create_struct(
+                "Foo",
+                '[{"name": "a", "type": "int"}, {"name": "b", "type": "int", "offset": 0}]',
+            )
+            self.assertIn("Failed to add field", result)
+        finally:
+            types_tools.ida_typeinf = orig_t
+            types_tools._parse_type = orig_parse
+
 
 # ---------------------------------------------------------------------------
 # modify_struct (IDA 9.x path)
