@@ -46,7 +46,7 @@ dependencies = [
   "html2text>=2025.4.15",
   "markdown-it-py>=3.0.0",
   "portalocker>=3.2.0,<4",
-  "unicorn>=2.1.0,<3",
+  "unicorn>=2.1.4,<3",
 ]
 
 [tool.ruff]
