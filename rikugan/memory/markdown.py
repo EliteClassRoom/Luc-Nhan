@@ -12,9 +12,10 @@ import os
 import re
 import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from ..constants import MEMORY_LOCK_TIMEOUT_SECONDS, MEMORY_MARKDOWN_MAX_BYTES
 from ..core.atomic_io import atomic_replace
@@ -231,11 +232,16 @@ class MemoryProjector:
             self._lock_exc_type = None
             return
         self._lock_module = portalocker
-        self._lock_exc_type = portalocker.exceptions.LockError
+        # portalocker 3.x renamed ``LockError`` to ``LockException``;
+        # fall back to whichever class actually exists so we work on
+        # either major version. ``BaseLockException`` is the common
+        # ancestor and is always present.
+        exc_mod = portalocker.exceptions
+        self._lock_exc_type = getattr(exc_mod, "LockException", getattr(exc_mod, "LockError", None))
 
     def _acquire_lock(
         self,
-        lock_path: "os.PathLike[str] | str",
+        lock_path: os.PathLike[str] | str,
         *,
         on_contention: Callable[[], None] | None = None,
     ):
@@ -251,9 +257,7 @@ class MemoryProjector:
         """
         if self._lock_module is not None:
             try:
-                return self._lock_module.Lock(
-                    str(lock_path), mode="a", timeout=self._lock_timeout
-                )
+                return self._lock_module.Lock(str(lock_path), mode="a", timeout=self._lock_timeout)
             except self._lock_exc_type:
                 log_debug("portalocker lock contention; aborting projection")
                 if on_contention is not None:
@@ -308,9 +312,9 @@ class _InProcessLock:
     projector can swap implementations transparently.
     """
 
-    _lock: "threading.RLock"
+    _lock: threading.RLock
 
-    def __enter__(self) -> "_InProcessLock":
+    def __enter__(self) -> _InProcessLock:
         self._lock.__enter__()
         return self
 
