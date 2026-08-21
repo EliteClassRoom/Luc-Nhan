@@ -80,7 +80,6 @@ from .modes.orchestra import run_orchestra_mode
 from .modes.plan import run_plan_mode
 from .modes.research import run_research_mode
 from .mutation import MutationRecord, build_reverse_record, capture_pre_state
-from .plan_mode import parse_plan as _parse_plan_impl
 from .pseudo_tool_schemas import (
     ASK_USER_SCHEMA,
     DELEGATE_EXTERNAL_TASK_SCHEMA,
@@ -724,7 +723,10 @@ class AgentLoop:
         Checks explicit /slug invocation first, then falls back to
         trigger pattern matching on the user's natural language.
 
-        Returns (rewritten_message, skill_or_None).
+        Returns (rewritten_message, skill_or_None). Plan-mode skills are
+        the exception: the message is returned unrewritten (the plan-mode
+        runner injects the skill body exactly once via
+        _SKILL_PLAN_GENERATION_PROMPT — rewriting here would duplicate it).
         """
         if not self.skills:
             return (user_message, None)
@@ -733,6 +735,8 @@ class AgentLoop:
         skill, remaining = self.skills.resolve_skill_invocation(user_message)
         if skill is not None:
             log_debug(f"AgentLoop: skill invocation /{skill.slug}")
+            if skill.mode == "plan":
+                return (remaining, skill)
             rewritten = (
                 f"[Skill: {skill.name}]\n{sanitize_skill_body(skill.body, skill.name)}\n\nUser request: {remaining}"
             )
@@ -742,17 +746,14 @@ class AgentLoop:
         skill = self.skills.match_triggers(user_message)
         if skill is not None:
             log_debug(f"AgentLoop: trigger-matched skill /{skill.slug}")
+            if skill.mode == "plan":
+                return (user_message, skill)
             rewritten = (
                 f"[Skill: {skill.name}]\n{sanitize_skill_body(skill.body, skill.name)}\n\nUser request: {user_message}"
             )
             return (rewritten, skill)
 
         return (user_message, None)
-
-    @staticmethod
-    def _parse_plan(text: str) -> list[str]:
-        """Parse a numbered plan from LLM text into step strings."""
-        return _parse_plan_impl(text)
 
     def _format_provider_error_for_user(self, error: ProviderError) -> str:
         """Return a user-facing provider error message for chat display."""
@@ -1677,7 +1678,7 @@ class AgentLoop:
             "# Your Task\n\n"
             "Diagnose why this script failed. Check every IDA API call against "
             "the `ida-scripting` skill and the bundled offline docs. Return the "
-            "structured VERDICT block described in your system prompt.\n"
+            "structured VERDICT block described in your task instructions.\n"
             "Do NOT call execute_python — you are a reviewer, not an executor."
         )
         task = "\n".join(task_lines)
@@ -1883,10 +1884,11 @@ class AgentLoop:
                     if augmented:
                         result = augmented
 
-        # Sanitize tool output before it enters the conversation.
-        # Error messages may contain attacker-controlled content (e.g. function
-        # names), so strip injection markers even though we skip full wrapping.
-        sanitized = sanitize_tool_result(result, tc.name) if not is_error else strip_injection_markers(result)
+        # Sanitize tool output before it enters the conversation. Errors are
+        # wrapped too: tracebacks can carry attacker-controlled content
+        # (function names, symbol paths), and DATA_INTEGRITY_SECTION promises
+        # delimiter wrapping for ALL untrusted tool output.
+        sanitized = sanitize_tool_result(result, tc.name)
 
         # Profile: strip IOCs from tool results when any IOC filter is enabled
         profile = self.config.get_active_profile()

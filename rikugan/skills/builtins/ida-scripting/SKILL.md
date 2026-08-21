@@ -114,6 +114,12 @@ it will fail with `AttributeError` at runtime. The static validator will
 | `ida_enum.add_enum(...)` | `ida_typeinf.tinfo_t` with `BTF_ENUM` (removed in IDA 9.x) |
 | `idaapi.get_struct(name)` | `ida_typeinf.get_named_type(...)` then parse |
 | `idc.AddStruc(...)` | `ida_typeinf.tinfo_t().create_udt(...)` |
+| `ida_struct.del_struc(...)` | `ida_typeinf.remove_named_type(...)` (removed in IDA 9.x) |
+| `ida_struct.get_struc(...)` | `ida_typeinf.get_named_type(...)` (removed in IDA 9.x) |
+| `ida_enum.get_enum(...)` | `ida_typeinf.get_named_type(...)` then iterate (removed in IDA 9.x) |
+| `idaapi.get_function_at(ea)` | `ida_funcs.get_func(ea)` — returns func_t or None |
+| `idaapi.get_function_name(ea)` | `ida_funcs.get_func_name(ea)` or `ida_name.get_name(ea)` |
+| `idc.AddEnum(...)` | `ida_typeinf.tinfo_t` with `BTF_ENUM` (removed in IDA 9.x) |
 
 These DO exist but are **legacy/discouraged**. The validator will **warn**
 but not block — prefer the modern equivalent.

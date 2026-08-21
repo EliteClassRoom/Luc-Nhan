@@ -10,6 +10,7 @@ from typing import Any
 
 from ...core.config import RikuganConfig
 from ...core.logging import log_debug, log_error, log_info
+from ...core.sanitize import strip_injection_markers
 from ...core.types import Message, Role
 from ...providers.base import LLMProvider
 from ...skills.registry import SkillRegistry
@@ -154,10 +155,10 @@ class OrchestraMainAgent:
 
         history_lines: list[str] = []
         for entry in self._subtask_history[-10:]:
-            name = entry.get("name", "?")
-            status = entry.get("status", "")
-            result = entry.get("result", "")[:200]
-            history_lines.append(f"- **{name}** ({status}): {result}")
+            safe_name = strip_injection_markers(str(entry.get("name", "?")))
+            safe_status = strip_injection_markers(str(entry.get("status", "")))
+            safe_result = strip_injection_markers(str(entry.get("result", ""))[:200])
+            history_lines.append(f"- **{safe_name}** ({safe_status}): {safe_result}")
 
         history_str = "\n".join(history_lines) if history_lines else "No subtasks completed yet."
 
