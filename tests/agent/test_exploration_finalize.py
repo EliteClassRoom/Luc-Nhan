@@ -106,6 +106,34 @@ class TestFinalizeExploreMemory(unittest.TestCase):
             events = _drain(exploration_mode._finalize_explore_memory(loop, state))
             self.assertEqual(events, [])
 
+    def test_hypotheses_only_batch_saves_central_index(self):
+        """A batch with only hypotheses must still save the central index.
+
+        The ``review is None`` fallback passes ``empty_review_result()``
+        to ``_build_central_index``; a dropped-underscore typo made this
+        raise NameError inside the try/except, silently skipping the
+        central save.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            idb = os.path.join(tmp, "x.idb")
+            with open(idb, "w", encoding="utf-8") as fh:
+                fh.write("")
+            loop = _make_loop(idb)
+            loop.memory_service = MagicMock()
+            loop._memory_authority = MagicMock()
+            state = _state_with(
+                [
+                    Finding(
+                        category="hypothesis",
+                        address=0x401000,
+                        summary="suspicious call",
+                        relevance="high",
+                    )
+                ]
+            )
+            _drain(exploration_mode._finalize_explore_memory(loop, state))
+            loop.memory_service.save_fact.assert_called_once()
+
     def test_review_pass_persists_with_deterministic_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
             idb = os.path.join(tmp, "x.idb")
@@ -126,12 +154,12 @@ class TestFinalizeExploreMemory(unittest.TestCase):
             runner = _scripted_runner_factory([_passing_response(mem_id)])
             with patch.object(report_review, "_build_runner", lambda _loop: runner):
                 events = _drain(exploration_mode._finalize_explore_memory(loop, state))
-            self.assertTrue(any("Verifying" in (e.text or "") for e in events))
+            self.assertTrue(any("reviewing" in (e.text or "").lower() for e in events))
             store, _ = make_store(idb)
             ids = {m.id for m in store.list_memories()}
             self.assertIn(mem_id, ids)
 
-    def test_review_failure_skips_persistence(self):
+    def test_review_failure_keeps_hypotheses_unverified(self):
         with tempfile.TemporaryDirectory() as tmp:
             idb = os.path.join(tmp, "x.idb")
             with open(idb, "w", encoding="utf-8") as fh:
@@ -147,11 +175,22 @@ class TestFinalizeExploreMemory(unittest.TestCase):
                     )
                 ]
             )
-            runner = _scripted_runner_factory(["not json"] * 6)
+            # A pure-hypothesis batch never invokes the reviewer; we
+            # still expect a no-op event sequence and the hypothesis
+            # to land in the raw store as ``unverified``.
+            runner = _scripted_runner_factory(["unused"])
             with patch.object(report_review, "_build_runner", lambda _loop: runner):
                 events = _drain(exploration_mode._finalize_explore_memory(loop, state))
+            # No error event: the hypothesis path is independent of
+            # the reviewer.
             error_events = [e for e in events if e.type.value == "error"]
-            self.assertTrue(error_events)
+            self.assertFalse(error_events)
+            store, _ = make_store(idb)
+            ids = {m.id for m in store.list_memories()}
+            hyp_id = _id_for("hypothesis", "guess", None)
+            self.assertIn(hyp_id, ids)
+            stored = next(m for m in store.list_memories() if m.id == hyp_id)
+            self.assertEqual(stored.status, "unverified")
 
     def test_central_only_message_when_raw_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp:

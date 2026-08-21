@@ -138,10 +138,13 @@ class _SkillPopup(QFrame):
         # Ensure the selected label is visible inside the scroll
         # viewport; without this, Down-arrow on a long list can
         # select commands that are off-screen.
-        if 0 <= self._selected_idx < len(self._labels):
-            self._scroll.ensureWidgetVisible(
-                self._labels[self._selected_idx], 0, 4
-            )
+        # Pure-logic tests and lightweight callers may construct a popup
+        # without the Qt label/scroll objects. Selection itself remains
+        # valid in that mode; scrolling is only a best-effort UI detail.
+        labels = getattr(self, "_labels", ())
+        scroll = getattr(self, "_scroll", None)
+        if scroll is not None and 0 <= self._selected_idx < len(labels):
+            scroll.ensureWidgetVisible(labels[self._selected_idx], 0, 4)
 
     def current_slug(self) -> str | None:
         if 0 <= self._selected_idx < len(self._slugs):
@@ -287,7 +290,6 @@ class InputArea(QPlainTextEdit):
         # autocomplete must merge SkillRegistry.list_slugs() in
         # before calling set_skill_slugs. This avoids duplicate
         # definitions that would let a future refactor of the
-        # /report handler diverge from the autocomplete source.
         combined.update(
             (
                 "goal",
@@ -300,8 +302,11 @@ class InputArea(QPlainTextEdit):
                 "undo",
                 "mcp",
                 "doctor",
+                "verify",
             )
         )
+        # Keep the normalized list on the widget; `_check_autocomplete`
+        # reads this state after each typed character.
         self._skill_slugs = sorted(combined)
 
     def focusOutEvent(self, event) -> None:

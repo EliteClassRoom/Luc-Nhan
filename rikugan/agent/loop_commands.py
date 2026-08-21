@@ -87,11 +87,7 @@ def _truncate_report_preview(body: str, cap: int = 1500) -> str:
         next_is_paragraph_break = next_line.strip() == ""
         next_is_fence = next_line.lstrip().startswith("```")
         is_inside_open_fence = fence_open
-        if (
-            consumed >= cap * 0.85
-            and not is_inside_open_fence
-            and (next_is_paragraph_break or next_is_fence)
-        ):
+        if consumed >= cap * 0.85 and not is_inside_open_fence and (next_is_paragraph_break or next_is_fence):
             kept_idx = idx
             break
     # ``kept_idx`` is consumed; rebuild the truncated body.
@@ -103,7 +99,6 @@ def _truncate_report_preview(body: str, cap: int = 1500) -> str:
         out = "\n".join(truncated_lines[:last_open]).rstrip()
     out = out.rstrip()
     return out + "\n\n…(truncated; write the full report to view the rest)…"
-
 
 
 def _report_draft_fingerprint(body: str) -> str:
@@ -123,6 +118,7 @@ def _report_draft_fingerprint(body: str) -> str:
 
 _MAX_GOAL_CHARS = 1000
 ACTIVE_GOAL_METADATA_KEY = "active_goal"
+
 
 def normalize_goal(raw_goal: str) -> str:
     """Sanitize, trim, and cap a raw goal string.
@@ -312,6 +308,7 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
         build_report_context,
         save_report,
         synthesize_report,
+        verified_memories,
     )
 
     store, paths, err_event = _open_knowledge_store(loop)
@@ -341,6 +338,18 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
         yield TurnEvent.text_done("No LLM provider is configured — cannot synthesize the report.")
         return
 
+    # Static binary evidence: decompile (or disassemble) the addresses
+    # cited by verified memories so the draft is grounded in real code.
+    # ``getattr(loop, "tools", None)`` keeps fake-loop tests working —
+    # a missing registry yields empty evidence and the report still
+    # generates (the writer then omits `### Evidence` subsections).
+    from ..agent.report_evidence import collect_binary_evidence, fetch_binary_info
+
+    registry = getattr(loop, "tools", None)
+    memories = verified_memories(store)
+    evidence = collect_binary_evidence(memories, registry, scope=scope)
+    binary_info = fetch_binary_info(registry)
+
     try:
         ctx, report_md = synthesize_report(
             store,
@@ -353,6 +362,8 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
             # and bounds this input; verified facts come only from the
             # knowledge store.
             conversation_context=getattr(loop.session, "messages", ()),
+            evidence=evidence,
+            binary_info=binary_info,
         )
     except Exception as e:
         yield TurnEvent.error_event(f"Report generation failed: {e}")
@@ -360,15 +371,13 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
     draft = (report_md or "").strip()
     if not draft:
         yield TurnEvent.error_event(
-            "Report generation returned an empty draft. "
-            "The LLM did not produce a body — nothing to write."
+            "Report generation returned an empty draft. The LLM did not produce a body — nothing to write."
         )
         return
     preview = _truncate_report_preview(report_md)
 
     draft_event_text = (
-        "**Report draft** — review the verified report below before choosing whether to write it.\n\n"
-        f"{preview}"
+        f"**Report draft** — review the verified report below before choosing whether to write it.\n\n{preview}"
     )
     # Diagnostic: log lengths (not bodies — reports may carry sensitive
     # analysis) plus a SHA-256 prefix for cross-run correlation. This
@@ -414,6 +423,47 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
     )
 
 
+_HYPOTHESIS_STATUS_MARKER = {
+    "verified": "✓ verified",
+    "wrong": "✗ wrong",
+    "unverified": "◌ unverified",
+}
+
+
+def _hypothesis_status_marker(memory) -> str:
+    """Return a short, explicit status flag for ``/knowledge`` output.
+
+    Hypothesis records use the three explicit status markers; other
+    memory types keep the legacy single-check rendering.
+    """
+    if memory.type == "hypothesis":
+        marker = _HYPOTHESIS_STATUS_MARKER.get(memory.status, f"? {memory.status}")
+        return f" {marker}"
+    return " ✓" if memory.verified else ""
+
+
+def _verdict_evidence_lines(memory, *, indent: str = "  ") -> list[str]:
+    """Return indented lines showing the verdict claim + citations.
+
+    Empty list when the memory is not a checked hypothesis. Used by
+    the ``/knowledge`` command so the user can see *why* a claim was
+    judged verified or wrong, not just the verdict status.
+    """
+    if memory.type != "hypothesis" or memory.status not in {"verified", "wrong"}:
+        return []
+    out: list[str] = []
+    if memory.verdict_claim:
+        claim = memory.verdict_claim
+        if len(claim) > 240:
+            claim = claim[:239].rstrip() + "…"
+        out.append(f"{indent}verdict: {claim}")
+    if memory.verification_citations:
+        cites = ", ".join(memory.verification_citations[:6])
+        if len(cites) > 240:
+            cites = cites[:239].rstrip() + "…"
+        out.append(f"{indent}citations: {cites}")
+    return out
+
 
 def _handle_knowledge_command(loop: AgentLoop, raw_query: str) -> Generator[TurnEvent, None, None]:
     """Show knowledge counts or search stored knowledge.
@@ -446,8 +496,9 @@ def _handle_knowledge_command(loop: AgentLoop, raw_query: str) -> Generator[Turn
             lines.append("")
             lines.append("Recent memories:")
             for m in recent:
-                flag = " ✓" if m.verified else ""
+                flag = _hypothesis_status_marker(m)
                 lines.append(f"- `{m.id}`{flag} — {m.title}")
+                lines.extend(_verdict_evidence_lines(m))
         else:
             lines.append("")
             lines.append("No memories yet. Use `/research`, `save_memory`, or `exploration_report` to populate.")
@@ -460,7 +511,6 @@ def _handle_knowledge_command(loop: AgentLoop, raw_query: str) -> Generator[Turn
     except Exception as e:
         yield TurnEvent.error_event(f"Knowledge search failed: {e}")
         return
-
     lines = [f"**Knowledge Search — `{query}`**", ""]
     lines.append(
         f"Matched: {len(result['memories'])} memories, "
@@ -468,21 +518,18 @@ def _handle_knowledge_command(loop: AgentLoop, raw_query: str) -> Generator[Turn
         f"{len(result['relations'])} relations, "
         f"{len(result['notes'])} note excerpts"
     )
-
     if result["memories"]:
         lines.append("")
         lines.append("### Memories")
         for m in result["memories"][:10]:
-            flag = " ✓" if m.verified else ""
+            flag = _hypothesis_status_marker(m)
             snippet = (m.content or "").splitlines()[0] if m.content else ""
             if len(snippet) > 200:
                 snippet = snippet[:200] + "…"
             lines.append(f"- `{m.id}`{flag} — {m.title}")
             if snippet:
                 lines.append(f"  {snippet}")
-
-    if result["entities"]:
-        lines.append("")
+            lines.extend(_verdict_evidence_lines(m))
         lines.append("### Entities")
         for e in result["entities"][:10]:
             addr = f" @ {e.address}" if e.address else ""
@@ -591,3 +638,131 @@ def _handle_doctor_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
     else:
         lines.append("\nNo issues found.")
     yield TurnEvent.text_done("\n".join(lines))
+
+
+def _handle_verify_command(loop: AgentLoop, raw_id: str) -> Generator[TurnEvent, None, None]:
+    """Independent hypothesis verification.
+
+    ``/verify`` with no argument selects every hypothesis record whose
+    status is ``unverified``. ``/verify <id>`` selects exactly that
+    hypothesis. The selected records are passed to a fresh, read-only
+    verifier subagent that returns a JSON verdict per id. On a fully
+    valid batch the verdict fields are committed atomically to both
+    stores and a ``HYPOTHESIS_VERDICT`` event is emitted for each
+    record; otherwise a terminal error event is emitted and no record
+    is mutated.
+    """
+    import uuid
+
+    from ..memory.ingest import _now_iso
+    from ..memory.schema import KnowledgeMemory, KnowledgeObservation
+    from .hypothesis_verification import verify_hypotheses
+
+    store, paths, err_event = _open_knowledge_store(loop)
+    if err_event is not None:
+        yield err_event
+        return
+    if paths is None or store is None:
+        yield TurnEvent.error_event("Knowledge store is unavailable; cannot run /verify.")
+        return
+
+    try:
+        all_mems = store.list_memories()
+    except Exception as e:
+        yield TurnEvent.error_event(f"Knowledge read failed: {e}")
+        return
+    pending = [m for m in all_mems if m.type == "hypothesis" and m.status == "unverified"]
+    pending.sort(key=lambda m: m.id)
+    raw = (raw_id or "").strip()
+    if raw:
+        target = [m for m in all_mems if m.id == raw]
+        if not target:
+            yield TurnEvent.text_done(f"No memory found with id `{raw}`.")
+            return
+        mem = target[0]
+        if mem.type != "hypothesis":
+            yield TurnEvent.text_done(
+                f"`{raw}` is not a hypothesis (type={mem.type}); /verify only handles hypotheses."
+            )
+            return
+        if mem.status != "unverified":
+            yield TurnEvent.text_done(f"`{raw}` is already {mem.status}; nothing to verify.")
+            return
+        candidates = [mem]
+    else:
+        candidates = pending
+    if not candidates:
+        yield TurnEvent.text_done("No unverified hypotheses pending /verify.")
+        return
+
+    yield TurnEvent.text_done(f"Verifying {len(candidates)} hypothesis(es) with an independent agent (read-only)…")
+    result = verify_hypotheses(loop, candidates, max_attempts=3)
+    if not result.passed:
+        unresolved = result.unresolved or {h.id: "verifier failed" for h in candidates}
+        joined = "; ".join(f"{mid}: {reason}" for mid, reason in sorted(unresolved.items()))
+        yield TurnEvent.error_event(
+            f"/verify did not produce a valid verdict batch after {result.attempts} attempt(s): {joined}"
+        )
+        return
+
+    updated_memories: dict[str, KnowledgeMemory] = {}
+    new_observations: list[KnowledgeObservation] = []
+    for hid, verdict in result.verdicts.items():
+        original = next((m for m in candidates if m.id == hid), None)
+        if original is None:
+            continue
+        updated = KnowledgeMemory(
+            id=original.id,
+            binary_id=original.binary_id,
+            type=original.type,
+            title=original.title,
+            content=original.content,
+            entity_refs=list(original.entity_refs),
+            relation_refs=list(original.relation_refs),
+            source_refs=list(original.source_refs),
+            tags=list(original.tags),
+            confidence=original.confidence,
+            importance=original.importance,
+            verified=(verdict.status == "verified"),
+            status=verdict.status,
+            verdict_claim=verdict.claim,
+            verification_citations=list(verdict.citations),
+        )
+        updated_memories[hid] = updated
+        new_observations.append(
+            KnowledgeObservation(
+                id=f"obs:{uuid.uuid4().hex[:12]}",
+                binary_id=updated.binary_id,
+                ts=_now_iso(),
+                kind="hypothesis_verified",
+                payload={
+                    "memory_id": updated.id,
+                    "status": updated.status,
+                    "claim": updated.verdict_claim[:200],
+                    "citations": list(updated.verification_citations),
+                },
+            )
+        )
+
+    try:
+        store.commit_hypothesis_verdicts(updated_memories, new_observations)
+    except Exception as e:
+        yield TurnEvent.error_event(f"Failed to persist verdict batch: {e}")
+        return
+
+    committed = [
+        updated_memories[hid] for hid in result.verdicts if hid in updated_memories
+    ]
+    for updated in committed:
+        yield TurnEvent.hypothesis_verdict(
+            updated.id, updated.status, updated.verdict_claim, list(updated.verification_citations)
+        )
+
+    summary_counts: dict[str, int] = {"verified": 0, "wrong": 0}
+    for updated in committed:
+        summary_counts[updated.status] = summary_counts.get(updated.status, 0) + 1
+    summary = (
+        f"/verify committed {len(committed)} verdict(s): "
+        f"{summary_counts['verified']} verified, {summary_counts['wrong']} wrong."
+    )
+    yield TurnEvent.text_done(summary)

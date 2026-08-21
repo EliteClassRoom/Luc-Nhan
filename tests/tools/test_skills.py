@@ -379,6 +379,39 @@ class TestBuiltinTriggerMatching(unittest.TestCase):
                         f"naming-convention stole a general query: {query}",
                     )
 
+
+
+    def test_malware_analysis_requires_hypothesis_logging_and_verification(self):
+        """The built-in malware-analysis skill must instruct the agent to:
+
+        1. Log every concrete behavioral hypothesis through
+           ``exploration_report(category=\"hypothesis\", summary=...)``.
+        2. Treat hypotheses as provisional ``unverified`` records.
+        3. Run ``/verify`` before ``/report`` and never author a report
+           that promotes unverified or ``wrong`` hypotheses to facts.
+        """
+        skill = self.reg.get("malware-analysis")
+        self.assertIsNotNone(skill, "malware-analysis skill not discovered")
+        body = skill.body
+        # Hypothesis logging contract.
+        self.assertIn("exploration_report", body)
+        self.assertIn("category=\"hypothesis\"", body)
+        self.assertIn("summary=", body)
+        self.assertIn("evidence=", body)
+        self.assertIn("relevance=", body)
+        # Provisional-until-verified contract.
+        self.assertIn("unverified", body)
+        # /verify runs before /report, and the report writer consumes
+        # only verified hypotheses.
+        self.assertIn("/verify", body)
+        self.assertIn("/report", body)
+        self.assertIn("verified", body)
+        # The report must not promote unverified or wrong hypotheses.
+        self.assertIn("wrong", body)
+        # Surface the verdict claim/citations from /verify in the report.
+        self.assertIn("claim", body)
+        self.assertIn("citation", body)
+
     def test_malware_analysis_skill_naming_section_expanded(self):
         """malware-analysis must carry the full 6-rule naming summary, not just 3."""
         skill = self.reg.get("malware-analysis")

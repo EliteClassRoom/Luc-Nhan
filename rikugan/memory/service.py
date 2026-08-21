@@ -212,6 +212,9 @@ class BinaryMemoryService:
         entity_refs: list[str],
         tags: list[str],
         source: str,
+        status: str = "unverified",
+        verdict_claim: str = "",
+        verification_citations: list[str] | None = None,
     ) -> SaveMemoryResult:
         """Save an exploration finding with graph metadata and project it.
 
@@ -243,6 +246,9 @@ class BinaryMemoryService:
             tags=list(tags),
             title=title,
             confidence=confidence,
+            status=status if normalized_category == "hypothesis" else "unverified",
+            verdict_claim=verdict_claim if normalized_category == "hypothesis" else "",
+            verification_citations=list(verification_citations or []) if normalized_category == "hypothesis" else None,
         )
         record = saved.record
         verify = self.repository._store.get_fact(record.id)

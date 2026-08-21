@@ -146,7 +146,6 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
     )
     from ...memory.paths import function_entity_id
     from ...memory.schema import KnowledgeMemory
-    from ..report_review import review_memories
 
     candidates: list[KnowledgeMemory] = []
     for f in findings:
@@ -172,6 +171,9 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
                 confidence=0.6,
                 importance=0.5,
                 verified=False,
+                status="unverified",
+                verdict_claim="",
+                verification_citations=[],
             )
         )
 
@@ -183,52 +185,93 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
         if paths is not None:
             mem.binary_id = paths.binary_id
 
+    # Per plan step 2: hypotheses are first-class knowledge records
+    # that remain explicitly unverified until ``/verify`` runs. They
+    from ..report_review import empty_review_result, review_memories
+    hypothesis_records: list[tuple[KnowledgeMemory, Any]] = []
+    review_candidates: list[KnowledgeMemory] = []
+    for mem, finding in zip(candidates, findings):
+        if mem.type == "hypothesis":
+            hypothesis_records.append((mem, finding))
+        else:
+            review_candidates.append(mem)
+
     yield TurnEvent.text_done(
-        f"Verifying {len(candidates)} finding(s) before persisting exploration memory…"
+        f"Persisting {len(hypothesis_records)} hypothesis(es) as unverified; "
+        f"reviewing {len(review_candidates)} non-hypothesis finding(s) before persisting."
     )
-    review = review_memories(loop, candidates, max_cycles=3)
-    if not review.passed:
-        ids = ", ".join(sorted(review.unresolved.keys())) or "(none)"
-        yield TurnEvent.error_event(
-            f"Exploration memory not persisted: {len(review.unresolved)} finding(s) "
-            f"unverified after {review.cycles} cycle(s). IDs: {ids}."
-        )
-        return
+    review: Any = None
+    if review_candidates:
+        review = review_memories(loop, review_candidates, max_cycles=3)
+        if not review.passed:
+            ids = ", ".join(sorted(review.unresolved.keys())) or "(none)"
+            yield TurnEvent.text_done(
+                f"Non-hypothesis review did not pass after {review.cycles} cycle(s): {ids}. "
+                "Hypotheses are still persisted as unverified; "
+                "non-hypothesis findings are skipped."
+            )
     finding_by_id: dict[str, Any] = {
         mem.id: finding for mem, finding in zip(candidates, findings)
     }
     persisted = 0
     raw_errors: list[str] = []
     if raw_store_available:
-        for mem, finding in zip(review.records, findings):
-            corrected_summary = mem.content or finding.summary
+        # Persist every hypothesis first as unverified. They never
+        # pass through the reviewer (the plan keeps them explicitly
+        # provisional until a future ``/verify`` promotes them).
+        for mem, finding in hypothesis_records:
             try:
                 ingest_exploration_finding(
                     store,
                     paths,
                     category=mem.type,
-                    summary=corrected_summary,
+                    summary=finding.summary,
                     address=finding.address,
-                    relevance="high",
+                    relevance=finding.relevance or "medium",
                     evidence=finding.evidence,
-                    function_name=(
-                        finding.summary[:40]
-                        if finding.category == "function_purpose"
-                        else ""
-                    ),
-                    # Prebuilt id keeps the raw store and the
-                    # central index referencing the same record
-                    # after content correction; explicit
-                    # title/confidence persist reviewer-corrected
-                    # fields (Plan §5.43).
+                    function_name="",
                     memory_id=mem.id,
                     title=mem.title,
                     confidence=mem.confidence,
+                    status="unverified",
+                    verdict_claim="",
+                    verification_citations=[],
                 )
                 persisted += 1
             except Exception as exc:
                 raw_errors.append(f"{mem.id}: {exc!r}")
-                log_debug(f"explore memory finalizer ingest failed: {exc!r}")
+                log_debug(f"explore memory finalizer hypothesis ingest failed: {exc!r}")
+        # Persist reviewer-cleared non-hypothesis records only when
+        # the review passed. When review failed or wasn't run, skip
+        # the non-hyp ingest so unverified claims are never persisted
+        # as facts.
+        if review is not None and review.passed:
+            for mem, finding in zip(review.records, findings):
+                if mem.type == "hypothesis":
+                    continue
+                corrected_summary = mem.content or finding.summary
+                try:
+                    ingest_exploration_finding(
+                        store,
+                        paths,
+                        category=mem.type,
+                        summary=corrected_summary,
+                        address=finding.address,
+                        relevance="high",
+                        evidence=finding.evidence,
+                        function_name=(
+                            finding.summary[:40]
+                            if finding.category == "function_purpose"
+                            else ""
+                        ),
+                        memory_id=mem.id,
+                        title=mem.title,
+                        confidence=mem.confidence,
+                    )
+                    persisted += 1
+                except Exception as exc:
+                    raw_errors.append(f"{mem.id}: {exc!r}")
+                    log_debug(f"explore memory finalizer ingest failed: {exc!r}")
     else:
         raw_errors.append("raw store: unavailable")
     central_saved = False
@@ -236,7 +279,7 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
         try:
             index_fact = _build_central_index(
                 state.knowledge_base.user_goal,
-                review,
+                review if review is not None else empty_review_result(),
                 persisted,
                 finding_by_id,
             )

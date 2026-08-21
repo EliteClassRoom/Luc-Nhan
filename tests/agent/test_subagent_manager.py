@@ -4,18 +4,19 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
-
-install_ida_mocks()
-
 from rikugan.agent.subagent_manager import (
     SubagentInfo,
     SubagentManager,
     SubagentStatus,
 )
+from rikugan.agent.turn import TurnEvent
 from rikugan.core.config import RikuganConfig
 from rikugan.providers.base import LLMProvider, ModelInfo, ProviderCapabilities
 from rikugan.tools.registry import ToolRegistry
@@ -303,3 +304,220 @@ class TestPollEvent(unittest.TestCase):
         mgr.register(name="a", task="t")
         event = mgr.poll_event()
         assert event is not None
+
+
+class TestRegistryAllowlist(unittest.TestCase):
+    """``ToolRegistry.allowlist`` returns a filtered view that preserves the dispatch surface."""
+
+    def _make_registry(self) -> ToolRegistry:
+        from rikugan.tools.base import ToolDefinition, ParameterSchema
+
+        reg = ToolRegistry()
+        reg.register(
+            ToolDefinition(
+                name="alpha_tool",
+                description="alpha",
+                category="test",
+                parameters=[ParameterSchema(name="x", type="string")],
+                handler=lambda: "alpha",
+            )
+        )
+        reg.register(
+            ToolDefinition(
+                name="beta_tool",
+                description="beta",
+                category="test",
+                parameters=[ParameterSchema(name="x", type="string")],
+                handler=lambda: "beta",
+            )
+        )
+        reg.set_capabilities({"hexrays": True})
+        return reg
+
+    def test_retains_only_named_tools(self) -> None:
+        reg = self._make_registry()
+        view = reg.allowlist(["alpha_tool"])
+        assert set(view.list_names()) == {"alpha_tool"}
+        names = [t["function"]["name"] for t in view.to_provider_format()]
+        assert names == ["alpha_tool"]
+
+    def test_unknown_names_dropped_silently(self) -> None:
+        reg = self._make_registry()
+        view = reg.allowlist(["alpha_tool", "missing_tool"])
+        assert set(view.list_names()) == {"alpha_tool"}
+        assert sorted(t["function"]["name"] for t in view.to_provider_format()) == ["alpha_tool"]
+
+    def test_all_unknown_returns_empty_view(self) -> None:
+        reg = self._make_registry()
+        view = reg.allowlist(["nope"])
+        assert view.list_names() == []
+        assert view.to_provider_format() == []
+
+    def test_capabilities_preserved(self) -> None:
+        reg = self._make_registry()
+        view = reg.allowlist(["alpha_tool"])
+        assert view._capabilities == {"hexrays": True}
+
+    def test_mutation_isolation(self) -> None:
+        """The view must not share the source tool dictionary."""
+        reg = self._make_registry()
+        view = reg.allowlist(["alpha_tool"])
+        # Drop a tool through the view; the parent registry must be intact.
+        view.unregister_by_prefix("alpha_tool")
+        assert "alpha_tool" in reg.list_names()
+
+
+class TestManagerSpawnHandoff(unittest.TestCase):
+    """``SubagentManager.spawn`` forwards the new tools/model kwargs to its worker."""
+
+    def _stub_tools(self) -> ToolRegistry:
+        from rikugan.tools.base import ToolDefinition, ParameterSchema
+
+        reg = ToolRegistry()
+        reg.register(
+            ToolDefinition(
+                name="alpha_tool",
+                description="alpha",
+                category="test",
+                parameters=[ParameterSchema(name="x", type="string")],
+                handler=lambda: "alpha",
+            )
+        )
+        reg.register(
+            ToolDefinition(
+                name="beta_tool",
+                description="beta",
+                category="test",
+                parameters=[ParameterSchema(name="x", type="string")],
+                handler=lambda: "beta",
+            )
+        )
+        return reg
+
+    def test_spawn_forwards_tools_and_model_to_runner(self) -> None:
+        from threading import Thread
+
+        mgr = SubagentManager(
+            provider=_StubProvider(),
+            tool_registry=self._stub_tools(),
+            config=RikuganConfig(),
+            host_name="test",
+        )
+        captured: dict = {}
+
+        def fake_run_agent(
+            agent_id, task, max_turns, system_addendum, cancel, mode="",
+            tool_registry=None, model_override="",
+        ):
+            captured["tools_registry"] = tool_registry
+            captured["model"] = model_override
+            captured["cancel"] = cancel
+            # Drain the spawned event so the queue stays healthy.
+            mgr._event_queue.get(timeout=0.1)
+            # Mimic immediate completion so the worker doesn't block.
+            info = mgr._agents[agent_id]
+            info.status = SubagentStatus.COMPLETED
+            info.completed_at = time.time()
+            mgr._event_queue.put(
+                TurnEvent.subagent_completed(
+                    agent_id=agent_id, name=info.name, summary="", turn_count=0,
+                    elapsed=0.0,
+                )
+            )
+
+        with patch.object(mgr, "_run_agent", side_effect=fake_run_agent):
+            agent_id = mgr.spawn(name="n", task="t", tools=["alpha_tool"], model="child-model")
+        # Wait for the daemon thread to finish.
+        for thread in [t for t in threading.enumerate() if t.name.startswith("rikugan-subagent-")]:
+            thread.join(timeout=1.0)
+        assert captured["model"] == "child-model"
+        assert set(captured["tools_registry"].list_names()) == {"alpha_tool"}
+        assert mgr.get(agent_id).status == SubagentStatus.COMPLETED
+
+    def test_spawn_without_tools_keeps_full_registry(self) -> None:
+        from threading import Thread
+
+        mgr = SubagentManager(
+            provider=_StubProvider(),
+            tool_registry=self._stub_tools(),
+            config=RikuganConfig(),
+            host_name="test",
+        )
+        captured: dict = {}
+
+        def fake_run_agent(
+            agent_id, task, max_turns, system_addendum, cancel, mode="",
+            tool_registry=None, model_override="",
+        ):
+            captured["tools_registry"] = tool_registry
+            captured["model"] = model_override
+            mgr._event_queue.get(timeout=0.1)
+            info = mgr._agents[agent_id]
+            info.status = SubagentStatus.COMPLETED
+            info.completed_at = time.time()
+            mgr._event_queue.put(
+                TurnEvent.subagent_completed(
+                    agent_id=agent_id, name=info.name, summary="", turn_count=0,
+                    elapsed=0.0,
+                )
+            )
+
+        with patch.object(mgr, "_run_agent", side_effect=fake_run_agent):
+            mgr.spawn(name="n", task="t")
+        for thread in [t for t in threading.enumerate() if t.name.startswith("rikugan-subagent-")]:
+            thread.join(timeout=1.0)
+        assert captured["model"] == ""
+        assert set(captured["tools_registry"].list_names()) == {"alpha_tool", "beta_tool"}
+
+    def test_preflight_cancel_before_iteration_finalizes_worker(self) -> None:
+        """The preflight cancel check in ``_run_agent`` (after
+        ``run_task`` returns, before iteration) must finalize the worker
+        without emitting progress or completion events."""
+        from threading import Thread
+        from rikugan.agent.subagent import SubagentRunner
+
+        mgr = SubagentManager(
+            provider=_StubProvider(),
+            tool_registry=self._stub_tools(),
+            config=RikuganConfig(),
+            host_name="test",
+        )
+
+        def fake_run_task(self, task, max_turns=20, system_addendum=""):
+            self._cancel_event.set()
+            return iter([])
+
+        with patch.object(SubagentRunner, "run_task", fake_run_task):
+            agent_id = mgr.spawn(name="n", task="t")
+        for thread in [
+            t for t in threading.enumerate() if t.name.startswith("rikugan-subagent-")
+        ]:
+            thread.join(timeout=1.0)
+        info = mgr.get(agent_id)
+        assert info.status == SubagentStatus.CANCELLED
+        events = []
+        while True:
+            ev = mgr.poll_event()
+            if ev is None:
+                break
+            events.append(ev)
+        event_types = [e.type.value for e in events]
+        assert "subagent_progress" not in event_types
+        assert "subagent_completed" not in event_types
+        assert event_types.count("subagent_failed") == 1
+
+    def test_cancellation_is_idempotent(self) -> None:
+        """Multiple cancellation finalizations emit only one cancellation event."""
+        mgr = _make_manager()
+        agent_id = mgr.register(name="a", task="t")
+        mgr.poll_event()  # drain spawn event
+        mgr._finalize_cancellation(mgr._agents[agent_id])
+        mgr._finalize_cancellation(mgr._agents[agent_id])
+        mgr._finalize_cancellation(mgr._agents[agent_id])
+        events = []
+        while True:
+            ev = mgr.poll_event()
+            if ev is None:
+                break
+            events.append(ev)
+        assert sum(1 for e in events if e.type.value == "subagent_failed") == 1

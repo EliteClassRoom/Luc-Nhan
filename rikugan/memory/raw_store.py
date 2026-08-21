@@ -106,6 +106,7 @@ class KnowledgeRawStore:
                 except OSError:
                     pass
             atomic_replace(tmp_path, path)
+            KnowledgeRawStore._fsync_parent_dir(path)
         except Exception:
             # Best-effort cleanup of the temp file
             try:
@@ -114,6 +115,22 @@ class KnowledgeRawStore:
             except OSError:
                 pass
             raise
+
+    @staticmethod
+    def _fsync_parent_dir(path: str) -> None:
+        """Best-effort directory fsync so the rename is durable on POSIX."""
+        if os.name == "nt":
+            return  # opening a directory handle is not supported on Windows
+        try:
+            fd = os.open(os.path.dirname(path) or ".", os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
 
     @staticmethod
     def _append_jsonl(path: str, record: dict[str, Any]) -> None:
@@ -228,6 +245,100 @@ class KnowledgeRawStore:
     def append_observation(self, observation: KnowledgeObservation) -> None:
         self.paths.ensure()
         self._append_jsonl(self.paths.observations_path, observation.to_dict())
+
+    # ------------------------------------------------------------------
+    # Batch verdict commit (per-file atomic, snapshot rollback)
+    # ------------------------------------------------------------------
+
+    def commit_hypothesis_verdicts(
+        self,
+        updated_memories: dict[str, "KnowledgeMemory"],
+        new_observations: list["KnowledgeObservation"],
+    ) -> tuple[list["KnowledgeMemory"], list["KnowledgeObservation"]]:
+        """Commit a batch of hypothesis verdicts to the memories and
+        observations JSONL files.
+
+        Each file is written atomically (temp + replace); the two
+        files cannot be made atomic with respect to each other, so a
+        snapshot of both is taken under the per-file locks and restored
+        when any write or the read-back verification fails. A crash
+        between the two replaces is the residual window (a restore is
+        attempted on any exception). Raises on any I/O error or
+        read-back mismatch after restoring the snapshot. Returns the
+        post-commit record lists so callers can skip a second disk
+        pass.
+        """
+        self.paths.ensure()
+        if not updated_memories and not new_observations:
+            return self.list_memories(), self.list_observations()
+        mem_path = self.paths.memories_path
+        obs_path = self.paths.observations_path
+        # Deterministic lock order to avoid deadlocks with other writers.
+        with _lock_for(mem_path), _lock_for(obs_path):
+            # Snapshot both files as raw dicts so we can restore on failure.
+            snapshot_memories = list(self._read_jsonl(mem_path))
+            snapshot_observations = list(self._read_jsonl(obs_path))
+
+            new_memory_ids = set(updated_memories.keys())
+            merged_memories: list[dict[str, Any]] = []
+            replaced: set[str] = set()
+            for rec in snapshot_memories:
+                rid = rec.get("id", "")
+                if rid in new_memory_ids:
+                    merged_memories.append(updated_memories[rid].to_dict())
+                    replaced.add(rid)
+                else:
+                    merged_memories.append(rec)
+            for rid, mem in updated_memories.items():
+                if rid not in replaced:
+                    merged_memories.append(mem.to_dict())
+
+            appended_observations = list(snapshot_observations)
+            for obs in new_observations:
+                appended_observations.append(obs.to_dict())
+
+            # Stage both files via temp + replace. Any failure — including
+            # the read-back verification below — restores both files from
+            # their snapshots before re-raising.
+            mem_written = False
+            obs_written = False
+            try:
+                self._write_jsonl_atomic(mem_path, merged_memories)
+                mem_written = True
+                self._write_jsonl_atomic(obs_path, appended_observations)
+                obs_written = True
+
+                readback = {r.get("id"): r for r in self._read_jsonl(mem_path)}
+                for rid, mem in updated_memories.items():
+                    rb = readback.get(rid)
+                    if (
+                        rb is None
+                        or rb.get("status") != mem.status
+                        or rb.get("verdict_claim") != mem.verdict_claim
+                        or list(rb.get("verification_citations") or [])
+                        != list(mem.verification_citations)
+                    ):
+                        raise RuntimeError(
+                            f"commit_hypothesis_verdicts: read-back mismatch for {rid}"
+                        )
+            except Exception:
+                for written, snapshot in (
+                    (obs_written, snapshot_observations),
+                    (mem_written, snapshot_memories),
+                ):
+                    if written:
+                        try:
+                            self._write_jsonl_atomic(
+                                obs_path if snapshot is snapshot_observations else mem_path,
+                                snapshot,
+                            )
+                        except Exception as restore_exc:
+                            log_error(
+                                f"commit_hypothesis_verdicts: rollback failed: {restore_exc!r}"
+                            )
+                raise
+
+        return self.list_memories(), self.list_observations()
 
     def list_observations(self) -> list[KnowledgeObservation]:
         return [KnowledgeObservation.from_dict(r) for r in self._read_jsonl(self.paths.observations_path)]

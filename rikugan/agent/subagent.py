@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Generator
 from typing import Any
 
@@ -34,6 +35,13 @@ class SubagentRunner:
 
     After the subagent finishes, the parent receives only a compact
     summary rather than the full exploration trace.
+
+    ``cancel_event`` is forwarded to the inner AgentLoop so that
+    ``SubagentManager.cancel(agent_id)`` (or any caller-supplied event)
+    interrupts the provider stream and the loop's cancellation checks.
+    ``model_override`` (when non-empty) is applied only to the child
+    run via a shallow copy of the provider and config; the parent
+    provider/config objects are never mutated.
     """
 
     def __init__(
@@ -45,6 +53,7 @@ class SubagentRunner:
         skill_registry: SkillRegistry | None = None,
         parent_loop: Any | None = None,
         cancel_event: Any | None = None,
+        model_override: str = "",
     ):
         self.provider = provider
         self.tools = tool_registry
@@ -53,7 +62,71 @@ class SubagentRunner:
         self.skills = skill_registry
         self._parent_loop = parent_loop
         self._cancel_event = cancel_event
+        self._model_override = model_override or ""
         self._last_session: SessionState | None = None
+
+    def _resolve_child_provider_and_config(
+        self,
+    ) -> tuple[LLMProvider, RikuganConfig]:
+        """Return (provider, config) for the child run, honoring ``_model_override``.
+
+        When no override is configured, the original provider and config
+        are returned unchanged so existing callers see the same object
+        identity they had before this feature.
+
+        When an override is configured, the provider is shallow-copied,
+        the config is shallow-copied, and both `.model` attributes are
+        set to the override model. The SDK client / base URL / credentials
+        on the provider copy remain shared with the parent because the
+        provider modules do not require a state reset per model. The
+        config copy isolates the agent loop's effective ``provider.model``
+        without leaking back to the parent config.
+        """
+        if not self._model_override:
+            return self.provider, self.config
+        child_provider = copy.copy(self.provider)
+        child_provider.model = self._model_override
+        child_config = copy.copy(self.config)
+        child_provider_config = copy.copy(self.config.provider)
+        child_provider_config.model = self._model_override
+        child_config.provider = child_provider_config
+        # Providers with model-dependent cached state (e.g. GLM) must
+        # refresh their internal lookup for the override model. Keep this
+        # generic by attempting the standard helpers when present; absent
+        # helpers mean no per-model state exists and the provider copy is
+        # already correct.
+        if hasattr(child_provider, "_glm_metadata") and hasattr(child_provider, "_glm_config"):
+            from ..core.glm_config import get_glm_model_metadata, parse_glm_extra
+
+            extra = getattr(child_provider, "_provider_extra_raw", None) or {
+                "dialect": getattr(child_provider, "_provider_name", "") or "glm"
+            }
+            child_provider._glm_metadata = get_glm_model_metadata(self._model_override)
+            child_provider._glm_config = parse_glm_extra(extra, self._model_override)
+        return child_provider, child_config
+
+    def _build_loop(self, session: SessionState) -> Any:
+        """Construct an AgentLoop for the child run with cancel/model wiring.
+
+        Centralizes the three call sites in ``run_task`` / ``run_exploration``
+        / ``run_mode`` so cancel and model overrides stay consistent.
+        ``AgentLoop`` prefers the explicit ``cancel_event`` over
+        ``parent_loop`` inheritance, which is the desired precedence for
+        SubagentManager-owned cancellation tokens.
+        """
+        from .loop import AgentLoop  # deferred to avoid circular import
+
+        child_provider, child_config = self._resolve_child_provider_and_config()
+        return AgentLoop(
+            provider=child_provider,
+            tool_registry=self.tools,
+            config=child_config,
+            session=session,
+            skill_registry=self.skills,
+            host_name=self.host_name,
+            parent_loop=self._parent_loop,
+            cancel_event=self._cancel_event,
+        )
 
     @property
     def last_session(self) -> SessionState | None:
@@ -88,19 +161,9 @@ class SubagentRunner:
         The subagent gets a clean session and runs the task as a normal
         agent loop (not exploration mode, not plan mode).
         """
-        from .loop import AgentLoop  # deferred to avoid circular import
-
         session = SessionState()
         self._last_session = session
-        loop = AgentLoop(
-            provider=self.provider,
-            tool_registry=self.tools,
-            config=self.config,
-            session=session,
-            skill_registry=self.skills,
-            host_name=self.host_name,
-            parent_loop=self._parent_loop,
-        )
+        loop = self._build_loop(session)
 
         log_info(f"Subagent started: task={task[:80]!r}, max_turns={max_turns}, silent={silent}")
 
@@ -151,21 +214,10 @@ class SubagentRunner:
         Yields TurnEvents so the UI can track progress.
         Returns the populated KnowledgeBase.
         """
-        from .loop import AgentLoop  # deferred to avoid circular import
-
         session = SessionState()
         session.idb_path = idb_path
         self._last_session = session
-
-        loop = AgentLoop(
-            provider=self.provider,
-            tool_registry=self.tools,
-            config=self.config,
-            session=session,
-            skill_registry=self.skills,
-            host_name=self.host_name,
-            parent_loop=self._parent_loop,
-        )
+        loop = self._build_loop(session)
 
         log_info(f"Subagent exploration started: goal={user_goal[:80]!r}, max_turns={max_turns}")
 
@@ -213,19 +265,9 @@ class SubagentRunner:
         When *silent* is True, only interactive events (tool approval,
         user questions) are forwarded to the parent UI.
         """
-        from .loop import AgentLoop  # deferred to avoid circular import
-
         session = SessionState()
         self._last_session = session
-        loop = AgentLoop(
-            provider=self.provider,
-            tool_registry=self.tools,
-            config=self.config,
-            session=session,
-            skill_registry=self.skills,
-            host_name=self.host_name,
-            parent_loop=self._parent_loop,
-        )
+        loop = self._build_loop(session)
 
         mode_prefix = _MODE_PREFIXES.get(mode.lower(), "")
         augmented_task = f"{mode_prefix}{task}" if mode_prefix else task

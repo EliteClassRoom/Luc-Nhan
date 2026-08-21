@@ -363,6 +363,8 @@ def persist_reviewed_memories(
         if memory.type == "report":
             continue
         memory.verified = True
+        if memory.type == "hypothesis":
+            memory.status = "verified"
         # Ensure updated_at is current while preserving created_at.
         from ..memory.ingest import _now_iso  # local import to avoid cycle
 
@@ -372,8 +374,19 @@ def persist_reviewed_memories(
     return persisted
 
 
+def empty_review_result() -> ReviewResult:
+    """Return a placeholder :class:`ReviewResult` for callers that
+    never invoked the reviewer (e.g. when an exploration batch
+    contains only hypotheses). Used by the explore finalizer to
+    feed ``_build_central_index`` without crashing on
+    ``review.records`` access.
+    """
+    return ReviewResult(passed=True, records=[], unresolved={}, cycles=0)
+
+
 __all__ = [
     "ReviewResult",
+    "empty_review_result",
     "persist_reviewed_memories",
     "review_memories",
 ]

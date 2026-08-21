@@ -181,6 +181,78 @@ class TestMemoryProjector:
         assert state.projection_dirty is False
         store.close()
 
+    def test_project_works_when_portalocker_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A user with portalocker not installed must not see
+        ``ModuleNotFoundError`` during projection. The projector
+        falls back to a process-local lock and still produces the
+        expected MEMORY.md contents.
+        """
+        # Simulate portalocker being absent.
+        import builtins as _bi
+        orig_import = _bi.__import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name.startswith("portalocker"):
+                raise ModuleNotFoundError(f"No module named '{name}'")
+            return orig_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(_bi, "__import__", _fake_import)
+        # Reload the module so the projector re-probes portalocker.
+        import importlib
+        from rikugan.memory import markdown as _md
+        importlib.reload(_md)
+        try:
+            memory_id = new_memory_id()
+            paths = MemoryLocator(tmp_path).binary(memory_id)
+            store = WorkspaceStore.create(
+                paths, owner_memory_id=memory_id
+            )
+            fid = new_record_id("fact")
+            store.put_fact(
+                fid, "algorithm", "RC4", "Uses RC4 for C2", 0.8, expected_revision=0
+            )
+
+            projector = _md.MemoryProjector()
+            # Sanity: fallback path was selected.
+            assert projector._lock_module is None
+
+            projector.project(paths, store)
+            content = paths.markdown.read_text(encoding="utf-8")
+            assert "Uses RC4 for C2" in content
+            store.close()
+        finally:
+            importlib.reload(_md)
+
+    def test_lock_contention_marks_dirty_and_raises(self, tmp_path: Path) -> None:
+        """Cross-process lock contention must mark the projection dirty
+        and raise instead of silently degrading to an in-process lock."""
+        memory_id = new_memory_id()
+        paths = MemoryLocator(tmp_path).binary(memory_id)
+        store = WorkspaceStore.create(paths, owner_memory_id=memory_id)
+        fid = new_record_id("fact")
+        store.put_fact(fid, "algorithm", "RC4", "Uses RC4", 0.8, expected_revision=0)
+
+        class _LockError(Exception):
+            pass
+
+        class _FakePortalocker:
+            class exceptions:
+                LockError = _LockError
+
+            @staticmethod
+            def Lock(*_args, **_kwargs):
+                raise _LockError("locked by another process")
+
+        projector = MemoryProjector()
+        projector._lock_module = _FakePortalocker
+        projector._lock_exc_type = _LockError
+        with pytest.raises(_LockError):
+            projector.project(paths, store)
+        assert store.projection_state().projection_dirty is True
+        store.close()
+
     def test_project_creates_markdown_for_empty_store(self, tmp_path: Path) -> None:
         memory_id = new_memory_id()
         paths = MemoryLocator(tmp_path).binary(memory_id)

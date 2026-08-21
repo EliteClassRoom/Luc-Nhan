@@ -513,6 +513,122 @@ class TestOpenAIStreamLateIdArgsReplay(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Reasoning content + tool call boundary tests.
+#
+# Plain OpenAI (capability.reasoning_content == False) lanes legacy o-series
+# reasoning into the visible-text channel wrapped in ``<think>...</think>``
+# markers. The close marker is emitted once the reasoning lane ends, which
+# always precedes the TOOL_CALL_END event. The lifecycle must stay complete
+# (one START/END pair) and the wrapper must be closed before the end so the
+# agent loop never carries an unclosed ``<think>`` block past the tool call.
+# ---------------------------------------------------------------------------
+
+
+def _reasoning_chunk(reasoning_content: str):
+    """A delta whose only payload is reasoning_content (the legacy o-series
+    path used by plain OpenAI when capability.reasoning_content is False)."""
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=None,
+                    reasoning_content=reasoning_content,
+                    tool_calls=None,
+                ),
+                finish_reason=None,
+            )
+        ],
+        usage=None,
+    )
+
+
+class TestOpenAIStreamReasoningAndToolCall(unittest.TestCase):
+    def test_inline_think_then_tool_call_emit_order(self) -> None:
+        """When reasoning arrives before a structured tool call in the
+        plain OpenAI legacy ``<think>`` lane, the provider emits the
+        open, the reasoning text, then the close as soon as the
+        reasoning lane ends — before the tool-call lifecycle in this
+        scenario — and the tool call still gets a complete
+        START/END pair with the wrapper closed before the END."""
+        p = _make_provider()
+        chunks = [
+            _reasoning_chunk("thinking"),
+            _delta_chunk(
+                tool_calls=[
+                    _tc_delta(index=0, id="call_1", name="do_thing", arguments="{}"),
+                ],
+            ),
+            _delta_chunk(finish_reason="tool_calls"),
+        ]
+        emitted = list(p._iter_stream_chunks(iter(chunks)))
+
+        # Find lifecycle markers by type and position.
+        text_events = [(i, c.text) for i, c in enumerate(emitted) if c.text]
+        opens = [i for i, t in text_events if t == "<think>"]
+        closes = [i for i, t in text_events if t == "</think>\n"]
+        starts = [i for i, c in enumerate(emitted) if c.is_tool_call_start]
+        ends = [i for i, c in enumerate(emitted) if c.is_tool_call_end]
+        self.assertEqual(len(opens), 1)
+        self.assertEqual(len(closes), 1)
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(len(ends), 1)
+        self.assertLess(opens[0], closes[0])
+        self.assertLess(starts[0], ends[0])
+        # The wrapper must be closed before the tool-call lifecycle ends.
+        self.assertLess(closes[0], ends[0])
+        # Balanced, contiguous wrapper in the visible channel.
+        self.assertEqual(
+            "".join(t for _, t in text_events), "<think>thinking</think>\n"
+        )
+
+    def test_reasoning_then_tool_call_in_same_chunk(self) -> None:
+        """A single delta with both reasoning_content and tool_calls
+        must still emit a complete tool-call lifecycle: the reasoning
+        wrapper is opened, the tool call starts, and the ``<think>``
+        close fires on the finish-chunk — between START and END —
+        so the wrapper is closed before the tool call ends."""
+        # Build a delta that carries both reasoning_content and a tool
+ # call, then a finish-chunk.
+        combined = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None,
+                        reasoning_content="thinking",
+                        tool_calls=[
+                            _tc_delta(index=0, id="call_1", name="do_thing", arguments="{}"),
+                        ],
+                    ),
+                finish_reason=None,
+                ),
+            ],
+            usage=None,
+        )
+        finish = _delta_chunk(finish_reason="tool_calls")
+        p = _make_provider()
+        emitted = list(p._iter_stream_chunks(iter([combined, finish])))
+
+        text_events = [(i, c.text) for i, c in enumerate(emitted) if c.text]
+        opens = [i for i, t in text_events if t == "<think>"]
+        closes = [i for i, t in text_events if t == "</think>\n"]
+        starts = [i for i, c in enumerate(emitted) if c.is_tool_call_start]
+        ends = [i for i, c in enumerate(emitted) if c.is_tool_call_end]
+        self.assertEqual(len(opens), 1)
+        self.assertEqual(len(closes), 1)
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(len(ends), 1)
+        self.assertLess(opens[0], closes[0])
+        self.assertLess(starts[0], ends[0])
+        # Same-delta reasoning + tool call: the close fires on the
+        # finish chunk, between START and END, still before the END.
+        self.assertLess(starts[0], closes[0])
+        self.assertLess(closes[0], ends[0])
+        self.assertEqual(
+            "".join(t for _, t in text_events), "<think>thinking</think>\n"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Task 5: payload equivalence.
 #
 # Threading an ``LLMRequestContext`` through the pipeline must not change

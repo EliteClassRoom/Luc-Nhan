@@ -7,6 +7,7 @@ import os
 import sys
 import unittest
 from collections.abc import Generator as GeneratorType
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -151,6 +152,21 @@ class TestAgentLoop(unittest.TestCase):
             session=session,
         )
 
+    def test_doctor_dispatch_resolves_handler(self):
+        """Regression: /doctor must dispatch without NameError.
+
+        The loop_commands import once dropped ``_handle_doctor_command``
+        while the dispatcher still referenced it, raising NameError only
+        when the user invoked /doctor.
+        """
+        loop = self._make_loop(MockProvider(responses=[]))
+        cmd = SimpleNamespace(direct_command="/doctor", direct_arg="")
+        handler = loop._resolve_direct_handler(cmd)
+        self.assertIsNotNone(handler)
+        events = list(handler())
+        joined = "\n".join(e.text for e in events if getattr(e, "text", None))
+        self.assertIn("**Luc Nhan Doctor**", joined)
+
     def test_simple_text_response(self):
         provider = MockProvider(responses=[_text_response("Hello!")])
         loop = self._make_loop(provider)
@@ -211,6 +227,94 @@ class TestAgentLoop(unittest.TestCase):
         # TurnEvent now carries the sanitized (wrapped) result, not the raw string.
         self.assertIn("Echo: hello", tool_result.tool_result)
         self.assertFalse(tool_result.tool_is_error)
+
+    def test_reasoning_then_tool_call_end_to_end(self):
+        """A reasoning-then-tool-call stream must run the tool call and
+        continue the loop. Regression: when reasoning arrives before a
+        structured tool call, the agent must NOT stop as a text-only
+        completion — the tool call is executable and the turn must
+        hand off to tool execution."""
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo",
+                description="echo",
+                parameters=[ParameterSchema(name="text", type="string", description="t", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+        # Turn 1: reasoning deltas, then a structured tool call, then
+        # the close. Turn 2: text reply after the tool result.
+        tool_call_chunks = [
+            StreamChunk(reasoning_delta="Let me think about this. "),
+            StreamChunk(reasoning_delta="I need to call echo."),
+            StreamChunk(is_tool_call_start=True, tool_call_id="call_e1", tool_name="echo"),
+            StreamChunk(tool_args_delta='{"text":', tool_call_id="call_e1"),
+            StreamChunk(tool_args_delta='"hi"}', tool_call_id="call_e1"),
+            StreamChunk(is_tool_call_end=True, tool_call_id="call_e1", tool_name="echo"),
+            StreamChunk(usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)),
+        ]
+        provider = MockProvider(responses=[tool_call_chunks, _text_response("Done")])
+        loop = self._make_loop(provider, tools=registry)
+
+        events = list(loop.run("Think then call echo"))
+        types = [e.type for e in events]
+
+        # The reasoning deltas must surface as REASONING_DELTA events.
+        self.assertIn(TurnEventType.REASONING_DELTA, types)
+        # The tool call lifecycle must be honoured despite the leading
+        # reasoning — the agent must NOT report a text-only completion.
+        self.assertIn(TurnEventType.TOOL_CALL_START, types)
+        self.assertIn(TurnEventType.TOOL_CALL_DONE, types)
+        self.assertIn(TurnEventType.TOOL_RESULT, types)
+        # The follow-up text reply must reach the stream.
+        self.assertIn(TurnEventType.TEXT_DONE, types)
+        tool_result = next(e for e in events if e.type == TurnEventType.TOOL_RESULT)
+        self.assertIn("Echo: hi", tool_result.tool_result)
+
+    def test_inline_think_then_tool_call_runs_tool(self):
+        """Legacy OpenAI o-series streams surface reasoning as inline
+        ``<​think>...<​/think>`` text instead of a separate reasoning
+        channel. A structured tool call wrapped in this inline thinking
+        block must still execute — the agent must not stop at the
+        unclosed ``<​think>`` marker."""
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo",
+                description="echo",
+                parameters=[ParameterSchema(name="text", type="string", description="t", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+        # Turn 1: inline 思考 wrapping a tool call. The provider emits
+        # ``<​think>thinking`` first, then the tool call lifecycle, then
+        # ``<​/think>`` on the closing chunk. Turn 2: text reply.
+        chunks = [
+            StreamChunk(text="<think>thinking"),
+            StreamChunk(is_tool_call_start=True, tool_call_id="call_e2", tool_name="echo"),
+            StreamChunk(tool_args_delta='{"text": "hi"}', tool_call_id="call_e2"),
+            StreamChunk(is_tool_call_end=True, tool_call_id="call_e2", tool_name="echo"),
+            StreamChunk(text="</think>\n", finish_reason="tool_calls"),
+            StreamChunk(usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)),
+        ]
+        provider = MockProvider(responses=[chunks, _text_response("Done")])
+        loop = self._make_loop(provider, tools=registry)
+
+        events = list(loop.run("Think then call echo"))
+        types = [e.type for e in events]
+
+        # Tool call lifecycle reaches the agent even when the inline
+        # thinking close arrives after the tool call.
+        self.assertIn(TurnEventType.TOOL_CALL_START, types)
+        self.assertIn(TurnEventType.TOOL_CALL_DONE, types)
+        self.assertIn(TurnEventType.TOOL_RESULT, types)
+        self.assertIn(TurnEventType.TEXT_DONE, types)
+        tool_result = next(e for e in events if e.type == TurnEventType.TOOL_RESULT)
+        self.assertIn("Echo: hi", tool_result.tool_result)
+
 
     def test_tool_error(self):
         registry = ToolRegistry()
@@ -714,6 +818,63 @@ class TestAgentLoop(unittest.TestCase):
         assert isinstance(outcome, TurnOutcome)
         assert outcome.disposition == TurnDisposition.STREAM_BROKEN
         assert outcome.visible_text == "partial"
+
+    def test_stream_turn_chunked_read_error_triggers_retry(self):
+        """A transport-layer ``incomplete chunked read`` must surface to
+        the retry layer, not be swallowed as a partial response.
+
+        Regression: previously the partial-output branch kept any
+        error with text already streamed, even when the error was a
+        transient connection drop. The provider's prefill noise was
+        shown to the user as a complete answer, which was wrong.
+        """
+        from rikugan.core.errors import ProviderError
+
+        call_count = {"n": 0}
+
+        class ChunkedReadProvider(MockProvider):
+            def chat_stream(
+                self,
+                messages,
+                tools=None,
+                temperature=0.3,
+                max_tokens=4096,
+                system="",
+                cancel_event=None,
+                **kwargs,
+            ):
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    # First attempt: prefill noise then transport drop.
+                    yield StreamChunk(text="partial prefill")
+                    raise ProviderError(
+                        "peer closed connection without sending complete message body (incomplete chunked read)",
+                        provider="mock",
+                        retryable=True,
+                    )
+                # Second attempt: clean full response.
+                yield StreamChunk(text="Final answer.")
+                yield StreamChunk(
+                    usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+                )
+
+        provider = ChunkedReadProvider()
+        loop = self._make_loop(provider)
+        loop.config.max_retries = 3
+        loop.config.silent_retry_mode = True
+        generator = loop._stream_llm_turn("system", None)
+        _events, outcome = _drain_generator_with_return(generator)
+        # The provider was called twice: once for the dropped attempt
+        # and once for the successful retry.
+        assert call_count["n"] == 2, (
+            f"expected exactly one retry, got {call_count['n']} calls"
+        )
+        assert isinstance(outcome, TurnOutcome)
+        assert outcome.disposition == TurnDisposition.COMPLETED
+        assert outcome.visible_text == "Final answer."
+        # The prefill noise from the dropped attempt must NOT leak
+        # into the final visible text.
+        assert "partial prefill" not in outcome.visible_text
 
     def test_stream_turn_reasoning_accumulated_separately(self):
         chunks = [

@@ -31,17 +31,21 @@ from rikugan.state.session import SessionState
 from rikugan.tests.knowledge._helpers import fresh_store
 
 
-def _seed_verified_memory(store, paths) -> KnowledgeMemory:
-    ingest_save_memory(
-        store,
-        paths,
-        fact="Uses RC4 keystream at 0x401000 for beacon encryption",
-        category="crypto",
+def _seed_verified_hypothesis(store, paths) -> KnowledgeMemory:
+    """Seed a verified hypothesis for the post-restriction /report flow."""
+    mem = KnowledgeMemory(
+        id="mem:explore:hypothesis:0x401000:abcd",
+        binary_id=paths.binary_id,
+        type="hypothesis",
+        title="RC4 keystream hypothesis",
+        content="Beacon encryption uses RC4 at 0x401000",
+        status="verified",
+        verdict_claim="Confirmed by decompile_function and xref walk",
+        verification_citations=["function:rc4_ksa", "address:0x401000"],
+        verified=True,
     )
-    mem = store.list_memories()[0]
-    verified = KnowledgeMemory(**{**mem.__dict__, "verified": True})
-    store.upsert_memory(verified)
-    return verified
+    store.upsert_memory(mem)
+    return mem
 
 
 def _build_test_loop(store, paths) -> AgentLoop:
@@ -71,13 +75,12 @@ def _build_test_loop(store, paths) -> AgentLoop:
     loop.run = _run  # type: ignore[assignment]
     return loop
 
-
 class TestBackgroundAgentRunnerReportFlow(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp()
         self.store, self.paths = fresh_store(self.tmp)
         self.idb_path = self.paths.idb_path
-        _seed_verified_memory(self.store, self.paths)
+        _seed_verified_hypothesis(self.store, self.paths)
 
     def _start_patches(self, save_mock: MagicMock) -> list:
         def _context_for(*_args, **_kwargs):

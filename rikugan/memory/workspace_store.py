@@ -76,7 +76,9 @@ class FactRecord:
     created_at: float
     entity_refs: list[str]
     tags: list[str]
-
+    status: str = "unverified"
+    verdict_claim: str = ""
+    verification_citations: tuple[str, ...] = ()
 
 @dataclass(frozen=True)
 class FactRevision:
@@ -281,7 +283,15 @@ def _migrate_v3(conn: Any) -> None:
         raise RuntimeError("workspace v3 migration failed foreign key check")
 
 
-_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3}
+def _migrate_v4(conn: Any) -> None:
+    """Workspace schema v4: persist hypothesis verification metadata."""
+    conn.execute("ALTER TABLE facts ADD COLUMN status TEXT NOT NULL DEFAULT 'unverified'")
+    conn.execute("ALTER TABLE facts ADD COLUMN verdict_claim TEXT NOT NULL DEFAULT ''")
+    conn.execute("ALTER TABLE facts ADD COLUMN verification_citations TEXT NOT NULL DEFAULT '[]'")
+    if conn.execute("PRAGMA foreign_key_check").fetchall():
+        raise RuntimeError("workspace v4 migration failed foreign key check")
+
+_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _migrate_v4}
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +388,9 @@ class WorkspaceStore:
         semantic_hash: str | None = None,
         entity_refs: list[str] | None = None,
         tags: list[str] | None = None,
+        status: str = "unverified",
+        verdict_claim: str = "",
+        verification_citations: list[str] | None = None,
         expected_revision: int,
     ) -> FactRecord:
         """Insert or update a fact with optimistic revision control.
@@ -398,9 +411,13 @@ class WorkspaceStore:
 
         entity_refs_list = list(entity_refs) if entity_refs is not None else []
         tags_list = list(tags) if tags is not None else []
+        if status not in {"unverified", "verified", "wrong"}:
+            raise ValueError(f"unknown hypothesis status {status!r}")
+        status_value = status
+        citations_list = list(verification_citations) if verification_citations is not None else []
         entity_refs_json = json.dumps(entity_refs_list, ensure_ascii=False, sort_keys=True)
         tags_json = json.dumps(tags_list, ensure_ascii=False, sort_keys=True)
-
+        citations_json = json.dumps(citations_list, ensure_ascii=False, sort_keys=True)
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         now = time.time()
 
@@ -420,8 +437,8 @@ class WorkspaceStore:
             if current == 0:
                 self._conn.execute(
                     "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, entity_refs, tags,"
-                    " current_revision, created_at)"
-                    " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                    " current_revision, created_at, status, verdict_claim, verification_citations)"
+                    " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         fact_id,
                         fact_type,
@@ -431,12 +448,16 @@ class WorkspaceStore:
                         tags_json,
                         revision,
                         now,
+                        status_value,
+                        verdict_claim,
+                        citations_json,
                     ),
                 )
             else:
                 self._conn.execute(
                     "UPDATE facts SET fact_type = ?, title = ?, semantic_hash = ?,"
-                    " entity_refs = ?, tags = ?, current_revision = ?"
+                    " entity_refs = ?, tags = ?, current_revision = ?,"
+                    " status = ?, verdict_claim = ?, verification_citations = ?"
                     " WHERE fact_id = ?",
                     (
                         fact_type,
@@ -445,6 +466,9 @@ class WorkspaceStore:
                         entity_refs_json,
                         tags_json,
                         revision,
+                        status_value,
+                        verdict_claim,
+                        citations_json,
                         fact_id,
                     ),
                 )
@@ -470,6 +494,9 @@ class WorkspaceStore:
             created_at=now,
             entity_refs=entity_refs_list,
             tags=tags_list,
+            status=status_value,
+            verdict_claim=verdict_claim,
+            verification_citations=tuple(citations_list),
         )
 
     def get_fact(self, fact_id: str) -> FactRecord | None:
@@ -479,6 +506,7 @@ class WorkspaceStore:
             SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
                    f.entity_refs, f.tags,
                    f.current_revision, f.created_at,
+                   f.status, f.verdict_claim, f.verification_citations,
                    r.content, r.confidence
             FROM facts f
             JOIN fact_revisions r ON r.fact_id = f.fact_id AND r.revision = f.current_revision
@@ -499,6 +527,9 @@ class WorkspaceStore:
             created_at=row["created_at"],
             entity_refs=json.loads(row["entity_refs"]),
             tags=json.loads(row["tags"]),
+            status=row["status"] or "unverified",
+            verdict_claim=row["verdict_claim"] or "",
+            verification_citations=tuple(json.loads(row["verification_citations"] or "[]")),
         )
 
     def list_facts(self) -> list[FactRecord]:
@@ -508,6 +539,7 @@ class WorkspaceStore:
             SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
                    f.entity_refs, f.tags,
                    f.current_revision, f.created_at,
+                   f.status, f.verdict_claim, f.verification_citations,
                    r.content, r.confidence
             FROM facts f
             JOIN fact_revisions r ON r.fact_id = f.fact_id AND r.revision = f.current_revision
@@ -526,6 +558,9 @@ class WorkspaceStore:
                 created_at=row["created_at"],
                 entity_refs=json.loads(row["entity_refs"]),
                 tags=json.loads(row["tags"]),
+                status=row["status"] or "unverified",
+                verdict_claim=row["verdict_claim"] or "",
+                verification_citations=tuple(json.loads(row["verification_citations"] or "[]")),
             )
             for row in rows
         ]
@@ -544,6 +579,9 @@ class WorkspaceStore:
         observation_payload: str,
         entity_refs: list[str] | None = None,
         tags: list[str] | None = None,
+        status: str = "unverified",
+        verdict_claim: str = "",
+        verification_citations: list[str] | None = None,
     ) -> tuple[FactRecord, FactSaveOutcome]:
         """Atomically dedup + insert + observation append under one transaction.
 
@@ -568,9 +606,13 @@ class WorkspaceStore:
 
         entity_refs_list = list(entity_refs) if entity_refs is not None else []
         tags_list = list(tags) if tags is not None else []
+        if status not in {"unverified", "verified", "wrong"}:
+            raise ValueError(f"unknown hypothesis status {status!r}")
+        status_value = status
+        citations_list = list(verification_citations) if verification_citations is not None else []
         entity_refs_json = json.dumps(entity_refs_list, ensure_ascii=False, sort_keys=True)
         tags_json = json.dumps(tags_list, ensure_ascii=False, sort_keys=True)
-
+        citations_json = json.dumps(citations_list, ensure_ascii=False, sort_keys=True)
         begin_immediate_with_retry(self._conn)
         try:
             rows = self._conn.execute(
@@ -600,8 +642,8 @@ class WorkspaceStore:
                 now = time.time()
                 self._conn.execute(
                     "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, entity_refs, tags,"
-                    " current_revision, created_at)"
-                    " VALUES(?, ?, ?, ?, ?, ?, 1, ?)",
+                    " current_revision, created_at, status, verdict_claim, verification_citations)"
+                    " VALUES(?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
                     (
                         fact_id,
                         fact_type,
@@ -610,6 +652,9 @@ class WorkspaceStore:
                         entity_refs_json,
                         tags_json,
                         now,
+                        status_value,
+                        verdict_claim,
+                        citations_json,
                     ),
                 )
                 self._conn.execute(

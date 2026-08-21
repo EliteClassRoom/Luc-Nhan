@@ -316,6 +316,19 @@ class TestPersistReviewedMemories(unittest.TestCase):
             self.assertIn("a", ids)
             self.assertNotIn("r", ids)
 
+    def test_persist_syncs_hypothesis_status_to_verified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store, _ = make_store(tmp)
+            h = _memory("h", verified=False)
+            h.type = "hypothesis"
+            h.status = "unverified"
+            result = ReviewResult(passed=True, records=[h], unresolved={}, cycles=1)
+            count = report_review.persist_reviewed_memories(store, result)
+            self.assertEqual(count, 1)
+            stored = next(m for m in store.list_memories() if m.id == "h")
+            self.assertTrue(stored.verified)
+            self.assertEqual(stored.status, "verified")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,37 +1,48 @@
 ---
 name: Verified Report
-description: Generate a verified Markdown report from stored findings about a binary. Triggered by `/report` or `/report <scope>`. Verified-only review pipeline runs before drafting; draft is written only after the user confirms.
-tags: [report, knowledge, memory, verification]
+description: Generate a verified Markdown report from stored hypotheses about a binary. Triggered by `/report` or `/report <scope>` (`full`, `executive`, `technical`, `iocs`, `network`). Only hypotheses whose status is `verified` are surfaced. Draft is written only after the user confirms.
+tags: [report, knowledge, memory, verification, hypothesis]
 ---
+
 
 # Verified Report (`/report`)
 
 Generate a Markdown report from the stored knowledge for the currently
-loaded binary. Every non-report candidate finding is independently
-verified with IDA tools (up to three correction cycles) before drafting.
-The Markdown draft is written only after the user explicitly confirms.
+loaded binary. The draft only contains hypothesis memories whose
+`status == "verified"` and the verdict claim plus the citations
+recorded by `/verify`. The Markdown draft is written only after the
+user explicitly confirms.
 
 ## Usage
 
-- `/report` — full scope, all sections, all verified findings.
+- `/report` — full scope, all sections, every verified hypothesis.
 - `/report executive` — high-level summary; no technical detail.
-- `/report technical` — function/data-structure detail.
-- `/report iocs` — indicators of compromise only.
-- `/report network` — C2 endpoints, protocols, network summary.
+- `/report technical` — verified-hypothesis claim and citations.
+- `/report iocs` — verified-hypothesis IOCs only.
+- `/report network` — verified-hypothesis network summary.
 
 ## Flow
 
 1. **Open store** — `_handle_report_command` resolves the per-binary
    raw knowledge store. If unavailable, the command aborts with an
    error event and no draft is produced.
-2. **Verify** — Every non-report candidate is run through an
-   independent tool-backed reviewer. Findings that fail
-   verification are corrected and re-verified, up to three cycles.
-   Findings that still fail after three cycles abort the report.
-3. **Persist** — Verified findings are marked `verified=True` and
-   upserted into the raw store.
-4. **Draft** — The verified subset is wrapped in a sanitized
-   report-pack envelope and the LLM is asked for a Markdown draft.
+2. **Filter** — Only memories with `type == "hypothesis" and
+   `status == "verified"` enter the report pack. Unverified and wrong
+   hypotheses, every other memory type, and `report` records are
+   excluded.
+3. **Collect evidence** — For `full` and `technical` scopes, the
+   handler decompiles (via Hex-Rays `decompile_function`) — or
+   disassembles when the decompiler is unavailable — the addresses
+   cited by the verified memories and attaches the output as a
+   `## Binary Evidence` (tool-verified) block in the writer prompt,
+   along with `## File Metadata` from `get_binary_info` when
+   available. When no decompiler or IDA tools are available, the
+   report is generated without evidence blocks and the writer omits
+   `### Evidence` subsections.
+4. **Draft** — The verified-hypothesis subset is wrapped in a
+   sanitized report-pack envelope and the LLM is asked for a Markdown
+   draft. The report must cite each hypothesis by ID and reflect the
+   stored claim and citations.
 5. **Confirm** — The agent yields a `Write report | Cancel` question
    for the user. No file is created and no report is ingested until
    the user answers `Write report`, `Write`, `Yes`, `Save`, or `1`.
@@ -44,11 +55,12 @@ The Markdown draft is written only after the user explicitly confirms.
 
 ## Hard rules
 
-- Do not call `/report` on a store that has not been explored.
-  The review pipeline runs but the result is meaningless.
+- Run `/verify` first. `/report` consumes stored verdicts; it must
+  not invoke a fresh verifier or convert a provisional or wrong
+  hypothesis on its own.
 - Distinguish verified from provisional. `/report` only surfaces
-  verified findings. A failed review aborts the report and lists
-  the unresolved IDs.
+  hypotheses whose status is `verified`. Unverified and wrong
+  hypotheses are never reportable.
 - Do not bypass the confirmation step. The user must answer
   before any file is written. The atomic-write step guarantees no
   partial file is left behind on failure.
@@ -57,9 +69,9 @@ The Markdown draft is written only after the user explicitly confirms.
 
 ## Failure behavior
 
-- Reviewer disagrees with a claim — the corrected content is
-  shown via the corrected finding; the report proceeds only when
-  every finding passes.
+- No verified hypotheses pending — `/report` returns a `No stored
+  knowledge to report. Try running /research <goal>, save_memory, or
+  exploration_report first.` text event and writes nothing.
 - No provider configured — `/report` returns an error event; no
   draft is produced.
 - Raw store unavailable — the command aborts before drafting; no

@@ -25,7 +25,9 @@ ingested twice updates one record instead of creating a duplicate.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+HypothesisStatus = Literal["unverified", "verified", "wrong"]
 
 
 @dataclass
@@ -48,8 +50,26 @@ class KnowledgeMemory:
     confidence: float = 0.5
     importance: float = 0.5
     verified: bool = False
+    status: HypothesisStatus = "unverified"
+    verdict_claim: str = ""
+    verification_citations: list[str] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
+
+    def __post_init__(self) -> None:
+        if self.status not in {"unverified", "verified", "wrong"}:
+            raise ValueError(f"invalid hypothesis status: {self.status!r}")
+        if not isinstance(self.verdict_claim, str):
+            raise ValueError("verdict_claim must be a string")
+        if not isinstance(self.verification_citations, list) or not all(
+            isinstance(citation, str) and citation.strip()
+            for citation in self.verification_citations
+        ):
+            raise ValueError("verification_citations must be a list of non-empty strings")
+        if self.type == "hypothesis":
+            if self.status == "unverified" and self.verified:
+                self.status = "verified"
+            self.verified = self.status == "verified"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -60,8 +80,19 @@ class KnowledgeMemory:
         # breaking older readers.
         allowed = {f for f in cls.__dataclass_fields__}
         clean = {k: v for k, v in data.items() if k in allowed}
+        # Legacy-safe default: when a hypothesis record predates the
+        # ``status`` field, default to ``unverified`` so the strict
+        # verified-only ``/report`` filter cannot surface a record that
+        # was merely ``verified=True`` from an older build. Only an
+        # explicit ``status="verified"`` produced by ``/verify`` may
+        # authorize report inclusion. Verdict metadata is also
+        # defaulted to empty so the legacy record cannot present
+        # citations it never had.
+        if "status" not in clean and clean.get("type") == "hypothesis":
+            clean["status"] = "unverified"
+        clean.setdefault("verdict_claim", "")
+        clean.setdefault("verification_citations", [])
         return cls(**clean)
-
 
 @dataclass
 class KnowledgeEntity:

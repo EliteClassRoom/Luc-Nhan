@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -63,6 +64,26 @@ def _set_unsupported_arch() -> None:
     sys.modules["ida_ida"].inf_is_32bit.return_value = False
     sys.modules["ida_ida"].inf_get_app_bitness.return_value = 64
 
+
+def _make_ida_mock(
+    *,
+    procname: str = "metapc",
+    app_bitness: int | None = 64,
+) -> MagicMock:
+    """Build a stand-in ``ida_ida`` for the IDA >= 7.6 contract.
+
+    ``app_bitness`` feeds ``inf_get_app_bitness()`` (16/32/64).
+    ``None`` removes the attribute so ``_ida_bitness`` surfaces its
+    ``IDA bitness query failed`` ToolError, simulating a build where
+    the symbol is absent.
+    """
+    fresh = unittest.mock.MagicMock()
+    fresh.inf_get_procname.return_value = procname
+    if app_bitness is not None:
+        fresh.inf_get_app_bitness.return_value = app_bitness
+    else:
+        del fresh.inf_get_app_bitness
+    return fresh
 
 # ---------------------------------------------------------------------------
 # Pure helpers.
@@ -328,6 +349,68 @@ class TestArchitectureValidation(unittest.TestCase):
                 max_output_size=8192,
             )
 
+class TestIdaBitnessArchResolution(unittest.TestCase):
+    """Arch resolution via ``ida_ida.inf_get_app_bitness()`` (IDA >= 7.6)."""
+
+    def setUp(self) -> None:
+        self._saved = sys.modules["ida_ida"]
+
+    def tearDown(self) -> None:
+        sys.modules["ida_ida"] = self._saved
+
+    def _fake_unicorn(self):
+        class _FakeUnicorn:
+            UC_ARCH_X86 = 0
+            UC_MODE_32 = 1
+            UC_MODE_64 = 2
+
+        return _FakeUnicorn()
+
+    def test_resolve_arch_x86(self) -> None:
+        mock_ida = _make_ida_mock(app_bitness=32)
+        sys.modules["ida_ida"] = mock_ida
+        emu.ida_ida = mock_ida
+        try:
+            arch = emu._resolve_arch(self._fake_unicorn())
+        finally:
+            emu.ida_ida = self._saved
+        self.assertEqual(arch.label, "x86")
+        self.assertEqual(arch.ptr_size, 4)
+        self.assertEqual(arch.ip_reg, "eip")
+
+    def test_resolve_arch_x64(self) -> None:
+        mock_ida = _make_ida_mock(app_bitness=64)
+        sys.modules["ida_ida"] = mock_ida
+        emu.ida_ida = mock_ida
+        try:
+            arch = emu._resolve_arch(self._fake_unicorn())
+        finally:
+            emu.ida_ida = self._saved
+        self.assertEqual(arch.label, "x64")
+        self.assertEqual(arch.ptr_size, 8)
+        self.assertEqual(arch.ip_reg, "rip")
+
+    def test_ida_bitness_raises_tool_error_when_getter_missing(self) -> None:
+        mock_ida = _make_ida_mock(app_bitness=None)
+        sys.modules["ida_ida"] = mock_ida
+        emu.ida_ida = mock_ida
+        try:
+            with self.assertRaises(ToolError) as ctx:
+                emu._ida_bitness()
+        finally:
+            emu.ida_ida = self._saved
+        self.assertIn("IDA bitness query failed", str(ctx.exception))
+
+    def test_resolve_arch_propagates_bitness_query_tool_error(self) -> None:
+        mock_ida = _make_ida_mock(app_bitness=None)
+        sys.modules["ida_ida"] = mock_ida
+        emu.ida_ida = mock_ida
+        try:
+            with self.assertRaises(ToolError) as ctx:
+                emu._resolve_arch(self._fake_unicorn())
+        finally:
+            emu.ida_ida = self._saved
+        self.assertIn("IDA bitness query failed", str(ctx.exception))
 
 # ---------------------------------------------------------------------------
 # Real Unicorn integration — runs each scenario in a fresh subprocess via

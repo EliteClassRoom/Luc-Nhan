@@ -354,7 +354,14 @@ def _ida_bitness() -> int:
             "IDA bitness API unavailable — cannot resolve x86/x64 mode",
             tool_name="emulate_code",
         )
-    return int(ida_ida.inf_get_app_bitness())
+    try:
+        return int(ida_ida.inf_get_app_bitness())
+    except AttributeError as e:
+        # Pre-7.6 IDA Python lacks the symbol entirely.
+        raise ToolError(
+            f"IDA bitness query failed: {e}",
+            tool_name="emulate_code",
+        ) from e
 
 
 def _resolve_arch(unicorn: Any) -> ArchMode:

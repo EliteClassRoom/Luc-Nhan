@@ -61,25 +61,21 @@ from .exploration_mode import (
 )
 from .glm_guard import GLMGuardSnapshot, GLMReasoningGuard
 from .loop_commands import (
-    ACTIVE_GOAL_METADATA_KEY,
-    _handle_doctor_command,
     _handle_goal_command,
     _handle_knowledge_command,
     _handle_mcp_command,
     _handle_memory_command,
     _handle_report_command,
     _handle_undo_command,
+    _handle_verify_command,
     normalize_goal,
 )
+from .loop_commands import ACTIVE_GOAL_METADATA_KEY, _handle_doctor_command
 from .minify import minify_messages, minify_text
-from .modes.a2a import run_a2a_mode
 from .modes.exploration import run_exploration_mode
 from .modes.normal import run_normal_loop
 from .modes.orchestra import run_orchestra_mode
-from .modes.plan import run_plan_mode
-from .modes.research import run_research_mode
 from .mutation import MutationRecord, build_reverse_record, capture_pre_state
-from .plan_mode import parse_plan as _parse_plan_impl
 from .pseudo_tool_schemas import (
     ASK_USER_SCHEMA,
     DELEGATE_EXTERNAL_TASK_SCHEMA,
@@ -281,6 +277,12 @@ def _parse_user_command(user_message: str) -> _ParsedCommand:
             direct_command="/report",
             direct_arg=stripped[7:].strip() if len(stripped) > 7 else "",
         )
+    if lower == "/verify" or lower.startswith("/verify "):
+        return _ParsedCommand(
+            message=stripped,
+            direct_command="/verify",
+            direct_arg=stripped[7:].strip() if len(stripped) > 7 else "",
+        )
     if lower == "/orchestra" or lower.startswith("/orchestra "):
         return _ParsedCommand(message=stripped[10:].strip() if len(stripped) > 10 else "", use_orchestra_mode=True)
     # /case <action> <args...> — analysis case management
@@ -354,6 +356,7 @@ class AgentLoop:
         skill_registry: SkillRegistry | None = None,
         host_name: str = "IDA Pro",
         parent_loop: AgentLoop | None = None,
+        cancel_event: threading.Event | None = None,
     ):
         self.provider = provider
         self.tools = tool_registry
@@ -361,11 +364,19 @@ class AgentLoop:
         self.session = session
         self.skills = skill_registry
         self.host_name = host_name
-        self._cancelled: threading.Event = parent_loop._cancelled if parent_loop else threading.Event()
+        # Explicit cancel_event wins over parent_loop inheritance so the
+        # SubagentManager-owned event remains authoritative for orchestra
+        # children. ``is not None`` (not truthiness) so the exact caller
+        # object is retained.
+        if cancel_event is not None:
+            self._cancelled: threading.Event = cancel_event
+        elif parent_loop is not None:
+            self._cancelled = parent_loop._cancelled
+        else:
+            self._cancelled = threading.Event()
         self._running: bool = False
         self._consecutive_errors: int = 0
         self._tools_disabled_for_turn: bool = False
-        # Thread-safe queues for user answers and tool approvals (no race condition)
         # Subagents share the parent's queues so UI signals reach them.
         self._user_answer_queue: queue.Queue[str] = (
             parent_loop._user_answer_queue if parent_loop else queue.Queue(maxsize=1)
@@ -1192,6 +1203,20 @@ class AgentLoop:
             # streamed text in the UI and waste tokens).  Instead keep the
             # partial result and warn.  If nothing was streamed yet, re-raise
             # so _stream_llm_turn's retry layer can handle it as before.
+            #
+            # Exception: a transport-layer chunked-read failure
+            # (``peer closed connection`` / ``incomplete chunked read``)
+            # is always treated as a retryable, transient network
+            # error. The chunks that did arrive are typically the
+            # model's prefill noise, not user-facing content, so we
+            # re-raise unconditionally and let the retry layer restart
+            # the request from scratch.
+            if _is_chunked_read_error(e):
+                log_error(
+                    f"Provider stream broke (transport chunked-read error) "
+                    f"after {chunk_count} chunks: {e}. Re-raising for retry."
+                )
+                raise
             has_partial = bool(assistant_text_parts) or bool(tool_calls)
             if not has_partial:
                 raise
@@ -1200,11 +1225,13 @@ class AgentLoop:
                 f"Provider stream broke after {chunk_count} chunks with partial output: {e}. "
                 "Keeping partial response and warning the user."
             )
+            # Surface as an error event. The chat view renders it
+            # distinctly so the user knows to retry if they need the
+            # rest of the answer.
             yield TurnEvent.error_event(
                 f"{self._format_provider_error_for_user(e)} "
                 "The response above is incomplete — it was cut off mid-stream."
             )
-
         last_usage, need_usage_update = self._finalize_stream_usage(
             last_usage, estimated_usage, estimated_prompt_tokens
         )
@@ -2106,7 +2133,6 @@ class AgentLoop:
         tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=result_text, is_error=False)
         yield TurnEvent.tool_result_event(tc.id, tc.name, result_text, False)
         return tr
-
     def _handle_spawn_subagent_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle the spawn_subagent pseudo-tool."""
         task = tc.arguments.get("task", "")
@@ -2505,6 +2531,8 @@ class AgentLoop:
             return lambda: _handle_knowledge_command(self, cmd.direct_arg)
         if cmd.direct_command == "/report":
             return lambda: _handle_report_command(self, cmd.direct_arg)
+        if cmd.direct_command == "/verify":
+            return lambda: _handle_verify_command(self, cmd.direct_arg)
         return None
 
     def _dispatch_direct(
@@ -2823,3 +2851,27 @@ class BackgroundAgentRunner:
             return self.event_queue.get(timeout=timeout)
         except queue.Empty:
             return None
+
+
+def _is_chunked_read_error(exc: BaseException) -> bool:
+    """Return True when *exc* is a transport-layer ``incomplete chunked read``.
+
+    The OpenAI / Anthropic SDKs surface upstream HTTP/1.1 stream
+    truncation as ``APIConnectionError`` with messages like
+    ``peer closed connection without sending complete message body
+    (incomplete chunked read)``. These are always transient and
+    retryable: the chunks that did arrive are typically model
+    prefill noise, not user-facing content, so the right action is
+    to re-raise so the retry layer can resend the request.
+    """
+    msg = str(exc or "").lower()
+    if not msg:
+        return False
+    needles = (
+        "incomplete chunked read",
+        "peer closed connection",
+        "connection broken",
+        "incomplete read",
+    )
+    return any(needle in msg for needle in needles)
+

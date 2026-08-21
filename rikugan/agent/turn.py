@@ -44,17 +44,15 @@ class TurnEventType(str, Enum):
     KNOWLEDGE_RETRIEVED = "knowledge_retrieved"
     DOCS_GATE_STATUS = "docs_gate_status"
     MEMORY_SAVED = "memory_saved"
-    # GLM reasoning-resilience events (consumed by stream/UI/recovery tasks).
+    HYPOTHESIS_VERDICT = "hypothesis_verdict"
     REASONING_DELTA = "reasoning_delta"
     RECOVERY_START = "recovery_start"
     TOOL_CALL_DISCARDED = "tool_call_discarded"
-
 
 @dataclass
 class TurnEvent:
     type: TurnEventType
     text: str = ""
-    # Provider reasoning/thinking channel, distinct from user-visible ``text``.
     # Populated by REASONING_DELTA events; the same value can also carry
     # reasoning payloads from other resilience events.
     reasoning: str = ""
@@ -464,6 +462,31 @@ class TurnEvent:
     # ------------------------------------------------------------------
     # GLM reasoning-resilience factories
     # ------------------------------------------------------------------
+    @staticmethod
+    def hypothesis_verdict(
+        hypothesis_id: str,
+        status: str,
+        claim: str,
+        citations: list[str],
+    ) -> TurnEvent:
+        """Emit one /verify verdict for a single hypothesis id.
+
+        ``status`` is one of ``verified``, ``wrong``, or ``unverified``.
+        ``citations`` is the list of evidence strings produced by the
+        verifier; ``claim`` is the human-readable explanation of why
+        the hypothesis is right or wrong.
+        """
+        return TurnEvent(
+            type=TurnEventType.HYPOTHESIS_VERDICT,
+            text=claim,
+            metadata={
+                "hypothesis_id": hypothesis_id,
+                "status": status,
+                "claim": claim,
+                "citations": list(citations),
+            },
+        )
+
 
     @staticmethod
     def reasoning_event(text: str) -> TurnEvent:

@@ -178,6 +178,57 @@ class ToolRegistry:
     def list_tools(self) -> list[ToolDefinition]:
         with self._lock:
             return list(self._tools.values())
+    def read_only_view(self) -> "ToolRegistry":
+        """Return a new registry that exposes only the non-mutating tools.
+
+        The returned registry shares the underlying dispatch_wrapper
+        and capability state with the original but is fully isolated
+        in terms of registered tools. Useful for spawning subagents
+        that must not mutate the analyzed database (e.g. the
+        hypothesis verifier in ``/verify``): even if the subagent's
+        prompt is ignored, it can only call read-only tools, so the
+        ``mutating`` flag on :class:`ToolDefinition` is a hard
+        contract rather than a polite request.
+        """
+        view = ToolRegistry(dispatch_wrapper=self._dispatch_wrapper)
+        with self._lock:
+            for name, defn in self._tools.items():
+                if defn.mutating:
+                    continue
+                view._tools[name] = defn
+            view._capabilities.update(self._capabilities)
+        return view
+
+    def allowlist(self, names: list[str]) -> "ToolRegistry":
+        """Return a new registry exposing only the requested tool names.
+
+        Mirrors :meth:`read_only_view` for the per-subagent tool filter
+        driven by ``SubAgentSpec.tools``. The returned registry shares the
+        source registry's ``_dispatch_wrapper`` and ``_capabilities`` but
+        is fully isolated in terms of registered tools: mutating the view
+        (registration / unregistration) cannot leak back into the parent.
+        Unknown names are silently dropped after a ``log_debug`` so a
+        stale or LLM-generated delegation name does not abort the child.
+        Duplicate requested names are de-duplicated by membership but
+        registration order is preserved.
+        """
+        view = ToolRegistry(dispatch_wrapper=self._dispatch_wrapper)
+        wanted = set(names)
+        with self._lock:
+            for name, defn in self._tools.items():
+                if name not in wanted:
+                    continue
+                view._tools[name] = defn
+            view._capabilities.update(self._capabilities)
+        if names:
+            registered = set(view._tools.keys())
+            missing = [n for n in names if n not in registered]
+            for name in missing:
+                log_debug(f"ToolRegistry.allowlist: requested tool {name!r} not registered")
+        return view
+
+
+
 
     def list_available_tools(self) -> list[ToolDefinition]:
         """Return only tools whose capability requirements are satisfied.
