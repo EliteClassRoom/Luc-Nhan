@@ -25,7 +25,7 @@ Clone the repo and symlink it into the IDA plugin directory so changes take effe
 
 ```bash
 # macOS / Linux
-git clone https://github.com/buzzer-re/rikugan
+git clone https://github.com/EliteClassRoom/rikugan
 ln -s "$(pwd)/rikugan" ~/.idapro/plugins/rikugan
 
 # Windows (run as Administrator)
@@ -338,4 +338,4 @@ The control server **does not** add CORS headers by default. All requests are ex
 ## Getting Help
 
 - Read [AGENTS.md](AGENTS.md) for deep technical documentation on internals, architecture decisions, and coding rules
-- Open an issue at https://github.com/buzzer-re/rikugan/issues
+- Open an issue at https://github.com/EliteClassRoom/rikugan/issues
