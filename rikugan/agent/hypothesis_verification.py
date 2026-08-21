@@ -23,7 +23,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..core.logging import log_debug, log_error
 from ..memory.schema import KnowledgeMemory
@@ -36,6 +36,13 @@ if TYPE_CHECKING:
 _CITATION_PREFIXES = ("function:", "address:", "tool_result:")
 _CITATION_RE = re.compile(r"^(?:function|address|tool_result):.+$")
 _VALID_STATUSES = {"verified", "wrong"}
+
+# Match entity IDs of address-bearing types per the schema conventions
+# in ``rikugan/memory.schema`` (func, string, global all carry a
+# 0x-hex address; other types like import/struct/algo/capability/ioc/
+# note/report do not). Anchored to the full ID so a stray segment
+# (e.g. "func:0x401000:extra") does not slip through.
+_ADDR_ENTITY_RE = re.compile(r"^(?:func|string|global):(0x[0-9a-fA-F]+)$")
 
 
 @dataclass(frozen=True)
@@ -89,8 +96,14 @@ def _drain(runner: SubagentRunner, prompt: str) -> tuple[str, str | None]:
         final_text = "".join(collected)
     return final_text, None
 
+
 def _format_record(memory: KnowledgeMemory) -> str:
-    addr = f"0x{int(memory.entity_refs[0].split(':')[-1], 16):x}" if memory.entity_refs and memory.entity_refs[0].startswith("func:0x") else "n/a"
+    addr = "n/a"
+    for ref in memory.entity_refs or ():
+        m = _ADDR_ENTITY_RE.match(ref)
+        if m:
+            addr = m.group(1).lower()
+            break
     return (
         f"- id: {memory.id}\n"
         f"  title: {memory.title}\n"
@@ -210,12 +223,12 @@ def _parse_verifier_response(
         first_error = first_error or f"missing ids in verifier response: {sorted(missing)}"
         for mid in missing:
             unresolved[mid] = first_error
-    for rid, verdict in verdicts.items():
+    for rid, _verdict in verdicts.items():
         unresolved.setdefault(rid, "")  # valid; empty marker
     return verdicts, unresolved, first_error
 
 
-def _build_runner(loop: "AgentLoop") -> SubagentRunner:
+def _build_runner(loop: AgentLoop) -> SubagentRunner:
     """Build a verifier subagent that cannot mutate the analyzed binary.
 
     The verifier is given a read-only view of the parent's tool
@@ -237,7 +250,7 @@ def _build_runner(loop: "AgentLoop") -> SubagentRunner:
 
 
 def verify_hypotheses(
-    loop: "AgentLoop",
+    loop: AgentLoop,
     hypotheses: list[KnowledgeMemory],
     *,
     max_attempts: int = 3,

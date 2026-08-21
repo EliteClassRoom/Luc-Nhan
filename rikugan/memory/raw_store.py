@@ -252,9 +252,9 @@ class KnowledgeRawStore:
 
     def commit_hypothesis_verdicts(
         self,
-        updated_memories: dict[str, "KnowledgeMemory"],
-        new_observations: list["KnowledgeObservation"],
-    ) -> tuple[list["KnowledgeMemory"], list["KnowledgeObservation"]]:
+        updated_memories: dict[str, KnowledgeMemory],
+        new_observations: list[KnowledgeObservation],
+    ) -> tuple[list[KnowledgeMemory], list[KnowledgeObservation]]:
         """Commit a batch of hypothesis verdicts to the memories and
         observations JSONL files.
 
@@ -315,33 +315,46 @@ class KnowledgeRawStore:
                         rb is None
                         or rb.get("status") != mem.status
                         or rb.get("verdict_claim") != mem.verdict_claim
-                        or list(rb.get("verification_citations") or [])
-                        != list(mem.verification_citations)
+                        or list(rb.get("verification_citations") or []) != list(mem.verification_citations)
                     ):
-                        raise RuntimeError(
-                            f"commit_hypothesis_verdicts: read-back mismatch for {rid}"
-                        )
+                        raise RuntimeError(f"commit_hypothesis_verdicts: read-back mismatch for {rid}")
             except Exception:
-                for written, snapshot in (
-                    (obs_written, snapshot_observations),
-                    (mem_written, snapshot_memories),
-                ):
-                    if written:
-                        try:
-                            self._write_jsonl_atomic(
-                                obs_path if snapshot is snapshot_observations else mem_path,
-                                snapshot,
-                            )
-                        except Exception as restore_exc:
-                            log_error(
-                                f"commit_hypothesis_verdicts: rollback failed: {restore_exc!r}"
-                            )
+                # Surgical rollback: only remove observations THIS commit
+                # appended (we know their IDs), preserving any concurrent
+                # appends by other threads between snapshot and now.
+                # Memories use full-file restore because we did read-modify-
+                # write and don't track which records we touched.
+                if obs_written:
+                    our_obs_ids = {obs.id for obs in new_observations}
+                    try:
+                        self._restore_observations_surgically(obs_path, our_obs_ids)
+                    except Exception as restore_exc:
+                        log_error(f"commit_hypothesis_verdicts: surgical obs rollback failed: {restore_exc!r}")
+                if mem_written:
+                    try:
+                        self._write_jsonl_atomic(mem_path, snapshot_memories)
+                    except Exception as restore_exc:
+                        log_error(f"commit_hypothesis_verdicts: mem rollback failed: {restore_exc!r}")
                 raise
 
         return self.list_memories(), self.list_observations()
 
     def list_observations(self) -> list[KnowledgeObservation]:
         return [KnowledgeObservation.from_dict(r) for r in self._read_jsonl(self.paths.observations_path)]
+
+    def _restore_observations_surgically(self, path: str, our_ids: set[str]) -> None:
+        """Remove only observations with IDs in ``our_ids`` from ``path``.
+
+        Surgical alternative to full-file restore used by
+        :meth:`commit_hypothesis_verdicts` when the post-write
+        read-back verification fails. Preserves observations appended
+        by other threads between snapshot and rollback — only the IDs
+        *we* know we appended are removed.
+        """
+        current = self._read_jsonl(path)
+        kept = [r for r in current if r.get("id") not in our_ids]
+        if len(kept) < len(current):
+            self._write_jsonl_atomic(path, kept)
 
     # ------------------------------------------------------------------
     # Counts + clear (for the UI tab)
