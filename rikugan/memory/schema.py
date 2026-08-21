@@ -62,13 +62,17 @@ class KnowledgeMemory:
         if not isinstance(self.verdict_claim, str):
             raise ValueError("verdict_claim must be a string")
         if not isinstance(self.verification_citations, list) or not all(
-            isinstance(citation, str) and citation.strip()
-            for citation in self.verification_citations
+            isinstance(citation, str) and citation.strip() for citation in self.verification_citations
         ):
             raise ValueError("verification_citations must be a list of non-empty strings")
         if self.type == "hypothesis":
-            if self.status == "unverified" and self.verified:
-                self.status = "verified"
+            # ``verified`` is derived from ``status``. Do NOT auto-promote
+            # legacy records that carry ``verified=True`` without an
+            # explicit ``status`` field — they predate the ``/verify``
+            # flow and were promoted by the legacy ``review_memories``
+            # mechanism, which ``/report`` no longer trusts. Only an
+            # explicit ``/verify`` verdict (``status="verified"``) may
+            # surface a hypothesis in ``/report``.
             self.verified = self.status == "verified"
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +97,7 @@ class KnowledgeMemory:
         clean.setdefault("verdict_claim", "")
         clean.setdefault("verification_citations", [])
         return cls(**clean)
+
 
 @dataclass
 class KnowledgeEntity:
