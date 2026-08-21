@@ -299,6 +299,7 @@ below are mandatory:
 
 - Confidence **> 0.90** (decompile + xrefs + strings agree): call
   `rename_function` directly. No new evidence comment required.
+# pi-lens-ignore: RUF001
 - Confidence **0.70 – 0.90**: rename only together with a
   repeatable function-level evidence comment. The exact order is:
   1. Call `get_function_comment(address, repeatable=True)` to read.
@@ -369,13 +370,4 @@ Follow the Smart Patch workflow:
 
 Include the original hex bytes and new hex bytes in your exploration_report \
 so the save gate can track what changed.
-"""
-
-SAVE_PROMPT = """\
-All patches have been applied and verified in-memory.
-
-{patch_summary}
-
-The user will now be asked whether to save these changes to the file. \
-Do not take any further actions until the user decides.
 """

@@ -37,10 +37,9 @@ def _id_for_pair(finding) -> str:
     from ...memory.ingest import _stable_hash
 
     cat = (finding.category or "general").strip().lower()
-    addr_part = (
-        f"0x{int(finding.address):x}" if finding.address is not None else "noaddr"
-    )
+    addr_part = f"0x{int(finding.address):x}" if finding.address is not None else "noaddr"
     return f"mem:explore:{cat}:{addr_part}:{_stable_hash(cat, finding.summary, finding.address)}"
+
 
 def _build_central_index(
     goal: str,
@@ -96,15 +95,11 @@ def _build_central_index(
                 f"{_safe(content, 200)} evidence={_safe(evidence, 200)}"
             )
         if len(review.records) > max_records:
-            parts.append(
-                f"… ({len(review.records) - max_records} more verified findings truncated)"
-            )
+            parts.append(f"… ({len(review.records) - max_records} more verified findings truncated)")
     return "\n".join(parts).strip()
 
 
-def finalize_explore_memory(
-    loop: AgentLoop, state: ExplorationState
-) -> tuple[bool, str]:
+def finalize_explore_memory(loop: AgentLoop, state: ExplorationState) -> tuple[bool, str]:
     """Synchronous wrapper around :func:`_finalize_explore_memory`.
 
     Drains the event generator and returns ``(persisted, message)``
@@ -150,9 +145,7 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
     candidates: list[KnowledgeMemory] = []
     for f in findings:
         cat = (f.category or "general").strip().lower()
-        addr_part = (
-            f"0x{int(f.address):x}" if f.address is not None else "noaddr"
-        )
+        addr_part = f"0x{int(f.address):x}" if f.address is not None else "noaddr"
         mem_id = f"mem:explore:{cat}:{addr_part}:{_stable_hash(cat, f.summary, f.address)}"
         entity_refs: list[str] = []
         if f.address is not None:
@@ -188,6 +181,7 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
     # Per plan step 2: hypotheses are first-class knowledge records
     # that remain explicitly unverified until ``/verify`` runs. They
     from ..report_review import empty_review_result, review_memories
+
     hypothesis_records: list[tuple[KnowledgeMemory, Any]] = []
     review_candidates: list[KnowledgeMemory] = []
     for mem, finding in zip(candidates, findings):
@@ -210,9 +204,7 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
                 "Hypotheses are still persisted as unverified; "
                 "non-hypothesis findings are skipped."
             )
-    finding_by_id: dict[str, Any] = {
-        mem.id: finding for mem, finding in zip(candidates, findings)
-    }
+    finding_by_id: dict[str, Any] = {mem.id: finding for mem, finding in zip(candidates, findings)}
     persisted = 0
     raw_errors: list[str] = []
     if raw_store_available:
@@ -259,11 +251,7 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
                         address=finding.address,
                         relevance="high",
                         evidence=finding.evidence,
-                        function_name=(
-                            finding.summary[:40]
-                            if finding.category == "function_purpose"
-                            else ""
-                        ),
+                        function_name=(finding.summary[:40] if finding.category == "function_purpose" else ""),
                         memory_id=mem.id,
                         title=mem.title,
                         confidence=mem.confidence,
@@ -302,44 +290,29 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
     )
     if persisted == 0 and not central_saved:
         joined = "; ".join(raw_errors) or "no persistence path succeeded"
-        yield TurnEvent.error_event(
-            f"Exploration memory not persisted: {joined}"
-        )
+        yield TurnEvent.error_event(f"Exploration memory not persisted: {joined}")
         return
     if central_saved and persisted > 0:
-        status_msg = (
-            f"Verified exploration memory saved to raw store and "
-            f"central index ({persisted} finding(s))."
-        )
+        status_msg = f"Verified exploration memory saved to raw store and central index ({persisted} finding(s))."
         body = (
             f"[SYSTEM] Verified exploration memory saved to raw store and "
             f"central index ({persisted} finding(s)).\n\n{verified_summary}"
         )
     elif central_saved:
-        status_msg = (
-            f"Verified exploration memory saved to central index only "
-            f"(raw store unavailable)."
-        )
+        status_msg = f"Verified exploration memory saved to central index only (raw store unavailable)."
         body = (
             f"[SYSTEM] Verified exploration memory saved to central index only "
             f"(raw store unavailable).\n\n{verified_summary}"
         )
     else:
-        status_msg = (
-            f"Verified exploration memory saved to raw store "
-            f"({persisted} finding(s))."
-        )
+        status_msg = f"Verified exploration memory saved to raw store ({persisted} finding(s))."
         body = (
-            f"[SYSTEM] Verified exploration memory saved to raw store "
-            f"({persisted} finding(s)).\n\n{verified_summary}"
+            f"[SYSTEM] Verified exploration memory saved to raw store ({persisted} finding(s)).\n\n{verified_summary}"
         )
     loop.session.add_message(Message(role=Role.USER, content=body))
     yield TurnEvent.text_done(status_msg)
     if raw_errors:
-        yield TurnEvent.error_event(
-            "Exploration memory persistence had partial failures: "
-            + "; ".join(raw_errors)
-        )
+        yield TurnEvent.error_event("Exploration memory persistence had partial failures: " + "; ".join(raw_errors))
 
 
 def _run_phase1_subagent(
@@ -502,7 +475,7 @@ def _run_phase2_plan(
     if plan_text is None:
         return None
 
-    steps = _parse_plan(plan_text)
+    steps = _parse_plan_impl(plan_text)
     if not steps:
         yield TurnEvent.error_event("Failed to generate a valid modification plan from exploration findings.")
         return None
@@ -535,7 +508,7 @@ def _run_phase2_plan(
         if plan_text is None:
             return None
 
-        steps = _parse_plan(plan_text)
+        steps = _parse_plan_impl(plan_text)
         if not steps:
             yield TurnEvent.error_event("Failed to generate a valid modification plan.")
             return None

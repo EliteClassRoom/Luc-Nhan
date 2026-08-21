@@ -45,10 +45,6 @@ _STEP_EXECUTION_PROMPT = (
 )
 
 
-def _parse_plan(text: str) -> list[str]:
-    return _parse_plan_impl(text)
-
-
 def _generate_plan_text(
     loop: AgentLoop,
     system_prompt: str,
@@ -153,7 +149,7 @@ def run_plan_mode(
     if plan_text is None:
         return
 
-    steps = _parse_plan(plan_text)
+    steps = _parse_plan_impl(plan_text)
     if not steps:
         yield TurnEvent.error_event("Failed to generate a valid plan.")
         return
@@ -186,7 +182,7 @@ def run_plan_mode(
         if plan_text is None:
             return
 
-        steps = _parse_plan(plan_text)
+        steps = _parse_plan_impl(plan_text)
         if not steps:
             yield TurnEvent.error_event("Failed to generate a valid plan.")
             return
