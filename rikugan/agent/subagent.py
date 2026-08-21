@@ -102,7 +102,20 @@ class SubagentRunner:
                 "dialect": getattr(child_provider, "_provider_name", "") or "glm"
             }
             child_provider._glm_metadata = get_glm_model_metadata(self._model_override)
-            child_provider._glm_config = parse_glm_extra(extra, self._model_override)
+            try:
+                child_provider._glm_config = parse_glm_extra(extra, self._model_override)
+            except ValueError:
+                # The override model does not support a user-saved setting
+                # (typically ``reasoning_effort != "max"`` on a model
+                # that does not advertise reasoning-effort support). Strip
+                # the unsupported sub-field and re-parse with the model's
+                # own default. The user's saved value is preserved on the
+                # parent provider so they can switch back without losing it.
+                safe_extra = dict(extra)
+                thinking = safe_extra.get("thinking")
+                if isinstance(thinking, dict):
+                    thinking.pop("reasoning_effort", None)
+                child_provider._glm_config = parse_glm_extra(safe_extra, self._model_override)
         return child_provider, child_config
 
     def _build_loop(self, session: SessionState) -> Any:
