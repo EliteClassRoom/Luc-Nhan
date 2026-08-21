@@ -61,6 +61,8 @@ from .exploration_mode import (
 )
 from .glm_guard import GLMGuardSnapshot, GLMReasoningGuard
 from .loop_commands import (
+    ACTIVE_GOAL_METADATA_KEY,
+    _handle_doctor_command,
     _handle_goal_command,
     _handle_knowledge_command,
     _handle_mcp_command,
@@ -70,12 +72,15 @@ from .loop_commands import (
     _handle_verify_command,
     normalize_goal,
 )
-from .loop_commands import ACTIVE_GOAL_METADATA_KEY, _handle_doctor_command
 from .minify import minify_messages, minify_text
+from .modes.a2a import run_a2a_mode
 from .modes.exploration import run_exploration_mode
 from .modes.normal import run_normal_loop
 from .modes.orchestra import run_orchestra_mode
+from .modes.plan import run_plan_mode
+from .modes.research import run_research_mode
 from .mutation import MutationRecord, build_reverse_record, capture_pre_state
+from .plan_mode import parse_plan as _parse_plan_impl
 from .pseudo_tool_schemas import (
     ASK_USER_SCHEMA,
     DELEGATE_EXTERNAL_TASK_SCHEMA,
@@ -1051,7 +1056,7 @@ class AgentLoop:
         # semantics.  GLM providers reject malformed/incomplete tool args
         # instead of falling back to ``{}``; non-GLM providers keep the
         # existing ``{}`` + warning fallback unchanged.
-        is_glm = self.config.provider.extra.get("dialect") == "glm" or self.provider.name == "glm"
+        is_glm = _is_glm_provider(self.config, self.provider)
 
         provider_messages, estimated_prompt_tokens, estimated_usage = self._prepare_provider_messages(system_prompt)
         # Do not emit a pre-stream estimate — it causes the display to jump
@@ -1432,18 +1437,19 @@ class AgentLoop:
         if not tools_schema:
             return None
 
-        # Parse GLM config to check guard.enabled and ceiling.
-        # Only the lazy import itself may fail silently (e.g. circular
-        # import edge case) -- invalid GLM extra values must surface as
-        # ValueError, not be swallowed, so the user knows their config
-        # is broken rather than silently losing the guard.
-        try:
-            from ..core.glm_config import parse_glm_extra
-        except ImportError:
-            log_debug("GLM guard: glm_config module unavailable, skipping guard")
-            return None
-
-        parsed_glm_config = parse_glm_extra(self.config.provider.extra, self.config.provider.model)
+        # Read the already-validated GLMConfig from the provider instance
+        # when available (the canonical GLMProvider path). Fall back to
+        # a fresh parse for non-GLM providers that nevertheless report
+        # ``dialect == "glm"`` (custom providers, test doubles) so the
+        # guard still activates.
+        parsed_glm_config = getattr(self.provider, "glm_config", None)
+        if parsed_glm_config is None:
+            try:
+                from ..core.glm_config import parse_glm_extra
+            except ImportError:
+                log_debug("GLM guard: glm_config module unavailable, skipping guard")
+                return None
+            parsed_glm_config = parse_glm_extra(self.config.provider.extra, self.config.provider.model)
 
         if not parsed_glm_config.guard.enabled:
             return None
@@ -2133,6 +2139,7 @@ class AgentLoop:
         tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=result_text, is_error=False)
         yield TurnEvent.tool_result_event(tc.id, tc.name, result_text, False)
         return tr
+
     def _handle_spawn_subagent_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle the spawn_subagent pseudo-tool."""
         task = tc.arguments.get("task", "")
@@ -2875,3 +2882,13 @@ def _is_chunked_read_error(exc: BaseException) -> bool:
     )
     return any(needle in msg for needle in needles)
 
+
+def _is_glm_provider(config: RikuganConfig, provider: LLMProvider) -> bool:
+    """True iff the active provider speaks the GLM dialect.
+
+    Single source of truth shared by the guard factory and the
+    recovery builder. Returns True when ``provider.extra`` carries
+    ``dialect == "glm"`` or the provider advertises itself as GLM.
+    """
+    extra = getattr(getattr(config, "provider", None), "extra", None) or {}
+    return extra.get("dialect") == "glm" or getattr(provider, "name", "") == "glm"

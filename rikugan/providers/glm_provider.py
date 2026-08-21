@@ -88,6 +88,20 @@ class GLMProvider(OpenAIProvider):
     def name(self) -> str:
         return self._provider_name
 
+    @property
+    def glm_config(self) -> GLMConfig:
+        """The parsed GLM dialect config snapshot.
+
+        Exposed so callers (the agent loop, recovery builder) can
+        consume the already-validated :class:`GLMConfig` instead of
+        re-parsing ``provider.extra`` on every turn. Re-parsing would
+        re-validate user-saved values and could surface
+        :class:`ValueError` after the provider was already
+        constructed — invalid config now raises at ``__init__`` time
+        and this property is a cheap read.
+        """
+        return self._glm_config
+
     # -- Client construction ------------------------------------------------
 
     def _get_client(self) -> Any:
