@@ -440,9 +440,6 @@ class TestMiniMaxThinkingChannel(unittest.TestCase):
 
     def test_thinking_chunk_passthrough_with_invoke_xml(self):
         from rikugan.providers.minimax_provider import _NativeToolCallFilter
-    def test_thinking_chunk_passthrough_with_invoke_xml(self):
-        from rikugan.providers.minimax_provider import _NativeToolCallFilter
-
         flt = _NativeToolCallFilter()
         out = list(flt.feed(StreamChunk(text="", is_thinking=True)))
         out += list(
