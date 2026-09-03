@@ -211,26 +211,43 @@ class OpenAIProvider(LLMProvider):
             supports_system_prompt=True,
         )
 
+    # Chat-family prefixes accepted by ``_fetch_models_live``. Subclasses
+    # (e.g. ``GLMProvider``) override this tuple so their live fetch keeps
+    # provider-specific model ids instead of being filtered down to OpenAI
+    # families.
+    _MODEL_ID_PREFIXES: tuple[str, ...] = (
+        "gpt-",
+        "o1-",
+        "o3-",
+        "o4-",
+        "chatgpt-",
+    )
+    _MODEL_ID_SKIP_SUBSTRINGS: tuple[str, ...] = (
+        "-instruct",
+        "embedding",
+        "tts",
+        "whisper",
+        "dall-e",
+        "audio",
+        "realtime",
+        "transcribe",
+    )
+
     def _fetch_models_live(self) -> list[ModelInfo]:
-        """Fetch chat-capable models from the OpenAI API."""
+        """Fetch chat-capable models from the API.
+
+        Subclasses can override ``_MODEL_ID_PREFIXES`` to keep their own
+        chat families (``GLMProvider`` keeps ``glm-``).
+        """
         client = self._get_client()
         response = client.models.list()
-        models = []
-        chat_prefixes = ("gpt-", "o1-", "o3-", "o4-", "chatgpt-")
-        skip_words = (
-            "-instruct",
-            "embedding",
-            "tts",
-            "whisper",
-            "dall-e",
-            "audio",
-            "realtime",
-            "transcribe",
-        )
+        models: list[ModelInfo] = []
+        prefixes = self._MODEL_ID_PREFIXES
+        skip = self._MODEL_ID_SKIP_SUBSTRINGS
         for m in response.data:
-            if not any(m.id.startswith(p) for p in chat_prefixes):
+            if not any(m.id.startswith(p) for p in prefixes):
                 continue
-            if any(s in m.id for s in skip_words):
+            if any(s in m.id for s in skip):
                 continue
             models.append(
                 ModelInfo(

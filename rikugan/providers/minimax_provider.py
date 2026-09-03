@@ -194,11 +194,19 @@ class _NativeToolCallFilter:
     # -- streaming interface ---------------------------------------------
 
     def feed(self, chunk: StreamChunk) -> Generator[StreamChunk, None, None]:
-        """Process one upstream chunk, yielding filtered chunks."""
+        """Process one upstream chunk, yielding filtered chunks.
+
+        Thinking-channel chunks (tagged by the upstream provider via
+        ``StreamChunk.is_thinking``) pass through verbatim — the
+        native tool-call recovery must never rewrite thinking text.
+        """
         # No stand-down after server-side tool_use chunks: an invoke leaked
         # into the text channel was provably NOT converted by the server
         # (multi-invoke turns: one converted, one leaked), so recovering it
         # cannot double-execute.  Each invoke is emitted exactly once.
+        if chunk.is_thinking:
+            yield chunk
+            return
         if chunk.raw_parts is not None:
             yield StreamChunk(raw_parts=self._rewrite_raw_parts(chunk.raw_parts))
             return

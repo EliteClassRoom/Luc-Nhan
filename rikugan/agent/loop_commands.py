@@ -253,19 +253,26 @@ def _handle_undo_command(loop: AgentLoop, raw_cmd: str) -> Generator[TurnEvent, 
     undone = 0
     errors = []
     for _ in range(count):
+        # Peek, do not pop — record stays in the log until the reverse
+        # actually succeeds. A failed reverse keeps the entry so a
+        # follow-up /undo can retry it instead of silently losing it.
         with loop._mutation_lock:
-            record = loop._mutation_log.pop()
+            record = loop._mutation_log[-1]
         if not record.reversible:
             errors.append(f"Cannot undo: {record.description} (not reversible)")
+            with loop._mutation_lock:
+                loop._mutation_log.pop()
             continue
         try:
             loop.tools.execute(record.reverse_tool, record.reverse_arguments)
-            undone += 1
-            log_info(f"Undo: {record.description}")
         except ToolError as e:
             errors.append(f"Failed to undo {record.description}: {e}")
             log_error(f"Undo failed: {record.description}: {e}")
-
+            continue
+        with loop._mutation_lock:
+            loop._mutation_log.pop()
+        undone += 1
+        log_info(f"Undo: {record.description}")
     parts_out = []
     if undone:
         parts_out.append(f"Undid {undone} mutation(s).")

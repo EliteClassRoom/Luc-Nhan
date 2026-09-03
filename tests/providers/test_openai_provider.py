@@ -7,6 +7,7 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -658,6 +659,50 @@ class TestOpenAIRequestContextPayloadEquivalence(unittest.TestCase):
             "the context must be a pure pass-through for non-GLM "
             "providers.",
         )
+
+
+class TestOpenAIModelIdPrefixes(unittest.TestCase):
+    """``_MODEL_ID_PREFIXES`` is a class attribute overridable by subclasses."""
+
+    def test_default_prefixes_include_openai_chat_families(self):
+        from rikugan.providers.openai_provider import OpenAIProvider
+
+        self.assertIn("gpt-", OpenAIProvider._MODEL_ID_PREFIXES)
+        self.assertIn("o1-", OpenAIProvider._MODEL_ID_PREFIXES)
+
+    def test_subclass_can_override_prefixes(self):
+        from rikugan.providers.openai_provider import OpenAIProvider
+
+        class _Stub(OpenAIProvider):
+            _MODEL_ID_PREFIXES = ("custom-",)
+            _builtin_models = staticmethod(lambda: [])
+
+        stub = _Stub(api_key="x", model="custom-1")
+        self.assertEqual(stub._MODEL_ID_PREFIXES, ("custom-",))
+
+    def test_glm_provider_keeps_glm_prefix(self):
+        from rikugan.providers.glm_provider import GLMProvider
+
+        stub = GLMProvider(api_key="x", model="glm-5.2")
+        self.assertIn("glm-", GLMProvider._MODEL_ID_PREFIXES)
+
+    def test_glm_live_fetch_keeps_glm_ids(self):
+        from rikugan.providers.glm_provider import GLMProvider
+
+        stub = GLMProvider(api_key="x", model="glm-5.2")
+        fake_response = SimpleNamespace(
+            data=[
+                SimpleNamespace(id="glm-5.2"),
+                SimpleNamespace(id="glm-5.1"),
+                SimpleNamespace(id="gpt-4o"),
+            ]
+        )
+        with patch.object(stub, "_get_client", return_value=SimpleNamespace(models=SimpleNamespace(list=lambda: fake_response))):
+            models = stub._fetch_models_live()
+        ids = [m.id for m in models]
+        self.assertIn("glm-5.2", ids)
+        self.assertIn("glm-5.1", ids)
+        self.assertNotIn("gpt-4o", ids)
 
 
 if __name__ == "__main__":

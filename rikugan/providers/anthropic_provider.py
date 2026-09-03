@@ -699,7 +699,7 @@ class AnthropicProvider(LLMProvider):
                             )
                         elif block.type == "thinking":
                             in_thinking = True
-                            yield StreamChunk(text="<think>\n")
+                            yield StreamChunk(text="<think>\n", is_thinking=True)
                         elif block.type == "text":
                             if block.text:
                                 _raw_text.append(block.text)
@@ -709,7 +709,7 @@ class AnthropicProvider(LLMProvider):
                         delta = event.delta
                         if delta.type == "thinking_delta":
                             _raw_thinking.append(delta.thinking)
-                            yield StreamChunk(text=delta.thinking)
+                            yield StreamChunk(text=delta.thinking, is_thinking=True)
                         elif delta.type == "text_delta":
                             _raw_text.append(delta.text)
                             yield StreamChunk(text=delta.text)

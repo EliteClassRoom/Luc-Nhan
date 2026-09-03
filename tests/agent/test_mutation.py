@@ -698,6 +698,75 @@ class TestMutationContractConsistency(unittest.TestCase):
         pre = capture_pre_state("rename_function", {"address": "0x1000"}, executor)
         self.assertEqual(pre, {})
 
+class TestUndoHandlerRollback(unittest.TestCase):
+    """Failing reverse — the mutation record must remain in the log so the
+    next ``/undo`` retries it instead of silently losing the entry.
+    """
+
+    def test_failing_reverse_keeps_record_for_retry(self):
+        from rikugan.agent.loop_commands import _handle_undo_command
+
+        class _StubLoop:
+            def __init__(self, log):
+                self._mutation_log = log
+                import threading
+                self._mutation_lock = threading.Lock()
+                self.tools = _FailingTools()
+
+        rec = MutationRecord(
+            tool_name="rename_function",
+            arguments={"address": "0x401000", "new_name": "main"},
+            reverse_tool="rename_function",
+            reverse_arguments={"address": "0x401000", "new_name": "sub_401000"},
+            description="rename",
+        )
+        loop = _StubLoop([rec])
+        list(_handle_undo_command(loop, "/undo"))
+        self.assertEqual(len(loop._mutation_log), 1, "record must remain for retry")
+        self.assertIs(loop._mutation_log[0], rec)
+
+    def test_second_undo_after_failure_runs_reverse(self):
+        from rikugan.agent.loop_commands import _handle_undo_command
+
+        class _StubLoop:
+            def __init__(self, log):
+                self._mutation_log = log
+                import threading
+                self._mutation_lock = threading.Lock()
+                self.tools = _SucceedAfterFirstFailTools()
+
+        rec = MutationRecord(
+            tool_name="rename_function",
+            arguments={"address": "0x401000", "new_name": "main"},
+            reverse_tool="rename_function",
+            reverse_arguments={"address": "0x401000", "new_name": "sub_401000"},
+            description="rename",
+        )
+        loop = _StubLoop([rec])
+        list(_handle_undo_command(loop, "/undo"))
+        self.assertEqual(_SucceedAfterFirstFailTools.calls, 1)
+        self.assertEqual(len(loop._mutation_log), 1)
+        list(_handle_undo_command(loop, "/undo"))
+        self.assertEqual(_SucceedAfterFirstFailTools.calls, 2)
+        self.assertEqual(len(loop._mutation_log), 0)
+
+
+class _FailingTools:
+    def execute(self, name, arguments):  # noqa: ARG002 — interface compat
+        from rikugan.core.errors import ToolError
+        raise ToolError("boom")
+
+
+class _SucceedAfterFirstFailTools:
+    calls = 0
+
+    def execute(self, name, arguments):  # noqa: ARG002 — interface compat
+        _SucceedAfterFirstFailTools.calls += 1
+        if _SucceedAfterFirstFailTools.calls == 1:
+            from rikugan.core.errors import ToolError
+            raise ToolError("boom")
+        return "ok"
+
 
 if __name__ == "__main__":
     unittest.main()
