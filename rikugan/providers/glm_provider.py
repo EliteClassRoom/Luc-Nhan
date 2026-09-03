@@ -59,6 +59,11 @@ class GLMProvider(OpenAIProvider):
     hooks that need GLM-specific fields are overridden.
     """
 
+    # Z.AI must never receive the user's real OpenAI key via the
+    # OPENAI_API_KEY env fallback; without a configured key the "no-key"
+    # placeholder branch in _get_client is the effective path.
+    _ALLOW_OPENAI_ENV_KEY = False
+
     def __init__(
         self,
         api_key: str = "",

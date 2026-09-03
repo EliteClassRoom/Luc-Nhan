@@ -14,6 +14,11 @@ from .openai_provider import OpenAIProvider
 class OpenAICompatProvider(OpenAIProvider):
     """Provider that speaks the OpenAI API protocol against a custom base URL."""
 
+    # A custom endpoint must never receive the user's real OpenAI key via
+    # the OPENAI_API_KEY env fallback; without a configured key the
+    # "no-key" placeholder branch in _get_client is the effective path.
+    _ALLOW_OPENAI_ENV_KEY = False
+
     def __init__(
         self,
         api_key: str = "",

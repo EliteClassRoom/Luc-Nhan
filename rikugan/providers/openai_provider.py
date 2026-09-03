@@ -166,8 +166,17 @@ def _format_openai_messages(
 class OpenAIProvider(LLMProvider):
     """Adapter for the OpenAI Chat Completions API."""
 
+    #: Whether ``__init__`` may fall back to the ``OPENAI_API_KEY``
+    #: environment variable when no explicit key is given.  Only the direct
+    #: api.openai.com adapter opts in; adapters that reuse the OpenAI
+    #: protocol against third-party endpoints (custom base URLs, Z.AI)
+    #: override this to ``False`` so the user's real OpenAI key is never
+    #: sent to a different host as a bearer credential.
+    _ALLOW_OPENAI_ENV_KEY: bool = True
+
     def __init__(self, api_key: str = "", api_base: str = "", model: str = "gpt-4o", **kwargs: Any) -> None:
-        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not api_key and self._ALLOW_OPENAI_ENV_KEY:
+            api_key = os.environ.get("OPENAI_API_KEY", "")
         super().__init__(api_key=api_key, api_base=api_base, model=model)
 
     def _get_client(self) -> Any:
