@@ -572,9 +572,21 @@ class CodexProvider(LLMProvider):
                 raise AuthenticationError(msg or str(e), provider="codex") from e
             if e.code == 429:
                 raise RateLimitError(provider="codex") from e
+            # Server errors — RETRYABLE (classified before body sniffing:
+            # a 5xx is a server fault regardless of response text).
+            if e.code >= 500:
+                raise ProviderError(
+                    f"Server error ({e.code}): {msg or e}",
+                    provider="codex",
+                    status_code=e.code,
+                    retryable=True,
+                ) from e
             if "context" in msg.lower() or "token" in msg.lower():
                 raise ContextLengthError(msg, provider="codex") from e
             raise ProviderError(msg or str(e), provider="codex") from e
+        # Connection-level failures (DNS, refused, reset, timeout) — RETRYABLE.
+        if isinstance(e, urllib.error.URLError):
+            raise ProviderError(f"Connection error: {e}", provider="codex", retryable=True) from e
         raise ProviderError(str(e), provider="codex") from e
 
     def _stream_chunks(

@@ -126,8 +126,10 @@ class GeminiProvider(LLMProvider):
     def _handle_api_error(self, e: Exception) -> NoReturn:
         """Raise the appropriate Rikugan error from a Gemini API error.
 
-        Uses typed exception checks from google.api_core.exceptions when
-        available, falling back to string matching for older SDK versions.
+        Uses typed exception checks from google.api_core.exceptions and
+        google.genai.errors when available, falling back to string matching
+        for older SDK versions.  Server errors and transport failures map
+        to retryable ProviderErrors (mirrors anthropic_provider).
         """
         try:
             gexc = importlib.import_module("google.api_core.exceptions")
@@ -139,8 +141,36 @@ class GeminiProvider(LLMProvider):
                 msg = str(e)
                 if "token" in msg.lower() and ("limit" in msg.lower() or "exceed" in msg.lower()):
                     raise ContextLengthError(msg, provider="gemini") from e
+            # Server errors / retry exhaustion — RETRYABLE.
+            if isinstance(e, (gexc.InternalServerError, gexc.ServiceUnavailable, gexc.DeadlineExceeded)):
+                raise ProviderError(f"Server error: {e}", provider="gemini", retryable=True) from e
+            if isinstance(e, gexc.RetryError):
+                # Transport-level retries exhausted (connection failures, timeouts).
+                raise ProviderError(f"Transport error: {e}", provider="gemini", retryable=True) from e
         except ImportError as ie:
             log_debug(f"google.api_core.exceptions unavailable, using string matching: {ie}")
+
+        # google.genai wraps HTTP 5xx responses in genai.errors.ServerError.
+        try:
+            genai_errors = importlib.import_module("google.genai.errors")
+            if isinstance(e, genai_errors.ServerError):
+                status = getattr(e, "code", 0)
+                raise ProviderError(
+                    f"Server error ({status}): {e}",
+                    provider="gemini",
+                    status_code=status,
+                    retryable=True,
+                ) from e
+        except ImportError as ie:
+            log_debug(f"google.genai.errors unavailable, using string matching: {ie}")
+
+        # Transport-level failures (ConnectError, ReadTimeout, ...) — RETRYABLE.
+        try:
+            httpx = importlib.import_module("httpx")
+            if isinstance(e, httpx.TransportError):
+                raise ProviderError(f"Connection error: {e}", provider="gemini", retryable=True) from e
+        except ImportError as ie:
+            log_debug(f"httpx unavailable, skipping transport error checks: {ie}")
 
         msg = str(e)
         msg_lower = msg.lower()
@@ -286,7 +316,15 @@ class GeminiProvider(LLMProvider):
     def _normalize_response(self, response: Any) -> Message:
         text = ""
         tool_calls = []
-        raw_parts = list(response.candidates[0].content.parts)
+        candidates = response.candidates or []
+        if not candidates or not candidates[0].content:
+            # Safety-blocked / empty responses otherwise crash with
+            # IndexError/AttributeError; surface the block reason instead
+            # (mirrors the streaming path's empty-candidate skip).
+            reason = getattr(getattr(response, "prompt_feedback", None), "block_reason", None)
+            detail = f" (block_reason: {reason})" if reason else ""
+            raise ProviderError(f"Gemini returned no content{detail}", provider="gemini")
+        raw_parts = list(candidates[0].content.parts)
         for part in raw_parts:
             if part.text:
                 if getattr(part, "thought", False):
