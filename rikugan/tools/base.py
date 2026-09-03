@@ -52,6 +52,7 @@ class ToolDefinition:
     category: str = "general"
     requires_decompiler: bool = False
     mutating: bool = False
+    requires_approval: bool = False
     timeout: float | None = None  # per-tool timeout in seconds (None = use default)
     handler: Callable | None = field(default=None, repr=False)
     requires: list[str] = field(default_factory=list)
@@ -185,6 +186,7 @@ def tool(
     category: str = "general",
     requires_decompiler: bool = False,
     mutating: bool = False,
+    requires_approval: bool = False,
     timeout: float | None = None,
     requires: list[str] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -247,6 +249,7 @@ def tool(
             category=category,
             requires_decompiler=requires_decompiler,
             mutating=mutating,
+            requires_approval=requires_approval,
             timeout=timeout,
             handler=func,
             requires=effective_requires,

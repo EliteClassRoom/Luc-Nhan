@@ -1754,34 +1754,36 @@ class AgentLoop:
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return tr
 
-        # execute_python always requires explicit approval.
-        # Static validator (validate_idapython) still runs pre-execute to
-        # block known-hallucinated APIs. The docs-reviewer now runs
-        # POST-error (see the except block below) instead of pre-execute.
-        if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
-            code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
-            if isinstance(code, str) and code.strip():
-                try:
-                    validation = validate_idapython(code)
-                except Exception as e:  # pragma: no cover — defensive
-                    log_error(f"docs-gate validation failed: {e}")
-                    validation = None
+        # execute_python always requires explicit approval, and any tool
+        # whose definition sets requires_approval (e.g. install_microcode_optimizer,
+        # which exec()s LLM-authored optimizer code) is gated identically.
+        defn = self.tools.get(tc.name)
+        needs_approval = tc.name == constants.EXECUTE_PYTHON_TOOL_NAME or (defn is not None and defn.requires_approval)
+        if needs_approval:
+            if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
+                code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
+                if isinstance(code, str) and code.strip():
+                    try:
+                        validation = validate_idapython(code)
+                    except Exception as e:  # pragma: no cover — defensive
+                        log_error(f"docs-gate validation failed: {e}")
+                        validation = None
 
-                if validation is not None and validation.is_blocked:
-                    # Hard block: hallucinated API detected pre-execute.
-                    block_msg = (
-                        "Script blocked by static validator (hallucinated API detected):\n"
-                        f"{validation.format_for_agent()}\n"
-                        "Fix the API usage and resubmit."
-                    )
-                    tr = ToolResult(
-                        tool_call_id=tc.id,
-                        name=tc.name,
-                        content=block_msg,
-                        is_error=True,
-                    )
-                    yield TurnEvent.tool_result_event(tc.id, tc.name, block_msg, True)
-                    return tr
+                    if validation is not None and validation.is_blocked:
+                        # Hard block: hallucinated API detected pre-execute.
+                        block_msg = (
+                            "Script blocked by static validator (hallucinated API detected):\n"
+                            f"{validation.format_for_agent()}\n"
+                            "Fix the API usage and resubmit."
+                        )
+                        tr = ToolResult(
+                            tool_call_id=tc.id,
+                            name=tc.name,
+                            content=block_msg,
+                            is_error=True,
+                        )
+                        yield TurnEvent.tool_result_event(tc.id, tc.name, block_msg, True)
+                        return tr
 
             approved = yield from self._wait_for_approval(tc)
             if not approved:
@@ -1790,7 +1792,6 @@ class AgentLoop:
                 yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
                 return tr
 
-        defn = self.tools.get(tc.name)
         is_mutating = defn is not None and defn.mutating
 
         if is_mutating and self.config.approve_mutations:

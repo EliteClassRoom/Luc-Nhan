@@ -11,7 +11,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.tools.script_guard import _check_ast, run_guarded_script
+from rikugan.ida.tools.microcode_optim import compile_optimizer
+from rikugan.tools.script_guard import _check_ast, check_ast, run_guarded_script
 
 
 def _empty_ns():
@@ -394,6 +395,29 @@ class TestRunGuardedScript(unittest.TestCase):
         # Even with __import__ restored to builtins, calling it is blocked
         result = run_guarded_script("__import__('struct')", _empty_ns)
         assert result.startswith("Error: Blocked")
+
+
+class TestCompileOptimizerGuard(unittest.TestCase):
+    """install_microcode_optimizer exec()s LLM-authored code — its compile
+    path must run through the same AST blocklist as execute_python."""
+
+    def test_compile_optimizer_rejects_subprocess_import(self):
+        code = "def optimize(mbi, ins): return 0\nimport subprocess\nsubprocess.run(['calc'])"
+        try:
+            compile_optimizer("evil", code)
+        except ValueError as e:
+            self.assertTrue("disallowed module" in str(e) or "Blocked" in str(e))
+        else:
+            self.fail("compile_optimizer accepted blocked code")
+
+    def test_compile_optimizer_accepts_pure_code(self):
+        code = "def optimize(mbi, ins):\n    return 0\n"
+        fn = compile_optimizer("ok", code)
+        self.assertTrue(callable(fn))
+
+    def test_public_check_ast_alias_matches_private(self):
+        self.assertIs(check_ast, _check_ast)
+        self.assertIsNone(check_ast("x = 1"))
 
 
 if __name__ == "__main__":

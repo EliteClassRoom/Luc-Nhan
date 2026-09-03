@@ -271,6 +271,12 @@ def _check_ast(code: str) -> str | None:
     return None
 
 
+#: Public alias. Other security-sensitive surfaces that exec() agent- or
+#: LLM-authored Python (e.g. the microcode optimizer compiler) validate
+#: their code through the same AST blocklist instead of a private import.
+check_ast = _check_ast
+
+
 def run_guarded_script(code: str, namespace_factory: Callable[[], dict[str, Any]]) -> str:
     """Block dangerous patterns, exec code, and return captured stdout/stderr."""
     violation = _check_ast(code)
