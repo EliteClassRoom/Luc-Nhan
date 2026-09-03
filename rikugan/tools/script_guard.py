@@ -228,13 +228,45 @@ _REMOVED_BUILTINS = frozenset(
         "delattr",
         "vars",
         "dir",
+        # Import-machinery handles: __loader__.load_module('sys') returns
+        # the real sys module, bypassing the module blocklist (fix round 2)
+        "__loader__",
+        "__spec__",
     }
 )
+
+
+#: The real import machinery entry point, captured once at module load so
+#: the guarded wrapper can delegate while remaining immune to later
+#: monkey-patching of the builtins module.
+_REAL_IMPORT = builtins.__import__
+
+
+def _guarded_import(
+    name: str,
+    globals: dict[str, Any] | None = None,
+    locals: dict[str, Any] | None = None,
+    fromlist: Any = (),
+    level: int = 0,
+) -> Any:
+    """__import__ replacement installed by :func:`safe_builtins`.
+
+    The AST check rejects literal ``__import__("subprocess")`` calls, but
+    the real import function remains reachable by reference — aliased
+    namespace-dict lookups (``ns["__builtins__"]["__import__"]``), frame
+    walks, etc. Wrapping it makes the module blocklist a runtime invariant
+    for import statements and reflective aliases alike.
+    """
+    root = name.split(".")[0] if name else ""
+    if root in _BLOCKED_MODULES:
+        raise ImportError(f"Blocked — import of disallowed module '{name}'")
+    return _REAL_IMPORT(name, globals, locals, fromlist, level)
 
 
 def safe_builtins() -> dict[str, Any]:
     """Return a restricted __builtins__ dict with dangerous names removed."""
     safe = {k: v for k, v in vars(builtins).items() if k not in _REMOVED_BUILTINS}
+    safe["__import__"] = _guarded_import
     return safe
 
 
@@ -350,13 +382,22 @@ def run_guarded_script(code: str, namespace_factory: Callable[[], dict[str, Any]
     stderr_buf = io.StringIO()
     namespace = namespace_factory()
 
-    # Ensure __builtins__ is restricted even if the factory provided full access
+    # Ensure __builtins__ is restricted no matter what the factory provided:
+    # - the real module/dict is replaced wholesale (never mutated — it is
+    #   the interpreter-wide builtins);
+    # - a custom dict is stripped in place and always gets the guarded
+    #   importer installed;
+    # - an absent/unknown __builtins__ is pinned to safe_builtins(),
+    #   because exec() would otherwise inject the LIVE builtins dict.
     ns_builtins = namespace.get("__builtins__")
-    if ns_builtins is builtins or ns_builtins is vars(builtins):
+    if ns_builtins is builtins or ns_builtins is builtins.__dict__:
         namespace["__builtins__"] = safe_builtins()
     elif isinstance(ns_builtins, dict):
         for name in _REMOVED_BUILTINS:
             ns_builtins.pop(name, None)
+        ns_builtins["__import__"] = _guarded_import
+    else:
+        namespace["__builtins__"] = safe_builtins()
 
     with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
         try:

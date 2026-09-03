@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import os
 import sys
 import unittest
@@ -14,7 +15,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 install_ida_mocks()
 
 from rikugan.ida.tools.microcode_optim import compile_optimizer
-from rikugan.tools.script_guard import _check_ast, check_ast, run_guarded_script
+from rikugan.tools.script_guard import (
+    _check_ast,
+    check_ast,
+    run_guarded_script,
+    safe_builtins,
+)
 
 
 def _empty_ns():
@@ -482,6 +488,57 @@ class TestRunGuardedScript(unittest.TestCase):
         # Even with __import__ restored to builtins, calling it is blocked
         result = run_guarded_script("__import__('struct')", _empty_ns)
         assert result.startswith("Error: Blocked")
+
+    # --- Runtime module-blocklist enforcement (fix round 2) --------------
+    # The AST check rejects literal __import__ calls, but the real import
+    # function stays reachable by reference (aliased namespace-dict lookups).
+    # safe_builtins() must therefore install a guarded importer.
+
+    def test_runtime_blocks_import_via_builtins_dict_alias(self):
+        # Exact review repro: walk frame locals to the namespace dict, grab
+        # __builtins__, fetch __import__, import subprocess. Must die at the
+        # guarded importer instead of importing.
+        code = (
+            "import inspect\n"
+            "ns = inspect.getargvalues(inspect.currentframe())[3]\n"
+            "h = ns['__builtins__']['__import__']\n"
+            "m = h('subprocess')\n"
+            "print(m.run)"
+        )
+        result = run_guarded_script(code, _empty_ns)
+        assert "ImportError" in result
+        assert "subprocess" in result
+
+    def test_run_guarded_script_pins_restricted_builtins(self):
+        # A factory without __builtins__ gets safe_builtins() pinned —
+        # never the live interpreter builtins dict injected by exec().
+        result = run_guarded_script("print('exec' in __builtins__, 'dir' in __builtins__)", _empty_ns)
+        assert "False False" in result
+        # ... and the interpreter-wide builtins are never mutated.
+        assert "exec" in vars(builtins)
+        assert "dir" in vars(builtins)
+        assert "__loader__" in vars(builtins)
+
+    def test_safe_builtins_import_is_guarded(self):
+        ns = safe_builtins()
+        importer = ns["__import__"]
+        assert importer is not builtins.__import__
+        for mod in ("subprocess", "os", "os.path", "ctypes"):
+            with self.assertRaises(ImportError):
+                importer(mod)
+
+    def test_safe_builtins_import_still_allows_data_plane(self):
+        ns = safe_builtins()
+        importer = ns["__import__"]
+        struct_mod = importer("struct")
+        self.assertTrue(hasattr(struct_mod, "pack"))
+        # Dotted safe imports keep working (root-module check only).
+        element_tree = importer("xml.etree.ElementTree", None, None, ("ElementTree",))
+        self.assertTrue(hasattr(element_tree, "parse"))
+
+    def test_runtime_nested_dotted_import_of_safe_module(self):
+        result = run_guarded_script("import xml.etree.ElementTree\nprint('ok')", _empty_ns)
+        assert "ok" in result
 
 
 class TestCompileOptimizerGuard(unittest.TestCase):
