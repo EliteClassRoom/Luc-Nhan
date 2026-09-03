@@ -14,7 +14,7 @@ from typing import Any
 
 from ...core.host import HAS_HEXRAYS as _HAS_HEXRAYS
 from ...core.logging import log_debug
-from ...tools.script_guard import check_ast, safe_builtins
+from ...tools.script_guard import GuardViolation, run_guarded_code, safe_builtins
 
 ida_hexrays = None
 try:
@@ -123,20 +123,19 @@ def compile_optimizer(name: str, python_code: str) -> Callable[..., Any]:
 
     Returns the callable, or raises with an error message string.
 
-    Security note: the code first passes through the shared AST blocklist
-    (:func:`rikugan.tools.script_guard.check_ast` — blocked modules, calls,
-    attrs, dunders), then the ``exec`` compiles it into a namespace built by
-    :func:`build_optimizer_namespace` using ``safe_builtins()`` (restricted
-    builtins) plus only the ``ida_hexrays`` opcode/operand constants. This is
-    an intentional, sandboxed use of exec analogous to the ``execute_python``
-    tool — not arbitrary code execution.
+    Security note: execution goes through the shared guarded sink
+    (:func:`rikugan.tools.script_guard.run_guarded_code`) — the AST blocklist
+    (blocked modules, calls, attrs, dunders) runs before the ``exec``, and the
+    namespace built by :func:`build_optimizer_namespace` uses ``safe_builtins()``
+    (restricted builtins) plus only the ``ida_hexrays`` opcode/operand constants.
+    No code path outside script_guard may call ``exec`` directly.
     """
     code = textwrap.dedent(python_code)
-    violation = check_ast(code)
-    if violation:
-        raise ValueError(f"Optimizer code rejected by script guard: {violation}")
     namespace = build_optimizer_namespace()
-    exec(compile(code, f"<optimizer:{name}>", "exec"), namespace)
+    try:
+        namespace = run_guarded_code(code, namespace, filename=f"<optimizer:{name}>")
+    except GuardViolation as e:
+        raise ValueError(f"Optimizer code rejected by script guard: {e}") from e
 
     optimize_fn = namespace.get("optimize")
     if optimize_fn is None or not callable(optimize_fn):

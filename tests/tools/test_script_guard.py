@@ -16,8 +16,10 @@ install_ida_mocks()
 
 from rikugan.ida.tools.microcode_optim import compile_optimizer
 from rikugan.tools.script_guard import (
+    GuardViolation,
     _check_ast,
     check_ast,
+    run_guarded_code,
     run_guarded_script,
     safe_builtins,
 )
@@ -588,6 +590,69 @@ class TestRunGuardedScript(unittest.TestCase):
         assert "rikugan" in result
 
 
+class TestRunGuardedCode(unittest.TestCase):
+    """run_guarded_code is the second exec sink: AST check, then exec into a
+    caller-supplied namespace (no stdout capture). The microcode optimizer
+    compiler goes through it instead of calling exec() directly."""
+
+    def test_executes_into_supplied_namespace_and_returns_it(self):
+        ns: dict = {}
+        result = run_guarded_code("x = 1 + 2", ns)
+        assert result is ns
+        assert ns["x"] == 3
+
+    def test_blocked_code_raises_guard_violation_without_executing(self):
+        ns = {"executed": False}
+        with pytest.raises(GuardViolation) as excinfo:
+            run_guarded_code("executed = True\nimport subprocess", ns)
+        assert "subprocess" in str(excinfo.value)
+        assert ns["executed"] is False
+
+    def test_guard_violation_is_a_value_error(self):
+        # Callers (compile_optimizer) keep their ValueError-on-blocked contract.
+        assert issubclass(GuardViolation, ValueError)
+        with pytest.raises(ValueError):
+            run_guarded_code("os.system('ls')", {})
+
+    def test_pins_guarded_builtins_when_namespace_lacks_them(self):
+        # exec() would otherwise inject the LIVE builtins dict — the same
+        # pinning run_guarded_script applies must hold for this sink too.
+        ns = run_guarded_code("leaked = 'exec' in __builtins__ or 'dir' in __builtins__", {})
+        assert ns["leaked"] is False
+        # ... and the interpreter-wide builtins are never mutated.
+        assert "exec" in vars(builtins)
+        assert "dir" in vars(builtins)
+
+    def test_does_not_redirect_stdout(self):
+        # Unlike run_guarded_script, this sink must let stdout through:
+        # the optimizer compiler's host owns output, not a tool-result string.
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            run_guarded_code("print('visible')", {})
+        assert "visible" in buf.getvalue()
+
+
+def test_compile_optimizer_executes_via_guarded_sink(monkeypatch):
+    """Single-sink invariant: compile_optimizer must delegate execution to
+    run_guarded_code instead of calling exec() itself."""
+    import rikugan.ida.tools.microcode_optim as microcode_optim
+
+    real_run = microcode_optim.run_guarded_code
+    seen: dict = {}
+
+    def spy(code, namespace, **kwargs):
+        seen["code"] = code
+        return real_run(code, namespace, **kwargs)
+
+    monkeypatch.setattr(microcode_optim, "run_guarded_code", spy)
+    fn = microcode_optim.compile_optimizer("sink", "def optimize(mbi, ins):\n    return 0\n")
+    assert callable(fn)
+    assert seen["code"] == "def optimize(mbi, ins):\n    return 0\n"
+
+
 class TestCompileOptimizerGuard(unittest.TestCase):
     """install_microcode_optimizer exec()s LLM-authored code — its compile
     path must run through the same AST blocklist as execute_python."""
@@ -600,6 +665,14 @@ class TestCompileOptimizerGuard(unittest.TestCase):
             self.assertTrue("disallowed module" in str(e) or "Blocked" in str(e))
         else:
             self.fail("compile_optimizer accepted blocked code")
+
+    def test_compile_optimizer_rejection_message_keeps_prefix(self):
+        # The ValueError must stay prefixed so the LLM sees which layer
+        # rejected the code (microcode.py returns str(e) as the tool result).
+        code = "def optimize(mbi, ins): return 0\nimport subprocess\n"
+        with pytest.raises(ValueError) as excinfo:
+            compile_optimizer("evil", code)
+        assert str(excinfo.value).startswith("Optimizer code rejected by script guard:")
 
     def test_compile_optimizer_accepts_pure_code(self):
         code = "def optimize(mbi, ins):\n    return 0\n"

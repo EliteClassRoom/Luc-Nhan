@@ -384,10 +384,64 @@ def _check_ast(code: str) -> str | None:
     return None
 
 
-#: Public alias. Other security-sensitive surfaces that exec() agent- or
-#: LLM-authored Python (e.g. the microcode optimizer compiler) validate
-#: their code through the same AST blocklist instead of a private import.
+#: Public alias. Surfaces that only *validate* agent- or LLM-authored Python
+#: (without executing it) use this instead of a private import.
 check_ast = _check_ast
+
+
+class GuardViolation(ValueError):
+    """Code rejected by the script-guard AST blocklist.
+
+    Subclasses :class:`ValueError` so existing ``except ValueError``
+    handlers (e.g. the microcode optimizer tool's error wrapping) keep
+    working unchanged.
+    """
+
+
+def _pin_guarded_builtins(namespace: dict[str, Any]) -> None:
+    """Ensure *namespace* executes with guarded builtins, in place.
+
+    - the real builtins module/dict is replaced wholesale (never mutated —
+      it is the interpreter-wide builtins);
+    - a custom dict is stripped in place and always gets the guarded
+      importer installed;
+    - an absent/unknown ``__builtins__`` is pinned to safe_builtins(),
+      because exec() would otherwise inject the LIVE builtins dict.
+    """
+    ns_builtins = namespace.get("__builtins__")
+    if ns_builtins is builtins or ns_builtins is builtins.__dict__:
+        namespace["__builtins__"] = safe_builtins()
+    elif isinstance(ns_builtins, dict):
+        for name in _REMOVED_BUILTINS:
+            ns_builtins.pop(name, None)
+        ns_builtins["__import__"] = _guarded_import
+    else:
+        namespace["__builtins__"] = safe_builtins()
+
+
+def run_guarded_code(
+    code: str,
+    namespace: dict[str, Any],
+    *,
+    filename: str = "<guarded-code>",
+) -> dict[str, Any]:
+    """AST-check *code*, then exec it into *namespace* and return it.
+
+    The shared execution sink for host surfaces that run agent- or
+    LLM-authored Python and need the resulting namespace (e.g. the
+    microcode optimizer compiler). No stdout/stderr redirection happens
+    here — surfaces that need captured output use :func:`run_guarded_script`.
+
+    Raises:
+        GuardViolation: the AST blocklist rejected *code*; *namespace* is
+            left untouched.
+    """
+    violation = _check_ast(code)
+    if violation:
+        raise GuardViolation(violation)
+    _pin_guarded_builtins(namespace)
+    exec(compile(code, filename, "exec"), namespace)
+    return namespace
 
 
 def run_guarded_script(code: str, namespace_factory: Callable[[], dict[str, Any]]) -> str:
@@ -400,22 +454,7 @@ def run_guarded_script(code: str, namespace_factory: Callable[[], dict[str, Any]
     stderr_buf = io.StringIO()
     namespace = namespace_factory()
 
-    # Ensure __builtins__ is restricted no matter what the factory provided:
-    # - the real module/dict is replaced wholesale (never mutated — it is
-    #   the interpreter-wide builtins);
-    # - a custom dict is stripped in place and always gets the guarded
-    #   importer installed;
-    # - an absent/unknown __builtins__ is pinned to safe_builtins(),
-    #   because exec() would otherwise inject the LIVE builtins dict.
-    ns_builtins = namespace.get("__builtins__")
-    if ns_builtins is builtins or ns_builtins is builtins.__dict__:
-        namespace["__builtins__"] = safe_builtins()
-    elif isinstance(ns_builtins, dict):
-        for name in _REMOVED_BUILTINS:
-            ns_builtins.pop(name, None)
-        ns_builtins["__import__"] = _guarded_import
-    else:
-        namespace["__builtins__"] = safe_builtins()
+    _pin_guarded_builtins(namespace)
 
     with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
         try:
