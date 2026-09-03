@@ -76,6 +76,24 @@ _BLOCKED_MODULES = frozenset(
         "resource",
         "termios",
         "tty",
+        # Exec/getattr re-exports + introspection vectors (bypass review):
+        # - builtins: the module re-exports exec/eval/getattr/__import__,
+        #   so `import builtins; builtins.exec(...)` walked past every
+        #   name-based check below.
+        # - timeit: timeit.timeit(stmt) compiles and execs its string arg.
+        # - pdb / doctest: debugger and docstring runners compile+execute
+        #   code strings.
+        # - operator: attrgetter reaches attributes by string name
+        #   (attrgetter('__class__') mirrors getattr).
+        # `inspect` is deliberately NOT blocked: the ida-scripting porting
+        # guide documents inspect.stack()/getargvalues() debug-logger
+        # hooks, and the f_* frame-attribute block below already severs
+        # every frame walk (currentframe().f_back.f_builtins dies at f_back).
+        "builtins",
+        "timeit",
+        "pdb",
+        "doctest",
+        "operator",
     }
 )
 
@@ -164,7 +182,11 @@ _BLOCKED_ATTRS = frozenset(
 # which reaches every loaded class (including subprocess.Popen, file IO,
 # etc.) without ever naming a blocked module. `__globals__` and `__code__`
 # similarly let attackers reach the real `exec`/`os` from inside a function
-# defined in a "safe" module.
+# defined in a "safe" module. The `f_*` frame-object attributes reach the
+# caller's frames (`f_back`), the live builtins dict (`f_builtins`) and
+# frame globals/locals/code — closing `inspect.currentframe().f_back
+# .f_builtins` walks even when the frame comes from an introspection
+# helper instead of a dunder chain.
 _BLOCKED_DUNDER_ATTRS = frozenset(
     {
         "__class__",
@@ -175,6 +197,12 @@ _BLOCKED_DUNDER_ATTRS = frozenset(
         "__globals__",
         "__code__",
         "__builtins__",
+        # Frame-object attrs — the inspect-style escape hatch
+        "f_back",
+        "f_builtins",
+        "f_globals",
+        "f_locals",
+        "f_code",
     }
 )
 
@@ -261,6 +289,15 @@ def _check_ast(code: str) -> str | None:
                     # Catch os.exec*/os.spawn* variants not explicitly listed
                     if func.value.id == "os" and (func.attr.startswith("exec") or func.attr.startswith("spawn")):
                         return f"Blocked — call to disallowed 'os.{func.attr}()'"
+
+                # Receiver-agnostic: any call whose attribute name is itself
+                # a blocked built-in (e.g. builtins.exec(...),
+                # __builtins__.eval(...), ns.getattr(...)). `compile` is
+                # excluded: `re.compile` is a documented data-plane idiom and
+                # compiling alone executes nothing — exec/eval of the result
+                # stay blocked both as bare calls and as attribute names.
+                if func.attr in _BLOCKED_CALLS and func.attr != "compile":
+                    return f"Blocked — attribute call to disallowed built-in '{func.attr}()'"
 
                 # Call on a dunder attribute (e.g. obj.__class__(),
                 # ().__class__.__bases__[0].__subclasses__()). This is the

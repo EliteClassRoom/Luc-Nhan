@@ -6,6 +6,8 @@ import os
 import sys
 import unittest
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from tests.mocks.ida_mock import install_ida_mocks
 
@@ -58,6 +60,28 @@ class TestCheckAst(unittest.TestCase):
 
     def test_allows_os_path(self):
         assert _check_ast("os.path.join('a', 'b')") is None
+
+    def test_allows_re_compile(self):
+        # re.compile is a documented data-plane idiom (string-decryption
+        # skill reference); the receiver-agnostic attribute rule must not
+        # fire on it — compiling alone executes nothing.
+        assert _check_ast("import re\nrule = re.compile(r'a+b')") is None
+
+    def test_allows_dict_get(self):
+        # dict.get has the same attribute name as the __builtins__.get
+        # pair block, but 'get' is not a blocked CALL name.
+        assert _check_ast("d = {}\nd.get('k')") is None
+
+    def test_blocks_builtins_attr_call_ambient(self):
+        # __builtins__ is ambient inside the exec namespace — no import
+        # required — so the receiver-agnostic rule must catch the call
+        # form directly.
+        assert _check_ast('__builtins__.exec("x = 1")') is not None
+
+    def test_blocks_frame_attr_walk(self):
+        # Frame-object attrs are the inspect-free escape: any frame in
+        # reach exposes the live builtins dict via f_builtins.
+        assert _check_ast("frame.f_back.f_builtins") is not None
 
     # --- Allowlist: safe data-plane / pure-compute modules ---------------
     # These are the whole point of the policy change: agents need Crypto.Cipher
@@ -169,6 +193,28 @@ class TestCheckAst(unittest.TestCase):
 
     def test_blocks_dunder_import_crypto(self):
         assert _check_ast("__import__('Crypto.Cipher')") is not None
+
+
+# --- Known review bypasses -----------------------------------------------
+# Each entry is a vector the review identified as walking past the AST
+# blocklist. All must be rejected by check_ast().
+
+BYPASSES = [
+    "import builtins\nbuiltins.exec(\"import subprocess; subprocess.run('calc')\")",
+    "import builtins\nbuiltins.__import__('subprocess')",
+    "import timeit\ntimeit.timeit(\"import os; os.system('id')\", number=1)",
+    "import pdb\npdb.set_trace()",
+    "import inspect\ninspect.currentframe().f_back.f_builtins",
+    "import operator\nf = operator.attrgetter('__class__')",
+    "import builtins\nbuiltins.getattr(builtins, 'eval')",
+]
+
+
+@pytest.mark.parametrize("code", BYPASSES)
+def test_known_bypasses_blocked(code):
+    from rikugan.tools.script_guard import check_ast
+
+    assert check_ast(code) is not None
 
 
 class TestRunGuardedScript(unittest.TestCase):
