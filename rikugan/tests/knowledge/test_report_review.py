@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -14,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from rikugan.agent import report_review
 from rikugan.agent.report_review import ReviewResult, review_memories
 from rikugan.core.config import RikuganConfig
+from rikugan.core.errors import CancellationError
 from rikugan.memory.ingest import make_store
 from rikugan.memory.schema import KnowledgeMemory
 from rikugan.state.session import SessionState
@@ -59,6 +61,7 @@ def _make_loop() -> MagicMock:
     loop.session = SessionState()
     loop.host_name = "test"
     loop.skills = None
+    loop._cancelled = threading.Event()
     return loop
 
 
@@ -73,6 +76,32 @@ def _drive_review(loop, candidates, *, scripts, max_cycles=3):
     with patch.object(report_review, "_build_runner", _factory):
         result = review_memories(loop, candidates, max_cycles=max_cycles)
     return result, runner
+
+
+class TestReviewCancellation(unittest.TestCase):
+    """A cancel observed mid-pipeline must abort before the next child run."""
+
+    def test_cancel_during_reviewer_aborts_before_corrector(self):
+        loop = _make_loop()
+        fail_response = json.dumps({"findings": [{"id": "a", "status": "fail", "evidence": "bad", "confidence": 0.1}]})
+        calls = []
+
+        class _Runner:
+            def run_task(self, prompt: str, max_turns: int = 20, silent: bool = False):
+                calls.append(1)
+                if len(calls) == 1:
+                    loop._cancelled.set()  # user cancels during the reviewer
+                return _consume(fail_response)
+
+        runner = _Runner()
+
+        def _factory(_loop):
+            return runner
+
+        with patch.object(report_review, "_build_runner", _factory):
+            with self.assertRaises(CancellationError):
+                review_memories(loop, [_memory("a")], max_cycles=3)
+        self.assertEqual(len(calls), 1, "corrector must not run after cancellation")
 
 
 class TestParseResponse(unittest.TestCase):
@@ -256,9 +285,7 @@ class TestReviewPipeline(unittest.TestCase):
                 ]
             }
         )
-        result, _ = _drive_review(
-            _make_loop(), candidates, scripts=[first_fail, corrected, second_pass]
-        )
+        result, _ = _drive_review(_make_loop(), candidates, scripts=[first_fail, corrected, second_pass])
         self.assertTrue(result.passed)
         self.assertEqual(result.cycles, 2)
         self.assertEqual(result.unresolved, {})
@@ -279,18 +306,14 @@ class TestReviewPipeline(unittest.TestCase):
                 ]
             }
         )
-        result, _ = _drive_review(
-            _make_loop(), candidates, scripts=[fail, fail, fail, fail, fail, fail]
-        )
+        result, _ = _drive_review(_make_loop(), candidates, scripts=[fail, fail, fail, fail, fail, fail])
         self.assertFalse(result.passed)
         self.assertEqual(result.cycles, 3)
         self.assertIn("a", result.unresolved)
 
     def test_malformed_response_invalidates_cycle(self):
         candidates = [_memory("a")]
-        result, _ = _drive_review(
-            _make_loop(), candidates, scripts=["not json"] * 6
-        )
+        result, _ = _drive_review(_make_loop(), candidates, scripts=["not json"] * 6)
         self.assertFalse(result.passed)
         self.assertIn("a", result.unresolved)
         self.assertIn("JSON", result.unresolved["a"])

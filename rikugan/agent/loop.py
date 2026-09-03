@@ -378,6 +378,11 @@ class AgentLoop:
             self._cancelled = parent_loop._cancelled
         else:
             self._cancelled = threading.Event()
+        # Only a loop that created its own event may clear it in run().
+        # An event supplied via cancel_event or inherited from
+        # parent_loop belongs to the caller — clearing it would silently
+        # discard a user cancellation that arrived between runs.
+        self._owns_cancel_event: bool = cancel_event is None and parent_loop is None
         self._running: bool = False
         self._consecutive_errors: int = 0
         self._tools_disabled_for_turn: bool = False
@@ -2114,6 +2119,7 @@ class AgentLoop:
                 skill_registry=self.skills,
                 parent_loop=self,
             ),
+            loop=self,
         )
 
         # Auto-ingest the *final* research note into the raw knowledge
@@ -2569,7 +2575,12 @@ class AgentLoop:
         This generator should be consumed from a background thread,
         while the UI reads events via the event_queue or directly iterates.
         """
-        self._cancelled.clear()
+        # Reset stale state only when the event is ours. An inherited or
+        # externally-supplied event may already carry a user cancellation
+        # (e.g. set between two pipeline child runs) — clearing it here
+        # loses that cancellation silently.
+        if self._owns_cancel_event:
+            self._cancelled.clear()
         self._docs_reviewer_invoked = False
         self._running = True
         self.session.is_running = True

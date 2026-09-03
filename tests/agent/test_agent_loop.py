@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import unittest
 from collections.abc import Generator as GeneratorType
 from types import SimpleNamespace
@@ -141,7 +142,7 @@ def _drain_generator_with_return(
 
 
 class TestAgentLoop(unittest.TestCase):
-    def _make_loop(self, provider: MockProvider, tools: ToolRegistry | None = None) -> AgentLoop:
+    def _make_loop(self, provider: MockProvider, tools: ToolRegistry | None = None, **kwargs: Any) -> AgentLoop:
         config = RikuganConfig()
         config.auto_context = False  # Skip IDA API calls
         session = SessionState(provider_name="mock", model_name="mock-model")
@@ -150,6 +151,7 @@ class TestAgentLoop(unittest.TestCase):
             tool_registry=tools or ToolRegistry(),
             config=config,
             session=session,
+            **kwargs,
         )
 
     def test_doctor_dispatch_resolves_handler(self):
@@ -315,7 +317,6 @@ class TestAgentLoop(unittest.TestCase):
         tool_result = next(e for e in events if e.type == TurnEventType.TOOL_RESULT)
         self.assertIn("Echo: hi", tool_result.tool_result)
 
-
     def test_tool_error(self):
         registry = ToolRegistry()
         registry.register(
@@ -372,6 +373,41 @@ class TestAgentLoop(unittest.TestCase):
         self.assertIn(TurnEventType.CANCELLED, types)
         # Should not reach the second response
         self.assertNotIn(TurnEventType.TEXT_DONE, types)
+
+    def test_run_does_not_clear_inherited_cancel_event(self):
+        """Regression: run() must not clear a cancel event it does not own.
+
+        Subagent children are wired with the parent's (or manager's) cancel
+        event. If the user cancels between child runs, the event stays set;
+        the next child's run() must observe it, not silently erase it.
+        """
+        parent_evt = threading.Event()
+        parent_evt.set()  # user cancelled before this child ran
+        provider = MockProvider(responses=[_text_response("should not stream")])
+        loop = self._make_loop(provider, cancel_event=parent_evt)
+
+        list(loop.run("continue"))
+
+        self.assertTrue(parent_evt.is_set(), "run() must not clear an externally-owned cancel event")
+
+    def test_run_does_not_clear_parent_loop_cancel_event(self):
+        """A child inheriting the event via parent_loop must not clear it either."""
+        parent = self._make_loop(MockProvider(responses=[]))
+        parent.cancel()
+        child = self._make_loop(MockProvider(responses=[_text_response("should not stream")]), parent_loop=parent)
+
+        list(child.run("continue"))
+
+        self.assertTrue(parent._cancelled.is_set(), "run() must not clear an event inherited via parent_loop")
+
+    def test_run_clears_owned_cancel_event(self):
+        """A loop that created its own event still resets a stale cancel."""
+        loop = self._make_loop(MockProvider(responses=[_text_response("Hello!")]))
+        loop._cancelled.set()  # stale cancel from a previous run
+
+        list(loop.run("fresh turn"))
+
+        self.assertFalse(loop._cancelled.is_set())
 
     def test_is_running_flag(self):
         provider = MockProvider(responses=[_text_response("Done")])
@@ -854,9 +890,7 @@ class TestAgentLoop(unittest.TestCase):
                     )
                 # Second attempt: clean full response.
                 yield StreamChunk(text="Final answer.")
-                yield StreamChunk(
-                    usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
-                )
+                yield StreamChunk(usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15))
 
         provider = ChunkedReadProvider()
         loop = self._make_loop(provider)
@@ -866,9 +900,7 @@ class TestAgentLoop(unittest.TestCase):
         _events, outcome = _drain_generator_with_return(generator)
         # The provider was called twice: once for the dropped attempt
         # and once for the successful retry.
-        assert call_count["n"] == 2, (
-            f"expected exactly one retry, got {call_count['n']} calls"
-        )
+        assert call_count["n"] == 2, f"expected exactly one retry, got {call_count['n']} calls"
         assert isinstance(outcome, TurnOutcome)
         assert outcome.disposition == TurnDisposition.COMPLETED
         assert outcome.visible_text == "Final answer."
