@@ -39,7 +39,7 @@ from ..constants import (
     SKILLS_DIR_NAME,
 )
 from .host import get_user_config_base_dir
-from .logging import log_error, log_warning
+from .logging import log_error, log_info, log_warning
 
 # Built-in provider default models — used as a fallback when the user's
 # saved config has an empty model string for a provider.
@@ -319,22 +319,30 @@ class RikuganConfig:
         elif self.encrypt_api_keys:
             # Encrypted mode without a stored blob (flag set but the config
             # was never saved with a password): refuse to write plaintext
-            # keys. Keep them out of the file and degrade the file to a
-            # coherent disabled state; the in-memory session is untouched.
+            # keys. Degrade the file to a coherent disabled state — the
+            # persisted flag must not survive pointing at disabled
+            # encryption, or a reload restores the degenerate in-memory
+            # state. The live session is untouched.
             has_keys = bool(d["provider"]["api_key"]) or any(
                 info.get("api_key") for info in d.get("providers", {}).values()
             )
+            d["encrypt_api_keys"] = False
+            d["encryption"] = {"enabled": False}
             if has_keys:
                 d["provider"]["api_key"] = ""
                 for info in d.get("providers", {}).values():
                     info["api_key"] = ""
-                d["encrypt_api_keys"] = False
                 log_warning(
                     "Config saved without password and no stored encryption "
                     "block: API keys were NOT persisted (would be written as "
                     "plaintext). Re-enter the keys and re-enable encryption."
                 )
-            d["encryption"] = {"enabled": False}
+            else:
+                log_info(
+                    "Config saved without password and no stored encryption "
+                    "block: encryption disabled in the saved file (no keys "
+                    "to protect)."
+                )
         else:
             d["encryption"] = {"enabled": False}
 

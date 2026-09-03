@@ -117,14 +117,24 @@ def test_save_without_password_and_without_blob_refuses_plaintext_keys(tmp_path:
 
 
 def test_save_without_password_no_keys_disables_cleanly(tmp_path: Path) -> None:
-    """Encrypt flag on, no blob, and no keys anywhere: enabled=False is safe."""
+    """Encrypt flag on, no blob, and no keys anywhere: the file must stay coherent.
+
+    Nothing can leak, but the persisted state must not leave
+    ``encrypt_api_keys=true`` pointing at ``encryption.enabled=false`` —
+    a reload would restore the degenerate in-memory state.
+    """
     cfg = _config(tmp_path)
     cfg.encrypt_api_keys = True
     cfg.save()
 
     on_disk = json.loads((tmp_path / CONFIG_FILE).read_text(encoding="utf-8"))
     assert on_disk["encryption"] == {"enabled": False}
-    assert on_disk["provider"]["api_key"] == ""
+    assert on_disk["encrypt_api_keys"] is False
+
+    reloaded = _config(tmp_path)
+    reloaded.load()
+    assert reloaded.encrypt_api_keys is False
+    assert reloaded.has_encrypted_keys() is False
 
 
 def test_save_without_password_keeps_plaintext_when_unencrypted(tmp_path: Path) -> None:
