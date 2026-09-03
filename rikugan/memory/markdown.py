@@ -15,6 +15,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING
 
 from ..constants import MEMORY_LOCK_TIMEOUT_SECONDS, MEMORY_MARKDOWN_MAX_BYTES
@@ -215,8 +216,11 @@ class MemoryProjector:
     def __init__(self, *, lock_timeout: float = MEMORY_LOCK_TIMEOUT_SECONDS) -> None:
         self._lock_timeout = lock_timeout
         self._fallback_lock = threading.RLock()
-        self._lock_module = None
-        self._lock_exc_type = None
+        self._lock_module: ModuleType | None = None
+        # Concrete portalocker exception class once the probe succeeds;
+        # stays ``Exception`` until then so ``except`` clauses never see
+        # ``None`` (which raises TypeError when an exception is matched).
+        self._lock_exc_type: type[BaseException] = Exception
         self._probe_portalocker()
 
     def _probe_portalocker(self) -> None:
@@ -229,48 +233,61 @@ class MemoryProjector:
                 "MEMORY.md projection uses an in-process lock only."
             )
             self._lock_module = None
-            self._lock_exc_type = None
             return
         self._lock_module = portalocker
         # portalocker 3.x renamed ``LockError`` to ``LockException``;
-        # fall back to whichever class actually exists so we work on
-        # either major version. ``BaseLockException`` is the common
-        # ancestor and is always present.
+        # prefer whichever class actually exists so either major version
+        # works. If neither exists (module layout changed), degrade to
+        # ``Exception`` rather than keeping ``None``: portalocker raises
+        # its lock errors from ``Lock.__enter__`` (acquire time) — the
+        # ``Lock(...)`` constructor never contends — and an ``except
+        # None`` clause would raise TypeError when matched.
         exc_mod = portalocker.exceptions
-        self._lock_exc_type = getattr(exc_mod, "LockException", getattr(exc_mod, "LockError", None))
+        self._lock_exc_type = (
+            getattr(exc_mod, "LockException", None) or getattr(exc_mod, "LockError", None) or Exception
+        )
 
     def _acquire_lock(
         self,
         lock_path: os.PathLike[str] | str,
         *,
         on_contention: Callable[[], None] | None = None,
-    ):
-        """Return a context manager that holds the projection lock.
+    ) -> _ProjectionLock:
+        """Acquire the projection lock and return an entered handle.
 
         Tries ``portalocker`` first. If the dependency cannot be
         imported, falls back to a process-local RLock so a missing
-        optional dependency never breaks ``/report`` or
-        ``save_memory``. If portalocker IS present but the lock cannot
-        be acquired (cross-process contention), invokes
-        ``on_contention`` and re-raises — callers keep the fail-loud
-        contract instead of degrading to an unprotected write.
+        optional dependency never breaks ``/report`` or ``save_memory``.
+
+        portalocker takes the OS lock in ``Lock.__enter__`` — the
+        ``Lock(...)`` constructor never contends — so acquisition happens
+        here, at the site where contention actually raises. On
+        contention, ``on_contention`` runs and the returned handle has
+        ``acquired == False``; callers must skip the projection body
+        rather than write unprotected.
         """
         if self._lock_module is not None:
+            lock = self._lock_module.Lock(str(lock_path), mode="a", timeout=self._lock_timeout)
             try:
-                return self._lock_module.Lock(str(lock_path), mode="a", timeout=self._lock_timeout)
-            except self._lock_exc_type:
+                lock.__enter__()
+            except self._lock_exc_type:  # raised at acquire time, never at construction
                 log_debug("portalocker lock contention; aborting projection")
                 if on_contention is not None:
                     on_contention()
-                raise
-        return _InProcessLock(self._fallback_lock)
+                return _ProjectionLock(acquired=False)
+            return _ProjectionLock(acquired=True, _release=lock.__exit__)
+        fallback = _InProcessLock(self._fallback_lock)
+        fallback.__enter__()
+        return _ProjectionLock(acquired=True, _release=fallback.__exit__)
 
     def project(self, paths: WorkspacePaths, store: WorkspaceStore) -> None:
         """Regenerate the managed region of ``paths.markdown`` from SQLite facts.
 
         If the unmanaged region changed between read and write
         (detected by hash), marks ``projection_conflict`` and raises
-        :class:`ProjectionConflictError`.
+        :class:`ProjectionConflictError`. If another process holds the
+        projection lock, marks the projection dirty and returns without
+        writing.
         """
         latest_facts = store.list_facts()
         entries = [
@@ -284,7 +301,11 @@ class MemoryProjector:
             for f in latest_facts
         ]
 
-        with self._acquire_lock(paths.lock, on_contention=store.mark_projection_dirty):
+        with self._acquire_lock(paths.lock, on_contention=store.mark_projection_dirty) as held:
+            if not held.acquired:
+                # Another process holds the projection lock; on_contention
+                # already marked it dirty so a later pass regenerates.
+                return
             before = _read_bounded_regular_utf8(paths.markdown)
             document = parse_memory_document(before)
             rendered = render_memory_document(document, entries=entries)
@@ -320,3 +341,23 @@ class _InProcessLock:
 
     def __exit__(self, exc_type, exc, tb) -> bool | None:
         return self._lock.__exit__(exc_type, exc, tb)
+
+
+@dataclass
+class _ProjectionLock:
+    """Handle for an entered projection lock.
+
+    ``acquired`` is False when another process held the lock and this
+    projection pass was skipped; callers must not run the projection
+    body unless it is True. ``_release`` releases the underlying lock.
+    """
+
+    acquired: bool
+    _release: Callable[..., object] | None = None
+
+    def __enter__(self) -> _ProjectionLock:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if self._release is not None:
+            self._release(exc_type, exc, tb)
