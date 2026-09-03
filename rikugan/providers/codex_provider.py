@@ -590,25 +590,13 @@ class CodexProvider(LLMProvider):
             return
 
         # Cancel watchdog — close urllib response so the SSE read loop
-        # unblocks and exits within ~100ms.
+        # unblocks and exits within ~100ms.  The returned ``done`` event is
+        # per-request: set in the finally below so the watchdog exits when
+        # the stream finishes instead of parking forever on the long-lived
+        # loop cancel event.
         response_ref: list = []
         response_ready = threading.Event()
-
-        def _watchdog() -> None:
-            if cancel_event is None:
-                return
-            cancel_event.wait()
-            if not response_ready.wait(timeout=2.0):
-                return
-            r = response_ref[0] if response_ref else None
-            if r is not None:
-                try:
-                    r.close()
-                except Exception as exc:
-                    log_debug(f"CodexProvider response.close() during cancel failed: {exc}")
-
-        if cancel_event is not None:
-            threading.Thread(target=_watchdog, daemon=True).start()
+        done = self._spawn_cancel_watchdog(cancel_event, response_ref, response_ready)
 
         response_ref.append(response)
         response_ready.set()
@@ -620,6 +608,8 @@ class CodexProvider(LLMProvider):
                 log_debug(f"CodexProvider stream closed by cancel: {e}")
                 return
             self._handle_api_error(e)
+        finally:
+            done.set()
 
     def _iter_sse(self, response: Any) -> Generator[StreamChunk, None, None]:
         # Per-call streaming state. ``name`` accumulates the tool name; ``seen``

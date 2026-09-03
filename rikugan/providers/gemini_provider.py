@@ -328,30 +328,15 @@ class GeminiProvider(LLMProvider):
         underlying stream so the consumer's cancellation check fires within
         ~100ms instead of waiting for the next chunk.
         """
-        # Cancel watchdog — Gemini SDK's stream object exposes .close() in
-        # recent versions; older versions silently ignore. The consumer's
+        # Per-request watchdog: Gemini SDK's stream object exposes .close()
+        # in recent versions; older versions silently ignore. The consumer's
         # ``_check_cancelled()`` will still fire on the next chunk that
-        # happens to arrive.
+        # happens to arrive.  ``done`` (set in the finally below) makes the
+        # watchdog exit when the stream finishes instead of parking forever
+        # on the long-lived loop cancel event.
         stream_ref: list = []
         stream_ready = threading.Event()
-
-        def _watchdog() -> None:
-            if cancel_event is None:
-                return
-            cancel_event.wait()
-            if not stream_ready.wait(timeout=2.0):
-                return
-            s = stream_ref[0] if stream_ref else None
-            if s is not None:
-                try:
-                    close = getattr(s, "close", None)
-                    if callable(close):
-                        close()
-                except Exception:
-                    pass
-
-        if cancel_event is not None:
-            threading.Thread(target=_watchdog, daemon=True).start()
+        done = self._spawn_cancel_watchdog(cancel_event, stream_ref, stream_ready)
 
         try:
             all_raw_parts: list = []
@@ -409,3 +394,5 @@ class GeminiProvider(LLMProvider):
                 log_debug(f"GeminiProvider stream closed by cancel: {e}")
                 return
             self._handle_api_error(e)
+        finally:
+            done.set()

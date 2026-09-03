@@ -456,25 +456,13 @@ class OpenAIProvider(LLMProvider):
             return
 
         # Cancel watchdog — closes the stream if cancel_event fires so the
-        # consumer's per-chunk cancellation check is reached promptly.
+        # consumer's per-chunk cancellation check is reached promptly.  The
+        # returned ``done`` event is per-request: set in the finally below so
+        # the watchdog exits when the stream finishes instead of parking
+        # forever on the long-lived loop cancel event.
         stream_ref: list = []
         stream_ready = threading.Event()
-
-        def _watchdog() -> None:
-            if cancel_event is None:
-                return
-            cancel_event.wait()
-            if not stream_ready.wait(timeout=2.0):
-                return
-            s = stream_ref[0] if stream_ref else None
-            if s is not None:
-                try:
-                    s.close()
-                except Exception:
-                    pass
-
-        if cancel_event is not None:
-            threading.Thread(target=_watchdog, daemon=True).start()
+        done = self._spawn_cancel_watchdog(cancel_event, stream_ref, stream_ready)
 
         stream_ref.append(stream)
         stream_ready.set()
@@ -486,6 +474,8 @@ class OpenAIProvider(LLMProvider):
                 log_debug(f"OpenAIProvider stream closed by cancel: {e}")
                 return
             raise
+        finally:
+            done.set()
 
     def _iter_stream_chunks(
         self,

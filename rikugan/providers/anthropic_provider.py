@@ -607,26 +607,10 @@ class AnthropicProvider(LLMProvider):
         """
         stream_ref: list = []
         stream_ready = threading.Event()
-
-        def _watchdog() -> None:
-            """Close the stream when cancel_event fires."""
-            if cancel_event is None:
-                return
-            cancel_event.wait()
-            # Wait for the consumer to enter the with-block and set stream_ref[0].
-            if not stream_ready.wait(timeout=2.0):
-                return
-            s = stream_ref[0] if stream_ref else None
-            if s is not None:
-                try:
-                    s.close()
-                except Exception as exc:
-                    log_debug(f"AnthropicProvider stream.close() during cancel failed: {exc}")
-
-        watchdog: threading.Thread | None = None
-        if cancel_event is not None:
-            watchdog = threading.Thread(target=_watchdog, daemon=True)
-            watchdog.start()
+        # Per-request watchdog: force-closes the stream when cancel_event
+        # fires; ``done`` (set in the finally below) makes it exit when the
+        # stream finishes instead of parking forever on the loop cancel event.
+        done = self._spawn_cancel_watchdog(cancel_event, stream_ref, stream_ready)
 
         try:
             with client.messages.stream(**kwargs) as stream:
@@ -810,3 +794,5 @@ class AnthropicProvider(LLMProvider):
                 return
             log_error(f"AnthropicProvider.chat_stream error: {e}")
             self._handle_api_error(e)
+        finally:
+            done.set()
