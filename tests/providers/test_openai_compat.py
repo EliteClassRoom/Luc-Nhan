@@ -118,3 +118,17 @@ def test_compat_client_uses_explicit_key(monkeypatch):
     p = OpenAICompatProvider(api_key="sk-explicit", api_base="https://api.z.ai/v1")
     p._get_client()
     fake.OpenAI.assert_called_once_with(api_key="sk-explicit", base_url="https://api.z.ai/v1")
+
+
+def test_compat_default_constructor_never_leaks_env_key_to_sdk(monkeypatch):
+    """Default empty-base path: ``openai.OpenAI()`` without an ``api_key``
+    kwarg makes the SDK read ``OPENAI_API_KEY`` itself — the placeholder
+    must reach the SDK kwargs even when no base URL is configured.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
+    from rikugan.providers.openai_compat import OpenAICompatProvider
+
+    fake = _fake_openai_module(monkeypatch)
+    p = OpenAICompatProvider(api_key="", api_base="")
+    p._get_client()
+    assert fake.OpenAI.call_args.kwargs["api_key"] == "no-key"
