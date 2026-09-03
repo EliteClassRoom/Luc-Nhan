@@ -198,10 +198,10 @@ class TestSkillPrefersTool(unittest.TestCase):
 
     def test_skill_prefers_point_lookup_over_hasattr(self):
         """SKILL.md must recommend the `name` parameter for point-lookups,
-        and explicitly contrast it against hasattr()/inspect.signature()."""
+        and explicitly contrast it against hasattr()/execute_python probes."""
         self.assertIn("name", self.body)  # the parameter name
         self.assertIn("hasattr", self.body)
-        self.assertIn("inspect.signature", self.body)
+        self.assertIn("execute_python", self.body)
         self.assertIn("instead of", self.body.lower())
 
 
