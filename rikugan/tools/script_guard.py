@@ -211,6 +211,9 @@ _BLOCKED_DUNDER_ATTRS = frozenset(
 # Note: `__import__` is intentionally kept here so user code can use
 # `import` statements for safe modules. Direct `__import__("...")` calls
 # are still rejected by the AST check via _BLOCKED_CALLS.
+# The introspection primitives are stripped as well: the AST check rejects
+# calling or binding them, and removing them means a hypothetical future
+# AST bypass cannot reach attributes/dicts by string name at runtime.
 _REMOVED_BUILTINS = frozenset(
     {
         "exec",
@@ -219,6 +222,12 @@ _REMOVED_BUILTINS = frozenset(
         "breakpoint",
         "exit",
         "quit",
+        # Reflective / namespace introspection (fix round 1)
+        "getattr",
+        "setattr",
+        "delattr",
+        "vars",
+        "dir",
     }
 )
 
@@ -234,6 +243,7 @@ def _check_ast(code: str) -> str | None:
 
     Returns an error message if a violation is found, or None if safe.
     """
+
     try:
         tree = ast.parse(code)
     except SyntaxError:
@@ -261,6 +271,15 @@ def _check_ast(code: str) -> str | None:
                 return "Blocked — direct subscript access to __builtins__"
             continue
 
+        # Block: binding or aliasing a blocked built-in name
+        # (e.g. `h = __import__`, `g = getattr`, `exec = print`,
+        # `def f(x=getattr)`). Aliasing sidesteps every call-site check:
+        # `g = getattr; g(os, "system")` never names getattr at a call.
+        # Direct calls still report the call message — the BFS walk yields
+        # the Call node before its func Name child.
+        if isinstance(node, ast.Name) and node.id in _BLOCKED_CALLS:
+            return f"Blocked — reference to disallowed built-in '{node.id}'"
+
         # Block: dunder attribute access on any value
         # (e.g. `os.__class__`, `().__class__.__bases__`,
         #        `fn.__globals__`, `fn.__code__`)
@@ -269,6 +288,13 @@ def _check_ast(code: str) -> str | None:
         if isinstance(node, ast.Attribute):
             if node.attr in _BLOCKED_DUNDER_ATTRS:
                 return f"Blocked — access to disallowed dunder '{node.attr}'"
+
+            # Attribute reads of blocked built-ins (e.g. `e = __builtins__.exec`,
+            # `g = ns.getattr`). A bound method object is as dangerous as the
+            # call, minus the call syntax. `compile` stays exempt: re.compile
+            # is a documented data-plane idiom.
+            if node.attr in _BLOCKED_CALLS and node.attr != "compile":
+                return f"Blocked — access to disallowed built-in attribute '{node.attr}'"
             # Don't continue — the Call-handling branch below may also apply
             # if this Attribute is the function of a Call.
 

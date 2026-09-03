@@ -83,6 +83,47 @@ class TestCheckAst(unittest.TestCase):
         # reach exposes the live builtins dict via f_builtins.
         assert _check_ast("frame.f_back.f_builtins") is not None
 
+    # --- Bare-name aliasing / binding bypasses (fix round 1) -------------
+    # `h = __import__; h('subprocess')` and `g = getattr; g(os, 'system')`
+    # never name the blocked builtin at a call site — binding or aliasing
+    # the name itself must be rejected.
+
+    def test_blocks_alias_of_dunder_import(self):
+        assert _check_ast("h = __import__\nm = h('subprocess')") is not None
+
+    def test_blocks_alias_of_getattr(self):
+        assert _check_ast("g = getattr\ng(os, 'system')") is not None
+
+    def test_blocks_binding_blocked_name(self):
+        assert _check_ast("exec = print") is not None
+        assert _check_ast("d = dir") is not None
+
+    def test_blocks_blocked_name_as_default(self):
+        # Keyword/default positions are bare references too.
+        assert _check_ast("def f(x=getattr):\n    pass") is not None
+
+    def test_blocks_attribute_read_of_blocked_builtin(self):
+        # `e = __builtins__.exec` — an aliased method object is as
+        # dangerous as a call, minus the call syntax.
+        assert _check_ast("e = __builtins__.exec") is not None
+
+    def test_blocks_frame_locals_reach_via_inspect(self):
+        # inspect.getargvalues(...).locals — the attribute name 'locals'
+        # is itself a blocked built-in, so the attribute rule fires.
+        code = "import inspect\ninspect.getargvalues(inspect.currentframe()).locals"
+        assert _check_ast(code) is not None
+
+    def test_allows_compile_attribute_reference(self):
+        # The compile carve-out covers attribute reads too.
+        assert _check_ast("import re\nr = re.compile") is None
+
+    def test_safe_builtins_strips_introspection(self):
+        from rikugan.tools.script_guard import safe_builtins
+
+        ns = safe_builtins()
+        for name in ("getattr", "setattr", "delattr", "vars", "dir"):
+            self.assertNotIn(name, ns)
+
     # --- Allowlist: safe data-plane / pure-compute modules ---------------
     # These are the whole point of the policy change: agents need Crypto.Cipher
     # and friends to decode malware algorithms without reimplementing them.
