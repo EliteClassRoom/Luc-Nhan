@@ -89,6 +89,26 @@ class TestCheckAst(unittest.TestCase):
         # reach exposes the live builtins dict via f_builtins.
         assert _check_ast("frame.f_back.f_builtins") is not None
 
+    # --- Guard self-import / closure escapes (fix round 3) ---------------
+    # The guard module itself exposes _REAL_IMPORT (the unguarded importer);
+    # importing rikugan.* from a guarded script must be rejected outright.
+
+    def test_blocks_import_rikugan_guard_module(self):
+        assert _check_ast("import rikugan.tools.script_guard as sg") is not None
+
+    def test_blocks_rikugan_real_import_chain(self):
+        code = "import rikugan.tools.script_guard as sg\nm = sg._REAL_IMPORT('subprocess')\nprint(m.run)"
+        assert _check_ast(code) is not None
+
+    def test_blocks_from_rikugan_import(self):
+        assert _check_ast("from rikugan.tools import script_guard") is not None
+
+    def test_blocks_closure_walk(self):
+        # Function objects reachable from the sandbox (e.g. IDA module
+        # callables) must not leak their captured cells.
+        assert _check_ast("f.__closure__") is not None
+        assert _check_ast("w.__closure__[0].cell_contents") is not None
+
     # --- Bare-name aliasing / binding bypasses (fix round 1) -------------
     # `h = __import__; h('subprocess')` and `g = getattr; g(os, 'system')`
     # never name the blocked builtin at a call site — binding or aliasing
@@ -539,6 +559,11 @@ class TestRunGuardedScript(unittest.TestCase):
     def test_runtime_nested_dotted_import_of_safe_module(self):
         result = run_guarded_script("import xml.etree.ElementTree\nprint('ok')", _empty_ns)
         assert "ok" in result
+
+    def test_runtime_blocks_rikugan_import(self):
+        result = run_guarded_script("import rikugan", _empty_ns)
+        assert result.startswith("Error: Blocked")
+        assert "rikugan" in result
 
 
 class TestCompileOptimizerGuard(unittest.TestCase):

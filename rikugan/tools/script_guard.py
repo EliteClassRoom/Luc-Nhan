@@ -94,6 +94,13 @@ _BLOCKED_MODULES = frozenset(
         "pdb",
         "doctest",
         "operator",
+        # - rikugan (fix round 3): the guard's own module exposes
+        #   _REAL_IMPORT (the unguarded importer captured for the wrapper)
+        #   — `import rikugan.tools.script_guard as sg; sg._REAL_IMPORT(...)
+        #   re-opens every blocked module. No documented guarded flow
+        #   imports the plugin package; rikugan APIs are out of scope for
+        #   execute_python by design.
+        "rikugan",
     }
 )
 
@@ -203,6 +210,13 @@ _BLOCKED_DUNDER_ATTRS = frozenset(
         "f_globals",
         "f_locals",
         "f_code",
+        # Closure cells (fix round 3): __closure__ exposes captured cells
+        # and cell_contents reads them — a walk like
+        # fn.__closure__[0].cell_contents can reach the real import
+        # machinery from any function object in reach. `cell_contents` is
+        # not a dunder by name but is blocked here as an attribute name.
+        "__closure__",
+        "cell_contents",
     }
 )
 
