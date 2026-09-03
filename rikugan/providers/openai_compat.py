@@ -14,6 +14,11 @@ from .openai_provider import OpenAIProvider
 class OpenAICompatProvider(OpenAIProvider):
     """Provider that speaks the OpenAI API protocol against a custom base URL."""
 
+    # A custom endpoint must never receive the user's real OpenAI key via
+    # the OPENAI_API_KEY env fallback; without a configured key the
+    # "no-key" placeholder branch in _get_client is the effective path.
+    _ALLOW_OPENAI_ENV_KEY = False
+
     def __init__(
         self,
         api_key: str = "",
@@ -38,9 +43,11 @@ class OpenAICompatProvider(OpenAIProvider):
             kwargs: dict[str, Any] = {}
             if self.api_key:
                 kwargs["api_key"] = self.api_key
-            elif self.api_base:
-                # Custom endpoint without explicit key — use a placeholder
-                # to prevent the SDK from reading OPENAI_API_KEY env var
+            else:
+                # No explicit key — always pass a placeholder so the SDK
+                # never falls back to OPENAI_API_KEY from the environment,
+                # with or without a custom base URL. A compat endpoint must
+                # never receive the user's real OpenAI credential.
                 kwargs["api_key"] = "no-key"
             if self.api_base:
                 kwargs["base_url"] = self.api_base

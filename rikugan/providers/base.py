@@ -35,7 +35,11 @@ class LLMProvider(ABC):
     in ``__init__`` (e.g. ``api_key = api_key or os.environ.get("OPENAI_API_KEY", "")``).
     The canonical env-var names currently in use:
 
-    * ``OPENAI_API_KEY`` (OpenAIProvider)
+    * ``OPENAI_API_KEY`` (OpenAIProvider only — adapters that reuse the
+      OpenAI protocol against third-party endpoints, e.g.
+      ``OpenAICompatProvider`` / ``GLMProvider``, must opt out via
+      ``_ALLOW_OPENAI_ENV_KEY = False`` so the key never leaks to another
+      host as a bearer credential)
     * ``GOOGLE_API_KEY`` or ``GEMINI_API_KEY`` (GeminiProvider)
     * ``ANTHROPIC_API_KEY`` and ``CLAUDE_CODE_OAUTH_TOKEN`` (AnthropicProvider —
       handled by ``resolve_anthropic_auth`` which also walks keychain)

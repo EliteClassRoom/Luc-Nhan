@@ -345,8 +345,8 @@ lookup_idapython_doc(module="ida_typeinf", name="apply_cdecl")
 
 Returns ~20 lines of context around each match — much cheaper than reading
 200 KB of RST just to verify one function. Use this **instead of**
-`hasattr(idc, 'X')` or `inspect.signature()`: those require `execute_python`
-user-approval, while the docs tool does not.
+executing probe code via `execute_python` (e.g. `hasattr(idc, 'X')`): the
+docs tool needs no user approval, while `execute_python` always does.
 
 Common modules: `ida_typeinf`, `ida_name`, `idautils`, `ida_hexrays`,
 `ida_frame`, `ida_funcs`, `ida_bytes`, `ida_xref`, `ida_segment`,

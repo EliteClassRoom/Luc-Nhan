@@ -8,6 +8,7 @@ import threading
 from collections.abc import Generator
 from typing import Any
 
+from ... import constants
 from ...core.config import RikuganConfig
 from ...core.logging import log_debug, log_error, log_info
 from ...core.sanitize import strip_injection_markers
@@ -484,14 +485,31 @@ class OrchestraMainAgent:
                     yield TurnEvent.tool_result_event(tc["id"], tool_name, result, is_error)
 
                 elif tool_name in self.tools.list_names():
-                    try:
-                        result = self.tools.execute(tool_name, tool_args)
-                        is_error = False
-                    except Exception as e:
-                        result = f"Error: {e}"
-                        is_error = True
-                        log_error(f"Orchestra tool execution error: {tool_name}: {e}")
-                    yield TurnEvent.tool_result_event(tc["id"], tool_name, result, is_error)
+                    defn = self.tools.get(tool_name)
+                    needs_approval = tool_name == constants.EXECUTE_PYTHON_TOOL_NAME or (
+                        defn is not None and defn.requires_approval
+                    )
+                    if needs_approval:
+                        # Orchestra has no UI approval queue, so an approval
+                        # prompt is impossible here: refuse instead of
+                        # silently bypassing the AgentLoop approval gate.
+                        log_error(f"Orchestra refused approval-gated tool: {tool_name}")
+                        result = (
+                            f"Error: {tool_name} requires interactive user approval, "
+                            "which is unavailable in orchestra mode. Ask the user to "
+                            "run it outside delegation."
+                        )
+                        yield TurnEvent.tool_result_event(tc["id"], tool_name, result, True)
+
+                    else:
+                        try:
+                            result = self.tools.execute(tool_name, tool_args)
+                            is_error = False
+                        except Exception as e:
+                            result = f"Error: {e}"
+                            is_error = True
+                            log_error(f"Orchestra tool execution error: {tool_name}: {e}")
+                        yield TurnEvent.tool_result_event(tc["id"], tool_name, result, is_error)
 
                 else:
                     result = f"Error: Unknown orchestration tool: {tool_name}"

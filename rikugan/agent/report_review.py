@@ -21,9 +21,11 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ..core.errors import CancellationError
 from ..core.logging import log_debug, log_error
 from ..memory.schema import KnowledgeMemory
 from .subagent import SubagentRunner
+
 
 def _drain(generator: Generator[Any, None, str]) -> tuple[str, str | None]:
     """Exhaust a runner generator and capture its returned summary.
@@ -41,6 +43,10 @@ def _drain(generator: Generator[Any, None, str]) -> tuple[str, str | None]:
             except StopIteration as stop:
                 final_text = stop.value or ""
                 break
+    except CancellationError:
+        # Cancellation must propagate unchanged so run() converts it into
+        # a CANCELLED event — never stringify it as a runner failure.
+        raise
     except Exception as exc:  # pragma: no cover - defensive
         return "", f"{type(exc).__name__}: {exc!r}"
     return final_text, None
@@ -239,7 +245,6 @@ def _build_runner(loop: AgentLoop) -> SubagentRunner:
     )
 
 
-
 def review_memories(
     loop: AgentLoop,
     memories: list[KnowledgeMemory],
@@ -253,8 +258,10 @@ def review_memories(
     record fails the cycle, a corrector is run over the failed
     records only and the loop starts a new reviewer pass with the
     corrected content. The loop stops on the first all-pass cycle,
-    after ``max_cycles`` cycles, or when the reviewer/corector
-    errors out.
+    after ``max_cycles`` cycles, or when the reviewer/corrector
+    errors out. A cancel observed between child runs raises
+    ``CancellationError`` so ``run()`` converts it into a CANCELLED
+    event.
     """
     if max_cycles < 1:
         raise ValueError("max_cycles must be >= 1")
@@ -267,6 +274,9 @@ def review_memories(
     factory = runner_factory or (lambda: _build_runner(loop))
 
     for cycle in range(1, max_cycles + 1):
+        # Abort before starting another child run if the user cancelled.
+        if loop._cancelled.is_set():
+            raise CancellationError("review_memories cancelled")
         reviewer = factory()
         review_prompt = _build_reviewer_prompt(candidates)
         raw, runner_err = _drain(reviewer.run_task(review_prompt, max_turns=8, silent=True))
@@ -300,12 +310,13 @@ def review_memories(
 
         # Run corrector over failed records.
         feedback = {rid: parsed[rid].get("evidence", "") for rid in failed_ids}
+        if loop._cancelled.is_set():
+            raise CancellationError("review_memories cancelled")
+
         failed_records = [next(m for m in candidates if m.id == rid) for rid in failed_ids]
         corrector = factory()
         correct_prompt = _build_correction_prompt(failed_records, feedback)
-        raw_corr, corr_runner_err = _drain(
-            corrector.run_task(correct_prompt, max_turns=8, silent=True)
-        )
+        raw_corr, corr_runner_err = _drain(corrector.run_task(correct_prompt, max_turns=8, silent=True))
         if corr_runner_err is not None:
             log_error(f"review_memories: corrector runner failed: {corr_runner_err}")
             last_error = corr_runner_err
@@ -326,7 +337,11 @@ def review_memories(
             entry = corrected.get(rid)
             if not entry or entry.get("status") != "fail":
                 # Corrector did not address this id; mark as evidence.
-                fallback = entry.get("evidence", "correction did not address finding") if entry else last_unresolved.get(rid, "correction missing")
+                fallback = (
+                    entry.get("evidence", "correction did not address finding")
+                    if entry
+                    else last_unresolved.get(rid, "correction missing")
+                )
                 last_unresolved[rid] = fallback
                 continue
             new_title = entry.get("corrected_title") or target.title

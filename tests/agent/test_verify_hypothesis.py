@@ -15,6 +15,7 @@ from rikugan.agent.loop import AgentLoop
 from rikugan.agent.loop_commands import _handle_verify_command
 from rikugan.agent.turn import TurnEventType
 from rikugan.core.config import RikuganConfig
+from rikugan.core.errors import CancellationError
 from rikugan.memory.schema import KnowledgeMemory
 from rikugan.state.session import SessionState
 from rikugan.tests.knowledge._helpers import fresh_store
@@ -208,6 +209,7 @@ class TestVerifyHypothesesFlow(unittest.TestCase):
 
                 def _gen():
                     return text
+
                 return _gen()
 
         return _R(queue_)
@@ -251,6 +253,44 @@ class TestVerifyHypothesesFlow(unittest.TestCase):
         self.assertEqual(set(result.verdicts), {"mem:a", "mem:b"})
         self.assertEqual(result.verdicts["mem:a"].status, "verified")
         self.assertEqual(result.verdicts["mem:b"].status, "wrong")
+
+    def test_cancellation_between_attempts_aborts(self):
+        """A cancel observed after a failed attempt aborts before the next child run."""
+        loop = self._build_loop()
+        mem = _hypothesis("mem:a", "claim")
+        calls = []
+
+        def factory():
+            calls.append(1)
+
+            class _R:
+                def run_task(self, prompt: str, max_turns: int = 8, silent: bool = True):
+                    loop._cancelled.set()  # user cancels during attempt 1
+
+                    def _gen():
+                        return "not json"
+
+                    return _gen()
+
+            return _R()
+
+        with self.assertRaises(CancellationError):
+            verify_hypotheses(loop, [mem], runner_factory=factory)
+        self.assertEqual(len(calls), 1, "verifier must not start another child run after cancellation")
+
+    def test_cancel_raised_by_runner_propagates_from_drain(self):
+        """A CancellationError raised mid-drain must propagate, not stringify into a failed result."""
+        loop = self._build_loop()
+        mem = _hypothesis("mem:a", "claim")
+
+        class _CancelRunner:
+            def run_task(self, prompt: str, max_turns: int = 8, silent: bool = True):
+                if False:  # pragma: no cover - generator marker
+                    yield None
+                raise CancellationError("cancelled mid child run")
+
+        with self.assertRaises(CancellationError):
+            verify_hypotheses(loop, [mem], runner_factory=lambda: _CancelRunner())
 
 
 class TestVerifyCommandHandler(unittest.TestCase):
@@ -320,12 +360,15 @@ class TestVerifyCommandHandler(unittest.TestCase):
         self._seed("mem:a")
         bad = MagicMock()
         bad.run_task.side_effect = lambda *a, **k: iter(["not json"])
-        with unittest.mock.patch(
-            "rikugan.agent.loop_commands._open_knowledge_store",
-            return_value=(self.store, self.paths, None),
-        ), unittest.mock.patch(
-            "rikugan.agent.hypothesis_verification._build_runner",
-            lambda _loop: bad,
+        with (
+            unittest.mock.patch(
+                "rikugan.agent.loop_commands._open_knowledge_store",
+                return_value=(self.store, self.paths, None),
+            ),
+            unittest.mock.patch(
+                "rikugan.agent.hypothesis_verification._build_runner",
+                lambda _loop: bad,
+            ),
         ):
             events = list(_handle_verify_command(loop, ""))
         self.assertTrue(any(e.type == TurnEventType.ERROR for e in events))
@@ -354,12 +397,15 @@ class TestVerifyCommandHandler(unittest.TestCase):
         )
         good = MagicMock()
         good.run_task.return_value = iter([response])
-        with unittest.mock.patch(
-            "rikugan.agent.loop_commands._open_knowledge_store",
-            return_value=(self.store, self.paths, None),
-        ), unittest.mock.patch(
-            "rikugan.agent.hypothesis_verification._build_runner",
-            lambda _loop: good,
+        with (
+            unittest.mock.patch(
+                "rikugan.agent.loop_commands._open_knowledge_store",
+                return_value=(self.store, self.paths, None),
+            ),
+            unittest.mock.patch(
+                "rikugan.agent.hypothesis_verification._build_runner",
+                lambda _loop: good,
+            ),
         ):
             events = list(_handle_verify_command(loop, ""))
         verdict_events = [e for e in events if e.type == TurnEventType.HYPOTHESIS_VERDICT]
@@ -374,7 +420,6 @@ class TestVerifyCommandHandler(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 
 
 class TestVerifierReadOnlyToolView(unittest.TestCase):

@@ -203,6 +203,45 @@ class TestProviderMessageCache(unittest.TestCase):
         self.assertGreater(before, after)
         self.assertLessEqual(after, 11)  # head + 10 tail
 
+    def test_prune_does_not_orphan_tool_result(self):
+        """The prune tail cut must not start on a TOOL message whose
+        assistant tool_call partner gets pruned — the provider rejects the
+        orphaned tool result (OpenAI/Anthropic both 400).
+        """
+        s = SessionState()
+        tc = ToolCall(id="call_1", name="decompile_function", arguments={})
+        messages = [
+            Message(role=Role.SYSTEM, content="system"),
+            Message(role=Role.USER, content="u1"),
+            Message(role=Role.USER, content="u2"),
+            Message(role=Role.USER, content="u3"),
+            Message(role=Role.ASSISTANT, content="", tool_calls=[tc]),
+            Message(
+                role=Role.TOOL,
+                content="",
+                tool_results=[
+                    ToolResult(
+                        tool_call_id="call_1", name="decompile_function", content="ok"
+                    )
+                ],
+            ),
+            Message(role=Role.USER, content="u4"),
+            Message(role=Role.USER, content="u5"),
+        ]
+        for m in messages:
+            s.add_message(m)
+        # Boundary = len - keep_last_n = 8 - 3 = 5 → lands on the TOOL message.
+        s.prune_messages(keep_last_n=3)
+        # The tool pair must be pruned together, leaving no orphaned TOOL.
+        for i in range(1, len(s.messages)):
+            msg = s.messages[i]
+            if msg.role != Role.TOOL:
+                continue
+            prev = s.messages[i - 1]
+            self.assertEqual(prev.role, Role.ASSISTANT)
+            self.assertIn("call_1", {t.id for t in prev.tool_calls})
+        self.assertEqual(len(s.messages), 3)  # head + [u4, u5]
+
     def test_sanitize_still_patches_orphans(self):
         """The cache must not skip the safety sanitizer."""
         s = SessionState()

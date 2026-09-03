@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ..core.errors import CancellationError
 from ..core.logging import log_debug, log_error
 from ..memory.schema import KnowledgeMemory
 from .subagent import SubagentRunner
@@ -90,6 +91,10 @@ def _drain(runner: SubagentRunner, prompt: str) -> tuple[str, str | None]:
                 break
             if isinstance(piece, str):
                 collected.append(piece)
+    except CancellationError:
+        # Cancellation must propagate unchanged so run() converts it into
+        # a CANCELLED event — never stringify it as a runner failure.
+        raise
     except Exception as exc:
         return "", f"{type(exc).__name__}: {exc!r}"
     if not final_text:
@@ -261,7 +266,9 @@ def verify_hypotheses(
     The verifier is read-only with respect to the analyzed IDA database.
     Any citation that cannot be tied to a function, address, or tool
     result is rejected; the entire attempt is treated as failed and
-    no record is mutated.
+    no record is mutated. A cancel observed between attempts raises
+    ``CancellationError`` so ``run()`` converts it into a CANCELLED
+    event.
     """
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
@@ -273,6 +280,9 @@ def verify_hypotheses(
     last_error: str | None = None
     last_unresolved: dict[str, str] = {}
     for attempt in range(1, max_attempts + 1):
+        # Abort before starting another child run if the user cancelled.
+        if loop._cancelled.is_set():
+            raise CancellationError("verify_hypotheses cancelled")
         try:
             runner = factory()
         except Exception as exc:

@@ -308,7 +308,7 @@ def nop_microcode(
 # ---------------------------------------------------------------------------
 
 
-@tool(category="microcode", requires_decompiler=True, mutating=True)
+@tool(category="microcode", requires_decompiler=True, mutating=True, requires_approval=True)
 def install_microcode_optimizer(
     name: Annotated[str, "Unique name for this optimizer (used to remove it later)"],
     description: Annotated[str, "What this optimizer does (for list_microcode_optimizers)"],

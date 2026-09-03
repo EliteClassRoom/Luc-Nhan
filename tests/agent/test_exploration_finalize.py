@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -63,6 +64,7 @@ def _make_loop(idb_path: str) -> Any:
     loop.skills = None
     loop.memory_service = None
     loop._memory_authority = None
+    loop._cancelled = threading.Event()
     return loop
 
 
@@ -215,17 +217,12 @@ class TestFinalizeExploreMemory(unittest.TestCase):
             loop.memory_service = fake_service
             loop._memory_authority = MagicMock()
             runner = _scripted_runner_factory([_passing_response(mem_id)])
-            with patch.object(
-                report_review, "_build_runner", lambda _loop: runner
-            ), patch(
-                "rikugan.memory.ingest.make_store", return_value=(None, None)
+            with (
+                patch.object(report_review, "_build_runner", lambda _loop: runner),
+                patch("rikugan.memory.ingest.make_store", return_value=(None, None)),
             ):
                 events = _drain(exploration_mode._finalize_explore_memory(loop, state))
-            system_msgs = [
-                e
-                for e in events
-                if e.text and "central index only" in e.text
-            ]
+            system_msgs = [e for e in events if e.text and "central index only" in e.text]
             self.assertTrue(
                 system_msgs,
                 "expected central-only system message when raw store unavailable",
@@ -340,9 +337,7 @@ class TestFinalizeExploreMemory(unittest.TestCase):
             mem_id = _id_for("function_purpose", "entry", 0x401000)
             runner = _scripted_runner_factory([_passing_response(mem_id)])
             with patch.object(report_review, "_build_runner", lambda _loop: runner):
-                persisted, message = exploration_mode.finalize_explore_memory(
-                    loop, state
-                )
+                persisted, message = exploration_mode.finalize_explore_memory(loop, state)
             self.assertTrue(persisted)
             self.assertIn("saved", message.lower())
 
