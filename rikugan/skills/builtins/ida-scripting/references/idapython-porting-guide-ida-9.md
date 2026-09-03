@@ -1837,22 +1837,9 @@ class lt_logger_hooks_t(ida_idp.IDB_Hooks):
         ida_idp.IDB_Hooks.__init__(self)
         self.inhibit_log = 0
 
-    def _format_value(self, v):
-        return str(v)
-
-    def _log(self, msg=None):
+    def _log(self, msg=''):
         if self.inhibit_log <= 0:
-            if msg:
-                print(f'>>> lt_logger_hooks_f: {msg}')
-            else:
-                stack = inspect.stack()
-                frame, _, _, _, _, _ = stack[1]
-                args, _, _, values = inspect.getargvalues(frame)
-                method_name = inspect.getframeinfo(frame)[2]
-                argstrs = []
-                for arg in args[1:]:
-                    argstrs.append("%s=%s" % (arg, self._format_value(values[arg])))
-                print(f'>>> lt_logger_hooks_t.{method_name}: {", ".join(args)}')
+            print(f'>>> lt_logger_hooks_t: {msg}' if msg else '>>> lt_logger_hooks_t event')
         return 0
 
     def lt_udm_created(self, udtname, udm):
@@ -1897,35 +1884,22 @@ class frame_logger_hooks_t(ida_idp.IDB_Hooks):
         ida_idp.IDB_Hooks.__init__(self)
         self.inhibit_log = 0
 
-    def _format_value(self, v):
-        return str(v)
-
-    def _log(self, msg=None):
+    def _log(self, msg=''):
         if self.inhibit_log <= 0:
-            if msg:
-                print(f'>>> frame_logger_hooks_f: {msg}')
-            else:
-                stack = inspect.stack()
-                frame, _, _, _, _, _ = stack[1]
-                args, _, _, values = inspect.getargvalues(frame)
-                method_name = inspect.getframeinfo(frame)[2]
-                argstrs = []
-                for arg in args[1:]:
-                    argstrs.append("%s=%s" % (arg, self._format_value(values[arg])))
-                print(f'>>> frame_logger_hooks_t.{method_name}: {", ".join(args)}')
+            print(f'>>> frame_logger_hooks_t: {msg}' if msg else '>>> frame_logger_hooks_t event')
         return 0
 
     def frame_udm_created(self, func_ea, udm):
-        return self._log()
+        return self._log(f'UDM {udm.name} created in frame at {func_ea:x}')
 
     def frame_udm_deleted(self, func_ea, udm_tid, udm):
-        return self._log()
+        return self._log(f'UDM tid {udm_tid:x} deleted from frame at {func_ea:x}')
 
     def frame_udm_renamed(self, func_ea, udm, oldname):
-        return self._log()
+        return self._log(f'UDM {oldname} renamed to {udm.name} in frame at {func_ea:x}')
 
     def frame_udm_changed(self, func_ea, udm_tid, udmold, udmnew):
-        return self._log()
+        return self._log(f'UDM changed in frame at {func_ea:x}')
 
 # Remove an existing hook on second run
 try:

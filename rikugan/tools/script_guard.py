@@ -85,15 +85,19 @@ _BLOCKED_MODULES = frozenset(
         #   code strings.
         # - operator: attrgetter reaches attributes by string name
         #   (attrgetter('__class__') mirrors getattr).
-        # `inspect` is deliberately NOT blocked: the ida-scripting porting
-        # guide documents inspect.stack()/getargvalues() debug-logger
-        # hooks, and the f_* frame-attribute block below already severs
-        # every frame walk (currentframe().f_back.f_builtins dies at f_back).
+        # - inspect (fix round 4, ruling reversed): it transitively exposes
+        #   os/sys/importlib as plain attributes (inspect.os, inspect.sys,
+        #   inspect.importlib) — `inspect.sys.modules[...]` walks straight
+        #   to any loaded module, defeating every name-based barrier. The
+        #   f_* frame-attr block alone is not sufficient. The skill docs'
+        #   inspect.stack()/signature() debug idioms were removed in favor
+        #   of the docs tool and plain prints.
         "builtins",
         "timeit",
         "pdb",
         "doctest",
         "operator",
+        "inspect",
         # - rikugan (fix round 3): the guard's own module exposes
         #   _REAL_IMPORT (the unguarded importer captured for the wrapper)
         #   — `import rikugan.tools.script_guard as sg; sg._REAL_IMPORT(...)

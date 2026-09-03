@@ -133,6 +133,26 @@ class TestCheckAst(unittest.TestCase):
         # dangerous as a call, minus the call syntax.
         assert _check_ast("e = __builtins__.exec") is not None
 
+    def test_blocks_import_inspect(self):
+        # Fix round 4 (ruling reversed): inspect transitively exposes
+        # os/sys/importlib as plain attributes (inspect.os, inspect.sys).
+        assert _check_ast("import inspect") is not None
+
+    def test_blocks_inspect_os_chain(self):
+        assert _check_ast("import inspect\ninspect.os.system('id')") is not None
+
+    def test_blocks_inspect_sys_modules_chain(self):
+        code = (
+            "import inspect\n"
+            "sg = inspect.sys.modules['rikugan.tools.script_guard']\n"
+            "m = sg._REAL_IMPORT('subprocess')\n"
+            "print(m.run)"
+        )
+        assert _check_ast(code) is not None
+
+    def test_blocks_from_inspect_import(self):
+        assert _check_ast("from inspect import currentframe") is not None
+
     def test_blocks_frame_locals_reach_via_inspect(self):
         # inspect.getargvalues(...).locals — the attribute name 'locals'
         # is itself a blocked built-in, so the attribute rule fires.
@@ -516,8 +536,10 @@ class TestRunGuardedScript(unittest.TestCase):
 
     def test_runtime_blocks_import_via_builtins_dict_alias(self):
         # Exact review repro: walk frame locals to the namespace dict, grab
-        # __builtins__, fetch __import__, import subprocess. Must die at the
-        # guarded importer instead of importing.
+        # __builtins__, fetch __import__, import subprocess. Since round 4
+        # the `import inspect` entry is itself statically blocked, so the
+        # chain dies before exec(); the wrapper layer underneath stays
+        # covered by test_safe_builtins_import_is_guarded.
         code = (
             "import inspect\n"
             "ns = inspect.getargvalues(inspect.currentframe())[3]\n"
@@ -526,8 +548,8 @@ class TestRunGuardedScript(unittest.TestCase):
             "print(m.run)"
         )
         result = run_guarded_script(code, _empty_ns)
-        assert "ImportError" in result
-        assert "subprocess" in result
+        assert result.startswith("Error: Blocked")
+        assert "inspect" in result
 
     def test_run_guarded_script_pins_restricted_builtins(self):
         # A factory without __builtins__ gets safe_builtins() pinned —
