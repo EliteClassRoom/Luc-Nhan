@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..core.logging import log_debug
+from ..tools.base import parse_addr
 from ..tools.coercion import coerce_bool
 
 
@@ -380,6 +381,17 @@ def _parse_struct_info(raw: Any) -> dict[str, Any] | None:
         (list of ``{"name": str, "type": str, "offset": int, "size": int,
         "comment": str}``), or ``None`` when the getter failed or the
         payload is unparseable.
+
+    Coupling to IDA's ``iter_struct()`` output shape: the line layout
+    ``+0xOFF TYPE NAME (N bytes)`` (optionally followed by ``; cmt``)
+    is produced by ``rikugan/ida/tools/types_tools._get_struct_info_ida9``
+    via ``tif.iter_struct()``. If a future IDA version changes column
+    widths, header wording, or member ordering, this parser MUST be
+    updated. The guard test
+    ``tests/agent/test_mutation_coverage.py::test_parser_returns_none_on_garbage_struct_output``
+    verifies the failure mode is fail-safe (return ``None`` →
+    builder falls through to non-reversible) rather than silent
+    misinterpretation.
     """
     if not isinstance(raw, str) or not raw.strip():
         return None
@@ -458,6 +470,18 @@ def _parse_enum_info(raw: Any) -> dict[str, Any] | None:
         dict with keys ``name`` (str), ``bitfield`` (bool), ``members``
         (list of ``{"name": str, "value": int}``), or ``None`` when the
         getter failed or the payload is unparseable.
+
+    Coupling to IDA's enum iteration output shape: the
+    ``NAME = 0xVAL (DEC)`` line layout is produced by
+    ``rikugan/ida/tools/types_tools.get_enum_info`` via
+    ``ida_enum.get_first_enum_member`` / ``get_next_enum_member`` (or
+    ``tif.iter_enum()`` as fallback). If a future IDA version changes
+    column widths, header wording, or value formatting, this parser
+    MUST be updated. The guard test
+    ``tests/agent/test_mutation_coverage.py::test_parser_returns_none_on_garbage_enum_output``
+    verifies the failure mode is fail-safe (return ``None`` →
+    builder falls through to non-reversible) rather than silent
+    misinterpretation.
     """
     if not isinstance(raw, str) or not raw.strip():
         return None
@@ -516,26 +540,82 @@ def _reverse_set_type(args: dict[str, Any], pre: dict[str, Any]) -> MutationReco
 def _reverse_nop_microcode(args: dict[str, Any], pre: dict[str, Any]) -> MutationRecord:
     """Build reverse record for ``nop_microcode``.
 
-    The tool carries its own pre-state in arguments: ``optimizer_name``
-    is the key the runtime uses to track the installed ``NopOptimizer``
-    in ``installed_optimizers``. Calling ``remove_microcode_optimizer``
-    with the same name uninstalls the rule.
+    The reverse calls ``remove_microcode_optimizer`` with the
+    actually-installed optimizer name. ``optimizer_name`` is sourced in
+    this priority order:
+
+    1. Explicit ``optimizer_name`` argument from the LLM call (when
+       provided).
+    2. Post-execute lookup in ``installed_optimizers``: find the
+       ``NopOptimizer`` whose ``func_ea`` and ``target_eas`` match the
+       captured pre-state (the LLM may have omitted ``optimizer_name``
+       and let the runtime derive ``f"nop_{ea:#x}_{N}"``).
+    3. Deterministic re-derivation of the runtime's name:
+       ``f"nop_{func_ea:#x}_{len(installed_optimizers)}"``.
+
+    If none of the above produces a non-empty name, the mutation is
+    flagged non-reversible with a description that names the tool so
+    the user can clean up manually.
     """
-    optimizer_name = args.get("optimizer_name", "")
     func_address = args.get("func_address", "")
-    if not _has_value(optimizer_name):
+    name = args.get("optimizer_name", "") or pre.get("optimizer_name", "")
+    if not _has_value(name):
+        # Try to recover from the optimizer registry.
+        name = _resolve_installed_nop_optimizer_name(pre)
+    if not _has_value(name):
+        # Last resort: derive deterministically. This matches the
+        # runtime in microcode.py when no collision happens. If a
+        # collision did happen, the runtime removes+re-installs and the
+        # length never grows — so the derived name still matches the
+        # post-execute count.
+        name = _derive_nop_optimizer_name(pre)
+    if not _has_value(name):
         return _not_reversible(
             "nop_microcode",
             args,
-            f"NOP microcode at {func_address} (no optimizer_name captured; cannot uninstall)",
+            f"NOP microcode at {func_address} (could not resolve optimizer_name; "
+            "pass optimizer_name explicitly for /undo, or remove it manually)",
         )
     return MutationRecord(
         tool_name="nop_microcode",
         arguments=args,
         reverse_tool="remove_microcode_optimizer",
-        reverse_arguments={"name": optimizer_name},
-        description=f"NOP microcode at {func_address} via optimizer {optimizer_name}",
+        reverse_arguments={"name": name},
+        description=f"NOP microcode at {func_address} via optimizer {name}",
     )
+
+
+def _resolve_installed_nop_optimizer_name(pre: dict[str, Any]) -> str:
+    """Peek at ``installed_optimizers`` for an NopOptimizer matching ``pre``.
+
+    Returns the matching optimizer's name, or ``""`` if no installed
+    optimizer matches ``func_ea`` + ``target_eas`` or the registry
+    module is unavailable (tests, host-agnostic agent context).
+    """
+    func_ea = pre.get("func_ea")
+    target_eas = pre.get("target_eas")
+    if not isinstance(func_ea, int) or not isinstance(target_eas, set) or not target_eas:
+        return ""
+    try:
+        from ..ida.tools.microcode_optim import NopOptimizer, installed_optimizers
+    except ImportError:
+        return ""
+    for name, opt in installed_optimizers.items():
+        if isinstance(opt, NopOptimizer) and opt.func_ea == func_ea and opt.target_eas == target_eas:
+            return name
+    return ""
+
+
+def _derive_nop_optimizer_name(pre: dict[str, Any]) -> str:
+    """Recreate the runtime's deterministic name: ``nop_<func_ea>_<N>``."""
+    func_ea = pre.get("func_ea")
+    if not isinstance(func_ea, int):
+        return ""
+    try:
+        from ..ida.tools.microcode_optim import installed_optimizers
+    except ImportError:
+        return ""
+    return f"nop_{func_ea:#x}_{len(installed_optimizers)}"
 
 
 def _lookup_struct_field(parsed: dict[str, Any] | None, field_name: str) -> dict[str, Any] | None:
@@ -1016,9 +1096,32 @@ def capture_pre_state(
             if _has_value(address):
                 pre["old_type"] = tool_executor("get_function_prototype", {"address": address})
         elif tool_name == "nop_microcode":
-            # All state needed for reversal lives in ``arguments``
-            # (the optimizer_name + the target instruction addresses).
-            # No external getter call is required.
+            # Capture the runtime inputs needed by the reverse builder to
+            # resolve the actually-installed optimizer name. The runtime
+            # derives the name as
+            # ``f"nop_{pfn.start_ea:#x}_{len(installed_optimizers)}"`` when
+            # the LLM omits ``optimizer_name`` (see
+            # ``rikugan/ida/tools/microcode.py``). Capturing
+            # ``target_eas`` + ``func_ea`` lets ``_reverse_nop_microcode``
+            # peek at ``installed_optimizers`` after the tool runs to find
+            # the matching ``NopOptimizer`` (a fallback is also tried via
+            # the deterministic derivation).
+            func_address = arguments.get("func_address", "")
+            instruction_addresses = arguments.get("instruction_addresses", "")
+            if _has_value(func_address) and _has_value(instruction_addresses):
+                target_eas: set[int] = set()
+                for piece in instruction_addresses.split(","):
+                    piece = piece.strip()
+                    if piece:
+                        try:
+                            target_eas.add(parse_addr(piece))
+                        except (TypeError, ValueError):
+                            pass
+                if target_eas:
+                    pre["func_ea"] = parse_addr(func_address)
+                    pre["target_eas"] = target_eas
+            # Whatever the LLM provided is also recorded — if non-empty
+            # it takes precedence over the post-execute lookup.
             pre["optimizer_name"] = arguments.get("optimizer_name", "")
         elif tool_name == "modify_struct":
             # Pull the struct layout so the builder can revert add/

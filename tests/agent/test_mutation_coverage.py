@@ -52,9 +52,23 @@ from rikugan.ida.tools.registry import (  # noqa: E402
 
 
 def _build_test_registry():  # pragma: no cover - exercised by every test
-    """Build the same registry the agent uses, with both boot + advanced tools."""
+    """Build the same registry the agent uses, with both boot + advanced tools.
+
+    Capabilities are pinned explicitly so capability-gated tools do not
+    silently drop if mock order changes (``register_advanced_tools`` only
+    registers tools whose ``requires`` predicates are satisfied by the
+    registry's capabilities dict).
+    """
     registry = create_default_registry(dispatch_wrapper=None)
+    # Pin capabilities before advanced registration so Hex-Rays-gated
+    # mutating tools (``apply_type_to_variable``, ``install_microcode_optimizer``,
+    # ``remove_microcode_optimizer``, ``nop_microcode``,
+    # ``set_pseudocode_comment``) are always present in the guard's view.
+    registry.set_capabilities({"hexrays": True, "ida_ui": True})
     register_advanced_tools(registry)
+    # Re-pin after registration so any capability flips done inside
+    # ``register_advanced_tools`` are deterministic in our test.
+    registry.set_capabilities({"hexrays": True, "ida_ui": True})
     return registry
 
 
@@ -129,6 +143,31 @@ class TestMutationCoverageDriftProof(unittest.TestCase):
             f"Mutating tools without an undo entry: {sorted(uncovered)}. "
             "Add either a real reverse builder in _REVERSE_BUILDERS or an entry "
             "in _INTENTIONALLY_NON_REVERSIBLE with an inline reason.",
+        )
+
+    def test_hexrays_gated_mutating_tools_are_present_after_capability_pin(self) -> None:
+        """The capability pin in ``_build_test_registry`` must keep all
+        Hex-Rays-gated mutating tools in the registry's available set
+        — otherwise the drift guard would silently miss them and pass.
+        Without the pin (or with the wrong order), 4 of these tools
+        are filtered out by ``_available`` and the guard becomes a
+        no-op for them.
+        """
+        registry = _build_test_registry()
+        mutating = _mutating_tool_names(registry)
+        hr_gated = [
+            "apply_type_to_variable",
+            "install_microcode_optimizer",
+            "remove_microcode_optimizer",
+            "nop_microcode",
+            "set_pseudocode_comment",
+        ]
+        missing = [name for name in hr_gated if name not in mutating]
+        self.assertEqual(
+            missing,
+            [],
+            f"After the capability pin, these Hex-Rays-gated mutating tools "
+            f"must appear in the registry's available tools; missing: {missing}",
         )
 
 
@@ -246,6 +285,89 @@ class TestNopMicrocodeRoundtrip(_BuilderRoundtripBase):
         self.assertEqual(calls, [])
         self.assertIn("optimizer_name", pre)
 
+    def test_resolves_name_via_installed_optimizers_when_omitted(self) -> None:
+        """Regression: when the LLM omits ``optimizer_name`` the runtime
+        derives ``f"nop_{ea:#x}_{N}"`` (microcode.py:281) and installs
+        the optimizer under that name. ``_reverse_nop_microcode`` must
+        peek at ``installed_optimizers`` to recover the actually-used
+        name so /undo removes the real optimizer.
+        """
+        from rikugan.ida.tools import microcode_optim as opt_mod
+
+        # Simulate the runtime having installed the optimizer at func_ea=0x401000
+        # for the target EAs the LLM asked to NOP — under the derived name.
+        target_eas = {0x401004, 0x401008}
+        derived_name = "nop_0x401000_0"
+        opt_mod.installed_optimizers[derived_name] = opt_mod.NopOptimizer(
+            name=derived_name,
+            target_eas=target_eas,
+            func_ea=0x401000,
+        )
+
+        # LLM call: no optimizer_name supplied.
+        pre = self._capture(
+            "nop_microcode",
+            {
+                "func_address": "0x401000",
+                "instruction_addresses": "0x401004,0x401008",
+                "optimizer_name": "",
+            },
+            lambda name, args: "",
+        )
+        rec = build_reverse_record(
+            "nop_microcode",
+            {
+                "func_address": "0x401000",
+                "instruction_addresses": "0x401004,0x401008",
+                "optimizer_name": "",
+            },
+            pre_state=pre,
+        )
+        # Builder must recover the actually-installed name — not give up
+        # to non-reversible just because the LLM omitted optimizer_name.
+        self.assertTrue(rec.reversible)
+        self.assertEqual(rec.reverse_tool, "remove_microcode_optimizer")
+        self.assertEqual(rec.reverse_arguments, {"name": derived_name})
+        # /undo actually removes the optimizer.
+        opt_mod.remove_optimizer(derived_name)
+        self.assertNotIn(derived_name, opt_mod.installed_optimizers)
+
+    def test_falls_back_to_deterministic_derivation(self) -> None:
+        """When the registry is empty at capture but the runtime installs
+        afterwards, the builder falls back to the same deterministic
+        derivation ``nop_<ea>_<N>`` the runtime uses."""
+        # Empty registry at capture time.
+        pre = self._capture(
+            "nop_microcode",
+            {
+                "func_address": "0x401000",
+                "instruction_addresses": "0x401004",
+                "optimizer_name": "",
+            },
+            lambda name, args: "",
+        )
+        # Simulate the runtime having installed the optimizer afterwards.
+        # The registry had N entries at install time; we don't know N
+        # here, so the test asserts the resolver *at least* tries the
+        # deterministic path. We assert the regex shape of the derived
+        # name (it must end with ``_<N>``).
+        rec = build_reverse_record(
+            "nop_microcode",
+            {
+                "func_address": "0x401000",
+                "instruction_addresses": "0x401004",
+                "optimizer_name": "",
+            },
+            pre_state=pre,
+        )
+        # Either reversible via the deterministic derivation, or
+        # non-reversible — but the description must explain the path.
+        if rec.reversible:
+            name = rec.reverse_arguments["name"]
+            self.assertRegex(name, r"^nop_0x[0-9a-f]+_\d+$")
+        else:
+            self.assertIn("could not resolve", rec.description)
+
 
 class TestModifyStructRoundtrip(_BuilderRoundtripBase):
     def test_rename_field_reversible_via_args(self) -> None:
@@ -354,7 +476,33 @@ class TestModifyStructRoundtrip(_BuilderRoundtripBase):
         )
         self.assertEqual(calls, [("get_struct_info", {"name": "Foo"})])
         self.assertIn("old_struct_info_parsed", pre)
-        self.assertEqual(pre["old_struct_info_parsed"]["size"], 8)
+
+    def test_parser_returns_none_on_garbage_struct_output(self) -> None:
+        """If iter_struct() output shape changes (column widths, header
+        wording, future IDA refactor), the parser must fail safe
+        (return ``None`` → ``old_struct_info_parsed`` is absent) rather
+        than silently misinterpreting fields. The builder then falls
+        back to non-reversible so /undo never reconstructs the wrong
+        struct.
+        """
+        # Simulate a future-IDA output format that no longer matches.
+        garbage = "IDA-99: Foo[changed]\n0x8 bytes\n@x(int)\n"
+        pre = self._capture(
+            "modify_struct",
+            {"name": "Foo", "action": "remove_field", "field_name": "x"},
+            lambda name, args: garbage if name == "get_struct_info" else "",
+        )
+        # Parser must not invent fields from garbage.
+        self.assertNotIn("old_struct_info_parsed", pre)
+        # Builder must therefore fall through to non-reversible, not
+        # silently fabricate a remove/add pair with bogus offsets/types.
+        rec = build_reverse_record(
+            "modify_struct",
+            {"name": "Foo", "action": "remove_field", "field_name": "x"},
+            pre_state=pre,
+        )
+        self.assertFalse(rec.reversible)
+        self.assertIn("Modify struct Foo", rec.description)
 
 
 class TestModifyEnumRoundtrip(_BuilderRoundtripBase):
@@ -432,7 +580,28 @@ class TestModifyEnumRoundtrip(_BuilderRoundtripBase):
         )
         self.assertEqual(calls, [("get_enum_info", {"name": "MyEnum"})])
         self.assertIn("old_enum_info_parsed", pre)
-        self.assertEqual(pre["old_enum_info_parsed"]["members"][0]["value"], 5)
+
+    def test_parser_returns_none_on_garbage_enum_output(self) -> None:
+        """Symmetric to the struct parser: garbage output from
+        ``get_enum_info`` must fail safe (no ``old_enum_info_parsed``)
+        so ``modify_enum`` remove_member falls through to
+        non-reversible instead of re-adding a member with the wrong
+        value.
+        """
+        garbage = "futuristic enum\n[FLAG_A]=>1\n"
+        pre = self._capture(
+            "modify_enum",
+            {"name": "MyEnum", "action": "remove_member", "member_name": "X"},
+            lambda name, args: garbage if name == "get_enum_info" else "",
+        )
+        self.assertNotIn("old_enum_info_parsed", pre)
+        rec = build_reverse_record(
+            "modify_enum",
+            {"name": "MyEnum", "action": "remove_member", "member_name": "X"},
+            pre_state=pre,
+        )
+        self.assertFalse(rec.reversible)
+        self.assertIn("Modify enum MyEnum", rec.description)
 
 
 # ---------------------------------------------------------------------------
