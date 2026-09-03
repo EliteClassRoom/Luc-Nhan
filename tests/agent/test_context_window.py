@@ -135,6 +135,36 @@ class TestCompactionToolResultBoundary:
         ]
         assert tail_tool_names == ["rename_function"]
 
+    def test_boundary_walk_iterates_past_consecutive_tool_results(self):
+        manager = ContextWindowManager()
+        # Review shape: the boundary lands on the FIRST of two consecutive
+        # tool results, so the walk must advance twice to find a non-TOOL
+        # tail start.
+        messages = [
+            system_msg(),
+            user_msg("u1"),
+            user_msg("u2"),
+            user_msg("u3"),
+            Message(
+                role=Role.ASSISTANT,
+                content="",
+                tool_calls=[
+                    ToolCall(id="call_a", name="list_functions", arguments={}),
+                    ToolCall(id="call_b", name="get_function", arguments={}),
+                ],
+            ),
+            tool_result("list_functions", "call_a"),
+            tool_result("get_function", "call_b"),
+            user_msg("u4"),
+            user_msg("u5"),
+        ]
+        assert len(messages) == 9  # boundary = 9 - 4 = 5 → lands on T_a
+        compacted = manager.compact_messages(messages)
+        assert_no_orphaned_tool_results(compacted)
+        # Both tool results left with their partner into the summary; the
+        # surviving tail contains no TOOL message at all.
+        assert all(m.role != Role.TOOL for m in compacted[1:])
+
     def test_invariant_holds_for_tool_pair_at_every_position(self):
         manager = ContextWindowManager()
         # Slide a tool pair through every insertion point of a 9-message
