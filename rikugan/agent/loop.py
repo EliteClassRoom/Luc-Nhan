@@ -1554,6 +1554,12 @@ class AgentLoop:
             # so a description here would duplicate the first line. Return
             # empty.
             return ""
+        if name == "delegate_external_task":
+            # Approval prompt must show exactly what will run externally:
+            # the target agent name and the full task text.
+            agent = str(args.get("agent", "?"))
+            task = str(args.get("task", ""))
+            return f"Delegate task to external agent '{agent}': {task}"
         if name in ("rename_function",):
             return f"Rename function {args.get('old_name', '?')} → {args.get('new_name', '?')}"
         if name in ("rename_variable",):
@@ -2229,6 +2235,18 @@ class AgentLoop:
 
         if not agent_name or not task:
             content = "Error: both 'agent' and 'task' are required."
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+
+        # Approval gate: delegation spawns an external CLI agent (or HTTP
+        # endpoint) driven by LLM-authored task text — the same risk class
+        # as execute_python. Route through the shared approval queue so the
+        # UI prompt and the headless serve-mode HTTP /tool-approval path
+        # both apply. The explicit /a2a slash command bypasses this
+        # handler entirely (run_a2a_mode) and stays ungated.
+        approved = yield from self._wait_for_approval(tc)
+        if not approved:
+            content = "External task delegation denied by user."
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
 
