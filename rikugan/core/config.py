@@ -384,8 +384,27 @@ class RikuganConfig:
 
         if "provider" in data:
             for k, v in data["provider"].items():
-                if hasattr(self.provider, k):
-                    setattr(self.provider, k, v)
+                if not hasattr(self.provider, k):
+                    continue
+                # Numeric provider fields: hand-edited configs sometimes
+                # leave these as JSON strings ("0.3", "4096").  Coerce in
+                # place when possible; reject (skip) values that cannot
+                # be parsed so validate()/save() never raise TypeError.
+                if k == "temperature":
+                    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+                        continue
+                    try:
+                        v = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                elif k in ("max_tokens", "context_window"):
+                    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+                        continue
+                    try:
+                        v = int(v)
+                    except (TypeError, ValueError):
+                        continue
+                setattr(self.provider, k, v)
         self.providers = data.get("providers", {})
         self.custom_providers = data.get("custom_providers", {})
         for k in (
@@ -412,6 +431,7 @@ class RikuganConfig:
             "parallel_agent_enabled",
             "parallel_agent_max_concurrent",
             "oauth_consent_accepted",
+            "preserve_context",
             "encrypt_api_keys",
             "ida_output_log_level",
             "knowledge_enabled",
@@ -443,7 +463,8 @@ class RikuganConfig:
                     val = "on_error"
                 # Boolean fields must be real JSON booleans — reject
                 # truthy strings/integers so a hand-edited config file
-                # can never silently enable central persistence.
+                # can never silently enable security/UX gates (consent,
+                # encryption, context preservation, agent discovery, …).
                 _BOOLEAN_FIELDS = {
                     "auto_context",
                     "plan_mode_default",
@@ -454,6 +475,10 @@ class RikuganConfig:
                     "knowledge_show_retrieved_in_chat",
                     "hide_strings",
                     "parallel_agent_enabled",
+                    "oauth_consent_accepted",
+                    "preserve_context",
+                    "a2a_auto_discover",
+                    "encrypt_api_keys",
                 }
                 if k in _BOOLEAN_FIELDS and not isinstance(val, bool):
                     continue

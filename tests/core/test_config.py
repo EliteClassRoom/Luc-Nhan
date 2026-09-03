@@ -160,3 +160,88 @@ def test_blob_round_trips_through_load_and_save(tmp_path: Path) -> None:
     cfg2.load()
     assert cfg2.decrypt_stored_keys("hunter2") is True
     assert cfg2.provider.api_key == "sk-secret"
+
+# --------------------------------------------------------------------
+# Config hardening: strict boolean guard + numeric coercion
+# --------------------------------------------------------------------
+# Hand-edited config files must not silently flip security-relevant
+# booleans ("yes"/"1"/1 → True is a hardening regression) and must not
+# crash validate()/save() when a numeric field arrives as a string.
+# These tests pin both behaviors via _apply_loaded_config, which is the
+# single source of truth for loading saved JSON.
+
+
+def test_truthy_string_does_not_enable_oauth_consent() -> None:
+    cfg = RikuganConfig()
+    cfg._apply_loaded_config({"oauth_consent_accepted": "yes"})
+    assert cfg.oauth_consent_accepted is False
+
+
+def test_truthy_string_does_not_enable_preserve_context() -> None:
+    cfg = RikuganConfig()
+    cfg._apply_loaded_config({"preserve_context": "true"})
+    assert cfg.preserve_context is False
+
+
+def test_truthy_string_does_not_disable_a2a_auto_discover() -> None:
+    cfg = RikuganConfig()
+    cfg._apply_loaded_config({"a2a_auto_discover": "0"})
+    assert cfg.a2a_auto_discover is True  # default preserved
+
+
+def test_truthy_string_does_not_enable_encrypt_api_keys() -> None:
+    # Security-critical gate: must never silently flip from a truthy string.
+    cfg = RikuganConfig()
+    cfg._apply_loaded_config({"encrypt_api_keys": "yes"})
+    assert cfg.encrypt_api_keys is False
+
+
+def test_real_bool_oauth_consent_is_accepted() -> None:
+    cfg = RikuganConfig()
+    cfg._apply_loaded_config({"oauth_consent_accepted": True})
+    assert cfg.oauth_consent_accepted is True
+
+
+def test_string_temperature_loads_and_validate_returns_errors_not_raises() -> None:
+    # Hand-edited config: temperature arrived as a JSON string.
+    # _apply_loaded_config must coerce-or-skip so validate() never sees a
+    # non-numeric temperature (which would raise TypeError on "<=").
+    cfg = RikuganConfig()
+    cfg._apply_loaded_config({
+        "provider": {
+            "name": "anthropic",
+            "temperature": "0.3",
+            "max_tokens": 4096,
+            "context_window": 100000,
+        }
+    })
+    # No TypeError — validate() returns a list (possibly with errors).
+    errors = cfg.validate()
+    assert isinstance(errors, list)
+
+def test_garbage_temperature_is_rejected_not_loaded() -> None:
+    cfg = RikuganConfig()
+    cfg._apply_loaded_config({
+        "provider": {"temperature": "not-a-number"}
+    })
+    # Bad value skipped; default temperature is preserved.
+    from rikugan.constants import DEFAULT_TEMPERATURE
+    assert cfg.provider.temperature == DEFAULT_TEMPERATURE
+
+
+def test_garbage_max_tokens_is_rejected_not_loaded() -> None:
+    cfg = RikuganConfig()
+    cfg._apply_loaded_config({
+        "provider": {"max_tokens": "lots"}
+    })
+    from rikugan.constants import DEFAULT_MAX_TOKENS
+    assert cfg.provider.max_tokens == DEFAULT_MAX_TOKENS
+
+
+def test_garbage_context_window_is_rejected_not_loaded() -> None:
+    cfg = RikuganConfig()
+    cfg._apply_loaded_config({
+        "provider": {"context_window": "huge"}
+    })
+    from rikugan.constants import DEFAULT_CONTEXT_WINDOW
+    assert cfg.provider.context_window == DEFAULT_CONTEXT_WINDOW
