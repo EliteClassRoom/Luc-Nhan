@@ -407,6 +407,62 @@ class TestMutationPropagation(unittest.TestCase):
 
         self.assertEqual(len(loop._mutation_log), 200, "all concurrent records must land exactly once")
 
+    def test_subagent_mutations_propagate_when_child_run_is_interrupted(self):
+        """A child abandoned/raised mid-run must still hand its mutations to
+        the parent's /undo log — the sync runs in a finally, not only on the
+        success path.
+        """
+        parent = AgentLoop(
+            provider=ScriptedProvider(),
+            tool_registry=ToolRegistry(),
+            config=_config(),
+            session=SessionState(),
+        )
+        child_state = {"name": "sub_401000"}
+        provider = ScriptedProvider(
+            responses=[
+                _tool_call_response(
+                    "rename_function",
+                    {"address": "0x401000", "new_name": "main"},
+                    call_id="call_rename",
+                ),
+            ]
+        )
+        runner = SubagentRunner(
+            provider=provider,
+            tool_registry=_rename_registry(child_state),
+            config=_config(),
+            host_name="IDA Pro",
+            parent_loop=parent,
+        )
+
+        gen = runner.run_task("rename 0x401000 to main")
+        mutation_seen = False
+        for event in gen:
+            if event.type == TurnEventType.MUTATION_RECORDED:
+                mutation_seen = True
+                # Simulate the parent run dying right after the child mutated:
+                # throw into the generator at the suspended yield.
+                with self.assertRaises(RuntimeError):
+                    gen.throw(RuntimeError("parent aborted"))
+                break
+        self.assertTrue(mutation_seen, "child must have performed the rename before the abort")
+        self.assertEqual(len(parent._mutation_log), 1, "finally-sync must deliver the child mutation")
+        self.assertEqual(parent._mutation_log[0].reverse_arguments["new_name"], "sub_401000")
+
+    def test_explicit_unattended_false_without_parent_loop_raises(self):
+        """unattended=False + parent_loop=None would silently recreate the
+        approval deadlock (private, unanswered queues) — must fail fast.
+        """
+        with self.assertRaises(ValueError):
+            SubagentRunner(
+                provider=ScriptedProvider(),
+                tool_registry=_interactive_registry([]),
+                config=_config(),
+                host_name="IDA Pro",
+                unattended=False,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

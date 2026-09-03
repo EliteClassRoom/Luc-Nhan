@@ -2181,6 +2181,7 @@ class AgentLoop:
                 tool_registry=self.tools,
                 config=self.config,
                 host_name=self.host_name,
+                skill_registry=self.skills,
                 parent_loop=self,
                 unattended=self._unattended,
             ),

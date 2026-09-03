@@ -73,6 +73,17 @@ class SubagentRunner:
         # ``unattended`` overrides the default (used to propagate the flag
         # down the subagent tree from an already-unattended parent).
         self._unattended = (parent_loop is None) if unattended is None else unattended
+        # ``unattended=False`` claims someone answers the child's queues —
+        # only ever true when the queues are inherited via parent_loop. A
+        # parentless child owns fresh queues, so this combination would
+        # silently recreate the approval deadlock; fail fast instead.
+        if not self._unattended and parent_loop is None:
+            raise ValueError(
+                "SubagentRunner(unattended=False, parent_loop=None) is invalid: a "
+                "parentless child owns private approval/question queues nobody "
+                "answers, so attended gates would deadlock. Pass parent_loop, or "
+                "omit unattended to default to unattended."
+            )
 
     def _resolve_child_provider_and_config(
         self,
@@ -224,21 +235,24 @@ class SubagentRunner:
             augmented_task = f"{system_addendum}\n\n{augmented_task}"
 
         final_text = ""
-        for event in loop.run(augmented_task):
-            # In silent mode, only forward interactive events
-            if silent:
-                if event.type in self._INTERACTIVE_EVENTS:
+        try:
+            for event in loop.run(augmented_task):
+                # In silent mode, only forward interactive events
+                if silent:
+                    if event.type in self._INTERACTIVE_EVENTS:
+                        yield event
+                else:
                     yield event
-            else:
-                yield event
 
-            # Capture the last text_done as the final output
-            if event.type.value == "text_done" and event.text:
-                final_text = event.text
-
-        # Propagate child-run side effects to the parent: mutations land in
-        # the parent's /undo log; the "always allow scripts" flag syncs back.
-        self._sync_to_parent(loop)
+                # Capture the last text_done as the final output
+                if event.type.value == "text_done" and event.text:
+                    final_text = event.text
+        finally:
+            # Propagate child-run side effects to the parent on success AND
+            # failure (exception, cancellation, generator close): mutations
+            # performed before a mid-run failure must still reach the
+            # parent's /undo log; the "always allow scripts" flag syncs back.
+            self._sync_to_parent(loop)
 
         log_info(f"Subagent finished: {len(final_text)} chars output")
         return final_text
@@ -267,8 +281,13 @@ class SubagentRunner:
 
         log_info(f"Subagent exploration started: goal={user_goal[:80]!r}, max_turns={max_turns}")
 
-        # Run in explore-only mode via the /explore prefix
-        yield from loop.run(f"/explore {user_goal}")
+        # Run in explore-only mode via the /explore prefix. Sync mutations to
+        # the parent in a finally so a cancelled/failed exploration still
+        # leaves its recorded mutations in the parent's /undo log.
+        try:
+            yield from loop.run(f"/explore {user_goal}")
+        finally:
+            self._sync_to_parent(loop)
 
         # Extract the knowledge base.  _run_exploration_mode stores
         # it in _last_knowledge_base before clearing _exploration_state.
@@ -276,9 +295,6 @@ class SubagentRunner:
         if kb is None:
             kb = KnowledgeBase(user_goal=user_goal)
             log_debug("Subagent exploration: no knowledge base returned, using empty")
-
-        # Propagate mutations + "always allow" flag back to the parent
-        self._sync_to_parent(loop)
 
         log_info(
             f"Subagent exploration finished: "
@@ -329,18 +345,22 @@ class SubagentRunner:
             augmented_task = f"{system_addendum}\n\n{augmented_task}"
 
         final_text = ""
-        for event in loop.run(augmented_task):
-            if silent:
-                if event.type in self._INTERACTIVE_EVENTS:
+        try:
+            for event in loop.run(augmented_task):
+                if silent:
+                    if event.type in self._INTERACTIVE_EVENTS:
+                        yield event
+                else:
                     yield event
-            else:
-                yield event
 
-            if event.type.value == "text_done" and event.text:
-                final_text = event.text
-
-        # Propagate mutations + "always allow" flag back to the parent
-        self._sync_to_parent(loop)
+                if event.type.value == "text_done" and event.text:
+                    final_text = event.text
+        finally:
+            # Propagate child-run side effects to the parent on success AND
+            # failure (exception, cancellation, generator close): mutations
+            # performed before a mid-run failure must still reach the
+            # parent's /undo log; the "always allow scripts" flag syncs back.
+            self._sync_to_parent(loop)
 
         log_info(f"Subagent mode finished: mode={mode}, {len(final_text)} chars output")
         return final_text
