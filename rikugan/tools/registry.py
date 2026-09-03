@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
-from ..constants import TOOL_RESULT_TRUNCATE_LEN
+from ..constants import EXECUTE_PYTHON_TOOL_NAME, TOOL_RESULT_TRUNCATE_LEN
 from ..core.errors import ToolError, ToolNotFoundError, ToolValidationError
 from ..core.logging import log_debug
 from .base import ToolDefinition
@@ -178,6 +178,7 @@ class ToolRegistry:
     def list_tools(self) -> list[ToolDefinition]:
         with self._lock:
             return list(self._tools.values())
+
     def read_only_view(self) -> "ToolRegistry":
         """Return a new registry that exposes only the non-mutating tools.
 
@@ -227,8 +228,26 @@ class ToolRegistry:
                 log_debug(f"ToolRegistry.allowlist: requested tool {name!r} not registered")
         return view
 
+    def without_approval_gated_tools(self) -> "ToolRegistry":
+        """Return a new registry excluding tools that need interactive approval.
 
-
+        Unattended subagents (bulk-renamer deep workers, SubagentManager
+        background threads) have nobody answering their approval queues: an
+        approval-gated call would block the child in
+        ``AgentLoop._wait_for_queue`` forever. This view drops
+        ``execute_python`` and every tool whose :class:`ToolDefinition` sets
+        ``requires_approval`` so the gate can never be reached. Mirrors
+        :meth:`read_only_view` / :meth:`allowlist`: shares the dispatch
+        wrapper and capabilities, isolated tool table.
+        """
+        view = ToolRegistry(dispatch_wrapper=self._dispatch_wrapper)
+        with self._lock:
+            for name, defn in self._tools.items():
+                if name == EXECUTE_PYTHON_TOOL_NAME or defn.requires_approval:
+                    continue
+                view._tools[name] = defn
+            view._capabilities.update(self._capabilities)
+        return view
 
     def list_available_tools(self) -> list[ToolDefinition]:
         """Return only tools whose capability requirements are satisfied.

@@ -54,6 +54,7 @@ class SubagentRunner:
         parent_loop: Any | None = None,
         cancel_event: Any | None = None,
         model_override: str = "",
+        unattended: bool | None = None,
     ):
         self.provider = provider
         self.tools = tool_registry
@@ -64,6 +65,14 @@ class SubagentRunner:
         self._cancel_event = cancel_event
         self._model_override = model_override or ""
         self._last_session: SessionState | None = None
+        # Unattended children have no parent UI attached: interactive gates
+        # (execute_python, requires_approval tools, ask_user, external
+        # delegation) would block forever in _wait_for_queue because nobody
+        # answers their queues. Default: unattended exactly when there is no
+        # parent loop to inherit working queues from; an explicit
+        # ``unattended`` overrides the default (used to propagate the flag
+        # down the subagent tree from an already-unattended parent).
+        self._unattended = (parent_loop is None) if unattended is None else unattended
 
     def _resolve_child_provider_and_config(
         self,
@@ -130,21 +139,45 @@ class SubagentRunner:
         from .loop import AgentLoop  # deferred to avoid circular import
 
         child_provider, child_config = self._resolve_child_provider_and_config()
+        # Unattended children get a registry view without approval-gated
+        # tools (execute_python, requires_approval) so neither the provider
+        # schema, the tools catalog, nor a direct call can reach a gate
+        # nobody answers.
+        registry = self.tools
+        if self._unattended and registry is not None:
+            registry = registry.without_approval_gated_tools()
         return AgentLoop(
             provider=child_provider,
-            tool_registry=self.tools,
+            tool_registry=registry,
             config=child_config,
             session=session,
             skill_registry=self.skills,
             host_name=self.host_name,
             parent_loop=self._parent_loop,
             cancel_event=self._cancel_event,
+            unattended=self._unattended,
         )
 
     @property
     def last_session(self) -> SessionState | None:
         """The session from the most recent subagent run."""
         return self._last_session
+
+    def _sync_to_parent(self, loop: Any) -> None:
+        """Propagate a finished child run's side effects to the parent loop.
+
+        Mutations the child recorded (renames, comments, ...) are copied
+        into the parent's mutation log so ``/undo`` reverses subagent
+        changes too; the "always allow scripts" flag syncs back as before.
+        No-op when there is no parent loop (unattended workers) — their
+        records die with the child loop, which is the pre-existing
+        behaviour for manager/bulk-rename agents.
+        """
+        if self._parent_loop is None:
+            return
+        self._parent_loop.record_mutations(loop.drain_mutations())
+        if loop._always_allow_scripts:
+            self._parent_loop._always_allow_scripts = True
 
     # Event types that must always be forwarded even in silent mode
     # (approval gates and user questions require UI interaction).
@@ -203,9 +236,9 @@ class SubagentRunner:
             if event.type.value == "text_done" and event.text:
                 final_text = event.text
 
-        # Sync "always allow" flag back to parent
-        if self._parent_loop and loop._always_allow_scripts:
-            self._parent_loop._always_allow_scripts = True
+        # Propagate child-run side effects to the parent: mutations land in
+        # the parent's /undo log; the "always allow scripts" flag syncs back.
+        self._sync_to_parent(loop)
 
         log_info(f"Subagent finished: {len(final_text)} chars output")
         return final_text
@@ -244,9 +277,8 @@ class SubagentRunner:
             kb = KnowledgeBase(user_goal=user_goal)
             log_debug("Subagent exploration: no knowledge base returned, using empty")
 
-        # Sync "always allow" flag back to parent
-        if self._parent_loop and loop._always_allow_scripts:
-            self._parent_loop._always_allow_scripts = True
+        # Propagate mutations + "always allow" flag back to the parent
+        self._sync_to_parent(loop)
 
         log_info(
             f"Subagent exploration finished: "
@@ -307,8 +339,8 @@ class SubagentRunner:
             if event.type.value == "text_done" and event.text:
                 final_text = event.text
 
-        if self._parent_loop and loop._always_allow_scripts:
-            self._parent_loop._always_allow_scripts = True
+        # Propagate mutations + "always allow" flag back to the parent
+        self._sync_to_parent(loop)
 
         log_info(f"Subagent mode finished: mode={mode}, {len(final_text)} chars output")
         return final_text

@@ -329,6 +329,7 @@ def _run_phase1_subagent(
         host_name=loop.host_name,
         skill_registry=loop.skills,
         parent_loop=loop,
+        unattended=loop.unattended,
     )
 
     log_info("Phase 1 running as subagent (isolated context)")

@@ -462,6 +462,7 @@ class TestVerifierReadOnlyToolView(unittest.TestCase):
         loop._user_answer_queue = queue.Queue(maxsize=1)
         loop._cancelled = threading.Event()
         loop._memory_authority = None
+        loop._unattended = False  # read surface of _build_runner
         return loop
 
     def test_build_runner_strips_mutating_tools(self):

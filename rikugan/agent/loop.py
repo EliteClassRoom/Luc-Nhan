@@ -361,6 +361,7 @@ class AgentLoop:
         host_name: str = "IDA Pro",
         parent_loop: AgentLoop | None = None,
         cancel_event: threading.Event | None = None,
+        unattended: bool = False,
     ):
         self.provider = provider
         self.tools = tool_registry
@@ -395,6 +396,11 @@ class AgentLoop:
         )
         self._approval_queue: queue.Queue[str] = parent_loop._approval_queue if parent_loop else queue.Queue(maxsize=1)
         self._always_allow_scripts: bool = parent_loop._always_allow_scripts if parent_loop else False
+        # Unattended loops run without an attached UI: nobody answers
+        # approval/question queues, so interactive gates must be removed from
+        # the tool surface and rejected at dispatch (see _build_tools_schema
+        # and the _unattended guards in the tool handlers).
+        self._unattended: bool = unattended
         self.plan_mode = False
 
         # Post-error docs-review: max 1 reviewer call per user message.
@@ -413,7 +419,11 @@ class AgentLoop:
         self.memory_service = None
         self._memory_authority = None
         # Mutation log for /undo support — typed once (see MutationRecord).
+        # Guarded by _mutation_lock: subagent threads append via
+        # record_mutations while the loop thread appends in
+        # _execute_single_tool (ThreadPoolExecutor parallel runs).
         self._mutation_log: list[MutationRecord] = []
+        self._mutation_lock = threading.Lock()
 
         # Exploration mode state (populated when /modify or /explore is used)
         self._exploration_state: ExplorationState | None = None
@@ -423,6 +433,33 @@ class AgentLoop:
         from .modes.research import ResearchState as _RS
 
         self._research_state: _RS | None = None
+
+    @property
+    def unattended(self) -> bool:
+        """True when no UI is attached to answer approval/question gates."""
+        return self._unattended
+
+    def drain_mutations(self) -> list[MutationRecord]:
+        """Return this loop's mutation records and clear the log.
+
+        Used by :class:`SubagentRunner` to hand a finished child run's
+        mutations to the parent loop's /undo log.
+        """
+        with self._mutation_lock:
+            records = list(self._mutation_log)
+            self._mutation_log.clear()
+            return records
+
+    def record_mutations(self, records: list[MutationRecord]) -> None:
+        """Append mutation records to this loop's /undo log.
+
+        Thread-safe: subagent threads call this concurrently with the
+        loop's own appends.
+        """
+        if not records:
+            return
+        with self._mutation_lock:
+            self._mutation_log.extend(records)
 
     @property
     def is_running(self) -> bool:
@@ -1701,6 +1738,7 @@ class AgentLoop:
             host_name=self.host_name,
             skill_registry=self.skills,
             parent_loop=self,
+            unattended=self._unattended,
         )
 
         try:
@@ -1770,6 +1808,15 @@ class AgentLoop:
         # which exec()s LLM-authored optimizer code) is gated identically.
         defn = self.tools.get(tc.name)
         needs_approval = tc.name == constants.EXECUTE_PYTHON_TOOL_NAME or (defn is not None and defn.requires_approval)
+        if needs_approval and self._unattended:
+            content = (
+                f"Error: Tool '{tc.name}' requires user approval but this is an unattended "
+                "subagent (no user is attached to approve it). Continue the task without it."
+            )
+            log_debug(f"Blocked approval-gated tool in unattended subagent: {tc.name}")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr
         if needs_approval:
             if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
                 code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
@@ -1804,6 +1851,17 @@ class AgentLoop:
                 return tr
 
         is_mutating = defn is not None and defn.mutating
+
+        if is_mutating and self._unattended and self.config.approve_mutations:
+            content = (
+                f"Error: Tool '{tc.name}' mutates the database and mutation approval is "
+                "enabled, but this is an unattended subagent (no user is attached to "
+                "approve it). Continue the task without it."
+            )
+            log_debug(f"Blocked mutation-approval tool in unattended subagent: {tc.name}")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr
 
         if is_mutating and self.config.approve_mutations:
             approved = yield from self._wait_for_approval(tc)
@@ -1850,7 +1908,8 @@ class AgentLoop:
                         reverse_args=record.reverse_arguments,
                     )
                 else:
-                    self._mutation_log.append(record)
+                    with self._mutation_lock:
+                        self._mutation_log.append(record)
                     log_debug(f"Mutation recorded: {record.description}")
                     yield TurnEvent.mutation_recorded(
                         tool_name=record.tool_name,
@@ -2122,8 +2181,8 @@ class AgentLoop:
                 tool_registry=self.tools,
                 config=self.config,
                 host_name=self.host_name,
-                skill_registry=self.skills,
                 parent_loop=self,
+                unattended=self._unattended,
             ),
             loop=self,
         )
@@ -2171,6 +2230,7 @@ class AgentLoop:
                     host_name=self.host_name,
                     skill_registry=self.skills,
                     parent_loop=self,
+                    unattended=self._unattended,
                 )
                 raw = yield from runner.run_task(task, max_turns=max_turns)
                 content = sanitize_tool_result(raw or "(Subagent produced no output)", "spawn_subagent")
@@ -2203,6 +2263,15 @@ class AgentLoop:
 
     def _handle_ask_user_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle the ask_user pseudo-tool."""
+        if self._unattended:
+            content = (
+                "Error: ask_user is unavailable in an unattended subagent (no user is "
+                "attached to answer). Decide yourself using the available context and continue."
+            )
+            log_debug("Blocked ask_user in unattended subagent")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr
         question = tc.arguments.get("question", "")
         raw_options = tc.arguments.get("options", [])
         # Filter out empty/whitespace-only options. Some LLMs send
@@ -2235,6 +2304,16 @@ class AgentLoop:
 
         if not agent_name or not task:
             content = "Error: both 'agent' and 'task' are required."
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+
+        if self._unattended:
+            content = (
+                "Error: delegate_external_task requires user approval but this is an "
+                "unattended subagent (no user is attached to approve it). "
+                "Continue the task without it."
+            )
+            log_debug("Blocked delegate_external_task in unattended subagent")
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
 
@@ -2477,6 +2556,17 @@ class AgentLoop:
 
         tools_schema = list(self.tools.to_provider_format())
 
+        if self._unattended:
+            # No UI answers this loop's approval/question queues — never
+            # advertise tools that would block in _wait_for_queue. The
+            # SubagentRunner registry view already drops these; this repeat
+            # filter keeps the invariant local to the loop for direct
+            # constructions (tests, future callers).
+            gated = {constants.EXECUTE_PYTHON_TOOL_NAME} | {
+                d.name for d in self.tools.list_tools() if d.requires_approval
+            }
+            tools_schema = [t for t in tools_schema if t.get("function", {}).get("name") not in gated]
+
         # Filter to skill-allowed tools if the skill restricts them
         if active_skill and active_skill.allowed_tools:
             allowed = set(active_skill.allowed_tools)
@@ -2534,8 +2624,9 @@ class AgentLoop:
             tools_schema.append(SAVE_MEMORY_SCHEMA)
 
         tools_schema.append(SPAWN_SUBAGENT_SCHEMA)
-        tools_schema.append(ASK_USER_SCHEMA)
-        tools_schema.append(DELEGATE_EXTERNAL_TASK_SCHEMA)
+        if not self._unattended:
+            tools_schema.append(ASK_USER_SCHEMA)
+            tools_schema.append(DELEGATE_EXTERNAL_TASK_SCHEMA)
 
         # Deduplicate — Anthropic rejects requests with duplicate tool names
         seen: set = set()
