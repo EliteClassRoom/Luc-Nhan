@@ -278,6 +278,20 @@ class TestVerifyHypothesesFlow(unittest.TestCase):
             verify_hypotheses(loop, [mem], runner_factory=factory)
         self.assertEqual(len(calls), 1, "verifier must not start another child run after cancellation")
 
+    def test_cancel_raised_by_runner_propagates_from_drain(self):
+        """A CancellationError raised mid-drain must propagate, not stringify into a failed result."""
+        loop = self._build_loop()
+        mem = _hypothesis("mem:a", "claim")
+
+        class _CancelRunner:
+            def run_task(self, prompt: str, max_turns: int = 8, silent: bool = True):
+                if False:  # pragma: no cover - generator marker
+                    yield None
+                raise CancellationError("cancelled mid child run")
+
+        with self.assertRaises(CancellationError):
+            verify_hypotheses(loop, [mem], runner_factory=lambda: _CancelRunner())
+
 
 class TestVerifyCommandHandler(unittest.TestCase):
     def setUp(self):

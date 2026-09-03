@@ -43,6 +43,10 @@ def _drain(generator: Generator[Any, None, str]) -> tuple[str, str | None]:
             except StopIteration as stop:
                 final_text = stop.value or ""
                 break
+    except CancellationError:
+        # Cancellation must propagate unchanged so run() converts it into
+        # a CANCELLED event — never stringify it as a runner failure.
+        raise
     except Exception as exc:  # pragma: no cover - defensive
         return "", f"{type(exc).__name__}: {exc!r}"
     return final_text, None

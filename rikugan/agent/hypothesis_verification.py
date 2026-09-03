@@ -91,6 +91,10 @@ def _drain(runner: SubagentRunner, prompt: str) -> tuple[str, str | None]:
                 break
             if isinstance(piece, str):
                 collected.append(piece)
+    except CancellationError:
+        # Cancellation must propagate unchanged so run() converts it into
+        # a CANCELLED event — never stringify it as a runner failure.
+        raise
     except Exception as exc:
         return "", f"{type(exc).__name__}: {exc!r}"
     if not final_text:

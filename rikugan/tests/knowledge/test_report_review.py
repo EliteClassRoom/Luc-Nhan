@@ -103,6 +103,19 @@ class TestReviewCancellation(unittest.TestCase):
                 review_memories(loop, [_memory("a")], max_cycles=3)
         self.assertEqual(len(calls), 1, "corrector must not run after cancellation")
 
+    def test_cancel_raised_by_runner_propagates_from_drain(self):
+        """A CancellationError raised mid-drain must propagate, not stringify into a failed result."""
+        loop = _make_loop()
+
+        class _CancelRunner:
+            def run_task(self, prompt: str, max_turns: int = 20, silent: bool = False):
+                if False:  # pragma: no cover - generator marker
+                    yield None
+                raise CancellationError("cancelled mid child run")
+
+        with self.assertRaises(CancellationError):
+            review_memories(loop, [_memory("a")], max_cycles=3, runner_factory=lambda: _CancelRunner())
+
 
 class TestParseResponse(unittest.TestCase):
     def test_complete_pass(self):
