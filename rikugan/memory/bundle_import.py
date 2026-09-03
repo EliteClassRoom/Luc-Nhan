@@ -116,7 +116,32 @@ def import_workspace_bundle(
         for file_info in manifest.files:
             if not file_info.name.startswith("records/"):
                 continue
-            content = zf.read(file_info.name).decode("utf-8")
+            # Stream the member so an oversize entry can be rejected
+            # before the whole payload lands in memory. The manifest is
+            # the source of truth: declared sha256 + uncompressed_size
+            # are checked incrementally against the bytes read.
+            declared_size = file_info.uncompressed_size
+            declared_sha = file_info.sha256
+            hasher = hashlib.sha256()
+            consumed = 0
+            lines_buf: list[str] = []
+            with zf.open(file_info.name, "r") as member:
+                for raw in member:
+                    consumed += len(raw)
+                    if declared_size >= 0 and consumed > declared_size:
+                        raise ValueError(
+                            f"{file_info.name}: size mismatch — manifest declares "
+                            f"{declared_size} bytes but member exceeded that before EOF"
+                        )
+                    hasher.update(raw)
+                    lines_buf.append(raw.decode("utf-8"))
+            actual_sha = hasher.hexdigest()
+            if actual_sha != declared_sha:
+                raise ValueError(
+                    f"{file_info.name}: sha256 mismatch — manifest declares "
+                    f"{declared_sha} but member actually hashes to {actual_sha}"
+                )
+            content = "".join(lines_buf)
             for line in content.strip().split("\n"):
                 if not line:
                     continue
@@ -124,7 +149,6 @@ def import_workspace_bundle(
                     envelope = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-
                 record_type = envelope.get("record_type", "")
                 origin_id = envelope.get("record_id", "")
                 payload = envelope.get("payload", {})

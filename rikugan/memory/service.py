@@ -153,19 +153,16 @@ class BinaryMemoryService:
             source,
         )
         record = saved.record
-        # Verify the fact was actually committed before returning success
-        verify = self.repository._store.get_fact(record.id)
-        if verify is None:
-            from ..core.logging import log_error as _le
-
-            _le(f"save_fact BUG: fact {record.id} not found after save_memory_fact!")
+        # ``projection_dirty`` is derived from ``store.projection_state()``
+        # rather than local exception flags — the projector + store are
+        # the single source of truth.
         try:
             self.projector.project(self.paths, self.store)
             return SaveMemoryResult(
                 record_id=record.id,
-                revision=verify.revision if verify is not None else getattr(record, "revision", 1),
+                revision=getattr(record, "revision", 1),
                 outcome=saved.outcome,
-                projection_dirty=False,
+                projection_dirty=self.store.projection_state().projection_dirty,
                 warning="",
             )
         except Exception as exc:
@@ -175,9 +172,9 @@ class BinaryMemoryService:
             self.store.mark_projection_dirty()
             return SaveMemoryResult(
                 record_id=record.id,
-                revision=verify.revision if verify is not None else getattr(record, "revision", 1),
+                revision=getattr(record, "revision", 1),
                 outcome=saved.outcome,
-                projection_dirty=True,
+                projection_dirty=self.store.projection_state().projection_dirty,
                 warning=str(exc),
             )
 
@@ -251,18 +248,15 @@ class BinaryMemoryService:
             verification_citations=list(verification_citations or []) if normalized_category == "hypothesis" else None,
         )
         record = saved.record
-        verify = self.repository._store.get_fact(record.id)
-        if verify is None:
-            from ..core.logging import log_error as _le
-
-            _le(f"save_exploration_finding BUG: fact {record.id} not found after save!")
+        # ``projection_dirty`` mirrors the store's view; the projector
+        # and the store are the single source of truth.
         try:
             self.projector.project(self.paths, self.store)
             return SaveMemoryResult(
                 record_id=record.id,
-                revision=verify.revision if verify is not None else getattr(record, "revision", 1),
+                revision=getattr(record, "revision", 1),
                 outcome=saved.outcome,
-                projection_dirty=False,
+                projection_dirty=self.store.projection_state().projection_dirty,
                 warning="",
             )
         except Exception as exc:
@@ -272,9 +266,9 @@ class BinaryMemoryService:
             self.store.mark_projection_dirty()
             return SaveMemoryResult(
                 record_id=record.id,
-                revision=verify.revision if verify is not None else getattr(record, "revision", 1),
+                revision=getattr(record, "revision", 1),
                 outcome=saved.outcome,
-                projection_dirty=True,
+                projection_dirty=self.store.projection_state().projection_dirty,
                 warning=str(exc),
             )
 

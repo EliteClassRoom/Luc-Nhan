@@ -426,5 +426,39 @@ class TestMiniMaxNativeToolCallRecovery(unittest.TestCase):
         self.assertEqual(len(tool_use), 2)
 
 
+class TestMiniMaxThinkingChannel(unittest.TestCase):
+    """Chunks emitted while in a thinking block must pass through verbatim
+    — the native tool-call XML recovery must not run on thinking deltas.
+    """
+
+    def _thinking_text_delta(self, text: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            type="content_block_delta",
+            delta=SimpleNamespace(type="thinking_delta", thinking=text),
+            index=0,
+        )
+
+    def test_thinking_chunk_passthrough_with_invoke_xml(self):
+        from rikugan.providers.minimax_provider import _NativeToolCallFilter
+        flt = _NativeToolCallFilter()
+        out = list(flt.feed(StreamChunk(text="", is_thinking=True)))
+        out += list(
+            flt.feed(
+                StreamChunk(
+                    text='<invoke name="rename_function"><address>0x1</address></invoke>',
+                    is_thinking=True,
+                )
+            )
+        )
+        out += list(flt.flush())
+        self.assertEqual(
+            [c for c in out if c.is_tool_call_start],
+            [],
+            "thinking-channel chunks must not produce tool calls",
+        )
+        joined = "".join(c.text for c in out if c.text)
+        self.assertIn("<invoke", joined, "thinking text must pass through")
+
+
 if __name__ == "__main__":
     unittest.main()

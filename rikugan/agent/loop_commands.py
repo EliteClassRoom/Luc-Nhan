@@ -243,26 +243,36 @@ def _handle_undo_command(loop: AgentLoop, raw_cmd: str) -> Generator[TurnEvent, 
             yield TurnEvent.error_event(f"Invalid undo count: {parts[1]}. Usage: /undo [N]")
             return
 
-    if not loop._mutation_log:
+    with loop._mutation_lock:
+        pending = len(loop._mutation_log)
+    if not pending:
         yield TurnEvent.text_done("Nothing to undo — mutation log is empty.")
         return
 
-    count = min(count, len(loop._mutation_log))
+    count = min(count, pending)
     undone = 0
     errors = []
     for _ in range(count):
-        record = loop._mutation_log.pop()
+        # Peek, do not pop — record stays in the log until the reverse
+        # actually succeeds. A failed reverse keeps the entry so a
+        # follow-up /undo can retry it instead of silently losing it.
+        with loop._mutation_lock:
+            record = loop._mutation_log[-1]
         if not record.reversible:
             errors.append(f"Cannot undo: {record.description} (not reversible)")
+            with loop._mutation_lock:
+                loop._mutation_log.pop()
             continue
         try:
             loop.tools.execute(record.reverse_tool, record.reverse_arguments)
-            undone += 1
-            log_info(f"Undo: {record.description}")
         except ToolError as e:
             errors.append(f"Failed to undo {record.description}: {e}")
             log_error(f"Undo failed: {record.description}: {e}")
-
+            continue
+        with loop._mutation_lock:
+            loop._mutation_log.pop()
+        undone += 1
+        log_info(f"Undo: {record.description}")
     parts_out = []
     if undone:
         parts_out.append(f"Undid {undone} mutation(s).")
@@ -750,9 +760,7 @@ def _handle_verify_command(loop: AgentLoop, raw_id: str) -> Generator[TurnEvent,
         yield TurnEvent.error_event(f"Failed to persist verdict batch: {e}")
         return
 
-    committed = [
-        updated_memories[hid] for hid in result.verdicts if hid in updated_memories
-    ]
+    committed = [updated_memories[hid] for hid in result.verdicts if hid in updated_memories]
     for updated in committed:
         yield TurnEvent.hypothesis_verdict(
             updated.id, updated.status, updated.verdict_claim, list(updated.verification_citations)

@@ -242,6 +242,7 @@ def _build_runner(loop: AgentLoop) -> SubagentRunner:
         host_name=loop.host_name,
         skill_registry=loop.skills,
         parent_loop=loop,
+        unattended=loop.unattended,
     )
 
 

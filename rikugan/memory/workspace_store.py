@@ -12,6 +12,7 @@ import json
 import math
 import re
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -79,6 +80,7 @@ class FactRecord:
     status: str = "unverified"
     verdict_claim: str = ""
     verification_citations: tuple[str, ...] = ()
+
 
 @dataclass(frozen=True)
 class FactRevision:
@@ -291,6 +293,7 @@ def _migrate_v4(conn: Any) -> None:
     if conn.execute("PRAGMA foreign_key_check").fetchall():
         raise RuntimeError("workspace v4 migration failed foreign key check")
 
+
 _MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _migrate_v4}
 
 
@@ -300,11 +303,22 @@ _MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _migrate_v4}
 
 
 class WorkspaceStore:
-    """SQLite-backed store for one workspace's structured records."""
+    """SQLite-backed store for one workspace's structured records.
+
+    Thread model: the single connection is shared by the agent background
+    thread (writes) and the Qt main thread (knowledge-panel refresh reads).
+    Every public method serializes on ``self._lock`` so the connection is
+    never used from two threads at once, and each transaction (``BEGIN
+    IMMEDIATE`` … commit/rollback) runs wholly inside the lock, keeping it
+    atomic against readers on the same connection.
+    """
 
     def __init__(self, conn: sqlite3.Connection, paths: WorkspacePaths) -> None:
         self._conn = conn
         self._paths = paths
+        # RLock: serializes every connection access; re-entrant because
+        # save_fact_if_semantically_absent reads back through get_fact().
+        self._lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -365,7 +379,8 @@ class WorkspaceStore:
 
     def close(self) -> None:
         """Close the database connection."""
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def __enter__(self) -> WorkspaceStore:
         return self
@@ -421,67 +436,68 @@ class WorkspaceStore:
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         now = time.time()
 
-        begin_immediate_with_retry(self._conn)
-        try:
-            row = self._conn.execute(
-                "SELECT current_revision FROM facts WHERE fact_id = ?",
-                (fact_id,),
-            ).fetchone()
-            current = int(row["current_revision"]) if row is not None else 0
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                row = self._conn.execute(
+                    "SELECT current_revision FROM facts WHERE fact_id = ?",
+                    (fact_id,),
+                ).fetchone()
+                current = int(row["current_revision"]) if row is not None else 0
 
-            if current != expected_revision:
-                raise StaleRevisionError(f"expected revision {expected_revision}, found {current}")
+                if current != expected_revision:
+                    raise StaleRevisionError(f"expected revision {expected_revision}, found {current}")
 
-            revision = current + 1
+                revision = current + 1
 
-            if current == 0:
+                if current == 0:
+                    self._conn.execute(
+                        "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, entity_refs, tags,"
+                        " current_revision, created_at, status, verdict_claim, verification_citations)"
+                        " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            fact_id,
+                            fact_type,
+                            title,
+                            current_semantic_hash,
+                            entity_refs_json,
+                            tags_json,
+                            revision,
+                            now,
+                            status_value,
+                            verdict_claim,
+                            citations_json,
+                        ),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE facts SET fact_type = ?, title = ?, semantic_hash = ?,"
+                        " entity_refs = ?, tags = ?, current_revision = ?,"
+                        " status = ?, verdict_claim = ?, verification_citations = ?"
+                        " WHERE fact_id = ?",
+                        (
+                            fact_type,
+                            title,
+                            current_semantic_hash,
+                            entity_refs_json,
+                            tags_json,
+                            revision,
+                            status_value,
+                            verdict_claim,
+                            citations_json,
+                            fact_id,
+                        ),
+                    )
+
                 self._conn.execute(
-                    "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, entity_refs, tags,"
-                    " current_revision, created_at, status, verdict_claim, verification_citations)"
-                    " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        fact_id,
-                        fact_type,
-                        title,
-                        current_semantic_hash,
-                        entity_refs_json,
-                        tags_json,
-                        revision,
-                        now,
-                        status_value,
-                        verdict_claim,
-                        citations_json,
-                    ),
+                    "INSERT INTO fact_revisions(fact_id, revision, content, content_hash, confidence, created_at)"
+                    " VALUES(?, ?, ?, ?, ?, ?)",
+                    (fact_id, revision, content, content_hash, confidence, now),
                 )
-            else:
-                self._conn.execute(
-                    "UPDATE facts SET fact_type = ?, title = ?, semantic_hash = ?,"
-                    " entity_refs = ?, tags = ?, current_revision = ?,"
-                    " status = ?, verdict_claim = ?, verification_citations = ?"
-                    " WHERE fact_id = ?",
-                    (
-                        fact_type,
-                        title,
-                        current_semantic_hash,
-                        entity_refs_json,
-                        tags_json,
-                        revision,
-                        status_value,
-                        verdict_claim,
-                        citations_json,
-                        fact_id,
-                    ),
-                )
-
-            self._conn.execute(
-                "INSERT INTO fact_revisions(fact_id, revision, content, content_hash, confidence, created_at)"
-                " VALUES(?, ?, ?, ?, ?, ?)",
-                (fact_id, revision, content, content_hash, confidence, now),
-            )
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
         return FactRecord(
             fact_id=fact_id,
@@ -501,53 +517,23 @@ class WorkspaceStore:
 
     def get_fact(self, fact_id: str) -> FactRecord | None:
         """Get a fact by ID, returning the current revision."""
-        row = self._conn.execute(
-            """
-            SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
-                   f.entity_refs, f.tags,
-                   f.current_revision, f.created_at,
-                   f.status, f.verdict_claim, f.verification_citations,
-                   r.content, r.confidence
-            FROM facts f
-            JOIN fact_revisions r ON r.fact_id = f.fact_id AND r.revision = f.current_revision
-            WHERE f.fact_id = ?
-            """,
-            (fact_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return FactRecord(
-            fact_id=row["fact_id"],
-            fact_type=row["fact_type"],
-            title=row["title"],
-            content=row["content"],
-            semantic_hash=row["semantic_hash"],
-            confidence=row["confidence"],
-            revision=row["current_revision"],
-            created_at=row["created_at"],
-            entity_refs=json.loads(row["entity_refs"]),
-            tags=json.loads(row["tags"]),
-            status=row["status"] or "unverified",
-            verdict_claim=row["verdict_claim"] or "",
-            verification_citations=tuple(json.loads(row["verification_citations"] or "[]")),
-        )
-
-    def list_facts(self) -> list[FactRecord]:
-        """List all current facts."""
-        rows = self._conn.execute(
-            """
-            SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
-                   f.entity_refs, f.tags,
-                   f.current_revision, f.created_at,
-                   f.status, f.verdict_claim, f.verification_citations,
-                   r.content, r.confidence
-            FROM facts f
-            JOIN fact_revisions r ON r.fact_id = f.fact_id AND r.revision = f.current_revision
-            ORDER BY f.created_at
-            """
-        ).fetchall()
-        return [
-            FactRecord(
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
+                       f.entity_refs, f.tags,
+                       f.current_revision, f.created_at,
+                       f.status, f.verdict_claim, f.verification_citations,
+                       r.content, r.confidence
+                FROM facts f
+                JOIN fact_revisions r ON r.fact_id = f.fact_id AND r.revision = f.current_revision
+                WHERE f.fact_id = ?
+                """,
+                (fact_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return FactRecord(
                 fact_id=row["fact_id"],
                 fact_type=row["fact_type"],
                 title=row["title"],
@@ -562,8 +548,40 @@ class WorkspaceStore:
                 verdict_claim=row["verdict_claim"] or "",
                 verification_citations=tuple(json.loads(row["verification_citations"] or "[]")),
             )
-            for row in rows
-        ]
+
+    def list_facts(self) -> list[FactRecord]:
+        """List all current facts."""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
+                       f.entity_refs, f.tags,
+                       f.current_revision, f.created_at,
+                       f.status, f.verdict_claim, f.verification_citations,
+                       r.content, r.confidence
+                FROM facts f
+                JOIN fact_revisions r ON r.fact_id = f.fact_id AND r.revision = f.current_revision
+                ORDER BY f.created_at
+                """
+            ).fetchall()
+            return [
+                FactRecord(
+                    fact_id=row["fact_id"],
+                    fact_type=row["fact_type"],
+                    title=row["title"],
+                    content=row["content"],
+                    semantic_hash=row["semantic_hash"],
+                    confidence=row["confidence"],
+                    revision=row["current_revision"],
+                    created_at=row["created_at"],
+                    entity_refs=json.loads(row["entity_refs"]),
+                    tags=json.loads(row["tags"]),
+                    status=row["status"] or "unverified",
+                    verdict_claim=row["verdict_claim"] or "",
+                    verification_citations=tuple(json.loads(row["verification_citations"] or "[]")),
+                )
+                for row in rows
+            ]
 
     def save_fact_if_semantically_absent(
         self,
@@ -613,82 +631,83 @@ class WorkspaceStore:
         entity_refs_json = json.dumps(entity_refs_list, ensure_ascii=False, sort_keys=True)
         tags_json = json.dumps(tags_list, ensure_ascii=False, sort_keys=True)
         citations_json = json.dumps(citations_list, ensure_ascii=False, sort_keys=True)
-        begin_immediate_with_retry(self._conn)
-        try:
-            rows = self._conn.execute(
-                """
-                SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
-                       f.current_revision, f.created_at, r.content, r.confidence
-                FROM facts f
-                JOIN fact_revisions r
-                  ON r.fact_id = f.fact_id AND r.revision = f.current_revision
-                WHERE f.semantic_hash = ?
-                ORDER BY f.created_at, f.fact_id
-                """,
-                (semantic_hash,),
-            ).fetchall()
-            match = next(
-                (
-                    row
-                    for row in rows
-                    if canonicalize_fact_type(row["fact_type"]) == canonicalize_fact_type(fact_type)
-                    and canonicalize_fact_content(row["content"]) == canonicalize_fact_content(content)
-                ),
-                None,
-            )
-            if match is None:
-                # Insert facts + revision 1 directly inside this transaction;
-                # do not call put_fact(), which starts its own transaction.
-                now = time.time()
-                self._conn.execute(
-                    "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, entity_refs, tags,"
-                    " current_revision, created_at, status, verdict_claim, verification_citations)"
-                    " VALUES(?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                rows = self._conn.execute(
+                    """
+                    SELECT f.fact_id, f.fact_type, f.title, f.semantic_hash,
+                           f.current_revision, f.created_at, r.content, r.confidence
+                    FROM facts f
+                    JOIN fact_revisions r
+                      ON r.fact_id = f.fact_id AND r.revision = f.current_revision
+                    WHERE f.semantic_hash = ?
+                    ORDER BY f.created_at, f.fact_id
+                    """,
+                    (semantic_hash,),
+                ).fetchall()
+                match = next(
                     (
-                        fact_id,
-                        fact_type,
-                        title,
-                        semantic_hash,
-                        entity_refs_json,
-                        tags_json,
-                        now,
-                        status_value,
-                        verdict_claim,
-                        citations_json,
+                        row
+                        for row in rows
+                        if canonicalize_fact_type(row["fact_type"]) == canonicalize_fact_type(fact_type)
+                        and canonicalize_fact_content(row["content"]) == canonicalize_fact_content(content)
+                    ),
+                    None,
+                )
+                if match is None:
+                    # Insert facts + revision 1 directly inside this transaction;
+                    # do not call put_fact(), which starts its own transaction.
+                    now = time.time()
+                    self._conn.execute(
+                        "INSERT INTO facts(fact_id, fact_type, title, semantic_hash, entity_refs, tags,"
+                        " current_revision, created_at, status, verdict_claim, verification_citations)"
+                        " VALUES(?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+                        (
+                            fact_id,
+                            fact_type,
+                            title,
+                            semantic_hash,
+                            entity_refs_json,
+                            tags_json,
+                            now,
+                            status_value,
+                            verdict_claim,
+                            citations_json,
+                        ),
+                    )
+                    self._conn.execute(
+                        "INSERT INTO fact_revisions(fact_id, revision, content, content_hash, confidence, created_at)"
+                        " VALUES(?, 1, ?, ?, ?, ?)",
+                        (
+                            fact_id,
+                            content,
+                            hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                            confidence,
+                            now,
+                        ),
+                    )
+                    selected_id = fact_id
+                    outcome: FactSaveOutcome = "created"
+                else:
+                    selected_id = match["fact_id"]
+                    outcome = "deduplicated"
+                payload = json.loads(observation_payload)
+                payload["fact_id"] = selected_id
+                payload["outcome"] = outcome
+                self._conn.execute(
+                    "INSERT INTO observations(observation_id, observation_type, content, created_at) VALUES(?, ?, ?, ?)",
+                    (
+                        observation_id,
+                        observation_type,
+                        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                        time.time(),
                     ),
                 )
-                self._conn.execute(
-                    "INSERT INTO fact_revisions(fact_id, revision, content, content_hash, confidence, created_at)"
-                    " VALUES(?, 1, ?, ?, ?, ?)",
-                    (
-                        fact_id,
-                        content,
-                        hashlib.sha256(content.encode("utf-8")).hexdigest(),
-                        confidence,
-                        now,
-                    ),
-                )
-                selected_id = fact_id
-                outcome: FactSaveOutcome = "created"
-            else:
-                selected_id = match["fact_id"]
-                outcome = "deduplicated"
-            payload = json.loads(observation_payload)
-            payload["fact_id"] = selected_id
-            payload["outcome"] = outcome
-            self._conn.execute(
-                "INSERT INTO observations(observation_id, observation_type, content, created_at) VALUES(?, ?, ?, ?)",
-                (
-                    observation_id,
-                    observation_type,
-                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
-                    time.time(),
-                ),
-            )
-            self._conn.commit()
-        except BaseException:
-            self._conn.rollback()
-            raise
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
 
         record = self.get_fact(selected_id)
         if record is None:
@@ -715,31 +734,32 @@ class WorkspaceStore:
         tags_json = json.dumps(tags_list, ensure_ascii=False, sort_keys=True)
         now = time.time()
 
-        begin_immediate_with_retry(self._conn)
-        try:
-            row = self._conn.execute(
-                "SELECT current_revision FROM entities WHERE entity_id = ?",
-                (entity_id,),
-            ).fetchone()
-            revision = (int(row["current_revision"]) if row else 0) + 1
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                row = self._conn.execute(
+                    "SELECT current_revision FROM entities WHERE entity_id = ?",
+                    (entity_id,),
+                ).fetchone()
+                revision = (int(row["current_revision"]) if row else 0) + 1
 
-            if row is None:
-                self._conn.execute(
-                    "INSERT INTO entities(entity_id, entity_type, name, metadata, tags,"
-                    " current_revision, created_at)"
-                    " VALUES(?, ?, ?, ?, ?, ?, ?)",
-                    (entity_id, entity_type, name, meta_json, tags_json, revision, now),
-                )
-            else:
-                self._conn.execute(
-                    "UPDATE entities SET entity_type = ?, name = ?, metadata = ?, tags = ?,"
-                    " current_revision = ? WHERE entity_id = ?",
-                    (entity_type, name, meta_json, tags_json, revision, entity_id),
-                )
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+                if row is None:
+                    self._conn.execute(
+                        "INSERT INTO entities(entity_id, entity_type, name, metadata, tags,"
+                        " current_revision, created_at)"
+                        " VALUES(?, ?, ?, ?, ?, ?, ?)",
+                        (entity_id, entity_type, name, meta_json, tags_json, revision, now),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE entities SET entity_type = ?, name = ?, metadata = ?, tags = ?,"
+                        " current_revision = ? WHERE entity_id = ?",
+                        (entity_type, name, meta_json, tags_json, revision, entity_id),
+                    )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
         return EntityRecord(
             entity_id=entity_id,
@@ -752,20 +772,37 @@ class WorkspaceStore:
 
     def get_entity(self, entity_id: str) -> EntityRecord | None:
         """Get an entity by ID."""
-        row = self._conn.execute(
-            "SELECT * FROM entities WHERE entity_id = ?",
-            (entity_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return EntityRecord(
-            entity_id=row["entity_id"],
-            entity_type=row["entity_type"],
-            name=row["name"],
-            metadata=json.loads(row["metadata"]),
-            revision=row["current_revision"],
-            tags=json.loads(row["tags"]),
-        )
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM entities WHERE entity_id = ?",
+                (entity_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return EntityRecord(
+                entity_id=row["entity_id"],
+                entity_type=row["entity_type"],
+                name=row["name"],
+                metadata=json.loads(row["metadata"]),
+                revision=row["current_revision"],
+                tags=json.loads(row["tags"]),
+            )
+
+    def list_entities(self) -> list[EntityRecord]:
+        """List all current entities."""
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM entities ORDER BY created_at").fetchall()
+            return [
+                EntityRecord(
+                    entity_id=row["entity_id"],
+                    entity_type=row["entity_type"],
+                    name=row["name"],
+                    metadata=json.loads(row["metadata"]),
+                    revision=row["current_revision"],
+                    tags=json.loads(row["tags"]),
+                )
+                for row in rows
+            ]
 
     # ------------------------------------------------------------------
     # Relations
@@ -789,48 +826,49 @@ class WorkspaceStore:
             raise ValueError("evidence must be a string")
         now = time.time()
 
-        begin_immediate_with_retry(self._conn)
-        try:
-            row = self._conn.execute(
-                "SELECT current_revision FROM relations WHERE relation_id = ?",
-                (relation_id,),
-            ).fetchone()
-            revision = (int(row["current_revision"]) if row else 0) + 1
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                row = self._conn.execute(
+                    "SELECT current_revision FROM relations WHERE relation_id = ?",
+                    (relation_id,),
+                ).fetchone()
+                revision = (int(row["current_revision"]) if row else 0) + 1
 
-            if row is None:
-                self._conn.execute(
-                    "INSERT INTO relations(relation_id, subject_id, predicate, object_id, confidence,"
-                    " evidence, current_revision, created_at)"
-                    " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        relation_id,
-                        subject_id,
-                        predicate,
-                        object_id,
-                        confidence,
-                        evidence,
-                        revision,
-                        now,
-                    ),
-                )
-            else:
-                self._conn.execute(
-                    "UPDATE relations SET subject_id = ?, predicate = ?, object_id = ?, confidence = ?,"
-                    " evidence = ?, current_revision = ? WHERE relation_id = ?",
-                    (
-                        subject_id,
-                        predicate,
-                        object_id,
-                        confidence,
-                        evidence,
-                        revision,
-                        relation_id,
-                    ),
-                )
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+                if row is None:
+                    self._conn.execute(
+                        "INSERT INTO relations(relation_id, subject_id, predicate, object_id, confidence,"
+                        " evidence, current_revision, created_at)"
+                        " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            relation_id,
+                            subject_id,
+                            predicate,
+                            object_id,
+                            confidence,
+                            evidence,
+                            revision,
+                            now,
+                        ),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE relations SET subject_id = ?, predicate = ?, object_id = ?, confidence = ?,"
+                        " evidence = ?, current_revision = ? WHERE relation_id = ?",
+                        (
+                            subject_id,
+                            predicate,
+                            object_id,
+                            confidence,
+                            evidence,
+                            revision,
+                            relation_id,
+                        ),
+                    )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
         return RelationRecord(
             relation_id=relation_id,
@@ -844,19 +882,20 @@ class WorkspaceStore:
 
     def list_relations(self) -> list[RelationRecord]:
         """List all current relations."""
-        rows = self._conn.execute("SELECT * FROM relations ORDER BY created_at").fetchall()
-        return [
-            RelationRecord(
-                relation_id=row["relation_id"],
-                subject_id=row["subject_id"],
-                predicate=row["predicate"],
-                object_id=row["object_id"],
-                confidence=row["confidence"],
-                revision=row["current_revision"],
-                evidence=row["evidence"],
-            )
-            for row in rows
-        ]
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM relations ORDER BY created_at").fetchall()
+            return [
+                RelationRecord(
+                    relation_id=row["relation_id"],
+                    subject_id=row["subject_id"],
+                    predicate=row["predicate"],
+                    object_id=row["object_id"],
+                    confidence=row["confidence"],
+                    revision=row["current_revision"],
+                    evidence=row["evidence"],
+                )
+                for row in rows
+            ]
 
     # ------------------------------------------------------------------
     # Observations
@@ -871,16 +910,17 @@ class WorkspaceStore:
         """Append an immutable observation record."""
         validate_record_id("observation", observation_id)
         now = time.time()
-        begin_immediate_with_retry(self._conn)
-        try:
-            self._conn.execute(
-                "INSERT INTO observations(observation_id, observation_type, content, created_at) VALUES(?, ?, ?, ?)",
-                (observation_id, observation_type, content, now),
-            )
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                self._conn.execute(
+                    "INSERT INTO observations(observation_id, observation_type, content, created_at) VALUES(?, ?, ?, ?)",
+                    (observation_id, observation_type, content, now),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
         return ObservationRecord(
             observation_id=observation_id,
@@ -891,8 +931,9 @@ class WorkspaceStore:
 
     def count_observations(self) -> int:
         """Count all observations."""
-        row = self._conn.execute("SELECT COUNT(*) AS cnt FROM observations").fetchone()
-        return int(row["cnt"])
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) AS cnt FROM observations").fetchone()
+            return int(row["cnt"])
 
     # ------------------------------------------------------------------
     # Projection state
@@ -900,24 +941,26 @@ class WorkspaceStore:
 
     def projection_state(self) -> ProjectionState:
         """Return the current projection state."""
-        row = self._conn.execute("SELECT * FROM projection_state WHERE id = 1").fetchone()
-        return ProjectionState(
-            managed_hash=row["managed_hash"],
-            unmanaged_hash=row["unmanaged_hash"],
-            projection_dirty=bool(row["projection_dirty"]),
-            projection_conflict=bool(row["projection_conflict"]),
-            projected_revision=row["projected_revision"],
-        )
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM projection_state WHERE id = 1").fetchone()
+            return ProjectionState(
+                managed_hash=row["managed_hash"],
+                unmanaged_hash=row["unmanaged_hash"],
+                projection_dirty=bool(row["projection_dirty"]),
+                projection_conflict=bool(row["projection_conflict"]),
+                projected_revision=row["projected_revision"],
+            )
 
     def mark_projection_dirty(self) -> None:
         """Mark the projection as dirty (needs regeneration)."""
-        begin_immediate_with_retry(self._conn)
-        try:
-            self._conn.execute("UPDATE projection_state SET projection_dirty = 1 WHERE id = 1")
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                self._conn.execute("UPDATE projection_state SET projection_dirty = 1 WHERE id = 1")
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def mark_projection_clean(
         self,
@@ -927,25 +970,54 @@ class WorkspaceStore:
         projected_revision: int,
     ) -> None:
         """Mark the projection as clean after successful regeneration."""
-        begin_immediate_with_retry(self._conn)
-        try:
-            self._conn.execute(
-                "UPDATE projection_state SET projection_dirty = 0, projection_conflict = 0,"
-                " managed_hash = ?, unmanaged_hash = ?, projected_revision = ?"
-                " WHERE id = 1",
-                (managed_hash, unmanaged_hash, projected_revision),
-            )
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                self._conn.execute(
+                    "UPDATE projection_state SET projection_dirty = 0, projection_conflict = 0,"
+                    " managed_hash = ?, unmanaged_hash = ?, projected_revision = ?"
+                    " WHERE id = 1",
+                    (managed_hash, unmanaged_hash, projected_revision),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def mark_projection_conflict(self) -> None:
         """Mark the projection as having a conflict."""
-        begin_immediate_with_retry(self._conn)
-        try:
-            self._conn.execute("UPDATE projection_state SET projection_conflict = 1 WHERE id = 1")
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                self._conn.execute("UPDATE projection_state SET projection_conflict = 1 WHERE id = 1")
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    # ------------------------------------------------------------------
+    # Workspace metadata
+    # ------------------------------------------------------------------
+
+    def get_meta(self, key: str) -> str | None:
+        """Return a workspace metadata value, or None when unset."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM workspace_meta WHERE key = ?",
+                (key,),
+            ).fetchone()
+        return None if row is None else str(row["value"])
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Persist a workspace metadata key in its own transaction."""
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO workspace_meta(key, value) VALUES(?, ?)",
+                    (key, value),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise

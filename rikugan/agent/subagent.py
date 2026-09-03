@@ -54,6 +54,7 @@ class SubagentRunner:
         parent_loop: Any | None = None,
         cancel_event: Any | None = None,
         model_override: str = "",
+        unattended: bool | None = None,
     ):
         self.provider = provider
         self.tools = tool_registry
@@ -64,6 +65,25 @@ class SubagentRunner:
         self._cancel_event = cancel_event
         self._model_override = model_override or ""
         self._last_session: SessionState | None = None
+        # Unattended children have no parent UI attached: interactive gates
+        # (execute_python, requires_approval tools, ask_user, external
+        # delegation) would block forever in _wait_for_queue because nobody
+        # answers their queues. Default: unattended exactly when there is no
+        # parent loop to inherit working queues from; an explicit
+        # ``unattended`` overrides the default (used to propagate the flag
+        # down the subagent tree from an already-unattended parent).
+        self._unattended = (parent_loop is None) if unattended is None else unattended
+        # ``unattended=False`` claims someone answers the child's queues —
+        # only ever true when the queues are inherited via parent_loop. A
+        # parentless child owns fresh queues, so this combination would
+        # silently recreate the approval deadlock; fail fast instead.
+        if not self._unattended and parent_loop is None:
+            raise ValueError(
+                "SubagentRunner(unattended=False, parent_loop=None) is invalid: a "
+                "parentless child owns private approval/question queues nobody "
+                "answers, so attended gates would deadlock. Pass parent_loop, or "
+                "omit unattended to default to unattended."
+            )
 
     def _resolve_child_provider_and_config(
         self,
@@ -130,21 +150,45 @@ class SubagentRunner:
         from .loop import AgentLoop  # deferred to avoid circular import
 
         child_provider, child_config = self._resolve_child_provider_and_config()
+        # Unattended children get a registry view without approval-gated
+        # tools (execute_python, requires_approval) so neither the provider
+        # schema, the tools catalog, nor a direct call can reach a gate
+        # nobody answers.
+        registry = self.tools
+        if self._unattended and registry is not None:
+            registry = registry.without_approval_gated_tools()
         return AgentLoop(
             provider=child_provider,
-            tool_registry=self.tools,
+            tool_registry=registry,
             config=child_config,
             session=session,
             skill_registry=self.skills,
             host_name=self.host_name,
             parent_loop=self._parent_loop,
             cancel_event=self._cancel_event,
+            unattended=self._unattended,
         )
 
     @property
     def last_session(self) -> SessionState | None:
         """The session from the most recent subagent run."""
         return self._last_session
+
+    def _sync_to_parent(self, loop: Any) -> None:
+        """Propagate a finished child run's side effects to the parent loop.
+
+        Mutations the child recorded (renames, comments, ...) are copied
+        into the parent's mutation log so ``/undo`` reverses subagent
+        changes too; the "always allow scripts" flag syncs back as before.
+        No-op when there is no parent loop (unattended workers) — their
+        records die with the child loop, which is the pre-existing
+        behaviour for manager/bulk-rename agents.
+        """
+        if self._parent_loop is None:
+            return
+        self._parent_loop.record_mutations(loop.drain_mutations())
+        if loop._always_allow_scripts:
+            self._parent_loop._always_allow_scripts = True
 
     # Event types that must always be forwarded even in silent mode
     # (approval gates and user questions require UI interaction).
@@ -191,21 +235,24 @@ class SubagentRunner:
             augmented_task = f"{system_addendum}\n\n{augmented_task}"
 
         final_text = ""
-        for event in loop.run(augmented_task):
-            # In silent mode, only forward interactive events
-            if silent:
-                if event.type in self._INTERACTIVE_EVENTS:
+        try:
+            for event in loop.run(augmented_task):
+                # In silent mode, only forward interactive events
+                if silent:
+                    if event.type in self._INTERACTIVE_EVENTS:
+                        yield event
+                else:
                     yield event
-            else:
-                yield event
 
-            # Capture the last text_done as the final output
-            if event.type.value == "text_done" and event.text:
-                final_text = event.text
-
-        # Sync "always allow" flag back to parent
-        if self._parent_loop and loop._always_allow_scripts:
-            self._parent_loop._always_allow_scripts = True
+                # Capture the last text_done as the final output
+                if event.type.value == "text_done" and event.text:
+                    final_text = event.text
+        finally:
+            # Propagate child-run side effects to the parent on success AND
+            # failure (exception, cancellation, generator close): mutations
+            # performed before a mid-run failure must still reach the
+            # parent's /undo log; the "always allow scripts" flag syncs back.
+            self._sync_to_parent(loop)
 
         log_info(f"Subagent finished: {len(final_text)} chars output")
         return final_text
@@ -234,8 +281,13 @@ class SubagentRunner:
 
         log_info(f"Subagent exploration started: goal={user_goal[:80]!r}, max_turns={max_turns}")
 
-        # Run in explore-only mode via the /explore prefix
-        yield from loop.run(f"/explore {user_goal}")
+        # Run in explore-only mode via the /explore prefix. Sync mutations to
+        # the parent in a finally so a cancelled/failed exploration still
+        # leaves its recorded mutations in the parent's /undo log.
+        try:
+            yield from loop.run(f"/explore {user_goal}")
+        finally:
+            self._sync_to_parent(loop)
 
         # Extract the knowledge base.  _run_exploration_mode stores
         # it in _last_knowledge_base before clearing _exploration_state.
@@ -243,10 +295,6 @@ class SubagentRunner:
         if kb is None:
             kb = KnowledgeBase(user_goal=user_goal)
             log_debug("Subagent exploration: no knowledge base returned, using empty")
-
-        # Sync "always allow" flag back to parent
-        if self._parent_loop and loop._always_allow_scripts:
-            self._parent_loop._always_allow_scripts = True
 
         log_info(
             f"Subagent exploration finished: "
@@ -297,18 +345,22 @@ class SubagentRunner:
             augmented_task = f"{system_addendum}\n\n{augmented_task}"
 
         final_text = ""
-        for event in loop.run(augmented_task):
-            if silent:
-                if event.type in self._INTERACTIVE_EVENTS:
+        try:
+            for event in loop.run(augmented_task):
+                if silent:
+                    if event.type in self._INTERACTIVE_EVENTS:
+                        yield event
+                else:
                     yield event
-            else:
-                yield event
 
-            if event.type.value == "text_done" and event.text:
-                final_text = event.text
-
-        if self._parent_loop and loop._always_allow_scripts:
-            self._parent_loop._always_allow_scripts = True
+                if event.type.value == "text_done" and event.text:
+                    final_text = event.text
+        finally:
+            # Propagate child-run side effects to the parent on success AND
+            # failure (exception, cancellation, generator close): mutations
+            # performed before a mid-run failure must still reach the
+            # parent's /undo log; the "always allow scripts" flag syncs back.
+            self._sync_to_parent(loop)
 
         log_info(f"Subagent mode finished: mode={mode}, {len(final_text)} chars output")
         return final_text

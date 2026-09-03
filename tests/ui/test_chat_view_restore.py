@@ -308,30 +308,40 @@ class BuildSpecTests(unittest.TestCase):
 
 
 class WorkerRunTests(unittest.TestCase):
-    """Drive the worker synchronously and inspect emitted signals."""
+    """Drive the worker synchronously and inspect the queue it populates.
+
+    Spec § A (Task 8): ``RestoreWorker`` no longer emits Qt signals.
+    Instead, ``run()`` pushes ``("chunk", _RenderedChunk)`` and
+    ``("finished", None)`` tuples onto ``worker.queue``.  These tests
+    call ``run()`` synchronously and then drain the queue, mirroring
+    the production ``ChatView._drain_restore_queue`` loop.
+    """
 
     def _run(self, messages: list[Message]) -> tuple[list[_RenderedChunk], bool]:
-        """Run a worker, collect all chunk_ready emissions and finished_ok flag.
-
-        Since QThread.run is overridden synchronously here, the signals are
-        emitted inline; we connect to MagicMock collectors and just call run().
-        """
         worker = RestoreWorker(messages)
         chunks: list[_RenderedChunk] = []
-        finished: list[bool] = []
-        worker.chunk_ready.connect(lambda c: chunks.append(c))
-        worker.finished_ok.connect(lambda: finished.append(True))
+        finished = False
         worker.run()
-        return chunks, bool(finished)
+        while True:
+            try:
+                kind, payload = worker.queue.get_nowait()
+            except Exception:
+                break
+            if kind == "chunk":
+                assert isinstance(payload, _RenderedChunk)
+                chunks.append(payload)
+            elif kind == "finished":
+                finished = True
+        return chunks, finished
 
     def test_empty_messages(self) -> None:
         chunks, finished = self._run([])
         self.assertEqual(chunks, [])
-        self.assertTrue(finished, "finished_ok should still fire on empty list")
+        self.assertTrue(finished, "finished sentinel must enqueue on empty list")
 
     def test_single_user_message(self) -> None:
         chunks, finished = self._run([_user_msg("hi")])
-        # Remainder flush emits the partial chunk
+        # Remainder flush enqueues the partial chunk
         self.assertEqual(len(chunks), 1)
         self.assertEqual(len(chunks[0].specs), 1)
         self.assertEqual(chunks[0].specs[0].role, "user")
@@ -349,8 +359,8 @@ class WorkerRunTests(unittest.TestCase):
         self.assertEqual(chunks[0].specs[0].content, "real")
 
     def test_chunk_boundary_emits_partial_chunk(self) -> None:
-        # Build _RESTORE_CHUNK_SIZE + 5 messages; the first chunk should be
-        # exactly chunk-size, the remainder should be a single chunk of 5.
+        # _RESTORE_CHUNK_SIZE + 5 messages; the first chunk is full,
+        # the remainder is a single chunk of 5.
         n = _RESTORE_CHUNK_SIZE + 5
         messages = [_user_msg(f"m{i}") for i in range(n)]
         chunks, _ = self._run(messages)
@@ -367,19 +377,26 @@ class WorkerRunTests(unittest.TestCase):
         worker = RestoreWorker(messages)
         # Cancel before starting
         worker.cancel()
-        chunks: list[_RenderedChunk] = []
-        finished: list[bool] = []
-        worker.chunk_ready.connect(lambda c: chunks.append(c))
-        worker.finished_ok.connect(lambda: finished.append(True))
         worker.run()
+        chunks: list[_RenderedChunk] = []
+        finished = False
+        while True:
+            try:
+                kind, payload = worker.queue.get_nowait()
+            except Exception:
+                break
+            if kind == "chunk":
+                chunks.append(payload)
+            elif kind == "finished":
+                finished = True
         # No specs produced because run() returns at the first iteration check
         self.assertEqual(sum(len(c.specs) for c in chunks), 0)
-        # finished_ok should NOT fire when cancelled before any work
+        # finished sentinel must NOT enqueue when cancelled before any work
         self.assertFalse(finished)
 
     def test_exactly_chunk_size_emits_one_chunk(self) -> None:
         # Boundary: exactly _RESTORE_CHUNK_SIZE messages. The boundary check
-        # emits the chunk when len >= CHUNK_SIZE, then the remainder is
+        # enqueues a chunk when len >= CHUNK_SIZE, then the remainder is
         # empty so the flush guard (`if chunk.specs`) skips it.
         messages = [_user_msg(f"m{i}") for i in range(_RESTORE_CHUNK_SIZE)]
         chunks, finished = self._run(messages)
@@ -387,6 +404,161 @@ class WorkerRunTests(unittest.TestCase):
         self.assertEqual(len(chunks[0].specs), _RESTORE_CHUNK_SIZE)
         self.assertTrue(finished)
 
+class WorkerQueueTests(unittest.TestCase):
+    """RestoreWorker pushes (kind, payload) tuples to a queue.Queue.
+
+    Spec § A: Thread UAF — the worker is a QThread but must NEVER emit
+    Qt signals across threads.  ``run()`` instead enqueues
+    ``("chunk", _RenderedChunk)`` / ``("finished", None)`` tuples onto
+    a queue that the main-thread ``QTimer`` callback drains.  This is
+    the same shape panel_core uses for the history executor queue.
+    """
+
+    KIND_CHUNK = "chunk"
+    KIND_FINISHED = "finished"
+
+    def _drain(self, worker: RestoreWorker) -> tuple[list[_RenderedChunk], bool]:
+        """Run a worker and drain its queue on the (mock) main thread.
+
+        Mirrors the production drain loop in ``ChatView._drain_restore_queue``:
+        pull tuples until the queue is empty, dispatch by ``kind``.  We do NOT
+        use any Qt signal connection — the worker thread ``run()`` enqueues
+        only, the main-thread drain is the sole consumer.
+        """
+        chunks: list[_RenderedChunk] = []
+        finished = False
+        while True:
+            try:
+                kind, payload = worker.queue.get_nowait()
+            except Exception:
+                break
+            if kind == "chunk":
+                assert isinstance(payload, _RenderedChunk)
+                chunks.append(payload)
+            elif kind == "finished":
+                finished = True
+            else:  # pragma: no cover - defensive
+                raise AssertionError(f"unknown kind: {kind!r}")
+        return chunks, finished
+
+    def test_worker_has_queue_attribute(self) -> None:
+        worker = RestoreWorker([])
+        import queue as _queue
+        self.assertIsInstance(worker.queue, _queue.Queue)
+
+    def test_worker_run_populates_queue_with_chunks_and_finished(self) -> None:
+        # _RESTORE_CHUNK_SIZE + 5 → two chunks (one full, one remainder)
+        # plus a finished sentinel.
+        n = _RESTORE_CHUNK_SIZE + 5
+        messages = [_user_msg(f"m{i}") for i in range(n)]
+        worker = RestoreWorker(messages)
+        worker.run()  # synchronous in-test, no QThread.start()
+        chunks, finished = self._drain(worker)
+        self.assertTrue(finished, "finished sentinel must be enqueued")
+        self.assertEqual(len(chunks), 2, f"expected 2 chunks, got {len(chunks)}")
+        self.assertEqual(len(chunks[0].specs), _RESTORE_CHUNK_SIZE)
+        self.assertEqual(len(chunks[1].specs), 5)
+        self.assertEqual(sum(len(c.specs) for c in chunks), n)
+    def test_worker_run_no_chunk_ready_or_finished_ok_signal(self) -> None:
+        """The Qt-signal interface must be GONE — clean cutover.
+
+        Importing ``RestoreWorker`` and looking up either attribute
+        must raise ``AttributeError``.  This guards against a future
+        regression that re-introduces the cross-thread signal path.
+        """
+        self.assertFalse(
+            hasattr(RestoreWorker, "chunk_ready"),
+            "RestoreWorker.chunk_ready signal must be removed (Shiboken UAF).",
+        )
+        self.assertFalse(
+            hasattr(RestoreWorker, "finished_ok"),
+            "RestoreWorker.finished_ok signal must be removed (Shiboken UAF).",
+        )
+
+    def test_widget_construction_happens_on_drain_not_on_producer(self) -> None:
+        """The stub widget factory must be invoked from the drain loop,
+        NOT from ``worker.run()``.  This is the central contract for
+        Task 8: widget construction must stay on the Qt main thread.
+        """
+        # Skip __init__ (heavy Qt setup) — we only need the drain entry
+        # point and the restore-generation state.  ``_drain_restore_queue``
+        # delegates to ``_on_chunk_ready`` / ``_on_restore_finished``,
+        # which is the widget-construction seam we are asserting against.
+        view = ChatView.__new__(ChatView)
+        view._restore_generation = 1
+        view._restore_worker = None
+        # ``_stop_restore_poll_timer`` runs at the finished sentinel
+        # even when no timer was ever created — must not AttributeError.
+        view._restore_poll_timer = None
+
+        import threading as _threading
+
+        factory_calls: list[tuple[int, str]] = []
+
+        def _on_chunk_stub(chunk, gen):  # replaces _on_chunk_ready
+            for spec in chunk.specs:
+                factory_calls.append((_threading.get_ident(), spec.msg_id))
+
+        def _on_finished_stub(gen):
+            factory_calls.append((_threading.get_ident(), "FINISHED"))
+
+        view._on_chunk_ready = _on_chunk_stub  # type: ignore[method-assign]
+        view._on_restore_finished = _on_finished_stub  # type: ignore[method-assign]
+
+        # Use explicit ids so the assertion can compare against stable names.
+        a = Message(role=Role.USER, content="a"); a.id = "a"
+        b = Message(role=Role.USER, content="b"); b.id = "b"
+        c = Message(role=Role.USER, content="c"); c.id = "c"
+        worker = RestoreWorker([a, b, c])
+        view._restore_worker = worker
+        producer_tid = _threading.get_ident()
+        worker.run()
+        # Producer: worker.run() must NOT call the factory.
+        self.assertEqual(
+            factory_calls,
+            [],
+            "worker.run() must NOT invoke the factory — widget "
+            "construction must be deferred to the main-thread drain "
+            "(Shiboken UAF risk).",
+        )
+        # Consumer: drain pulls tuples from the queue and dispatches.
+        view._drain_restore_queue()
+        self.assertEqual(len(factory_calls), 4)
+        self.assertEqual(
+            [role for _tid, role in factory_calls],
+            ["a", "b", "c", "FINISHED"],
+            "drain must dispatch every chunk spec in order, then the "
+            "finished sentinel",
+        )
+        drain_tid = factory_calls[0][0]
+        self.assertEqual(
+            drain_tid,
+            producer_tid,
+            "in the synchronous test, drain runs on the same thread as "
+            "producer; the contract we are asserting is that the factory "
+            "call originates from the drain call stack, NOT from "
+            "worker.run() — the empty-call assertion above enforces that",
+        )
+
+    def test_cancel_short_circuits_producer_no_finished(self) -> None:
+        """A cancelled worker puts no ``finished`` sentinel."""
+        messages = [_user_msg(f"m{i}") for i in range(10)]
+        worker = RestoreWorker(messages)
+        worker.cancel()
+        worker.run()
+        chunks, finished = self._drain(worker)
+        # Cancellation runs in run() before the loop body, so neither
+        # chunk nor finished lands.
+        self.assertEqual(chunks, [])
+        self.assertFalse(finished)
+
+    def test_empty_messages_emits_only_finished(self) -> None:
+        """No chunks, but a finished sentinel still arrives."""
+        worker = RestoreWorker([])
+        worker.run()
+        chunks, finished = self._drain(worker)
+        self.assertEqual(chunks, [])
+        self.assertTrue(finished)
 
 class PlaceholderTests(unittest.TestCase):
     """``MessagePlaceholder`` is a tiny ``QFrame`` used during async

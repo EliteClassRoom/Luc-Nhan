@@ -83,24 +83,32 @@ def _execute_step(
     )
     step_msg = Message(role=Role.USER, content=step_prompt)
     loop.session.add_message(step_msg)
-
     max_step_turns = 20
-    for _st in range(max_step_turns):
-        loop._check_cancelled()
-        yield TurnEvent.turn_start(_st + 1)
+    status = "completed"
+    try:
+        for _st in range(max_step_turns):
+            loop._check_cancelled()
+            yield TurnEvent.turn_start(_st + 1)
 
-        result = yield from execute_single_turn(loop, system_prompt, tools_schema)
+            result = yield from execute_single_turn(loop, system_prompt, tools_schema)
 
-        if not result.ok:
-            return
+            if not result.ok:
+                status = "error"
+                return
 
-        if not result.has_tool_calls:
+            if not result.has_tool_calls:
+                yield TurnEvent.turn_end(_st + 1)
+                break
+
             yield TurnEvent.turn_end(_st + 1)
-            break
-
-        yield TurnEvent.turn_end(_st + 1)
-
-    yield TurnEvent.plan_step_done(step_index, "completed")
+        else:
+            # Loop completed without ``break`` — the per-step turn budget
+            # was exhausted while the model kept requesting tool calls.
+            status = "turn_limit"
+    finally:
+        # Always emit exactly one ``plan_step_done`` so the UI step
+        # transitions out of "running" — even on error or cancellation.
+        yield TurnEvent.plan_step_done(step_index, status)
 
 
 def persist_plan(loop: AgentLoop, user_goal: str, steps: list[str]) -> None:

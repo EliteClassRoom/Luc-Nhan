@@ -84,6 +84,10 @@ def open_sqlite(
     if not path.is_file() and not allow_create:
         raise FileNotFoundError(path)
 
+    # check_same_thread=False on every connect below: the workspace's single
+    # connection is shared across the agent background thread (writes) and the
+    # Qt main thread (knowledge-panel refresh reads); WorkspaceStore serializes
+    # all access through its RLock, so cross-thread use is safe by design.
     if read_only:
         uri_path = quote(path.as_posix(), safe="/:")
         conn = sqlite3.connect(

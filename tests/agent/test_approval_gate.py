@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from unittest.mock import MagicMock, patch
 from collections.abc import Generator as GeneratorType
 from typing import Any
 
@@ -25,7 +26,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 install_ida_mocks()
 
 from rikugan.agent.loop import AgentLoop
-from rikugan.agent.turn import TurnEventType
+from rikugan.agent.turn import TurnEvent, TurnEventType
 from rikugan.core.config import RikuganConfig
 from rikugan.core.types import ModelInfo, ProviderCapabilities, ToolCall
 from rikugan.providers.base import LLMProvider
@@ -184,6 +185,116 @@ class TestApprovalGateBehavior(unittest.TestCase):
         self.assertNotIn(TurnEventType.TOOL_APPROVAL_REQUEST, types)
         self.assertFalse(tr.is_error)
         self.assertIn("ran x", tr.content)
+
+
+class TestDelegateExternalTaskGate(unittest.TestCase):
+    """``delegate_external_task`` spawns external CLI agents (or HTTP
+    endpoints) driven by LLM-authored task text — the pseudo-tool
+    dispatch inside a normal agent turn must be approval-gated like
+    execute_python: deny blocks the subprocess, allow dispatches once,
+    and the prompt shows the target agent + full task text. The
+    explicit ``/a2a`` user command stays ungated (user-mediated).
+    """
+
+    def _make_loop(self) -> AgentLoop:
+        config = RikuganConfig()
+        config.auto_context = False  # Skip IDA API calls
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        return AgentLoop(provider=_NullProvider(), tool_registry=ToolRegistry(), config=config, session=session)
+
+    @staticmethod
+    def _delegate_tc() -> ToolCall:
+        return ToolCall(
+            id="call_delegate_1",
+            name="delegate_external_task",
+            arguments={"agent": "claude", "task": "analyze sample.exe for C2 callbacks"},
+        )
+
+    def test_delegate_requires_approval_and_honors_deny(self):
+        loop = self._make_loop()
+        tc = self._delegate_tc()
+        dispatched: list[dict] = []
+
+        def fake_run(self_dispatcher, agent_name, task, cancel_event=None, include_context=""):
+            dispatched.append({"agent": agent_name, "task": task})
+            yield TurnEvent.text_delta("payload")
+
+        with patch("rikugan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
+            loop._tool_approval_queue.put("deny")
+            events, tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
+
+        approval_events = [e for e in events if e.type == TurnEventType.TOOL_APPROVAL_REQUEST]
+        self.assertEqual(len(approval_events), 1)
+        self.assertEqual(approval_events[0].tool_name, "delegate_external_task")
+        self.assertEqual(dispatched, [], "denied delegation must never spawn a subprocess")
+        self.assertTrue(tr.is_error)
+        self.assertIn("denied by user", tr.content)
+
+    def test_delegate_runs_after_allow(self):
+        loop = self._make_loop()
+        tc = self._delegate_tc()
+        dispatched: list[dict] = []
+
+        def fake_run(self_dispatcher, agent_name, task, cancel_event=None, include_context=""):
+            dispatched.append({"agent": agent_name, "task": task})
+            yield TurnEvent.text_delta("external answer")
+
+        with patch("rikugan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
+            loop._tool_approval_queue.put("allow")
+            events, tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
+
+        self.assertEqual(
+            dispatched,
+            [{"agent": "claude", "task": "analyze sample.exe for C2 callbacks"}],
+            "exactly one dispatcher run with the requested agent + task",
+        )
+        self.assertFalse(tr.is_error)
+        self.assertIn("external answer", tr.content)
+
+    def test_delegate_approval_prompt_shows_agent_and_task(self):
+        loop = self._make_loop()
+        tc = self._delegate_tc()
+
+        def fake_run(self_dispatcher, agent_name, task, cancel_event=None, include_context=""):
+            yield TurnEvent.text_delta("ok")
+
+        with patch("rikugan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
+            loop._tool_approval_queue.put("allow")
+            events, _tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
+
+        approval = next(e for e in events if e.type == TurnEventType.TOOL_APPROVAL_REQUEST)
+        self.assertIn("claude", approval.text)
+        self.assertIn("analyze sample.exe for C2 callbacks", approval.text)
+        # Raw JSON args are part of the prompt too — both fields visible.
+        self.assertIn("claude", approval.tool_args)
+        self.assertIn("analyze sample.exe for C2 callbacks", approval.tool_args)
+
+    def test_a2a_mode_stays_ungated(self):
+        """The explicit /a2a slash command routes through run_a2a_mode
+        (not the pseudo-tool handler) and never requests approval."""
+        from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
+        from rikugan.agent.modes.a2a import run_a2a_mode
+
+        loop = MagicMock()
+        loop._cancelled = None
+        loop.config = MagicMock()
+        loop.config.a2a_auto_discover = True
+        loop.config.a2a_agents = []
+        agents = [ExternalAgentConfig(name="claude", transport="subprocess", endpoint="claude")]
+
+        def fake_run(*args, **kwargs):
+            yield A2AEvent(type="stdout", text="working")
+            yield A2AEvent(type="completed", text="done!", done=True)
+
+        with (
+            patch("rikugan.agent.a2a.dispatcher.SubprocessBridge.discover", return_value=agents),
+            patch("rikugan.agent.a2a.dispatcher.SubprocessBridge.run_task", new=fake_run),
+        ):
+            events, _ = _drain_generator_with_return(run_a2a_mode(loop, "claude do thing", "", []))
+
+        types = [e.type for e in events]
+        self.assertNotIn(TurnEventType.TOOL_APPROVAL_REQUEST, types)
+        self.assertTrue(any(e.type == TurnEventType.TEXT_DONE for e in events))
 
 
 if __name__ == "__main__":

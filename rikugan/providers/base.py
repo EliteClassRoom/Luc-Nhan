@@ -21,6 +21,11 @@ from ..core.types import (
     StreamChunk,
 )
 
+# Watchdog poll interval: how often a streaming cancel watchdog re-checks
+# its per-request ``done`` event while parked on the loop cancel event.
+# Small enough that a finished request releases the thread promptly.
+_WATCHDOG_POLL_INTERVAL = 0.5
+
 
 class LLMProvider(ABC):
     """Abstract base for all LLM provider adapters.
@@ -332,6 +337,60 @@ class LLMProvider(ABC):
         )
         silence_sdk_debug_loggers()
         yield from self._stream_chunks(client, kwargs, cancel_event=cancel_event)
+
+    # -- Streaming cancel watchdog ---------------------------------------------
+
+    def _spawn_cancel_watchdog(
+        self,
+        cancel_event: threading.Event | None,
+        stream_ref: list,
+        stream_ready: threading.Event,
+    ) -> threading.Event:
+        """Spawn the per-request cancel watchdog; return its ``done`` event.
+
+        When ``cancel_event`` fires while the stream is blocked, the watchdog
+        force-closes the stream (``stream_ref[0]``, valid once
+        ``stream_ready`` is set) so the consumer's cancellation check fires
+        promptly instead of waiting for the next SSE chunk.
+
+        The returned ``done`` event is per-request: the caller MUST set it in
+        a ``finally:`` when the stream finishes.  Without it the watchdog
+        would park forever on the long-lived loop cancel event — one leaked
+        daemon thread per streaming request.
+
+        Returns ``done`` even when ``cancel_event`` is None (no thread is
+        spawned) so callers can set it unconditionally.
+        """
+        done = threading.Event()
+
+        def _watchdog() -> None:
+            if cancel_event is None:  # unreachable: only spawned when set
+                return
+            # Park until either this request finishes (``done``) or cancel
+            # fires.  ``cancel_event.wait`` wakes immediately when the event
+            # is set, so a blocked stream is still interrupted promptly; the
+            # short poll timeout only bounds how soon a finished request
+            # releases the thread.
+            while not done.is_set():
+                if cancel_event.wait(timeout=_WATCHDOG_POLL_INTERVAL):
+                    break
+            if done.is_set():
+                return
+            if not stream_ready.wait(timeout=2.0):
+                return
+            stream = stream_ref[0] if stream_ref else None
+            if stream is None:
+                return
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    log_debug(f"{type(self).__name__} stream.close() during cancel failed: {exc}")
+
+        if cancel_event is not None:
+            threading.Thread(target=_watchdog, daemon=True, name=f"{self.name}-cancel-watchdog").start()
+        return done
 
     # -- Concrete shared implementations ---------------------------------------
 

@@ -211,26 +211,43 @@ class OpenAIProvider(LLMProvider):
             supports_system_prompt=True,
         )
 
+    # Chat-family prefixes accepted by ``_fetch_models_live``. Subclasses
+    # (e.g. ``GLMProvider``) override this tuple so their live fetch keeps
+    # provider-specific model ids instead of being filtered down to OpenAI
+    # families.
+    _MODEL_ID_PREFIXES: tuple[str, ...] = (
+        "gpt-",
+        "o1-",
+        "o3-",
+        "o4-",
+        "chatgpt-",
+    )
+    _MODEL_ID_SKIP_SUBSTRINGS: tuple[str, ...] = (
+        "-instruct",
+        "embedding",
+        "tts",
+        "whisper",
+        "dall-e",
+        "audio",
+        "realtime",
+        "transcribe",
+    )
+
     def _fetch_models_live(self) -> list[ModelInfo]:
-        """Fetch chat-capable models from the OpenAI API."""
+        """Fetch chat-capable models from the API.
+
+        Subclasses can override ``_MODEL_ID_PREFIXES`` to keep their own
+        chat families (``GLMProvider`` keeps ``glm-``).
+        """
         client = self._get_client()
         response = client.models.list()
-        models = []
-        chat_prefixes = ("gpt-", "o1-", "o3-", "o4-", "chatgpt-")
-        skip_words = (
-            "-instruct",
-            "embedding",
-            "tts",
-            "whisper",
-            "dall-e",
-            "audio",
-            "realtime",
-            "transcribe",
-        )
+        models: list[ModelInfo] = []
+        prefixes = self._MODEL_ID_PREFIXES
+        skip = self._MODEL_ID_SKIP_SUBSTRINGS
         for m in response.data:
-            if not any(m.id.startswith(p) for p in chat_prefixes):
+            if not any(m.id.startswith(p) for p in prefixes):
                 continue
-            if any(s in m.id for s in skip_words):
+            if any(s in m.id for s in skip):
                 continue
             models.append(
                 ModelInfo(
@@ -456,25 +473,13 @@ class OpenAIProvider(LLMProvider):
             return
 
         # Cancel watchdog — closes the stream if cancel_event fires so the
-        # consumer's per-chunk cancellation check is reached promptly.
+        # consumer's per-chunk cancellation check is reached promptly.  The
+        # returned ``done`` event is per-request: set in the finally below so
+        # the watchdog exits when the stream finishes instead of parking
+        # forever on the long-lived loop cancel event.
         stream_ref: list = []
         stream_ready = threading.Event()
-
-        def _watchdog() -> None:
-            if cancel_event is None:
-                return
-            cancel_event.wait()
-            if not stream_ready.wait(timeout=2.0):
-                return
-            s = stream_ref[0] if stream_ref else None
-            if s is not None:
-                try:
-                    s.close()
-                except Exception:
-                    pass
-
-        if cancel_event is not None:
-            threading.Thread(target=_watchdog, daemon=True).start()
+        done = self._spawn_cancel_watchdog(cancel_event, stream_ref, stream_ready)
 
         stream_ref.append(stream)
         stream_ready.set()
@@ -486,6 +491,8 @@ class OpenAIProvider(LLMProvider):
                 log_debug(f"OpenAIProvider stream closed by cancel: {e}")
                 return
             raise
+        finally:
+            done.set()
 
     def _iter_stream_chunks(
         self,
