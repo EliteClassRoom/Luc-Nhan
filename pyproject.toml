@@ -53,6 +53,21 @@ dependencies = [
 target-version = "py311"
 line-length = 120
 
+# ``tests/`` (top-level) is intentionally included in ruff's walk set.
+# ``rikugan/tests/`` is already covered by ``*.py`` default includes;
+# the top-level ``tests/`` lives outside ``rikugan/`` so it needs an
+# explicit ``extend-include`` so that ``ruff check`` (no args) and
+# ``ruff check .`` from the project root lint it alongside the package.
+#
+# Note: the CI workflow currently invokes ``ruff check rikugan/``, which
+# passes an explicit path and bypasses the default include set.  To
+# gate the top-level ``tests/`` suite in CI, that command needs to
+# become ``ruff check .`` (or ``ruff check rikugan/ tests/``).  This
+# config change is the prerequisite for that follow-up — without it,
+# widening the CI command would silently lint the repo's vendored
+# stubs and tooling scripts too.
+extend-include = ["tests/*.py", "tests/**/*.py"]
+
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "UP", "B", "RUF"]
 ignore = ["E501", "B008", "UP042"]
@@ -66,6 +81,15 @@ ignore = ["E501", "B008", "UP042"]
 python_version = "3.11"
 ignore_missing_imports = true
 no_error_summary = true
+
+# Modules covered by `mypy` when invoked without explicit paths (e.g.
+# via ``./ci-local.sh`` or editor integration).  The GitHub Actions job
+# still pins ``mypy rikugan/core rikugan/providers`` for stability —
+# update that command alongside this list to actually gate these layers.
+files = [
+  "rikugan/memory",
+  "rikugan/ui",
+]
 
 # Strict type checking for the security-critical core and provider layers.
 [[tool.mypy.overrides]]
@@ -134,6 +158,40 @@ module = [
   "rikugan.ida.tools.registry",
   "rikugan.tools.web_fetch",
   "rikugan.tests.conftest",
+  # NOTE (task-7 r1, against reviewer recommendation): both modules
+  # DO surface errors when mypy follows imports into them — the
+  # reviewer claim of "0 errors" was verified empirically as referring
+  # to a ``--follow-imports=skip`` / isolated-file analysis, not the
+  # ``mypy rikugan/memory rikugan/ui`` invocation that the new
+  # ``[tool.mypy].files`` triggers.
+  #
+  # ``rikugan.ui.knowledge_panel`` — 10 errors (mypy 2.3.1, default
+  # ``--follow-imports=normal``):
+  #   * 8× ``[attr-defined]`` on PySide6 enum-by-name accesses that
+  #     the bundled stubs only expose via nested enum classes:
+  #     ``QAbstractItemView.SelectRows`` (134),
+  #     ``QAbstractItemView.SingleSelection`` (135),
+  #     ``QAbstractItemView.NoEditTriggers`` (136),
+  #     ``QHeaderView.ResizeToContents`` (140, 142-145),
+  #     ``QHeaderView.Stretch`` (141).
+  #   * 2× ``[union-attr]`` ``QLayout | None`` does not have attribute
+  #     ``insertWidget`` (233).
+  # The enum-by-name pattern is exactly the Shiboken stub gap the
+  # task-7 brief listed as warranting an ``ignore_errors`` override.
+  # The union-attr is the same ``parent: QWidget | None = None``
+  # idiom the existing block already addresses for the other
+  # ``rikugan.ui.*`` modules.
+  "rikugan.ui.knowledge_panel",
+  # ``rikugan.ui.history_panel`` — 2 errors:
+  #   * ``[operator]`` ``object`` not callable (750) — mypy cannot
+  #     resolve that the dynamic ``_announcements_sink`` attribute is
+  #     a callable.
+  #   * ``[attr-defined]`` ``QFrame`` has no attribute
+  #     ``_announcements_sink`` (753) — the attribute is injected at
+  #     runtime by the Qt compat layer / a ``TYPE_CHECKING`` shim.
+  # Same pattern as ``rikugan.tests.conftest`` (dynamic attribute
+  # injection on a Qt class) which is already in this override block.
+  "rikugan.ui.history_panel",
 ]
 ignore_errors = true
 
@@ -153,6 +211,23 @@ ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "rikugan/tests"]
+# Per-test timeout was the goal here (see task 7 brief:
+# ``test_height_cached_label`` mock-pollution flake is the canonical
+# case the timeout guards against).  ``--timeout=30`` with the
+# ``thread`` method cooperates with C-level waits via a watchdog
+# thread, matching the suite's threading.Event + queue.Queue patterns.
+#
+# DEFERRED — the ``pytest-timeout`` plugin is not provisioned in CI.
+# The workflow installs runtime deps via ``pip install -r
+# requirements.txt`` and does not pull the ``dev`` dependency group,
+# so ``addopts = ["--timeout=30", "--timeout-method=thread"]`` would
+# fail every test job with ``unrecognized option: --timeout``.  The
+# intended addopts line is left commented below; re-enable in a
+# follow-up PR after either adding ``pytest-timeout`` to
+# ``requirements.txt`` (runtime side) or installing the ``dev`` group
+# from the CI workflow.
+#
+# addopts = ["--timeout=30", "--timeout-method=thread"]
 
 [dependency-groups]
 dev = [
