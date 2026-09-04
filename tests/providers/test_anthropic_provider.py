@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy as _copy
 import os
 import sys
 import unittest
@@ -273,6 +274,70 @@ class TestAnthropicRequestContextPayloadEquivalence(unittest.TestCase):
             "providers.",
         )
 
+
+class TestAnthropicRawPartsDeepCopy(unittest.TestCase):
+    """Mutations during _build_request_kwargs must never leak back into
+    Message._raw_parts. Two requests with the same Message must produce
+    equal payloads and the source Message must be byte-equal after both
+    calls (round-trip parity through the assistant raw-part replay path).
+    """
+
+    def _make_assistant(self) -> Message:
+        msg = Message(role=Role.ASSISTANT, content="")
+        msg._raw_parts = [
+            {"type": "thinking", "thinking": "hmm", "signature": "sig"},
+            {"type": "text", "text": "checking"},
+            {
+                "type": "tool_use",
+                "id": "tc_1",
+                "name": "look",
+                "input": {"x": 1},
+            },
+        ]
+        return msg
+
+    def test_two_requests_with_same_message_round_trip(self) -> None:
+        provider = _make_provider()
+        assistant = self._make_assistant()
+        snapshot_before = _copy.deepcopy(assistant._raw_parts)
+
+        messages = [
+            Message(role=Role.USER, content="hi"),
+            Message(role=Role.TOOL, tool_results=[ToolResult(tool_call_id="tc_1", name="look", content="ok")]),
+            Message(role=Role.ASSISTANT, content="prev"),
+            Message(role=Role.USER, content="again?"),
+            assistant,  # last — qualifies for cache_control injection
+        ]
+
+        kw1 = provider._build_request_kwargs(messages, None, 0.3, 4096, "system")
+        kw2 = provider._build_request_kwargs(messages, None, 0.3, 4096, "system")
+        snapshot_after = _copy.deepcopy(assistant._raw_parts)
+
+        # Payload equality across two independent requests.
+        self.assertEqual(kw1, kw2)
+
+        # Original Message._raw_parts byte-equal before and after both calls.
+        self.assertEqual(snapshot_after, snapshot_before)
+
+        # No block inside _raw_parts picked up a cache_control field
+        # injected by _build_request_kwargs.
+        for block in assistant._raw_parts:
+            self.assertNotIn(
+                "cache_control",
+                block,
+                "build_request_kwargs leaked cache_control into Message._raw_parts — "
+                "raw blocks must be deep-copied before mutation.",
+            )
+
+        # Cache_control from request one matches request two (round-trip parity)
+        # and was emitted on the *deep-copied* slot, not the original.
+        msgs_out = kw1["messages"]
+        last = msgs_out[-1]
+        last_block = last["content"][-1]
+        self.assertIn("cache_control", last_block)
+        same_in_kw2 = kw2["messages"][-1]["content"][-1].get("cache_control")
+        self.assertEqual(same_in_kw2, last_block["cache_control"])
+        self.assertIsNot(last_block, assistant._raw_parts[-1])
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+import copy
 from collections.abc import Generator
 from typing import Any, NoReturn
 
@@ -290,10 +291,15 @@ class AnthropicProvider(LLMProvider):
                     # ``_is_valid_anthropic_raw_parts`` guarantees *raw_parts*
                     # is a non-empty ``list[dict]``; the isinstance check
                     # lets mypy narrow the ``Any`` return of ``getattr`` so
-                    # ``list(...)`` type-checks without an ignore.
                     assert isinstance(raw_parts, list)
-                    formatted.append({"role": "assistant", "content": list(raw_parts)})
-                    continue
+                    # Deep-copy so per-request mutations (cache_control injection,
+                    # MiniMax's cache_control stripping) never reach back into
+                    # Message._raw_parts. Shallow `[dict(b) for b in raw_parts]`
+                    # is not enough: tool_use ``input`` and any other nested
+                    # content blocks share their inner dicts with the source.
+                    formatted.append(
+                        {"role": "assistant", "content": copy.deepcopy(raw_parts)}
+                    )
 
                 content: list = []
                 if msg.content:
