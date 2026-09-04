@@ -300,6 +300,7 @@ class AnthropicProvider(LLMProvider):
                     formatted.append(
                         {"role": "assistant", "content": copy.deepcopy(raw_parts)}
                     )
+                    continue
 
                 content: list = []
                 if msg.content:
