@@ -6,6 +6,7 @@ import ast
 import builtins
 import contextlib
 import io
+import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -260,6 +261,113 @@ _REMOVED_BUILTINS = frozenset(
 _REAL_IMPORT = builtins.__import__
 
 
+#: Attribute names that must never be reachable through any module the
+#: guarded code observes. Closing the transitive-leak class (uuid.os,
+#: re.sys, ET.sys, json.codecs.sys, etc.) requires a runtime attribute
+#: proxy on module return values — a static blocklist can't catch the
+#: path because the access point is always a legitimate stdlib module
+#: name. The Phase-1 ledger explicitly parked this as Phase-3 architectural
+#: work (Layer A, scope B per the controller ruling). Layer A is deny-only:
+#: anything outside this set is returned untouched.
+_DENY_ATTR_NAMES = frozenset(
+    {
+        "os",
+        "sys",
+        "subprocess",
+        "importlib",
+        "builtins",
+        "shutil",
+        "signal",
+    }
+)
+
+
+def _wrap_module(value: Any) -> Any:
+    """Return :class:`SafeModule` wrapping *value* if it is a module, else *value*.
+
+    Used by :func:`_guarded_import` to apply the proxy to every module
+    object that flows into user code. Non-module return values
+    (functions, classes, constants, the fromlist tail of an
+    ``from X import Y``) flow through unwrapped.
+    """
+    mod_type = type(sys)  # `types.ModuleType` — avoid an extra import
+    if isinstance(value, mod_type):
+        return SafeModule(value)
+    return value
+
+
+def safe_builtins() -> dict[str, Any]:
+    """Return a restricted __builtins__ dict with dangerous names removed."""
+    safe = {k: v for k, v in vars(builtins).items() if k not in _REMOVED_BUILTINS}
+    safe["__import__"] = _guarded_import
+    return safe
+
+
+class SafeModule:
+    """Lightweight proxy that hides a deny-set of attribute names on a module.
+
+    Phase-3 Layer A. Wrapping is deny-only — every attribute access not
+    in :data:`_DENY_ATTR_NAMES` returns the underlying object unchanged.
+    Reads of deny names raise :class:`AttributeError` with a
+    contract-stable message containing the offending attribute name.
+    :func:`dir` (and therefore :func:`vars` / :func:`hasattr` introspection)
+    route through :meth:`__dir__` which excludes the deny set so attribute
+    discovery can't reach it either.
+
+    Why a class and not a ModuleType subclass: subclassing
+    ``types.ModuleType`` would replace the live module in ``sys.modules``,
+    which we explicitly avoid. A wrapper keeps the underlying module
+    intact and side-effect-free for code that may receive a reference to
+    the same module object via other channels (e.g. ``importlib``'s
+    return path).
+
+    Non-deny submodules are returned as their raw value — we do not
+    auto-wrap. If an unwrapped submodule is itself in the deny list (by
+    name), the access raises :class:`AttributeError` first so the bypass
+    never reaches the unwrapped object. Recursive wrapping of modules
+    looked up *under* a deny-name attribute does not apply because the
+    deny-name lookup itself fails.
+    """
+
+    __slots__ = ("_wrapped",)
+
+    def __init__(self, module: Any) -> None:
+        # _wrapped must always resolve via object.__getattribute__ to
+        # avoid recursion through our own proxy.
+        object.__setattr__(self, "_wrapped", module)
+
+    def __getattribute__(self, name: str) -> Any:
+        # Name-mangled attribute storage keeps the slot lookup out of the
+        # deny-set chokepoint — we must never gate ``_wrapped`` itself.
+        if name == "_wrapped" or name.startswith("_SafeModule__"):
+            return object.__getattribute__(self, name)
+        if name == "__dir__":
+            # Special-case: delegate to our filtered __dir__ rather than
+            # the wrapped module's own (which would leak the deny set).
+            return object.__getattribute__(self, "__dir__")
+        if name in _DENY_ATTR_NAMES:
+            raise AttributeError(
+                f"Blocked — access to disallowed module attribute '{name}'"
+            )
+        wrapped = object.__getattribute__(self, "_wrapped")
+        value = getattr(wrapped, name)
+        return _wrap_module(value)
+
+    def __dir__(self) -> list[str]:
+        try:
+            raw = dir(object.__getattribute__(self, "_wrapped"))
+        except TypeError:
+            return []
+        return [name for name in raw if name not in _DENY_ATTR_NAMES]
+
+    def __repr__(self) -> str:
+        try:
+            wrapped = object.__getattribute__(self, "_wrapped")
+        except AttributeError:
+            return "<SafeModule (uninitialised)>"
+        return f"<SafeModule wrapping {wrapped!r}>"
+
+
 def _guarded_import(
     name: str,
     globals: dict[str, Any] | None = None,
@@ -274,18 +382,18 @@ def _guarded_import(
     namespace-dict lookups (``ns["__builtins__"]["__import__"]``), frame
     walks, etc. Wrapping it makes the module blocklist a runtime invariant
     for import statements and reflective aliases alike.
+
+    The returned module (and any submodule entries inside ``fromlist``)
+    is wrapped via :class:`SafeModule` so transitive attribute reads of
+    deny-named modules (``uuid.os``, ``re.sys``, ``ET.sys``, …) close at
+    the runtime chokepoint rather than reaching the real ``os`` / ``sys``
+    objects.
     """
     root = name.split(".")[0] if name else ""
     if root in _BLOCKED_MODULES:
         raise ImportError(f"Blocked — import of disallowed module '{name}'")
-    return _REAL_IMPORT(name, globals, locals, fromlist, level)
-
-
-def safe_builtins() -> dict[str, Any]:
-    """Return a restricted __builtins__ dict with dangerous names removed."""
-    safe = {k: v for k, v in vars(builtins).items() if k not in _REMOVED_BUILTINS}
-    safe["__import__"] = _guarded_import
-    return safe
+    module = _REAL_IMPORT(name, globals, locals, fromlist, level)
+    return _wrap_module(module)
 
 
 def _check_ast(code: str) -> str | None:
