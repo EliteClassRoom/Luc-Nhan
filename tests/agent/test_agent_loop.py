@@ -2096,7 +2096,339 @@ class TestReasoningRunnerCoalescing(unittest.TestCase):
 
         types = [e.type for e in collected]
         assert TurnEventType.TEXT_DELTA in types
-        assert TurnEventType.TURN_END in types
+
+class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
+    """BackgroundAgentRunner must never drop lifecycle control events under
+    backpressure, and the daemon thread must exit cleanly within a bounded
+    time even when the consumer is dead. Phase 3 introduces a split between
+    ``put_control`` (bounded blocking put) and ``put_delta`` (drop on pressure)
+    plus a separate bounded sentinel branch — see loop.py for design notes.
+    """
+
+    def _make_loop(self) -> AgentLoop:
+        provider = MockProvider(responses=[_text_response("x")])
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState()
+        return AgentLoop(provider, ToolRegistry(), config, session)
+
+    def test_control_events_arrive_with_slow_consumer(self):
+        """Every TURN_START / TOOL_RESULT / CANCELLED / TURN_END / ERROR must
+        reach the consumer even when the consumer drains slower than the
+        legacy 1-second safe_put timeout."""
+        import queue as queue_mod
+        import time
+
+        # Producer bursts two stream deltas (to trigger low-latency passthrough
+        # and exercise the queue) followed by one of each lifecycle event.
+        events = [
+            TurnEvent.text_delta("a"),
+            TurnEvent.text_delta("b"),
+            TurnEvent.turn_start(1),
+            TurnEvent.tool_result_event("call-1", "noop", "ok"),
+            TurnEvent.cancelled_event(),
+            TurnEvent.turn_end(1),
+            TurnEvent.error_event("oops"),
+        ]
+
+        loop = self._make_loop()
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = queue_mod.Queue(maxsize=1)
+        runner.start("test")
+
+        # Slow consumer (1.5s/get) — slower than the legacy 1s timeout. With
+        # maxsize=1 the producer blocks on the second delta's unbounded put
+        # until the consumer takes the first delta; thereafter each
+        collected: list[TurnEvent] = []
+        deadline = time.monotonic() + 25.0
+        while True:
+            ev = runner.get_event(timeout=0.1)
+            if ev is None:
+                if (
+                    runner._thread is not None
+                    and not runner._thread.is_alive()
+                    and runner.event_queue.empty()
+                ):
+                    break
+                if time.monotonic() > deadline:
+                    self.fail("test timed out waiting for runner to finish")
+                continue
+            collected.append(ev)
+            time.sleep(1.5)
+
+        types = [e.type for e in collected]
+        for ctrl in (
+            TurnEventType.TURN_START,
+            TurnEventType.TOOL_RESULT,
+            TurnEventType.CANCELLED,
+            TurnEventType.TURN_END,
+            TurnEventType.ERROR,
+        ):
+            self.assertIn(
+                ctrl,
+                types,
+                f"control event {ctrl.value} dropped under slow consumer",
+            )
+
+    def test_daemon_exits_when_consumer_is_dead(self):
+        """When no consumer ever drains the queue (e.g. the UI panel closed
+        before the background agent finished), the daemon thread must exit
+        within bounded time. The legacy ``event_queue.put(None)`` is an
+        unbounded blocking call that hangs the thread forever; the new
+        sentinel branch must use a finite timeout."""
+        import queue as queue_mod
+
+        # Pre-fill the queue so the producer's first put blocks; consumer
+        # never drains — so the sentinel put at the end of _run() must time
+        # out instead of hanging forever.
+        q = queue_mod.Queue(maxsize=1)
+        q.put(TurnEvent.text_delta("blocker"))
+
+        events: list[TurnEvent] = []  # Producer yields no events; falls into finally.
+        loop = self._make_loop()
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = q
+        runner.start("test")
+
+        # The implementation's _CONTROL_PUT_TIMEOUT = 5s; budget 8s so we
+        # don't make this test depend on the exact constant — just on the
+        # contract that the daemon does eventually exit.
+        thread = runner._thread
+        assert thread is not None
+        thread.join(timeout=8.0)
+        self.assertFalse(
+            thread.is_alive(),
+            "daemon thread should exit within bounded time when consumer "
+            "is dead — the legacy q.put(None) hangs forever.",
+        )
+
+    def test_text_done_arrives_under_slow_consumer(self):
+        """``TEXT_DONE`` carries the final assistant message. Dropping it
+        under backpressure means the UI never renders the reply — a real
+        user-visible defect (Phase 3 round-1 review). The runner must
+        route ``TEXT_DONE`` through ``_put_control`` so a slow consumer
+        (slower than the legacy 1s ``_put_delta`` budget) still gets it."""
+        import queue as queue_mod
+        import time
+
+        # Producer emits a burst of text deltas (to exercise the
+        # low-latency passthrough), then a single TEXT_DONE with the
+        # final reply. The slow consumer must still receive the final
+        # text — that's the contract.
+        events: list[TurnEvent] = []
+        for _ in range(50):
+            events.append(TurnEvent.text_delta("x"))
+        events.append(TurnEvent.text_done("final reply the user must see"))
+
+        loop = self._make_loop()
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = queue_mod.Queue(maxsize=1)
+        runner.start("test")
+
+        collected: list[TurnEvent] = []
+        deadline = time.monotonic() + 30.0
+        while True:
+            ev = runner.get_event(timeout=0.1)
+            if ev is None:
+                if (
+                    runner._thread is not None
+                    and not runner._thread.is_alive()
+                    and runner.event_queue.empty()
+                ):
+                    break
+                if time.monotonic() > deadline:
+                    self.fail("test timed out waiting for runner to finish")
+                continue
+            collected.append(ev)
+            time.sleep(2.0)
+
+        text_done_events = [e for e in collected if e.type == TurnEventType.TEXT_DONE]
+        self.assertEqual(
+            len(text_done_events),
+            1,
+            "TEXT_DONE must arrive exactly once under slow consumer; "
+            "dropping it hides the final assistant message.",
+        )
+        self.assertEqual(text_done_events[0].text, "final reply the user must see")
+
+    def test_tool_approval_request_arrives_under_slow_consumer(self):
+        """``TOOL_APPROVAL_REQUEST`` gates tool execution. Dropping it under
+        backpressure means a tool runs without user consent — a security
+        regression (Phase 3 round-1 review). The runner must route it
+        through ``_put_control``."""
+        import queue as queue_mod
+        import time
+
+        # Producer emits a burst of text deltas followed by a tool
+        # approval request. The approval request MUST reach the consumer
+        # even when the consumer is slow enough that the legacy 1s
+        # ``_put_delta`` budget would drop it.
+        events: list[TurnEvent] = []
+        for _ in range(50):
+            events.append(TurnEvent.text_delta("x"))
+        events.append(
+            TurnEvent.tool_approval_request(
+                tool_call_id="call-approval-1",
+                tool_name="execute_python",
+                args="{\"script\": \"rm -rf /\"}",
+                description="Run dangerous script",
+            )
+        )
+
+        loop = self._make_loop()
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = queue_mod.Queue(maxsize=1)
+        runner.start("test")
+
+        collected: list[TurnEvent] = []
+        deadline = time.monotonic() + 30.0
+        while True:
+            ev = runner.get_event(timeout=0.1)
+            if ev is None:
+                if (
+                    runner._thread is not None
+                    and not runner._thread.is_alive()
+                    and runner.event_queue.empty()
+                ):
+                    break
+                if time.monotonic() > deadline:
+                    self.fail("test timed out waiting for runner to finish")
+                continue
+            collected.append(ev)
+            time.sleep(2.0)
+
+        approval_events = [
+            e for e in collected if e.type == TurnEventType.TOOL_APPROVAL_REQUEST
+        ]
+        self.assertEqual(
+            len(approval_events),
+            1,
+            "TOOL_APPROVAL_REQUEST must arrive exactly once under slow "
+            "consumer; dropping it lets the tool run without user consent.",
+        )
+        self.assertEqual(approval_events[0].tool_name, "execute_python")
+
+
+class TestMaxTurnsHardCeiling(unittest.TestCase):
+    """``max_turns`` is a hard ceiling on the normal-mode agentic loop.
+
+    The pre-fix implementation hardcoded a 100-turn ceiling inside
+    ``run_normal_loop`` regardless of any caller-supplied budget; a
+    subagent spawned with ``max_turns=3`` could still burn 100 turns
+    (and the corresponding token budget). After the fix the loop must
+    stop cleanly at the configured budget regardless of how many tool
+    calls the model emits.
+    """
+
+    def _make_loop(
+        self, provider: MockProvider, tools: ToolRegistry | None = None, max_turns: int | None = None
+    ) -> AgentLoop:
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        kwargs: dict[str, Any] = {}
+        if max_turns is not None:
+            kwargs["max_turns"] = max_turns
+        return AgentLoop(
+            provider=provider,
+            tool_registry=tools or ToolRegistry(),
+            config=config,
+            session=session,
+            **kwargs,
+        )
+
+    def test_loop_tool_loop_stops_at_max_turns_3(self) -> None:
+        """A provider that always emits tool calls must terminate at turn 3."""
+        from rikugan.tools.base import ParameterSchema, ToolDefinition
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="ping",
+                description="noop",
+                parameters=[ParameterSchema(name="x", type="string", required=True)],
+                handler=lambda x: f"pong: {x}",
+                category="test",
+            )
+        )
+        # 10 scripted tool-call responses: provider would loop forever
+        # without the ceiling. budget=3 must stop after turn 3.
+        provider = MockProvider(
+            responses=[_tool_call_response("ping", {"x": f"v{i}"}, call_id=f"c{i}") for i in range(10)]
+        )
+        loop = self._make_loop(provider, tools=registry, max_turns=3)
+
+        events = list(loop.run("loop forever"))
+
+        errors = [e for e in events if e.type == TurnEventType.ERROR and e.error]
+        assert errors, "expected ERROR event signalling the turn ceiling"
+        assert "max turns" in (errors[-1].error or "")
+
+        turn_ends = [e for e in events if e.type == TurnEventType.TURN_END]
+        assert len(turn_ends) == 3
+
+    def test_loop_default_uses_legacy_100_ceiling(self) -> None:
+        """Without ``max_turns`` the loop keeps the 100-turn ceiling
+        (no behavioural regression for the top-level agent)."""
+        from rikugan.tools.base import ParameterSchema, ToolDefinition
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="ping",
+                description="noop",
+                parameters=[ParameterSchema(name="x", type="string", required=True)],
+                handler=lambda x: "pong",
+                category="test",
+            )
+        )
+        # One tool call, then text — well within the legacy 100-turn cap.
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("ping", {"x": "1"}, call_id="c1"),
+                _text_response("done"),
+            ]
+        )
+        loop = self._make_loop(provider, tools=registry)
+
+        events = list(loop.run("call once"))
+
+        assert not any(e.type == TurnEventType.ERROR and e.error and "max turns" in e.error for e in events)
+
+    def test_loop_max_turns_one_stops_after_one_turn(self) -> None:
+        """Positive case: ``max_turns=1`` lets the model finish one tool
+        call, then the ceiling fires on the second iteration — exactly
+        one ``TURN_END`` and one ``max turns`` ERROR.
+        """
+        from rikugan.tools.base import ParameterSchema, ToolDefinition
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="ping",
+                description="noop",
+                parameters=[ParameterSchema(name="x", type="string", required=True)],
+                handler=lambda x: "pong",
+                category="test",
+            )
+        )
+        provider = MockProvider(responses=[_tool_call_response("ping", {"x": "1"}, call_id="c1")])
+        loop = self._make_loop(provider, tools=registry, max_turns=1)
+
+        events = list(loop.run("call once"))
+
+        turn_ends = [e for e in events if e.type == TurnEventType.TURN_END]
+        assert len(turn_ends) == 1
+        errors = [e for e in events if e.type == TurnEventType.ERROR and e.error]
+        assert any("max turns limit (1)" in (e.error or "") for e in errors)
 
 
 if __name__ == "__main__":

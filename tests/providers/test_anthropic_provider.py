@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy as _copy
 import os
 import sys
 import unittest
@@ -274,5 +275,122 @@ class TestAnthropicRequestContextPayloadEquivalence(unittest.TestCase):
         )
 
 
+class TestAnthropicRawPartsDeepCopy(unittest.TestCase):
+    """Mutations during _build_request_kwargs must never leak back into
+    Message._raw_parts. Two requests with the same Message must produce
+    equal payloads and the source Message must be byte-equal after both
+    calls (round-trip parity through the assistant raw-part replay path).
+    """
+
+    def _make_assistant(self) -> Message:
+        msg = Message(role=Role.ASSISTANT, content="")
+        msg._raw_parts = [
+            {"type": "thinking", "thinking": "hmm", "signature": "sig"},
+            {"type": "text", "text": "checking"},
+            {
+                "type": "tool_use",
+                "id": "tc_1",
+                "name": "look",
+                "input": {"x": 1},
+            },
+        ]
+        return msg
+
+    def test_format_messages_deep_copies_replayed_raw_blocks(self) -> None:
+        # Direct call to _format_messages: deep-copy contract must hold at
+        # the source (no shared references on top-level block dicts OR
+        # nested dicts inside tool_use.input), regardless of any
+        # downstream mutation. This catches the regression independently
+        # of _build_request_kwargs and stays meaningful even if the
+        # cache_control injection site moves.
+        provider = _make_provider()
+        assistant = self._make_assistant()
+        original_blocks = _copy.deepcopy(assistant._raw_parts)
+        original_inner_input = _copy.deepcopy(assistant._raw_parts[-1]["input"])
+
+        formatted = provider._format_messages([assistant])
+        self.assertEqual(len(formatted), 1)
+        replayed = formatted[0]["content"]
+
+        # Every top-level block must be a fresh dict, not the source.
+        self.assertEqual(len(replayed), len(assistant._raw_parts))
+        for src_block, repl_block in zip(assistant._raw_parts, replayed):
+            self.assertIsNot(
+                repl_block,
+                src_block,
+                "_format_messages must deep-copy each top-level block.",
+            )
+
+        # Nested dicts must also be fresh — tool_use.input especially.
+        self.assertIsNot(
+            replayed[-1]["input"],
+            assistant._raw_parts[-1]["input"],
+            "_format_messages must deep-copy tool_use.input dict.",
+            )
+
+        # Mutating the formatted slot must NOT touch the source.
+        replayed[-1]["cache_control"] = {"type": "ephemeral"}
+        replayed[-1]["input"]["x"] = 999
+        self.assertEqual(assistant._raw_parts, original_blocks)
+        self.assertEqual(assistant._raw_parts[-1]["input"], original_inner_input)
+
+    def test_two_requests_with_same_message_round_trip(self) -> None:
+        # Wired through _build_request_kwargs: cache_control injection on
+        # the trailing assistant block must land on the formatted slot,
+        # NOT on Message._raw_parts. This catches the dropped-continue
+        # bug (cache_control lands on a *different* block when the
+        # raw_parts replay falls through to the fallback branch).
+        provider = _make_provider()
+        assistant = self._make_assistant()
+        snapshot_before = _copy.deepcopy(assistant._raw_parts)
+
+        messages = [
+            Message(role=Role.USER, content="hi"),
+            Message(role=Role.TOOL, tool_results=[ToolResult(tool_call_id="tc_1", name="look", content="ok")]),
+            Message(role=Role.ASSISTANT, content="prev"),
+            Message(role=Role.USER, content="again?"),
+            assistant,  # last — qualifies for cache_control injection
+        ]
+
+        kw1 = provider._build_request_kwargs(messages, None, 0.3, 4096, "system")
+        kw2 = provider._build_request_kwargs(messages, None, 0.3, 4096, "system")
+        snapshot_after = _copy.deepcopy(assistant._raw_parts)
+
+        # Payload equality across two independent requests.
+        self.assertEqual(kw1, kw2)
+
+        # Original Message._raw_parts byte-equal before and after both calls.
+        self.assertEqual(snapshot_after, snapshot_before)
+
+        # No block inside _raw_parts picked up a cache_control field
+        # injected by _build_request_kwargs — it must land on the deep
+        # copy, not the source.
+        for block in assistant._raw_parts:
+            self.assertNotIn(
+                "cache_control",
+                block,
+                "build_request_kwargs leaked cache_control into Message._raw_parts — "
+                "raw blocks must be deep-copied before mutation.",
+            )
+
+        # Cache_control from request one matches request two (round-trip
+        # parity) and was emitted on the *deep-copied* slot, not the
+        # original. Also: cache_control must be on the LAST block of the
+        # raw_parts replay — NOT on an unrelated empty-content fallback
+        # block (which would mean the replay branch fell through and
+        # produced a duplicate formatted entry).
+        msgs_out = kw1["messages"]
+        last = msgs_out[-1]
+        last_block = last["content"][-1]
+        self.assertIn("cache_control", last_block)
+        self.assertEqual(
+            last_block.get("type"),
+            assistant._raw_parts[-1].get("type"),
+            "cache_control landed on the wrong block — _format_messages "
+            "likely double-appended (replay + fallback).",
+        )
+        same_in_kw2 = kw2["messages"][-1]["content"][-1].get("cache_control")
+        self.assertEqual(same_in_kw2, last_block["cache_control"])
+        self.assertIsNot(last_block, assistant._raw_parts[-1])
 if __name__ == "__main__":
     unittest.main()

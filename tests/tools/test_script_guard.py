@@ -17,7 +17,9 @@ install_ida_mocks()
 from rikugan.ida.tools.microcode_optim import compile_optimizer
 from rikugan.tools.script_guard import (
     GuardViolation,
+    SafeModule,
     _check_ast,
+    _DENY_ATTR_NAMES,
     check_ast,
     run_guarded_code,
     run_guarded_script,
@@ -682,6 +684,280 @@ class TestCompileOptimizerGuard(unittest.TestCase):
     def test_public_check_ast_alias_matches_private(self):
         self.assertIs(check_ast, _check_ast)
         self.assertIsNone(check_ast("x = 1"))
+
+
+# --- SafeModule proxy (Phase-3 / Layer A) -------------------------------
+# The Phase-1 + 4 fix rounds closed every direct bypass vector. What
+# remained is the transitive module-attribute leak class: legitimate stdlib
+# modules (uuid, re, ET, json, enum, …) re-export os/sys/importlib via
+# transitive imports. Static blocklists can't close the class — it requires
+# runtime attribute-proxying on the module objects the guarded importer
+# returns. These tests prove the Layer-A chokepoint (DENY_ATTR_NAMES frozenset
+# + SafeModule.__getattribute__) shuts the chain.
+
+class TestSafeModuleDenySet(unittest.TestCase):
+    def test_deny_attr_names_is_frozenset(self):
+        # Contract: the deny set is a frozenset of bare attribute names. No
+        # positive allow-list of pure-data modules — that's a Phase-4 / Layer-B
+        # change.
+        self.assertIsInstance(_DENY_ATTR_NAMES, frozenset)
+        self.assertEqual(
+            _DENY_ATTR_NAMES,
+            frozenset({"os", "sys", "subprocess", "importlib", "builtins", "shutil", "signal"}),
+        )
+
+    def test_safemodule_wraps_an_explicit_module(self):
+        # Direct construction: a raw module wrapped through SafeModule must
+        # hide deny-set names but pass through everything else.
+        import json
+
+        wrapped = SafeModule(json)
+        # Non-deny name (loads) leaks through as the real bound function.
+        self.assertIs(wrapped.loads, json.loads)
+        # Deny name raises the contract AttributeError.
+        with self.assertRaises(AttributeError) as ctx:
+            _ = wrapped.sys
+        self.assertIn("sys", str(ctx.exception))
+
+
+class TestTransitiveLeakClosure(unittest.TestCase):
+    """The Phase-1 ledger documented these chains as the residual attack
+    surface after every direct bypass was patched. Layer A (SafeModule proxy
+    on _guarded_import return values) must close every chain that surfaces
+    one of the seven deny-named modules through a benign stdlib surface."""
+
+    def test_blocks_uuid_os(self):
+        # Phase-1 ledger: uuid re-exports os.
+        code = (
+            "import uuid\n"
+            "try:\n"
+            "    uuid.os.system('echo uuid-leak')\n"
+            "except AttributeError as e:\n"
+            "    print('blocked', e)\n"
+        )
+        result = run_guarded_script(code, _empty_ns)
+        self.assertIn("blocked", result)
+        self.assertNotIn("uuid-leak", result)
+
+    def test_blocks_re_sys_modules_chain(self):
+        # Phase-1 ledger: re → sys (when present in this Python's re). Even
+        # if re.sys is absent naturally, the proxy must never expose it.
+        code = (
+            "import re\n"
+            "try:\n"
+            "    re.sys\n"
+            "except AttributeError as e:\n"
+            "    print('blocked', e)\n"
+        )
+        result = run_guarded_script(code, _empty_ns)
+        self.assertIn("blocked", result)
+
+    def test_blocks_xml_etree_sys(self):
+        # Phase-1 ledger: xml.etree.ElementTree exposes sys.
+        code = (
+            "import xml.etree.ElementTree as ET\n"
+            "try:\n"
+            "    ET.sys\n"
+            "except AttributeError as e:\n"
+            "    print('blocked', e)\n"
+        )
+        result = run_guarded_script(code, _empty_ns)
+        self.assertIn("blocked", result)
+
+    def test_blocks_enum_sys(self):
+        # Phase-1 ledger: enum exposes sys.
+        code = (
+            "import enum\n"
+            "try:\n"
+            "    enum.sys\n"
+            "except AttributeError as e:\n"
+            "    print('blocked', e)\n"
+        )
+        result = run_guarded_script(code, _empty_ns)
+        self.assertIn("blocked", result)
+
+    def test_blocks_subprocess_through_benign_module(self):
+        # Generic defensible chain: if any wrapped module managed to
+        # transitively surface subprocess, it must be denied. We check
+        # every wrapped module listed in the ledger.
+        for modname in ("uuid", "re", "xml.etree.ElementTree", "enum", "base64", "string", "json"):
+            code = (
+                f"import {modname} as m\n"
+                f"try:\n"
+                f"    m.subprocess\n"
+                f"except AttributeError:\n"
+                f"    print('blocked')\n"
+            )
+            result = run_guarded_script(code, _empty_ns)
+            self.assertIn("blocked", result, msg=f"{modname}.subprocess not blocked; output={result!r}")
+
+    def test_blocks_importlib_through_benign_module(self):
+        for modname in ("uuid", "xml.etree.ElementTree", "enum"):
+            code = (
+                f"import {modname} as m\n"
+                f"try:\n"
+                f"    m.importlib\n"
+                f"except AttributeError:\n"
+                f"    print('blocked')\n"
+            )
+            result = run_guarded_script(code, _empty_ns)
+            self.assertIn("blocked", result, msg=f"{modname}.importlib not blocked; output={result!r}")
+
+    def test_blocks_shutil_through_benign_module(self):
+        for modname in ("uuid", "enum"):
+            code = (
+                f"import {modname} as m\n"
+                f"try:\n"
+                f"    m.shutil\n"
+                f"except AttributeError:\n"
+                f"    print('blocked')\n"
+            )
+            result = run_guarded_script(code, _empty_ns)
+            self.assertIn("blocked", result, msg=f"{modname}.shutil not blocked; output={result!r}")
+
+    def test_blocks_signal_through_benign_module(self):
+        for modname in ("uuid", "enum"):
+            code = (
+                f"import {modname} as m\n"
+                f"try:\n"
+                f"    m.signal\n"
+                f"except AttributeError:\n"
+                f"    print('blocked')\n"
+            )
+            result = run_guarded_script(code, _empty_ns)
+            self.assertIn("blocked", result, msg=f"{modname}.signal not blocked; output={result!r}")
+
+    def test_blocks_builtins_through_benign_module(self):
+        # `builtins` must be denied even if a wrapped module surfaces it
+        # via a transitive import.
+        for modname in ("uuid", "enum"):
+            code = (
+                f"import {modname} as m\n"
+                f"try:\n"
+                f"    m.builtins\n"
+                f"except AttributeError:\n"
+                f"    print('blocked')\n"
+            )
+            result = run_guarded_script(code, _empty_ns)
+            self.assertIn("blocked", result, msg=f"{modname}.builtins not blocked; output={result!r}")
+
+    def test_blocks_os_through_every_ledger_module(self):
+        # uuid, ET, enum are the documented surfaces; the proxy must
+        # cover them uniformly.
+        for modname in ("uuid", "xml.etree.ElementTree", "enum", "base64", "string"):
+            code = (
+                f"import {modname} as m\n"
+                f"try:\n"
+                f"    m.os\n"
+                f"except AttributeError:\n"
+                f"    print('blocked')\n"
+            )
+            result = run_guarded_script(code, _empty_ns)
+            self.assertIn("blocked", result, msg=f"{modname}.os not blocked; output={result!r}")
+
+
+class TestSafeModulePositiveFlows(unittest.TestCase):
+    """Layer A is deny-only — everything outside the seven-name deny set
+    must pass through unchanged. Without these regression tests a sloppy
+    future implementation could accidentally widen the choke and break
+    legitimate analysis flows."""
+
+    def test_passes_through_real_function(self):
+        result = run_guarded_script(
+            "import re\nprint(re.compile('a+b').pattern)",
+            _empty_ns,
+        )
+        self.assertIn("a+b", result)
+
+    def test_passes_through_real_class(self):
+        # collections.OrderedDict is a class — `c = collections.OrderedDict`
+        # must yield the real type, not a wrapped object that's silently
+        # unusable.
+        code = (
+            "import collections\n"
+            "d = collections.OrderedDict()\n"
+            "d['a'] = 1\n"
+            "print(len(d), d['a'])\n"
+        )
+        result = run_guarded_script(code, _empty_ns)
+        self.assertIn("1 1", result)
+
+    def test_passes_through_real_submodule(self):
+        # collections.abc is a legitimate submodule (non-deny name), must
+        # be reachable through the wrapped module surface.
+        code = (
+            "import collections\n"
+            "abc = collections.abc\n"
+            "print(abc.MutableMapping.__name__)\n"
+        )
+        result = run_guarded_script(code, _empty_ns)
+        self.assertIn("MutableMapping", result)
+
+    def test_does_not_wrap_direct_import_target(self):
+        # `from re import search` binds `search` in the namespace to the
+        # real function. (`compile` is itself blocked by the AST, not by
+        # SafeModule — the FromList path doesn't shadow the AST rule.)
+        code = (
+            "from re import search\n"
+            "print(bool(search('ab+c', 'abc')))\n"
+        )
+        result = run_guarded_script(code, _empty_ns)
+        self.assertIn("True", result)
+
+    def test_dir_excludes_deny_names(self):
+        # `dir()` is itself blocked by the AST blocklist, but the contract
+        # holds via SafeModule.__dir__: when the interpreter calls it on
+        # the proxy (e.g. for help() introspection), the deny set is
+        # filtered out so attribute discovery cannot reach it.
+        import uuid as _uuid
+
+        wrapped = SafeModule(_uuid)
+        names = wrapped.__dir__()
+        for deny in _DENY_ATTR_NAMES:
+            self.assertNotIn(deny, names, msg=f"deny name {deny!r} leaked through __dir__")
+        # Sanity: legitimate names survive.
+        self.assertIn("uuid4", names)
+
+    def test_dir_preserves_other_names(self):
+        # Non-deny names in __dir__() must be preserved so legitimate
+        # introspection keeps working.
+        import re as _re
+
+        wrapped = SafeModule(_re)
+        names = wrapped.__dir__()
+        self.assertIn("compile", names)
+        self.assertIn("search", names)
+
+    def test_safe_module_direct_construction(self):
+        # Smoke: SafeModule around a plain module exposes through everything
+        # except the deny set, and id()-equality is preserved for raw objects.
+        import json as _json
+
+        wrapped = SafeModule(_json)
+        self.assertIs(wrapped.dumps, _json.dumps)
+        self.assertIs(wrapped.JSONEncoder, _json.JSONEncoder)
+
+
+class TestSafeModulePerf(unittest.TestCase):
+    """Layer A MUST NOT spin up a watchdog or anything heavier than a
+    frozenset membership check per attribute access. A 10k iteration loop
+    finishing well under the AST-check budget (≪ 1 second) proves the
+    property without spinning up real-time machinery."""
+
+    def test_attribute_access_through_wrapper_is_fast(self):
+        import time
+
+        import uuid as _uuid
+
+        wrapped = SafeModule(_uuid)
+        n = 10000
+        start = time.perf_counter()
+        for _ in range(n):
+            _ = wrapped.uuid4
+        elapsed = time.perf_counter() - start
+        # 10k attribute reads in well under 1 second. Real measured budget
+        # for a frozenset membership + getattr is < 50 ms on any modern CPU.
+        self.assertLess(elapsed, 1.0, msg=f"10k reads took {elapsed:.3f}s — proxy too slow")
 
 
 if __name__ == "__main__":

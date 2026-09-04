@@ -319,6 +319,12 @@ class WorkspaceStore:
         # RLock: serializes every connection access; re-entrant because
         # save_fact_if_semantically_absent reads back through get_fact().
         self._lock = threading.RLock()
+        # Idempotent close(): every agent run swaps the per-run store, so the
+        # previous store's close() races with on_agent_finished's close() of
+        # the same instance. Guard instead of relying on sqlite3.Connection's
+        # built-in tolerance so a future custom connection can't reintroduce
+        # the leak via a ProgrammingError on double-close.
+        self._closed = False
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -378,9 +384,23 @@ class WorkspaceStore:
         return cls(conn, paths)
 
     def close(self) -> None:
-        """Close the database connection."""
+        """Close the database connection. Idempotent — safe to call twice.
+
+        The per-run store is closed when the next agent run replaces it AND
+        again on ``on_agent_finished``; double-close must be a no-op so the
+        swap path does not raise if the finish hook already closed it
+        (or vice versa).
+
+        ``_closed`` is flipped AFTER ``self._conn.close()`` returns so a
+        raising close (e.g. on a corrupted WAL) does not silently swallow
+        future calls — the next caller retries and surfaces the original
+        failure mode instead of pretending the connection is already dead.
+        """
         with self._lock:
+            if self._closed:
+                return
             self._conn.close()
+            self._closed = True
 
     def __enter__(self) -> WorkspaceStore:
         return self

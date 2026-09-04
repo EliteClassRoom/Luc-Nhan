@@ -24,8 +24,8 @@ from collections.abc import Generator
 from typing import TYPE_CHECKING
 
 from ..a2a import A2ADispatcher
+from ...core.errors import CancellationError
 from ..turn import TurnEvent, TurnEventType
-
 if TYPE_CHECKING:
     from ..loop import AgentLoop
 
@@ -48,9 +48,10 @@ def run_a2a_mode(
 
     Events yielded: ``TEXT_DELTA`` (one per dispatcher event),
     ``TEXT_DONE`` at the end with the final aggregated output,
-    and ``ERROR`` for validation/transport failures. We bypass
-    the regular turn cycle entirely — /a2a is a one-shot,
-    non-LLM-mediated path.
+    ``ERROR`` for validation/transport failures, and (via the outer
+    ``AgentLoop.run`` re-raise) ``CANCELLED`` when the user cancels
+    mid-dispatch. We bypass the regular turn cycle entirely — /a2a
+    is a one-shot, non-LLM-mediated path.
     """
     parts = user_message.split(maxsplit=1)
     if len(parts) < 2:
@@ -92,8 +93,21 @@ def run_a2a_mode(
                 collected_text += event.text or ""
                 yield event
             elif event.type == TurnEventType.ERROR:
+                # The dispatcher surfaces user cancellation as an
+                # ERROR event with a "cancelled by user" message
+                # rather than raising. Detect the underlying cancel
+                # signal and re-raise ``CancellationError`` so the
+                # outer ``AgentLoop.run`` converts it into a
+                # ``CANCELLED`` event for the UI instead of a
+                # generic ``ERROR``.
+                if loop._cancelled is not None and loop._cancelled.is_set():
+                    raise CancellationError("Agent run cancelled")
                 collected_text += event.error or "External agent error"
                 yield event
+    except CancellationError:
+        # Propagate unchanged so the outer ``AgentLoop.run``
+        # converts it into a CANCELLED event.
+        raise
     except Exception as e:
         collected_text += f"\nDispatcher exception: {e}"
         yield TurnEvent.error_event(f"Dispatcher exception: {e}")

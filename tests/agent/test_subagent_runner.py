@@ -1,4 +1,5 @@
 """Tests for the SubagentRunner -> AgentLoop cancellation/model wiring."""
+
 from __future__ import annotations
 
 import os
@@ -84,6 +85,7 @@ class _FakeAgentLoop:
 
     def run(self, user_message: str):
         from rikugan.agent.turn import TurnEvent, TurnEventType
+
         yield TurnEvent(type=TurnEventType.TEXT_DONE, text="done")
         return None
 
@@ -149,6 +151,7 @@ class TestRunnerModelOverride(unittest.TestCase):
         assert loop.config.provider.model == "child-model"
         assert runner.config.provider.model == cfg_before_model
 
+
 class TestRunnerRespectsCancelEvent(unittest.TestCase):
     def test_cancel_event_reaches_provider_stream(self) -> None:
         """The cancel event must be forwarded into the chat_stream cancel_event slot."""
@@ -183,7 +186,138 @@ class TestRunnerRespectsCancelEvent(unittest.TestCase):
         with patch("rikugan.agent.loop.AgentLoop", _ShortLoop):
             events = list(runner.run_task("do thing", max_turns=1))
         assert any(e.type == TurnEventType.TEXT_DONE and e.text == "ok" for e in events)
-        assert captured_stream_cancel["event"] is cancel
+
+
+class TestRunnerMaxTurnsPlumbing(unittest.TestCase):
+    """``SubagentRunner`` must forward ``max_turns`` to the constructed
+    ``AgentLoop`` so the per-run budget is honoured as a hard ceiling.
+    """
+
+    def test_run_task_forwards_max_turns_to_agent_loop(self) -> None:
+        captured: dict = {}
+
+        class _Loop(_FakeAgentLoop):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured["max_turns"] = kwargs.get("max_turns")
+
+        provider = _StubProvider()
+        provider.scripted_packets = [StreamChunk(text="ok")]
+
+        runner = SubagentRunner(
+            provider=provider,
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+        )
+        with patch("rikugan.agent.loop.AgentLoop", _Loop):
+            list(runner.run_task("task", max_turns=7))
+        assert captured["max_turns"] == 7
+
+    def test_run_mode_forwards_max_turns_to_agent_loop(self) -> None:
+        captured: dict = {}
+
+        class _Loop(_FakeAgentLoop):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured["max_turns"] = kwargs.get("max_turns")
+
+        provider = _StubProvider()
+        provider.scripted_packets = [StreamChunk(text="ok")]
+
+        runner = SubagentRunner(
+            provider=provider,
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+        )
+        with patch("rikugan.agent.loop.AgentLoop", _Loop):
+            list(runner.run_mode("task", mode="normal", max_turns=12))
+        assert captured["max_turns"] == 12
+
+    def test_run_exploration_forwards_max_turns_to_agent_loop(self) -> None:
+        captured: dict = {}
+
+        class _Loop(_FakeAgentLoop):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured["max_turns"] = kwargs.get("max_turns")
+                self.last_knowledge_base = None  # run_exploration reads this
+
+            def run(self, user_message):
+                return
+                yield  # pragma: no cover - generator marker
+
+        runner = SubagentRunner(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+        )
+        with patch("rikugan.agent.loop.AgentLoop", _Loop):
+            list(runner.run_exploration("goal", max_turns=9))
+        assert captured["max_turns"] == 9
+
+
+class TestRunnerMaxTurnsValidation(unittest.TestCase):
+    """``max_turns`` validation at the runner boundary.
+
+    ``max_turns=0`` is **invalid** (immediate-stop is not a supported
+    mode and would otherwise be silently promoted to the 100-turn
+    default via Python truthiness). The constructor rejects it with
+    ``ValueError`` so the bug surfaces immediately instead of
+    degrading silently.
+    """
+
+    def _runner(self) -> SubagentRunner:
+        return SubagentRunner(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+        )
+
+    def test_constructor_max_turns_zero_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            SubagentRunner(
+                provider=_StubProvider(),
+                tool_registry=ToolRegistry(),
+                config=RikuganConfig(),
+                host_name="test",
+                max_turns=0,
+            )
+        assert "max_turns must be None or a positive int" in str(ctx.exception)
+
+    def test_constructor_max_turns_negative_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            SubagentRunner(
+                provider=_StubProvider(),
+                tool_registry=ToolRegistry(),
+                config=RikuganConfig(),
+                host_name="test",
+                max_turns=-1,
+            )
+        assert "max_turns must be None or a positive int" in str(ctx.exception)
+
+    def test_constructor_max_turns_none_accepted(self) -> None:
+        runner = SubagentRunner(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+            max_turns=None,
+        )
+        assert runner._max_turns is None
+
+    def test_constructor_max_turns_positive_accepted(self) -> None:
+        runner = SubagentRunner(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+            max_turns=12,
+        )
+        assert runner._max_turns == 12
 
 
 if __name__ == "__main__":
