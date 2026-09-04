@@ -32,6 +32,30 @@ import pytest
 @pytest.fixture
 def ctrl(tmp_path: Path):
     """Yield a real ``IdaSessionController`` wired with a fake IDB."""
+    # Defend against module-level sys.modules pollution from sibling
+    # tests (``tests/tools/test_ida_panel.py``,
+    # ``tests/ida_ui/test_panel_onside_widget.py``) that install a
+    # ``types.ModuleType("rikugan.ida.ui.session_controller")`` whose
+    # ``IdaSessionController`` is a ``MagicMock()``. The replacement
+    # outlives those tests and would otherwise shadow the real class
+    # here, turning the controller into a MagicMock and breaking every
+    # assertion on ``_memory_stores`` / close-call tracking.
+    import sys
+
+    for _name in (
+        "rikugan.ida.ui.session_controller",
+        "rikugan.ui.panel_core",
+        "rikugan.ida.ui.actions",
+    ):
+        _entry = sys.modules.get(_name)
+        if _entry is None:
+            continue
+        # Real rikugan modules have a ``__file__``; the stub
+        # ``types.ModuleType("...")`` instances installed by sibling
+        # tests have none. Drop only the latter.
+        if getattr(_entry, "__file__", None) is None:
+            del sys.modules[_name]
+
     from rikugan.core.config import RikuganConfig
     from rikugan.ida.ui.session_controller import IdaSessionController
     from rikugan.memory.workspace import FilesystemIdentity
