@@ -198,6 +198,23 @@ def _estimate_user_height(text: str) -> int:
     # ~16px per wrapped line
     return max(40, min(600, 32 + lines * 16))
 
+def _plan_step_done_status(outcome: str) -> str:
+    """Map ``plan_step_done`` outcome text to the ``PlanStepWidget`` status.
+
+    ``plan_mode._execute_step`` emits ``plan_step_done`` with ``text`` set
+    to one of ``"completed"``, ``"turn_limit"``, or ``"error"``. The
+    widget renderer needs the matching PlanStepWidget status names so
+    a step that exhausted its per-step turn budget gets a distinct
+    icon/colour instead of collapsing into the "done" state.
+    """
+    if outcome == "turn_limit":
+        return "turn_limit"
+    if outcome == "error":
+        return "error"
+    # ``completed`` (default) and any unknown outcome render as the
+    # regular "done" state.
+    return "done"
+
 
 class MessagePlaceholder(QFrame):
     """Lightweight sized spacer used during async restore.
@@ -1267,7 +1284,14 @@ class ChatView(QScrollArea):
             self._scroll_to_bottom()
         elif etype == TurnEventType.PLAN_STEP_DONE:
             if self._plan_view:
-                self._plan_view.set_step_status(event.plan_step_index, "done")
+                # ``plan_step_done`` carries the outcome in ``text``
+                # (``completed`` / ``turn_limit`` / ``error``). Map it
+                # to the matching ``PlanStepWidget`` status so the step
+                # reads as "stopped at limit" rather than "done" when
+                # the per-step turn budget was exhausted.
+                self._plan_view.set_step_status(
+                    event.plan_step_index, _plan_step_done_status(event.text)
+                )
             self._scroll_to_bottom()
 
     def _handle_exploration_event(self, event: TurnEvent) -> None:
