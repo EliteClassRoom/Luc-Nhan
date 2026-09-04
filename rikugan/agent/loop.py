@@ -2865,27 +2865,45 @@ class AgentLoop:
 _EVENT_QUEUE_MAXSIZE = 500
 
 # Lifecycle / control events that must never be dropped on a saturated
-# queue. These are the events the UI uses to advance its run state machine
-# (``TURN_START`` / ``TURN_END``), surface tool completion (``TOOL_RESULT``,
-# ``TOOL_CALL_*``), or finalize the run (``CANCELLED`` / ``ERROR`` /
-# ``RECOVERY_START``). The ``_BACKGROUND_RUNNER_CONTROL_EVENT_TYPES`` set is
-# the single source of truth — if a new ``TurnEventType`` becomes a
-# lifecycle marker, add it here and the put helper will route it correctly.
+# queue. The UI uses these to advance its run state machine
+# (``TURN_START`` / ``TURN_END``), render the final assistant message
+# (``TEXT_DONE`` — drop = user never sees the reply), surface tool
+# completion (``TOOL_RESULT``, ``TOOL_CALL_*``), gate user consent
+# (``TOOL_APPROVAL_REQUEST`` — drop = tool runs without approval, a
+# security regression), drive plan-mode progression
+# (``PLAN_GENERATED`` / ``PLAN_STEP_START`` / ``PLAN_STEP_DONE`` —
+# drop = plan approval never surfaces), or finalize the run
+# (``CANCELLED`` / ``ERROR`` / ``RECOVERY_START``). The
+# ``_BACKGROUND_RUNNER_CONTROL_EVENT_TYPES`` set is the single source of
+# truth — if a new ``TurnEventType`` becomes a lifecycle marker, add it
+# here and the put helper will route it correctly.
+#
+# Stream deltas (``TEXT_DELTA`` / ``REASONING_DELTA``) stay on the
+# low-latency passthrough because the coalescing buffer already absorbs
+# their backpressure; their loss is acceptable because the final
+# ``TEXT_DONE`` carries the full text. See Phase 3 round-1 finding in
+# task-4-report.md for the rationale shift (TEXT_DONE is itself a
+# control event because dropping it hides the final message).
 _BACKGROUND_RUNNER_CONTROL_EVENT_TYPES: frozenset[TurnEventType] = frozenset(
     {
         TurnEventType.TURN_START,
         TurnEventType.TURN_END,
+        TurnEventType.TEXT_DONE,
         TurnEventType.TOOL_CALL_START,
         TurnEventType.TOOL_CALL_ARGS_DELTA,
         TurnEventType.TOOL_CALL_DONE,
         TurnEventType.TOOL_CALL_DISCARDED,
         TurnEventType.TOOL_RESULT,
+        TurnEventType.TOOL_APPROVAL_REQUEST,
+        TurnEventType.SAVE_APPROVAL_REQUEST,
         TurnEventType.RECOVERY_START,
         TurnEventType.CANCELLED,
         TurnEventType.ERROR,
         TurnEventType.USAGE_UPDATE,
         TurnEventType.USER_QUESTION,
         TurnEventType.PLAN_GENERATED,
+        TurnEventType.PLAN_STEP_START,
+        TurnEventType.PLAN_STEP_DONE,
     }
 )
 
@@ -2897,6 +2915,13 @@ _BACKGROUND_RUNNER_CONTROL_EVENT_TYPES: frozenset[TurnEventType] = frozenset(
 # "persistent recovery queue" upgrade path is documented in the design
 # notes below.
 _CONTROL_PUT_TIMEOUT = 5.0
+
+# Stream-delta bounded put. Kept short on purpose: deltas are stream-rate
+# high-frequency events and the coalescing buffer already absorbs most
+# backpressure upstream. Dropping a delta is acceptable (the final
+# ``TEXT_DONE`` carries the full text), so we do NOT escalate to a
+# blocking put. This is intentional and matches the legacy behaviour.
+_DELTA_PUT_TIMEOUT = 1.0
 
 # The sentinel ``None`` is the producer's "I'm done" signal. Use a slightly
 # tighter timeout so a dead consumer doesn't park the daemon thread for
@@ -2995,9 +3020,15 @@ class BackgroundAgentRunner:
                 )
 
         def _put_delta(event: TurnEvent) -> None:
-            """Bounded put for stream deltas. Drops on timeout (debug-log)."""
+            """Bounded put for stream deltas. Drops on timeout (debug-log).
+
+            Uses the deliberately short ``_DELTA_PUT_TIMEOUT`` — deltas are
+            high-frequency, coalescing already absorbs most backpressure,
+            and a drop here is acceptable because the final TEXT_DONE
+            carries the full text. See block comment on the constant.
+            """
             try:
-                self.event_queue.put(event, timeout=1)
+                self.event_queue.put(event, timeout=_DELTA_PUT_TIMEOUT)
             except queue.Full:
                 log_debug(f"Event queue full, dropping {event.type.value}")
 

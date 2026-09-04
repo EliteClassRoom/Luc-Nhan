@@ -2206,6 +2206,117 @@ class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
             "is dead — the legacy q.put(None) hangs forever.",
         )
 
+    def test_text_done_arrives_under_slow_consumer(self):
+        """``TEXT_DONE`` carries the final assistant message. Dropping it
+        under backpressure means the UI never renders the reply — a real
+        user-visible defect (Phase 3 round-1 review). The runner must
+        route ``TEXT_DONE`` through ``_put_control`` so a slow consumer
+        (slower than the legacy 1s ``_put_delta`` budget) still gets it."""
+        import queue as queue_mod
+        import time
+
+        # Producer emits a burst of text deltas (to exercise the
+        # low-latency passthrough), then a single TEXT_DONE with the
+        # final reply. The slow consumer must still receive the final
+        # text — that's the contract.
+        events: list[TurnEvent] = []
+        for _ in range(50):
+            events.append(TurnEvent.text_delta("x"))
+        events.append(TurnEvent.text_done("final reply the user must see"))
+
+        loop = self._make_loop()
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = queue_mod.Queue(maxsize=1)
+        runner.start("test")
+
+        collected: list[TurnEvent] = []
+        deadline = time.monotonic() + 30.0
+        while True:
+            ev = runner.get_event(timeout=0.1)
+            if ev is None:
+                if (
+                    runner._thread is not None
+                    and not runner._thread.is_alive()
+                    and runner.event_queue.empty()
+                ):
+                    break
+                if time.monotonic() > deadline:
+                    self.fail("test timed out waiting for runner to finish")
+                continue
+            collected.append(ev)
+            time.sleep(2.0)
+
+        text_done_events = [e for e in collected if e.type == TurnEventType.TEXT_DONE]
+        self.assertEqual(
+            len(text_done_events),
+            1,
+            "TEXT_DONE must arrive exactly once under slow consumer; "
+            "dropping it hides the final assistant message.",
+        )
+        self.assertEqual(text_done_events[0].text, "final reply the user must see")
+
+    def test_tool_approval_request_arrives_under_slow_consumer(self):
+        """``TOOL_APPROVAL_REQUEST`` gates tool execution. Dropping it under
+        backpressure means a tool runs without user consent — a security
+        regression (Phase 3 round-1 review). The runner must route it
+        through ``_put_control``."""
+        import queue as queue_mod
+        import time
+
+        # Producer emits a burst of text deltas followed by a tool
+        # approval request. The approval request MUST reach the consumer
+        # even when the consumer is slow enough that the legacy 1s
+        # ``_put_delta`` budget would drop it.
+        events: list[TurnEvent] = []
+        for _ in range(50):
+            events.append(TurnEvent.text_delta("x"))
+        events.append(
+            TurnEvent.tool_approval_request(
+                tool_call_id="call-approval-1",
+                tool_name="execute_python",
+                args="{\"script\": \"rm -rf /\"}",
+                description="Run dangerous script",
+            )
+        )
+
+        loop = self._make_loop()
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = queue_mod.Queue(maxsize=1)
+        runner.start("test")
+
+        collected: list[TurnEvent] = []
+        deadline = time.monotonic() + 30.0
+        while True:
+            ev = runner.get_event(timeout=0.1)
+            if ev is None:
+                if (
+                    runner._thread is not None
+                    and not runner._thread.is_alive()
+                    and runner.event_queue.empty()
+                ):
+                    break
+                if time.monotonic() > deadline:
+                    self.fail("test timed out waiting for runner to finish")
+                continue
+            collected.append(ev)
+            time.sleep(2.0)
+
+        approval_events = [
+            e for e in collected if e.type == TurnEventType.TOOL_APPROVAL_REQUEST
+        ]
+        self.assertEqual(
+            len(approval_events),
+            1,
+            "TOOL_APPROVAL_REQUEST must arrive exactly once under slow "
+            "consumer; dropping it lets the tool run without user consent.",
+        )
+        self.assertEqual(approval_events[0].tool_name, "execute_python")
+
+
 class TestMaxTurnsHardCeiling(unittest.TestCase):
     """``max_turns`` is a hard ceiling on the normal-mode agentic loop.
 
