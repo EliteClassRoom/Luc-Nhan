@@ -313,7 +313,6 @@ class SafeModule:
     :func:`dir` (and therefore :func:`vars` / :func:`hasattr` introspection)
     route through :meth:`__dir__` which excludes the deny set so attribute
     discovery can't reach it either.
-
     Why a class and not a ModuleType subclass: subclassing
     ``types.ModuleType`` would replace the live module in ``sys.modules``,
     which we explicitly avoid. A wrapper keeps the underlying module
@@ -321,12 +320,15 @@ class SafeModule:
     the same module object via other channels (e.g. ``importlib``'s
     return path).
 
-    Non-deny submodules are returned as their raw value — we do not
-    auto-wrap. If an unwrapped submodule is itself in the deny list (by
-    name), the access raises :class:`AttributeError` first so the bypass
-    never reaches the unwrapped object. Recursive wrapping of modules
-    looked up *under* a deny-name attribute does not apply because the
-    deny-name lookup itself fails.
+    Submodules — including non-deny ones — that the wrapped module
+    exposes are recursively wrapped as :class:`SafeModule` too. Every
+    attribute read goes through :meth:`__getattribute__`, which checks
+    the deny set *before* delegating and runs the result through
+    :func:`_wrap_module` on the way out. Because of this, transitive
+    chains like ``json.codecs.sys`` close at the proxy too: reading
+    ``json.codecs`` returns a wrapped ``codecs``, and the next
+    ``.sys`` access hits the deny check on that wrapper before
+    reaching the real ``sys``.
     """
 
     __slots__ = ("_wrapped",)
