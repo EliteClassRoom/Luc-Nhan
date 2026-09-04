@@ -2097,6 +2097,114 @@ class TestReasoningRunnerCoalescing(unittest.TestCase):
         types = [e.type for e in collected]
         assert TurnEventType.TEXT_DELTA in types
 
+class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
+    """BackgroundAgentRunner must never drop lifecycle control events under
+    backpressure, and the daemon thread must exit cleanly within a bounded
+    time even when the consumer is dead. Phase 3 introduces a split between
+    ``put_control`` (bounded blocking put) and ``put_delta`` (drop on pressure)
+    plus a separate bounded sentinel branch — see loop.py for design notes.
+    """
+
+    def _make_loop(self) -> AgentLoop:
+        provider = MockProvider(responses=[_text_response("x")])
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState()
+        return AgentLoop(provider, ToolRegistry(), config, session)
+
+    def test_control_events_arrive_with_slow_consumer(self):
+        """Every TURN_START / TOOL_RESULT / CANCELLED / TURN_END / ERROR must
+        reach the consumer even when the consumer drains slower than the
+        legacy 1-second safe_put timeout."""
+        import queue as queue_mod
+        import time
+
+        # Producer bursts two stream deltas (to trigger low-latency passthrough
+        # and exercise the queue) followed by one of each lifecycle event.
+        events = [
+            TurnEvent.text_delta("a"),
+            TurnEvent.text_delta("b"),
+            TurnEvent.turn_start(1),
+            TurnEvent.tool_result_event("call-1", "noop", "ok"),
+            TurnEvent.cancelled_event(),
+            TurnEvent.turn_end(1),
+            TurnEvent.error_event("oops"),
+        ]
+
+        loop = self._make_loop()
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = queue_mod.Queue(maxsize=1)
+        runner.start("test")
+
+        # Slow consumer (1.5s/get) — slower than the legacy 1s timeout. With
+        # maxsize=1 the producer blocks on the second delta's unbounded put
+        # until the consumer takes the first delta; thereafter each
+        collected: list[TurnEvent] = []
+        deadline = time.monotonic() + 25.0
+        while True:
+            ev = runner.get_event(timeout=0.1)
+            if ev is None:
+                if (
+                    runner._thread is not None
+                    and not runner._thread.is_alive()
+                    and runner.event_queue.empty()
+                ):
+                    break
+                if time.monotonic() > deadline:
+                    self.fail("test timed out waiting for runner to finish")
+                continue
+            collected.append(ev)
+            time.sleep(1.5)
+
+        types = [e.type for e in collected]
+        for ctrl in (
+            TurnEventType.TURN_START,
+            TurnEventType.TOOL_RESULT,
+            TurnEventType.CANCELLED,
+            TurnEventType.TURN_END,
+            TurnEventType.ERROR,
+        ):
+            self.assertIn(
+                ctrl,
+                types,
+                f"control event {ctrl.value} dropped under slow consumer",
+            )
+
+    def test_daemon_exits_when_consumer_is_dead(self):
+        """When no consumer ever drains the queue (e.g. the UI panel closed
+        before the background agent finished), the daemon thread must exit
+        within bounded time. The legacy ``event_queue.put(None)`` is an
+        unbounded blocking call that hangs the thread forever; the new
+        sentinel branch must use a finite timeout."""
+        import queue as queue_mod
+
+        # Pre-fill the queue so the producer's first put blocks; consumer
+        # never drains — so the sentinel put at the end of _run() must time
+        # out instead of hanging forever.
+        q = queue_mod.Queue(maxsize=1)
+        q.put(TurnEvent.text_delta("blocker"))
+
+        events: list[TurnEvent] = []  # Producer yields no events; falls into finally.
+        loop = self._make_loop()
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = q
+        runner.start("test")
+
+        # The implementation's _CONTROL_PUT_TIMEOUT = 5s; budget 8s so we
+        # don't make this test depend on the exact constant — just on the
+        # contract that the daemon does eventually exit.
+        thread = runner._thread
+        assert thread is not None
+        thread.join(timeout=8.0)
+        self.assertFalse(
+            thread.is_alive(),
+            "daemon thread should exit within bounded time when consumer "
+            "is dead — the legacy q.put(None) hangs forever.",
+        )
 
 class TestMaxTurnsHardCeiling(unittest.TestCase):
     """``max_turns`` is a hard ceiling on the normal-mode agentic loop.

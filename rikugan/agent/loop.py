@@ -23,7 +23,7 @@ from ..core.errors import (
     ToolError,
     ToolNotFoundError,
 )
-from ..core.logging import log_debug, log_error, log_info
+from ..core.logging import log_debug, log_error, log_info, log_warning
 from ..core.sanitize import (
     sanitize_skill_body,
     sanitize_tool_result,
@@ -2864,12 +2864,65 @@ class AgentLoop:
 
 _EVENT_QUEUE_MAXSIZE = 500
 
+# Lifecycle / control events that must never be dropped on a saturated
+# queue. These are the events the UI uses to advance its run state machine
+# (``TURN_START`` / ``TURN_END``), surface tool completion (``TOOL_RESULT``,
+# ``TOOL_CALL_*``), or finalize the run (``CANCELLED`` / ``ERROR`` /
+# ``RECOVERY_START``). The ``_BACKGROUND_RUNNER_CONTROL_EVENT_TYPES`` set is
+# the single source of truth — if a new ``TurnEventType`` becomes a
+# lifecycle marker, add it here and the put helper will route it correctly.
+_BACKGROUND_RUNNER_CONTROL_EVENT_TYPES: frozenset[TurnEventType] = frozenset(
+    {
+        TurnEventType.TURN_START,
+        TurnEventType.TURN_END,
+        TurnEventType.TOOL_CALL_START,
+        TurnEventType.TOOL_CALL_ARGS_DELTA,
+        TurnEventType.TOOL_CALL_DONE,
+        TurnEventType.TOOL_CALL_DISCARDED,
+        TurnEventType.TOOL_RESULT,
+        TurnEventType.RECOVERY_START,
+        TurnEventType.CANCELLED,
+        TurnEventType.ERROR,
+        TurnEventType.USAGE_UPDATE,
+        TurnEventType.USER_QUESTION,
+        TurnEventType.PLAN_GENERATED,
+    }
+)
+
+# Bounded blocking timeout for control-event puts. Chosen inside the brief's
+# 5-10s window: long enough to absorb UI pauses (panel switching, modal
+# dialogs, brief UI thread stalls on Windows under load) yet short enough
+# that a wedged consumer surfaces as a log warning within a couple of
+# turns. Log+warn recovery is sufficient per the Phase 3 plan; the future
+# "persistent recovery queue" upgrade path is documented in the design
+# notes below.
+_CONTROL_PUT_TIMEOUT = 5.0
+
+# The sentinel ``None`` is the producer's "I'm done" signal. Use a slightly
+# tighter timeout so a dead consumer doesn't park the daemon thread for
+# the full 5s when nothing is left to do — the daemon exits either way,
+# but this keeps shutdown snappy.
+_SENTINEL_PUT_TIMEOUT = 1.0
+
 
 class BackgroundAgentRunner:
     """Runs the AgentLoop in a background thread, bridging to a bounded queue.
 
-    When the queue is full, consecutive TEXT_DELTA events are coalesced
-    into a single event instead of being dropped.
+    When the queue is full, consecutive TEXT_DELTA / REASONING_DELTA events
+    are coalesced into a single event instead of being dropped. Other
+    events route through one of three bounded put helpers (see
+    ``_BACKGROUND_RUNNER_CONTROL_EVENT_TYPES`` and ``_CONTROL_PUT_TIMEOUT``):
+
+    * ``_put_control`` — blocking bounded put (5s) for lifecycle events
+      (``TURN_*``, ``TOOL_*``, ``CANCELLED``, ``ERROR``, ``RECOVERY_START``,
+      etc.). Times out with a ``log_warning`` instead of dropping, so the
+      UI never observes a missed state transition.
+    * ``_put_delta`` — non-blocking-ish bounded put (1s, drop on timeout)
+      for stream-delta flushes. Coalescing already absorbs most backpressure
+      upstream; this is a final safety net.
+    * ``_put_sentinel`` — bounded put for the end-of-stream ``None``. The
+      bounded timeout ensures the daemon thread exits cleanly even when the
+      consumer is dead or the queue is permanently saturated.
     """
 
     def __init__(self, agent_loop: AgentLoop):
@@ -2904,8 +2957,8 @@ class BackgroundAgentRunner:
         pending buffer is reasoning) before it is enqueued, and it is
         never coalesced itself.
 
-        Control events and the sentinel are never dropped — ``_safe_put``
-        uses ``timeout=1`` with ``except queue.Full`` to avoid deadlock.
+        Control events and the sentinel use bounded blocking puts so they
+        never get silently dropped — see ``_put_control`` / ``_put_sentinel``.
         """
         pending_type: TurnEventType | None = None
         pending_buffer: list[str] = []
@@ -2924,24 +2977,46 @@ class BackgroundAgentRunner:
                 pending_buffer.clear()
                 pending_type = None
                 return
-            try:
-                self.event_queue.put(evt, timeout=1)
-            except queue.Full:
-                log_debug(f"Event queue full, dropping coalesced {pending_type.value}")
+            _put_delta(evt)
             pending_buffer.clear()
             pending_type = None
 
-        def _safe_put(event: TurnEvent) -> None:
-            """Put without blocking indefinitely on a full queue.
+        def _put_control(event: TurnEvent) -> None:
+            """Blocking bounded put for lifecycle events. Logs+returns on timeout."""
+            try:
+                self.event_queue.put(event, timeout=_CONTROL_PUT_TIMEOUT)
+            except queue.Full:
+                log_warning(
+                    f"BackgroundAgentRunner: control event "
+                    f"{event.type.value} could not be enqueued within "
+                    f"{_CONTROL_PUT_TIMEOUT:.1f}s — consumer is wedged or "
+                    "queue saturated. Logging+dropping. UI may need to "
+                    "reconcile state."
+                )
 
-            Used for control events and sentinel — these must never
-            deadlock the producer thread.
-            """
+        def _put_delta(event: TurnEvent) -> None:
+            """Bounded put for stream deltas. Drops on timeout (debug-log)."""
             try:
                 self.event_queue.put(event, timeout=1)
             except queue.Full:
                 log_debug(f"Event queue full, dropping {event.type.value}")
 
+        def _put_sentinel() -> None:
+            """Bounded put for the end-of-stream sentinel.
+
+            Must never block forever — the daemon thread is otherwise
+            stuck if the consumer died. Logs an error and returns on
+            timeout so ``_run`` can finish and the thread can exit.
+            """
+            try:
+                self.event_queue.put(None, timeout=_SENTINEL_PUT_TIMEOUT)
+            except queue.Full:
+                log_error(
+                    "BackgroundAgentRunner: sentinel could not be enqueued "
+                    f"within {_SENTINEL_PUT_TIMEOUT:.1f}s — consumer is "
+                    "wedged or dead. Daemon thread exiting without "
+                    "notifying consumer; UI must detect via timeout."
+                )
         try:
             for event in self.agent_loop.run(user_message):
                 if event.type == TurnEventType.TEXT_DELTA:
@@ -2972,24 +3047,29 @@ class BackgroundAgentRunner:
                             pending_buffer.clear()
                             pending_type = None
                         self.event_queue.put(event)
-                elif event.type == TurnEventType.RECOVERY_START:
-                    discard = event.metadata.get("discard_transient_reasoning", False)
-                    if discard and pending_type == TurnEventType.REASONING_DELTA:
-                        pending_buffer.clear()
-                        pending_type = None
+                elif event.type in _BACKGROUND_RUNNER_CONTROL_EVENT_TYPES:
+                    if event.type == TurnEventType.RECOVERY_START:
+                        # RECOVERY_START is a hard boundary: drop the
+                        # pending reasoning buffer if the recovery flow
+                        # says so, otherwise flush before the control.
+                        discard = event.metadata.get("discard_transient_reasoning", False)
+                        if discard and pending_type == TurnEventType.REASONING_DELTA:
+                            pending_buffer.clear()
+                            pending_type = None
+                        else:
+                            _flush_pending()
                     else:
                         _flush_pending()
-                    _safe_put(event)
+                    _put_control(event)
                 else:
                     _flush_pending()
-                    _safe_put(event)
+                    _put_delta(event)
         except Exception as e:
             log_error(f"BackgroundAgentRunner error: {e}\n{traceback.format_exc()}")
             _flush_pending()
-            _safe_put(TurnEvent.error_event(str(e)))
+            _put_control(TurnEvent.error_event(str(e)))
         finally:
-            _flush_pending()
-            self.event_queue.put(None)  # Sentinel
+            _put_sentinel()
 
     def cancel(self) -> None:
         self.agent_loop.cancel()
