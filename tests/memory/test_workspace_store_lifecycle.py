@@ -192,3 +192,110 @@ class TestWorkspaceStoreCloseIdempotentAfterSwap:
         # If close() is not idempotent, the second wire-up's swap-close
         # path raises a ProgrammingError on the same instance.
         ctrl.on_agent_finished()
+
+
+class TestShutdownClosesStores:
+    """``shutdown()`` must release every per-tab store.
+
+    ``on_agent_finished`` handles the happy-path release, but cancelled
+    runs and tabs the user never started a query on still hold an open
+    store. Controller destruction must release them all.
+    """
+
+    def test_shutdown_closes_wired_store(self, ctrl, monkeypatch: pytest.MonkeyPatch) -> None:
+        from unittest.mock import MagicMock
+
+        _patch_fs_identity(monkeypatch)
+        calls = _patch_close_tracker(monkeypatch)
+
+        ctrl._wire_central_memory(MagicMock())
+        assert calls == []
+
+        # Cancel-style state: the runner never reaches on_agent_finished,
+        # so the store is still in ``_memory_stores`` until shutdown.
+        assert len(ctrl._memory_stores) == 1
+        ctrl.shutdown()
+
+        # The store must have been released by shutdown itself (the
+        # fixture's teardown would otherwise no-op because the dict is
+        # empty after the controller is gone).
+        assert len(calls) == 1, "shutdown() must close every per-tab store"
+
+    def test_shutdown_is_idempotent(self, ctrl, monkeypatch: pytest.MonkeyPatch) -> None:
+        """shutdown() called twice must not raise.
+
+        The second invocation finds ``_memory_stores`` already cleared
+        and short-circuits. Combined with the test fixture also calling
+        shutdown, every realistic teardown sequence must be safe.
+        """
+        from unittest.mock import MagicMock
+
+        _patch_fs_identity(monkeypatch)
+        _patch_close_tracker(monkeypatch)
+
+        ctrl._wire_central_memory(MagicMock())
+        ctrl.shutdown()
+        # Second call: _memory_stores is empty, the loop is a no-op.
+        # If the loop guards on ``if self._memory_stores`` the second
+        # pass raises RuntimeError on mutating a cleared dict — reach
+        # this line to confirm idempotency.
+        ctrl.shutdown()
+
+
+class TestWorkspaceStoreCloseOrdering:
+    """``close()`` must flip ``_closed`` AFTER ``_conn.close()`` succeeds.
+
+    If ``self._conn.close()`` raises (corrupted WAL, OSError on flush,
+    etc.) and ``_closed`` was already True, subsequent callers
+    silently early-out and the connection leaks. The fix sets the
+    flag post-success so the failure mode survives for the next
+    caller to retry.
+    """
+
+    def test_close_flag_unset_until_close_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rikugan.memory.workspace import MemoryLocator, new_memory_id
+        from rikugan.memory.workspace_store import WorkspaceStore
+
+        owner = new_memory_id()
+
+        paths = MemoryLocator(tmp_path / "memory").binary(owner)
+        store = WorkspaceStore.create(paths, owner_memory_id=owner)
+
+        # Patch the *connection attribute* with a wrapper whose close()
+        # can be toggled to raise. sqlite3.Connection.close is a
+        # read-only C-level method, so monkeypatching the attribute
+        # itself is the only layer we can intercept at runtime.
+        real_conn = store._conn
+
+        class _Wrapper:
+            def __init__(self, inner: object, fail: list[bool]) -> None:
+                self._inner = inner
+                self._fail = fail
+
+            def close(self) -> None:
+                if self._fail:
+                    raise OSError("simulated WAL flush failure")
+                self._inner.close()
+
+        wrapper = _Wrapper(real_conn, [True])
+        store._conn = wrapper  # type: ignore[assignment]
+
+        raised = False
+        try:
+            store.close()
+        except OSError:
+            raised = True
+
+        assert raised, "Underlying error must propagate"
+        assert store._closed is False, (
+            "close() must NOT mark itself closed when _conn.close() raises; "
+            "a subsequent call must attempt the close again."
+        )
+
+        # Restore the real close behaviour and confirm the retry succeeds.
+        wrapper._fail = [False]
+        store._conn = real_conn  # type: ignore[assignment]
+        # No-op retry on the already-attempted wrapper would call the real
+        # inner close. Belt-and-braces: directly retry the real conn path.
+        store._closed = False
+        store.close()

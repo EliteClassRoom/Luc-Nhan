@@ -1175,4 +1175,17 @@ class SessionControllerBase:
                     history.save_session(session)
                 except (OSError, ValueError) as e:
                     log_error(f"Failed to save session {tab_id} on shutdown: {e}")
+        # Release every per-tab sqlite3 connection. ``on_agent_finished``
+        # already closes the store for runs that finished cleanly, but
+        # cancelled or idle tabs would still hold an open connection at
+        # this point — close them all here so controller destruction
+        # never leaks a handle. Idempotent close() makes the double-close
+        # harmless.
+        if self._memory_stores:
+            for _tab_id, store in list(self._memory_stores.items()):
+                try:
+                    store.close()
+                except Exception as e:  # pragma: no cover — defensive
+                    log_warning(f"Failed to close memory store on shutdown: {e}")
+            self._memory_stores.clear()
         self._mcp_manager.shutdown()

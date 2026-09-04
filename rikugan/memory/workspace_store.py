@@ -390,12 +390,17 @@ class WorkspaceStore:
         again on ``on_agent_finished``; double-close must be a no-op so the
         swap path does not raise if the finish hook already closed it
         (or vice versa).
+
+        ``_closed`` is flipped AFTER ``self._conn.close()`` returns so a
+        raising close (e.g. on a corrupted WAL) does not silently swallow
+        future calls — the next caller retries and surfaces the original
+        failure mode instead of pretending the connection is already dead.
         """
         with self._lock:
             if self._closed:
                 return
-            self._closed = True
             self._conn.close()
+            self._closed = True
 
     def __enter__(self) -> WorkspaceStore:
         return self
