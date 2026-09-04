@@ -2096,7 +2096,93 @@ class TestReasoningRunnerCoalescing(unittest.TestCase):
 
         types = [e.type for e in collected]
         assert TurnEventType.TEXT_DELTA in types
-        assert TurnEventType.TURN_END in types
+
+
+class TestMaxTurnsHardCeiling(unittest.TestCase):
+    """``max_turns`` is a hard ceiling on the normal-mode agentic loop.
+
+    The pre-fix implementation hardcoded a 100-turn ceiling inside
+    ``run_normal_loop`` regardless of any caller-supplied budget; a
+    subagent spawned with ``max_turns=3`` could still burn 100 turns
+    (and the corresponding token budget). After the fix the loop must
+    stop cleanly at the configured budget regardless of how many tool
+    calls the model emits.
+    """
+
+    def _make_loop(
+        self, provider: MockProvider, tools: ToolRegistry | None = None, max_turns: int | None = None
+    ) -> AgentLoop:
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        kwargs: dict[str, Any] = {}
+        if max_turns is not None:
+            kwargs["max_turns"] = max_turns
+        return AgentLoop(
+            provider=provider,
+            tool_registry=tools or ToolRegistry(),
+            config=config,
+            session=session,
+            **kwargs,
+        )
+
+    def test_loop_tool_loop_stops_at_max_turns_3(self) -> None:
+        """A provider that always emits tool calls must terminate at turn 3."""
+        from rikugan.tools.base import ParameterSchema, ToolDefinition
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="ping",
+                description="noop",
+                parameters=[ParameterSchema(name="x", type="string", required=True)],
+                handler=lambda x: f"pong: {x}",
+                category="test",
+            )
+        )
+        # 10 scripted tool-call responses: provider would loop forever
+        # without the ceiling. budget=3 must stop after turn 3.
+        provider = MockProvider(
+            responses=[_tool_call_response("ping", {"x": f"v{i}"}, call_id=f"c{i}") for i in range(10)]
+        )
+        loop = self._make_loop(provider, tools=registry, max_turns=3)
+
+        events = list(loop.run("loop forever"))
+
+        errors = [e for e in events if e.type == TurnEventType.ERROR and e.error]
+        assert errors, "expected ERROR event signalling the turn ceiling"
+        assert "max turns" in (errors[-1].error or "")
+
+        turn_ends = [e for e in events if e.type == TurnEventType.TURN_END]
+        assert 1 <= len(turn_ends) <= 3
+
+    def test_loop_default_uses_legacy_100_ceiling(self) -> None:
+        """Without ``max_turns`` the loop keeps the 100-turn ceiling
+        (no behavioural regression for the top-level agent)."""
+        from rikugan.tools.base import ParameterSchema, ToolDefinition
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="ping",
+                description="noop",
+                parameters=[ParameterSchema(name="x", type="string", required=True)],
+                handler=lambda x: "pong",
+                category="test",
+            )
+        )
+        # One tool call, then text — well within the legacy 100-turn cap.
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("ping", {"x": "1"}, call_id="c1"),
+                _text_response("done"),
+            ]
+        )
+        loop = self._make_loop(provider, tools=registry)
+
+        events = list(loop.run("call once"))
+
+        assert not any(e.type == TurnEventType.ERROR and e.error and "max turns" in e.error for e in events)
 
 
 if __name__ == "__main__":

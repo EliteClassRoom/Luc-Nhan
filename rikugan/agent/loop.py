@@ -362,7 +362,8 @@ class AgentLoop:
         parent_loop: AgentLoop | None = None,
         cancel_event: threading.Event | None = None,
         unattended: bool = False,
-    ):
+        max_turns: int | None = None,
+    ) -> None:
         self.provider = provider
         self.tools = tool_registry
         self.config = config
@@ -401,6 +402,13 @@ class AgentLoop:
         # the tool surface and rejected at dispatch (see _build_tools_schema
         # and the _unattended guards in the tool handlers).
         self._unattended: bool = unattended
+        # Hard turn ceiling for the normal-mode loop. ``None`` means fall
+        # back to the legacy 100-turn default in ``run_normal_loop`` so
+        # top-level callers (and existing tests) are unchanged. Subagents
+        # set this from SubagentRunner._build_loop to enforce their
+        # per-run budget as a hard ceiling rather than just an advisory
+        # prompt-text instruction.
+        self._max_turns: int | None = max_turns
         self.plan_mode = False
 
         # Post-error docs-review: max 1 reviewer call per user message.

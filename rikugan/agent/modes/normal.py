@@ -19,7 +19,10 @@ def run_normal_loop(
     tools_schema: list,
 ) -> Generator[TurnEvent, None, None]:
     """Run the standard agentic while loop (non-plan, non-exploration)."""
-    max_turns = 100
+    # Hard ceiling for the number of turns. Subagents set ``loop._max_turns``
+    # via AgentLoop(max_turns=...); the loop falls back to the legacy 100-turn
+    # default when ``None``, preserving top-level behaviour.
+    max_turns: int = getattr(loop, "_max_turns", None) or 100
     turn = 0
     while True:
         loop._check_cancelled()
