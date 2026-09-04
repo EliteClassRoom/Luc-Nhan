@@ -21,8 +21,12 @@ def run_normal_loop(
     """Run the standard agentic while loop (non-plan, non-exploration)."""
     # Hard ceiling for the number of turns. Subagents set ``loop._max_turns``
     # via AgentLoop(max_turns=...); the loop falls back to the legacy 100-turn
-    # default when ``None``, preserving top-level behaviour.
-    max_turns: int = getattr(loop, "_max_turns", None) or 100
+    # default when ``None``, preserving top-level behaviour. Use an explicit
+    # ``is None`` check (NOT ``or 100``) so a legitimate 0 would not be
+    # silently promoted to 100; the runner constructor rejects ``max_turns=0``
+    # outright so we should never see one here.
+    mt = getattr(loop, "_max_turns", None)
+    max_turns: int = 100 if mt is None else int(mt)
     turn = 0
     while True:
         loop._check_cancelled()

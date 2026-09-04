@@ -126,31 +126,40 @@ class SubagentManager:
         else:
             resolved_tools = self._tools
 
-        # Override max_turns for known agent types
+        # Override max_turns for known agent types. The runner constructor
+        # rejects ``max_turns=0`` outright, so an explicit ``== 0`` test is
+        # used here instead of ``or`` truthiness — otherwise a legitimate
+        # zero in ``max_turns`` would silently promote to the type default.
         if agent_type == "network_recon":
             from .agents.network_recon import NETWORK_RECON_MAX_TURNS
 
-            max_turns = max_turns or NETWORK_RECON_MAX_TURNS
+            if max_turns == 0:
+                max_turns = NETWORK_RECON_MAX_TURNS
         elif agent_type == "report_writer":
             from .agents.report_writer import REPORT_WRITER_MAX_TURNS
 
-            max_turns = max_turns or REPORT_WRITER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = REPORT_WRITER_MAX_TURNS
         elif agent_type == "ida_code_reader":
             from .agents.ida_code_reader import IDA_CODE_READER_MAX_TURNS
 
-            max_turns = max_turns or IDA_CODE_READER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = IDA_CODE_READER_MAX_TURNS
         elif agent_type == "ida_microcode_reader":
             from .agents.ida_microcode_reader import IDA_MICROCODE_READER_MAX_TURNS
 
-            max_turns = max_turns or IDA_MICROCODE_READER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = IDA_MICROCODE_READER_MAX_TURNS
         elif agent_type == "ida_disasm_reader":
             from .agents.ida_disasm_reader import IDA_DISASM_READER_MAX_TURNS
 
-            max_turns = max_turns or IDA_DISASM_READER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = IDA_DISASM_READER_MAX_TURNS
         elif agent_type == "ida_docs_reviewer":
             from .agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_MAX_TURNS
 
-            max_turns = max_turns or IDA_DOCS_REVIEWER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = IDA_DOCS_REVIEWER_MAX_TURNS
 
         # Emit spawned event
         self._event_queue.put(
@@ -169,7 +178,9 @@ class SubagentManager:
             name=f"rikugan-subagent-{agent_id[:6]}",
         )
         thread.start()
-        log_info(f"Subagent spawned: id={agent_id}, name={name!r}, type={agent_type}, mode={mode!r}, tools={len(tools) if tools else 0}, model={model!r}")
+        log_info(
+            f"Subagent spawned: id={agent_id}, name={name!r}, type={agent_type}, mode={mode!r}, tools={len(tools) if tools else 0}, model={model!r}"
+        )
         return agent_id
 
     def _finalize_cancellation(self, info: "SubagentInfo") -> None:

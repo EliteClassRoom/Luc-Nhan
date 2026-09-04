@@ -61,8 +61,19 @@ class SubagentRunner:
         # Hard ceiling for the child run. ``None`` means each caller
         # (SubagentManager, /spawn_subagent pseudo-tool) supplies its own
         # max_turns at the call site; SubagentManager's per-agent-type
-        # overrides then forward the resolved number here.
-        self._max_turns: int | None = None if max_turns is None else int(max_turns)
+        # overrides then forward the resolved number here. The value
+        # MUST be ``None`` or a positive integer — ``max_turns=0`` is
+        # rejected because "immediate stop" is not a supported mode
+        # (it would silently promote to the legacy 100 via Python
+        # truthiness before the fix landed here).
+        if max_turns is None:
+            self._max_turns: int | None = None
+        elif isinstance(max_turns, int) and max_turns >= 1:
+            self._max_turns = max_turns
+        else:
+            raise ValueError(
+                f"SubagentRunner(max_turns={max_turns!r}) is invalid: max_turns must be None or a positive int >= 1."
+            )
 
         self.provider = provider
         self.tools = tool_registry

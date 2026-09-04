@@ -2154,7 +2154,7 @@ class TestMaxTurnsHardCeiling(unittest.TestCase):
         assert "max turns" in (errors[-1].error or "")
 
         turn_ends = [e for e in events if e.type == TurnEventType.TURN_END]
-        assert 1 <= len(turn_ends) <= 3
+        assert len(turn_ends) == 3
 
     def test_loop_default_uses_legacy_100_ceiling(self) -> None:
         """Without ``max_turns`` the loop keeps the 100-turn ceiling
@@ -2183,6 +2183,33 @@ class TestMaxTurnsHardCeiling(unittest.TestCase):
         events = list(loop.run("call once"))
 
         assert not any(e.type == TurnEventType.ERROR and e.error and "max turns" in e.error for e in events)
+
+    def test_loop_max_turns_one_stops_after_one_turn(self) -> None:
+        """Positive case: ``max_turns=1`` lets the model finish one tool
+        call, then the ceiling fires on the second iteration — exactly
+        one ``TURN_END`` and one ``max turns`` ERROR.
+        """
+        from rikugan.tools.base import ParameterSchema, ToolDefinition
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="ping",
+                description="noop",
+                parameters=[ParameterSchema(name="x", type="string", required=True)],
+                handler=lambda x: "pong",
+                category="test",
+            )
+        )
+        provider = MockProvider(responses=[_tool_call_response("ping", {"x": "1"}, call_id="c1")])
+        loop = self._make_loop(provider, tools=registry, max_turns=1)
+
+        events = list(loop.run("call once"))
+
+        turn_ends = [e for e in events if e.type == TurnEventType.TURN_END]
+        assert len(turn_ends) == 1
+        errors = [e for e in events if e.type == TurnEventType.ERROR and e.error]
+        assert any("max turns limit (1)" in (e.error or "") for e in errors)
 
 
 if __name__ == "__main__":

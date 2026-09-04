@@ -2226,7 +2226,17 @@ class AgentLoop:
     def _handle_spawn_subagent_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle the spawn_subagent pseudo-tool."""
         task = tc.arguments.get("task", "")
-        max_turns = tc.arguments.get("max_turns", 20)
+        # ``max_turns`` arrives as a raw JSON int from the model — validate
+        # it here so a malicious or hallucinated ``0`` (or negative) is
+        # reported as a tool error rather than silently promoted to 100
+        # via Python truthiness on the runner side.
+        raw_max_turns = tc.arguments.get("max_turns", 20)
+        if isinstance(raw_max_turns, bool) or not isinstance(raw_max_turns, int) or raw_max_turns < 1:
+            max_turns: int | None = None  # fall through to default below
+        else:
+            max_turns = raw_max_turns
+        if raw_max_turns != max_turns:
+            log_debug(f"spawn_subagent: invalid max_turns={raw_max_turns!r}, falling back to default")
         if not task:
             content = "Error: 'task' is required."
             is_err = True

@@ -259,5 +259,66 @@ class TestRunnerMaxTurnsPlumbing(unittest.TestCase):
         assert captured["max_turns"] == 9
 
 
+class TestRunnerMaxTurnsValidation(unittest.TestCase):
+    """``max_turns`` validation at the runner boundary.
+
+    ``max_turns=0`` is **invalid** (immediate-stop is not a supported
+    mode and would otherwise be silently promoted to the 100-turn
+    default via Python truthiness). The constructor rejects it with
+    ``ValueError`` so the bug surfaces immediately instead of
+    degrading silently.
+    """
+
+    def _runner(self) -> SubagentRunner:
+        return SubagentRunner(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+        )
+
+    def test_constructor_max_turns_zero_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            SubagentRunner(
+                provider=_StubProvider(),
+                tool_registry=ToolRegistry(),
+                config=RikuganConfig(),
+                host_name="test",
+                max_turns=0,
+            )
+        assert "max_turns must be None or a positive int" in str(ctx.exception)
+
+    def test_constructor_max_turns_negative_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            SubagentRunner(
+                provider=_StubProvider(),
+                tool_registry=ToolRegistry(),
+                config=RikuganConfig(),
+                host_name="test",
+                max_turns=-1,
+            )
+        assert "max_turns must be None or a positive int" in str(ctx.exception)
+
+    def test_constructor_max_turns_none_accepted(self) -> None:
+        runner = SubagentRunner(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+            max_turns=None,
+        )
+        assert runner._max_turns is None
+
+    def test_constructor_max_turns_positive_accepted(self) -> None:
+        runner = SubagentRunner(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+            max_turns=12,
+        )
+        assert runner._max_turns == 12
+
+
 if __name__ == "__main__":
     unittest.main()
