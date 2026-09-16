@@ -326,7 +326,7 @@ class TestAnthropicRawPartsDeepCopy(unittest.TestCase):
             replayed[-1]["input"],
             assistant._raw_parts[-1]["input"],
             "_format_messages must deep-copy tool_use.input dict.",
-            )
+        )
 
         # Mutating the formatted slot must NOT touch the source.
         replayed[-1]["cache_control"] = {"type": "ephemeral"}
@@ -386,11 +386,101 @@ class TestAnthropicRawPartsDeepCopy(unittest.TestCase):
         self.assertEqual(
             last_block.get("type"),
             assistant._raw_parts[-1].get("type"),
-            "cache_control landed on the wrong block — _format_messages "
-            "likely double-appended (replay + fallback).",
+            "cache_control landed on the wrong block — _format_messages likely double-appended (replay + fallback).",
         )
         same_in_kw2 = kw2["messages"][-1]["content"][-1].get("cache_control")
         self.assertEqual(same_in_kw2, last_block["cache_control"])
         self.assertIsNot(last_block, assistant._raw_parts[-1])
+
+
+class TestSdkV1TemperatureCompat(unittest.TestCase):
+    """anthropic SDK >= 1.0 dropped ``temperature`` from Messages signatures.
+
+    Passing it directly raises ``TypeError: Messages.stream() got an
+    unexpected keyword argument 'temperature'`` (seen with the MiniMax
+    provider). The fix routes it through ``extra_body`` — merged into the
+    request JSON on every SDK version, so the wire payload is unchanged.
+    """
+
+    def test_repack_moves_temperature_into_extra_body(self) -> None:
+        from rikugan.providers.anthropic_provider import _sdk_request_kwargs
+
+        kwargs = _sdk_request_kwargs({"model": "m", "temperature": 0.7})
+        self.assertNotIn("temperature", kwargs)
+        self.assertEqual(kwargs["extra_body"], {"temperature": 0.7})
+
+    def test_repack_merges_with_existing_extra_body(self) -> None:
+        from rikugan.providers.anthropic_provider import _sdk_request_kwargs
+
+        kwargs = _sdk_request_kwargs({"temperature": 0.4, "extra_body": {"foo": 1}})
+        self.assertEqual(kwargs["extra_body"], {"foo": 1, "temperature": 0.4})
+
+    def test_repack_without_temperature_is_noop(self) -> None:
+        from rikugan.providers.anthropic_provider import _sdk_request_kwargs
+
+        kwargs = _sdk_request_kwargs({"model": "m"})
+        self.assertNotIn("extra_body", kwargs)
+
+    def test_stream_survives_sdk_v1_signature(self) -> None:
+        """_stream_chunks against a client whose stream() has no
+        ``temperature`` parameter (SDK 1.x) — the pre-fix TypeError
+        reproduction."""
+        from types import SimpleNamespace
+
+        received: dict = {}
+
+        class _FakeStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def __iter__(self):
+                text_block = SimpleNamespace(type="text", text="")
+                return iter(
+                    [
+                        SimpleNamespace(
+                            type="message_start",
+                            message=SimpleNamespace(usage=None),
+                        ),
+                        SimpleNamespace(type="content_block_start", content_block=text_block),
+                        SimpleNamespace(
+                            type="content_block_delta",
+                            delta=SimpleNamespace(type="text_delta", text="hi"),
+                        ),
+                        SimpleNamespace(type="content_block_stop", index=0),
+                        SimpleNamespace(
+                            type="message_delta",
+                            delta=SimpleNamespace(stop_reason="end_turn"),
+                            usage=None,
+                        ),
+                    ]
+                )
+
+        class _FakeMessages:
+            # Deliberately NO ``temperature`` and NO ``**kwargs``: mirrors
+            # the SDK 1.x signature, so a direct pass raises TypeError.
+            def stream(self, *, model, messages, max_tokens, extra_body=None):
+                received.update(model=model, max_tokens=max_tokens, extra_body=extra_body)
+                return _FakeStream()
+
+        client = SimpleNamespace(messages=_FakeMessages())
+        provider = _make_provider()
+        kwargs = provider._build_request_kwargs(
+            messages=[Message(role=Role.USER, content="hi")],
+            tools=None,
+            temperature=0.7,
+            max_tokens=64,
+            system="",
+        )
+
+        chunks = list(provider._stream_chunks(client, kwargs))
+
+        self.assertEqual("".join(c.text or "" for c in chunks if c.text), "hi")
+        self.assertEqual(received["extra_body"], {"temperature": 0.7})
+        self.assertNotIn("temperature", kwargs)
+
+
 if __name__ == "__main__":
     unittest.main()
