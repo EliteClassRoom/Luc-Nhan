@@ -76,6 +76,33 @@ ignore = ["E501", "B008", "UP042"]
 "rikugan/ida/**" = ["F401"]
 "rikugan/core/sanitize.py" = ["RUF003"]
 "rikugan/ui/plan_view.py" = ["RUF001"]
+# The exploration-mode prompt embeds an en-dash (U+2013) in a numeric
+# range.  Test fixtures (``tests/ida/test_evidence_comment.py``) assert
+# on this exact glyph, so replacing it would break the contract.
+"rikugan/agent/exploration_mode.py" = ["RUF001"]
+# ``tests/**`` and ``rikugan/tests/**`` files intentionally bootstrap
+# ``sys.path`` and the IDA/Qt stub modules before importing the package
+# under test (see e.g. ``tests/a2a/test_dispatcher.py``).  The
+# resulting non-top-of-file imports are a structural requirement, not
+# a mistake — silencing E402 here avoids 160+ ``# noqa: E402`` lines
+# that would otherwise drown out the real E-rule violations.
+"tests/**" = ["E402"]
+"rikugan/tests/**" = ["E402"]
+# ``tests/core/test_sanitize.py`` is the homoglyph test fixture — it
+# embeds Cyrillic/Greek look-alike characters as **input data** that
+# ``sanitize()`` is expected to detect.  Ruff cannot distinguish
+# "ambiguous unicode as documentation hint" from "ambiguous unicode
+# in a test payload", so we silence RUF001/RUF002/RUF003 at the file
+# level rather than peppering test cases with ``# noqa``.
+"tests/core/test_sanitize.py" = ["RUF001", "RUF002", "RUF003"]
+# Same logic as test_sanitize: this file checks that the evidence-
+# comment merge helper passes through an en-dash (U+2013) verbatim,
+# matching the prompt literal in ``exploration_mode.py``.
+"tests/ida/test_evidence_comment.py" = ["RUF001"]
+# The plan_view tests assert that ``setText`` is called with a
+# Unicode minus sign (U+2212) — a deliberate glyph choice that
+# ruff otherwise flags as ambiguous.
+"tests/tools/test_plan_view.py" = ["RUF001"]
 
 [tool.mypy]
 python_version = "3.11"
