@@ -799,7 +799,7 @@ def ingest_report(
                 },
             )
         )
-    except Exception as exc:
+    except Exception:
         if raise_on_error:
             raise
         # Best-effort: a write error should not undo a successful file.

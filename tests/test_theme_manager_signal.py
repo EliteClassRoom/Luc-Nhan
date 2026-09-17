@@ -148,7 +148,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         This is the production code path that crashed in IDA."""
         from PySide6.QtWidgets import QApplication  # type: ignore[import-not-found]
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         from rikugan.ui.message_widgets import (  # type: ignore[import-not-found]
             UserMessageWidget,
         )
@@ -172,7 +172,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         when it subscribes to ``themeChanged``."""
         from PySide6.QtWidgets import QApplication  # type: ignore[import-not-found]
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         from rikugan.ui.message_widgets import (  # type: ignore[import-not-found]
             AssistantMessageWidget,
         )

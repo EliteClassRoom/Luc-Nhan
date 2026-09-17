@@ -26,6 +26,9 @@ from ..core.logging import log_debug, log_error
 from ..memory.schema import KnowledgeMemory
 from .subagent import SubagentRunner
 
+if TYPE_CHECKING:
+    from .loop import AgentLoop
+
 
 def _drain(generator: Generator[Any, None, str]) -> tuple[str, str | None]:
     """Exhaust a runner generator and capture its returned summary.

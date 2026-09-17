@@ -64,8 +64,8 @@ for _mod_name in [
 ]:
     sys.modules.pop(_mod_name, None)
 
-from rikugan.ui.bulk_renamer import BulkRenamerWidget  # noqa: E402
-from rikugan.ui.chat_view import _TOOL_GROUP_MIN_CALLS, _is_hidden_system_user_message  # noqa: E402
+from rikugan.ui.bulk_renamer import BulkRenamerWidget
+from rikugan.ui.chat_view import _TOOL_GROUP_MIN_CALLS, _is_hidden_system_user_message
 
 # ---------------------------------------------------------------------------
 # _is_hidden_system_user_message

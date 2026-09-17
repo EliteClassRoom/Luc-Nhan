@@ -13,7 +13,7 @@ ensure_pyside6_stubs()
 # Ensure the real module is loaded even if another test stubbed it.
 sys.modules.pop("rikugan.ui.tool_widgets", None)
 
-from rikugan.ui.tool_widgets import ExecutePythonWidget  # noqa: E402
+from rikugan.ui.tool_widgets import ExecutePythonWidget
 
 
 class TestExecutePythonWidgetInit(unittest.TestCase):

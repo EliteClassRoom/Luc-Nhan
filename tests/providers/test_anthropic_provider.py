@@ -235,7 +235,7 @@ class TestAnthropicAuthResolution(unittest.TestCase):
         from rikugan.providers.anthropic_provider import AnthropicProvider
 
         p = AnthropicProvider(api_key="sk-test", model="test")
-        label, status = p.auth_status()
+        _label, status = p.auth_status()
         self.assertEqual(status, "ok")
 
     def test_auth_status_oauth(self):
@@ -314,7 +314,7 @@ class TestAnthropicRawPartsDeepCopy(unittest.TestCase):
 
         # Every top-level block must be a fresh dict, not the source.
         self.assertEqual(len(replayed), len(assistant._raw_parts))
-        for src_block, repl_block in zip(assistant._raw_parts, replayed):
+        for src_block, repl_block in zip(assistant._raw_parts, replayed, strict=False):
             self.assertIsNot(
                 repl_block,
                 src_block,

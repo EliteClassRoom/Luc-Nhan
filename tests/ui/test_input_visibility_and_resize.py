@@ -44,7 +44,7 @@ from tests import purge_rikugan_stubs
 
 purge_rikugan_stubs()
 
-from tests.qt_stubs import ensure_pyside6_stubs  # noqa: E402
+from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
@@ -52,9 +52,9 @@ ensure_pyside6_stubs()
 # cannot mask ``validate()``/``hide_strings``-style guards.
 sys.modules.pop("rikugan.core.config", None)
 
-from rikugan.ui.styles import build_input_area_stylesheet  # noqa: E402
-from rikugan.ui.theme.palette_dark import DARK_TOKENS  # noqa: E402
-from rikugan.ui.theme.palette_light import LIGHT_TOKENS  # noqa: E402
+from rikugan.ui.styles import build_input_area_stylesheet
+from rikugan.ui.theme.palette_dark import DARK_TOKENS
+from rikugan.ui.theme.palette_light import LIGHT_TOKENS
 
 
 class _FakeColor:
@@ -174,7 +174,7 @@ class TestInputPalette(unittest.TestCase):
     """
 
     def test_palette_roles_match_tokens(self) -> None:
-        from rikugan.ui import input_area as input_area_mod  # noqa: E402
+        from rikugan.ui import input_area as input_area_mod
 
         # Attach ``ColorRole`` to the fake palette class so the
         # production code's ``QPalette.ColorRole.Base/Text/...``
@@ -193,7 +193,7 @@ class TestInputPalette(unittest.TestCase):
         with patch.object(
             input_area_mod, "QPalette", _FakePalette, create=True
         ), patch.object(input_area_mod, "QColor", _FakeColor, create=True):
-            from rikugan.ui.input_area import InputArea  # noqa: E402
+            from rikugan.ui.input_area import InputArea
 
             InputArea.apply_palette(receiver, LIGHT_TOKENS)
 
@@ -225,7 +225,7 @@ class TestInputSizing(unittest.TestCase):
     """
 
     def test_input_area_sizing_contract(self) -> None:
-        from rikugan.ui.input_area import InputArea  # noqa: E402
+        from rikugan.ui.input_area import InputArea
 
         source = inspect.getsource(InputArea.__init__)
         self.assertIn(
@@ -272,7 +272,7 @@ class TestChatSplitterShowEventSizes(unittest.TestCase):
     """
 
     def _make_panel(self, *, total_height: int, input_min: int = 60):
-        from rikugan.ui.panel_core import RikuganPanelCore  # noqa: E402
+        from rikugan.ui.panel_core import RikuganPanelCore
 
         panel = RikuganPanelCore.__new__(RikuganPanelCore)
         panel._chat_splitter = MagicMock()

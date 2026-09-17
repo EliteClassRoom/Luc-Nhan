@@ -10,7 +10,6 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from tests.mocks.ida_mock import install_ida_mocks
 from rikugan.agent.subagent_manager import (
     SubagentInfo,
     SubagentManager,
@@ -310,7 +309,7 @@ class TestRegistryAllowlist(unittest.TestCase):
     """``ToolRegistry.allowlist`` returns a filtered view that preserves the dispatch surface."""
 
     def _make_registry(self) -> ToolRegistry:
-        from rikugan.tools.base import ToolDefinition, ParameterSchema
+        from rikugan.tools.base import ParameterSchema, ToolDefinition
 
         reg = ToolRegistry()
         reg.register(
@@ -371,7 +370,7 @@ class TestManagerSpawnHandoff(unittest.TestCase):
     """``SubagentManager.spawn`` forwards the new tools/model kwargs to its worker."""
 
     def _stub_tools(self) -> ToolRegistry:
-        from rikugan.tools.base import ToolDefinition, ParameterSchema
+        from rikugan.tools.base import ParameterSchema, ToolDefinition
 
         reg = ToolRegistry()
         reg.register(
@@ -395,7 +394,6 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         return reg
 
     def test_spawn_forwards_tools_and_model_to_runner(self) -> None:
-        from threading import Thread
 
         mgr = SubagentManager(
             provider=_StubProvider(),
@@ -435,7 +433,6 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         assert mgr.get(agent_id).status == SubagentStatus.COMPLETED
 
     def test_spawn_without_tools_keeps_full_registry(self) -> None:
-        from threading import Thread
 
         mgr = SubagentManager(
             provider=_StubProvider(),
@@ -473,7 +470,6 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         """The preflight cancel check in ``_run_agent`` (after
         ``run_task`` returns, before iteration) must finalize the worker
         without emitting progress or completion events."""
-        from threading import Thread
         from rikugan.agent.subagent import SubagentRunner
 
         mgr = SubagentManager(

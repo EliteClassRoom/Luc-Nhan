@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 BADADDR = 0xFFFFFFFFFFFFFFFF
 
 
-def _create_mock_module(name: str, attrs: dict = None) -> ModuleType:
+def _create_mock_module(name: str, attrs: dict | None = None) -> ModuleType:
     mod = ModuleType(name)
     mod.__dict__.update(attrs or {})
     return mod

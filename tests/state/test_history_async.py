@@ -29,10 +29,10 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig  # noqa: E402
-from rikugan.core.types import Message, Role  # noqa: E402
-from rikugan.state.history import SessionHistory  # noqa: E402
-from rikugan.state.session import SessionState  # noqa: E402
+from rikugan.core.config import RikuganConfig
+from rikugan.core.types import Message, Role
+from rikugan.state.history import SessionHistory
+from rikugan.state.session import SessionState
 
 
 def _make_session(message_count: int = 3) -> SessionState:

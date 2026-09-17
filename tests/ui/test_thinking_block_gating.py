@@ -24,7 +24,7 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui.message_widgets import _ThinkingBlock  # noqa: E402
+from rikugan.ui.message_widgets import _ThinkingBlock
 
 
 class TestThinkingBlockRenderGating(unittest.TestCase):

@@ -42,7 +42,7 @@ for _name in (
 ):
     sys.modules.pop(_name, None)
 
-import rikugan.ui.context_bar as _context_bar_mod  # noqa: E402
+import rikugan.ui.context_bar as _context_bar_mod
 
 ContextBar = _context_bar_mod.ContextBar
 _function_name_at = _context_bar_mod._function_name_at
@@ -55,7 +55,7 @@ _function_name_at = _context_bar_mod._function_name_at
 # leak as ``HOST_IDA`` and bias subsequent tests that call
 # ``is_ida()``.  Force the standalone default here so the
 # ``_function_name_at`` test sees the expected host kind.
-import rikugan.core.host as _host_mod  # noqa: E402
+import rikugan.core.host as _host_mod
 
 _host_mod._HOST = _host_mod.HOST_STANDALONE
 

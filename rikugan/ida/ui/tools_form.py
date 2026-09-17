@@ -1,6 +1,7 @@
 """IDA PluginForm wrapper for the Rikugan Tools panel (dockable view)."""
 
 from __future__ import annotations
+
 import importlib
 import importlib.util as _importlib_util
 from typing import Any

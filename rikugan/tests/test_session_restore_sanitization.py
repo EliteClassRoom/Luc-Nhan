@@ -34,9 +34,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from rikugan.core.config import RikuganConfig  # noqa: E402
-from rikugan.core.types import Message, Role  # noqa: E402
-from rikugan.state.history import SessionHistory  # noqa: E402
+from rikugan.core.config import RikuganConfig
+from rikugan.core.types import Message, Role
+from rikugan.state.history import SessionHistory
 
 # ---------------------------------------------------------------------------
 # Fixtures

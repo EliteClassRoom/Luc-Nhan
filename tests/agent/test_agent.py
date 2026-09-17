@@ -11,12 +11,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.context_window import ContextWindowManager  # noqa: E402
-from rikugan.agent.plan_mode import create_plan_from_text, parse_plan  # noqa: E402
-from rikugan.agent.turn import TurnEvent, TurnEventType  # noqa: E402
-from rikugan.core.config import RikuganConfig  # noqa: E402
-from rikugan.core.types import Message, Role, TokenUsage  # noqa: E402
-from rikugan.state.session import SessionState  # noqa: E402
+from rikugan.agent.context_window import ContextWindowManager
+from rikugan.agent.plan_mode import create_plan_from_text, parse_plan
+from rikugan.agent.turn import TurnEvent, TurnEventType
+from rikugan.core.config import RikuganConfig
+from rikugan.core.types import Message, Role, TokenUsage
+from rikugan.state.session import SessionState
 
 
 class TestTurnEvents(unittest.TestCase):

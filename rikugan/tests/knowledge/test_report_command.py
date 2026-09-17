@@ -13,17 +13,15 @@ No Qt UI, no real LLM, no filesystem writer.
 from __future__ import annotations
 
 import queue
+import re as _re
 import tempfile
 import unittest
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
-import re as _re
-
 
 from rikugan.agent.loop_commands import _handle_report_command
 from rikugan.agent.turn import TurnEvent, TurnEventType
 from rikugan.core.config import RikuganConfig
-from rikugan.memory.ingest import ingest_save_memory
 from rikugan.memory.report import ReportSaveResult, build_report_context
 from rikugan.memory.schema import KnowledgeMemory
 from rikugan.state.session import SessionState
@@ -179,7 +177,7 @@ class TestReportCommandEventSequence(unittest.TestCase):
         self.assertEqual(types[2], TurnEventType.TEXT_DONE)
         self.assertIn("Report saved", events[2].text)
         save_mock.assert_called_once()
-        args, kwargs = save_mock.call_args
+        _args, kwargs = save_mock.call_args
         self.assertEqual(kwargs.get("scope"), "full")
 
     def test_no_findings_emits_skip_message_no_draft(self) -> None:
@@ -421,12 +419,12 @@ class TestReportDraftFencing(unittest.TestCase):
         distinct UserQuestionWidget beneath the draft.
         """
         try:
-            from rikugan.ui.qt_compat import QApplication
             from rikugan.ui.chat_view import ChatView
             from rikugan.ui.message_widgets import (
                 AssistantMessageWidget,
                 UserQuestionWidget,
             )
+            from rikugan.ui.qt_compat import QApplication
         except ImportError:
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])
@@ -531,9 +529,9 @@ class TestReportDraftFencing(unittest.TestCase):
         fails before the user notices.
         """
         try:
-            from rikugan.ui.qt_compat import QApplication
             from rikugan.ui.chat_view import ChatView
             from rikugan.ui.message_widgets import AssistantMessageWidget
+            from rikugan.ui.qt_compat import QApplication
         except ImportError:
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])
@@ -664,9 +662,9 @@ class TestReportDraftFencing(unittest.TestCase):
         the visible body to a heading + raw source-dump blob.
         """
         try:
-            from rikugan.ui.qt_compat import QApplication
             from rikugan.ui.chat_view import ChatView
             from rikugan.ui.message_widgets import AssistantMessageWidget
+            from rikugan.ui.qt_compat import QApplication
         except ImportError:
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])
@@ -724,7 +722,7 @@ class TestReportDraftFencing(unittest.TestCase):
         # never gets a closing fence in the visible window.
         import re as _re
         pre_opens = len(_re.findall(r"white-space:pre-wrap", html))
-        pre_closes = len(_re.findall(r"</div>", html))
+        len(_re.findall(r"</div>", html))
         # Sanity: there IS a pre block OR there isn't one (we may have
         # dropped the spanning fence entirely). Either is acceptable,
         # but a NESTED one without a sibling trailing <div> is not.

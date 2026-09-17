@@ -92,8 +92,7 @@ class MockProvider(LLMProvider):
         if self._call_count < len(self._responses):
             chunks = self._responses[self._call_count]
             self._call_count += 1
-            for chunk in chunks:
-                yield chunk
+            yield from chunks
         else:
             yield StreamChunk(text="No more scripted responses.")
 

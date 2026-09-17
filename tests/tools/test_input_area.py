@@ -17,11 +17,11 @@ from tests import purge_rikugan_stubs
 
 purge_rikugan_stubs()
 
-from tests.qt_stubs import ensure_pyside6_stubs  # noqa: E402
+from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui.input_area import InputArea, _SkillPopup  # noqa: E402
+from rikugan.ui.input_area import InputArea, _SkillPopup
 
 # ---------------------------------------------------------------------------
 # _SkillPopup — pure list logic

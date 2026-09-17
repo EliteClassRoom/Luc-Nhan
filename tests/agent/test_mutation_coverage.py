@@ -32,14 +32,14 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent import mutation  # noqa: E402
-from rikugan.agent.mutation import (  # noqa: E402
+from rikugan.agent import mutation
+from rikugan.agent.mutation import (
     _REVERSE_BUILDERS,
     build_reverse_record,
     capture_pre_state,
 )
-from rikugan.ida.tools import microcode_optim as _opt  # noqa: E402
-from rikugan.ida.tools.registry import (  # noqa: E402
+from rikugan.ida.tools import microcode_optim as _opt
+from rikugan.ida.tools.registry import (
     create_default_registry,
     register_advanced_tools,
 )

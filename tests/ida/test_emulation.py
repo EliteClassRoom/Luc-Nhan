@@ -23,6 +23,7 @@ import os
 import sys
 import unittest
 import unittest.mock
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -36,8 +37,8 @@ if "rikugan.ida.tools.emulation" in sys.modules:
     del sys.modules["rikugan.ida.tools.emulation"]
 emu = importlib.import_module("rikugan.ida.tools.emulation")
 
-from rikugan.core.errors import ToolError  # noqa: E402
-from tests.subprocess_test_worker import run_in_subprocess  # noqa: E402
+from rikugan.core.errors import ToolError
+from tests.subprocess_test_worker import run_in_subprocess
 
 # ---------------------------------------------------------------------------
 # IDA architecture switches via the mock.

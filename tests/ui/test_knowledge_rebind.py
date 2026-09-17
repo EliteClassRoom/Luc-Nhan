@@ -21,11 +21,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)
 
-from tests.qt_stubs import ensure_pyside6_stubs  # noqa: E402
+from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.state.history_types import (  # noqa: E402
+from rikugan.state.history_types import (
     HistoryAttachStatus,
     HistoryLoadResult,
     HistoryRequestStatus,

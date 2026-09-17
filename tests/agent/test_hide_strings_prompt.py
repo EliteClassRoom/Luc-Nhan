@@ -20,12 +20,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # Ensure the project root is on the path so the rikugan package resolves.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tests.mocks.ida_mock import install_ida_mocks  # noqa: E402
+from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.prompts.base import ANALYSIS_SECTION  # noqa: E402
-from rikugan.agent.system_prompt import build_system_prompt  # noqa: E402
+from rikugan.agent.prompts.base import ANALYSIS_SECTION
+from rikugan.agent.system_prompt import build_system_prompt
 
 
 class TestAnalysisSectionRules(unittest.TestCase):

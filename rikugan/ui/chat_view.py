@@ -1,6 +1,7 @@
 """Chat view: scrollable area containing message widgets."""
 
 from __future__ import annotations
+
 import json
 import queue
 import time
@@ -2022,7 +2023,6 @@ class ChatView(QScrollArea):
         # Bump generation so any late signals from the prior worker
         # are ignored.  Captured in closures for chunk/finished slots.
         self._restore_generation += 1
-        generation = self._restore_generation
 
         # Insert one placeholder per *visible* message so the layout
         # is full from the start.  We mirror the worker's pairing

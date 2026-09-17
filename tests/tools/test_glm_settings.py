@@ -87,7 +87,7 @@ _ac_stub.resolve_anthropic_auth = MagicMock(return_value=("tok", "api_key"))
 _ac_stub.invalidate_cache = MagicMock()
 _ac_stub.set_keychain_consent = MagicMock()
 
-from rikugan.core.config import RikuganConfig  # noqa: E402
+from rikugan.core.config import RikuganConfig
 
 # Stub tab service / tabs so _build_ui does not touch the filesystem.
 _FakeService = type("_FakeService", (), {"__init__": lambda self, *a, **k: None})
@@ -348,9 +348,8 @@ class TestGLMEndpointType(unittest.TestCase):
     def test_endpoint_change_updates_base_url(self) -> None:
         """Switching to Coding Plan updates api_base from the standard URL
         to the coding-plan URL."""
-        from rikugan.ui.settings_dialog import SettingsDialog
-
         from rikugan.core.glm_config import GLM_ENDPOINT_BASE_URLS
+        from rikugan.ui.settings_dialog import SettingsDialog
 
         config = RikuganConfig()
         config.provider.extra = {"dialect": "glm"}
@@ -497,7 +496,6 @@ class TestGLMZaiMigration(unittest.TestCase):
     def test_decline_then_cancel_retains_marker_and_no_dialect(self) -> None:
         """Decline then Cancel must: keep the marker (no re-prompt on
         reopen) and leave no dialect on the active provider."""
-        from rikugan.ui.qt_compat import QDialog
 
         config = RikuganConfig()
         config.add_custom_provider("zai-glm")
@@ -539,7 +537,6 @@ class TestGLMZaiMigration(unittest.TestCase):
         re-registration) follow normal Cancel behavior and revert to the
         pre-dialog state.
         """
-        from rikugan.ui.qt_compat import QDialog
 
         config = RikuganConfig()
         config.add_custom_provider("zai-glm")

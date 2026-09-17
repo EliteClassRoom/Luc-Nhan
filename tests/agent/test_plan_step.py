@@ -12,7 +12,6 @@ import os
 import sys
 import threading
 import unittest
-from collections.abc import Generator
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -27,7 +26,6 @@ from rikugan.agent.modes.turn_helpers import TurnResult
 from rikugan.agent.turn import TurnEvent, TurnEventType
 from rikugan.core.config import RikuganConfig
 from rikugan.state.session import SessionState
-from rikugan.tests.knowledge._helpers import fresh_store
 
 
 def _make_loop() -> AgentLoop:
@@ -70,7 +68,7 @@ class TestPlanStepStatus(unittest.TestCase):
     def test_completed_status_on_clean_finish(self):
         loop = _make_loop()
 
-        def fake_single_turn(loop_arg, sys_prompt, tools_schema):  # noqa: ARG001
+        def fake_single_turn(loop_arg, sys_prompt, tools_schema):
             yield TurnEvent.text_done("done")
             return _result_ok(has_tool_calls=False)
 
@@ -83,7 +81,7 @@ class TestPlanStepStatus(unittest.TestCase):
     def test_error_status_emitted_on_failure(self):
         loop = _make_loop()
 
-        def fake_single_turn(loop_arg, sys_prompt, tools_schema):  # noqa: ARG001
+        def fake_single_turn(loop_arg, sys_prompt, tools_schema):
             yield TurnEvent.text_done("partial")
             return _result_err()
 
@@ -96,7 +94,7 @@ class TestPlanStepStatus(unittest.TestCase):
     def test_turn_limit_status_after_max_turns(self):
         loop = _make_loop()
 
-        def fake_single_turn(loop_arg, sys_prompt, tools_schema):  # noqa: ARG001
+        def fake_single_turn(loop_arg, sys_prompt, tools_schema):
             # Always returns tool calls -> exhausts the 20-turn budget.
             tc = SimpleNamespace(id="tc_1", name="f", arguments={"x": 1})
             yield TurnEvent.text_done("loop")

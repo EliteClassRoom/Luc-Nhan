@@ -16,10 +16,10 @@ install_ida_mocks()
 
 from rikugan.ida.tools.microcode_optim import compile_optimizer
 from rikugan.tools.script_guard import (
+    _DENY_ATTR_NAMES,
     GuardViolation,
     SafeModule,
     _check_ast,
-    _DENY_ATTR_NAMES,
     check_ast,
     run_guarded_code,
     run_guarded_script,
@@ -946,7 +946,6 @@ class TestSafeModulePerf(unittest.TestCase):
 
     def test_attribute_access_through_wrapper_is_fast(self):
         import time
-
         import uuid as _uuid
 
         wrapped = SafeModule(_uuid)

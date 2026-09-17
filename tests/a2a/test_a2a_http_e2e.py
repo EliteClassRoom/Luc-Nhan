@@ -51,7 +51,7 @@ class _A2AServerHandler(BaseHTTPRequestHandler):
 
     # Class-level (shared across instances) — we set it on the
     # subclass to keep tests independent.
-    behavior: list[dict] = []
+    behavior: list[dict] = []  # noqa: RUF012
     call_count: int = 0
     last_request_body: bytes = b""
 
@@ -296,7 +296,7 @@ class TestCleanup(unittest.TestCase):
             agent = ExternalAgentConfig(
                 name="x", transport="a2a", endpoint=server.url,
             )
-            task = client.send_task(agent, "x")
+            client.send_task(agent, "x")
             # close() must not raise even with active sessions.
             client.close()
             self.assertEqual(len(client._sessions), 0)

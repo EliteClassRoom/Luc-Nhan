@@ -18,13 +18,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)
 
-from tests.mocks.ida_mock import install_ida_mocks  # noqa: E402
+from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.system_prompt import build_system_prompt  # noqa: E402
-from rikugan.ida.tools.database import get_binary_info  # noqa: E402
-
+from rikugan.agent.system_prompt import build_system_prompt
+from rikugan.ida.tools.database import get_binary_info
 
 FILENAME_RULE = (
     "Never infer the binary's purpose, family, or behavior from a file name"

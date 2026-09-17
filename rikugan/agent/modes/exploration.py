@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Generator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ... import constants
 from ...core.errors import ToolError
@@ -31,6 +31,9 @@ from ..subagent import SubagentRunner
 from ..turn import TurnEvent
 from .phase_tracker import ModePhaseTracker
 from .turn_helpers import execute_single_turn
+
+if TYPE_CHECKING:
+    from ..loop import AgentLoop
 
 
 def _id_for_pair(finding) -> str:
@@ -184,7 +187,7 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
 
     hypothesis_records: list[tuple[KnowledgeMemory, Any]] = []
     review_candidates: list[KnowledgeMemory] = []
-    for mem, finding in zip(candidates, findings):
+    for mem, finding in zip(candidates, findings, strict=False):
         if mem.type == "hypothesis":
             hypothesis_records.append((mem, finding))
         else:
@@ -204,7 +207,7 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
                 "Hypotheses are still persisted as unverified; "
                 "non-hypothesis findings are skipped."
             )
-    finding_by_id: dict[str, Any] = {mem.id: finding for mem, finding in zip(candidates, findings)}
+    finding_by_id: dict[str, Any] = {mem.id: finding for mem, finding in zip(candidates, findings, strict=False)}
     persisted = 0
     raw_errors: list[str] = []
     if raw_store_available:
@@ -238,7 +241,7 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
         # the non-hyp ingest so unverified claims are never persisted
         # as facts.
         if review is not None and review.passed:
-            for mem, finding in zip(review.records, findings):
+            for mem, finding in zip(review.records, findings, strict=False):
                 if mem.type == "hypothesis":
                     continue
                 corrected_summary = mem.content or finding.summary
@@ -299,7 +302,7 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
             f"central index ({persisted} finding(s)).\n\n{verified_summary}"
         )
     elif central_saved:
-        status_msg = f"Verified exploration memory saved to central index only (raw store unavailable)."
+        status_msg = "Verified exploration memory saved to central index only (raw store unavailable)."
         body = (
             f"[SYSTEM] Verified exploration memory saved to central index only "
             f"(raw store unavailable).\n\n{verified_summary}"

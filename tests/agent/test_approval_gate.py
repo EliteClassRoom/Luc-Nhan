@@ -16,9 +16,9 @@ from __future__ import annotations
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
 from collections.abc import Generator as GeneratorType
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -158,7 +158,7 @@ class TestApprovalGateBehavior(unittest.TestCase):
         tc = ToolCall(id="call_gate_2", name="guarded_tool", arguments={"code": "ok"})
 
         loop._tool_approval_queue.put("allow")
-        events, tr = _drain_generator_with_return(loop._execute_single_tool(tc))
+        _events, tr = _drain_generator_with_return(loop._execute_single_tool(tc))
 
         self.assertEqual(executed, ["ok"])
         self.assertFalse(tr.is_error)
@@ -241,7 +241,7 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
 
         with patch("rikugan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
             loop._tool_approval_queue.put("allow")
-            events, tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
+            _events, tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
 
         self.assertEqual(
             dispatched,

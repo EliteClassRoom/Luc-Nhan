@@ -752,7 +752,7 @@ class TestUndoHandlerRollback(unittest.TestCase):
 
 
 class _FailingTools:
-    def execute(self, name, arguments):  # noqa: ARG002 — interface compat
+    def execute(self, name, arguments):
         from rikugan.core.errors import ToolError
         raise ToolError("boom")
 
@@ -760,7 +760,7 @@ class _FailingTools:
 class _SucceedAfterFirstFailTools:
     calls = 0
 
-    def execute(self, name, arguments):  # noqa: ARG002 — interface compat
+    def execute(self, name, arguments):
         _SucceedAfterFirstFailTools.calls += 1
         if _SucceedAfterFirstFailTools.calls == 1:
             from rikugan.core.errors import ToolError

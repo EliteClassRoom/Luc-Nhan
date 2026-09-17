@@ -19,7 +19,6 @@ install_ida_mocks()
 from rikugan.ida.tools import function_index
 from rikugan.ida.tools.function_index import (
     FunctionEntry,
-    _build_index,
     find_containing_function,
     function_count,
     get_function_index,

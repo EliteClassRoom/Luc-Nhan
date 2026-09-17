@@ -14,12 +14,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
+from rikugan.agent.subagent import SubagentRunner
 from rikugan.core.config import RikuganConfig
 from rikugan.core.types import ProviderCapabilities, StreamChunk
 from rikugan.providers.base import LLMProvider, ModelInfo
 from rikugan.state.session import SessionState
 from rikugan.tools.registry import ToolRegistry
-from rikugan.agent.subagent import SubagentRunner
 
 
 class _StubProvider(LLMProvider):

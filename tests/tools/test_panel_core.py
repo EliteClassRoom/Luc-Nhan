@@ -210,16 +210,16 @@ sys.modules.pop("rikugan.ui.panel_core", None)
 # downstream test — which is exactly the kind of test-isolation
 # regression that makes headless / provider tests fail when run
 # after a panel-core test in the same pytest invocation.
-import pytest  # noqa: E402
+import pytest
 
-from rikugan.ui import panel_core as _pc_module  # noqa: E402
-from rikugan.ui.export_formatting import (  # noqa: E402
+from rikugan.ui import panel_core as _pc_module
+from rikugan.ui.export_formatting import (
     _TOOL_RESULT_TRUNCATE_CHARS,
     _export_detect_lang,
     _export_format_tool_args,
     _export_format_tool_result,
 )
-from rikugan.ui.panel_core import (  # noqa: E402
+from rikugan.ui.panel_core import (
     RikuganPanelCore,
 )
 
@@ -3230,7 +3230,7 @@ class TestLoadRetryPath(unittest.TestCase):
 # the Task 8 implementation leaves open.
 # ---------------------------------------------------------------------------
 
-import queue as _queue_module  # noqa: E402
+import queue as _queue_module
 
 
 class TestTask10InvalidateHistorySignature(unittest.TestCase):
@@ -3793,7 +3793,7 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
 # the pre-confirm / post-confirm / watchdog / retry / invalidation
 # phases cannot land silently.
 # ---------------------------------------------------------------------------
-from rikugan.state.history_types import (  # noqa: E402
+from rikugan.state.history_types import (
     HistoryDeleteResult,
     HistoryDeleteStatus,
     HistoryRequestStatus,

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import unittest
 
-
 _BODY = (
     "**Report draft**\n\n"
     "# Draft\n\n"

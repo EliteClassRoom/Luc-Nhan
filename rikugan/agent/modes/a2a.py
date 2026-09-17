@@ -23,9 +23,10 @@ from __future__ import annotations
 from collections.abc import Generator
 from typing import TYPE_CHECKING
 
-from ..a2a import A2ADispatcher
 from ...core.errors import CancellationError
+from ..a2a import A2ADispatcher
 from ..turn import TurnEvent, TurnEventType
+
 if TYPE_CHECKING:
     from ..loop import AgentLoop
 

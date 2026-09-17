@@ -161,8 +161,9 @@ class TestWriteFile(unittest.TestCase):
         """Force a real ``mkstemp`` + ``atomic_replace`` failure and
         confirm the temp file is cleaned up.
         """
-        from rikugan.ida.tools import file_io as fio
         from unittest.mock import patch as _patch
+
+        from rikugan.ida.tools import file_io as fio
 
         with _with_root(self.tmp), _patch.object(
             fio, "atomic_replace", side_effect=OSError("forced failure")

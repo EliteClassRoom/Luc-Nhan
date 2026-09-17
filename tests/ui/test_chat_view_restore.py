@@ -82,9 +82,9 @@ except ImportError:
     pass
 
 
-from rikugan import constants  # noqa: E402
-from rikugan.core.types import Message, Role, ToolCall, ToolResult  # noqa: E402
-from rikugan.ui.chat_view import (  # noqa: E402
+from rikugan import constants
+from rikugan.core.types import Message, Role, ToolCall, ToolResult
+from rikugan.ui.chat_view import (
     _RESTORE_CHUNK_SIZE,
     ChatView,
     MessageSpec,
@@ -96,7 +96,7 @@ from rikugan.ui.chat_view import (  # noqa: E402
     _is_hidden_system_user_message,
     _RenderedChunk,
 )
-from rikugan.ui.tool_widgets import (  # noqa: E402
+from rikugan.ui.tool_widgets import (
     ExecutePythonWidget,
     ToolCallWidget,
 )
@@ -506,9 +506,12 @@ class WorkerQueueTests(unittest.TestCase):
         view._on_restore_finished = _on_finished_stub  # type: ignore[method-assign]
 
         # Use explicit ids so the assertion can compare against stable names.
-        a = Message(role=Role.USER, content="a"); a.id = "a"
-        b = Message(role=Role.USER, content="b"); b.id = "b"
-        c = Message(role=Role.USER, content="c"); c.id = "c"
+        a = Message(role=Role.USER, content="a")
+        a.id = "a"
+        b = Message(role=Role.USER, content="b")
+        b.id = "b"
+        c = Message(role=Role.USER, content="c")
+        c.id = "c"
         worker = RestoreWorker([a, b, c])
         view._restore_worker = worker
         producer_tid = _threading.get_ident()

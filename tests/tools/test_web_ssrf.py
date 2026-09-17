@@ -27,8 +27,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.errors import ToolError  # noqa: E402
-from rikugan.tools import web, web_fetch  # noqa: E402
+from rikugan.core.errors import ToolError
+from rikugan.tools import web, web_fetch
 
 
 class TestPrivateIPDetection(unittest.TestCase):

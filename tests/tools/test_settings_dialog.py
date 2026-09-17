@@ -144,7 +144,7 @@ def _resolve_auth_cached_impl(explicit_key=""):
 _ac_stub.resolve_auth_cached = _resolve_auth_cached_impl
 _ac_stub.invalidate_cache = MagicMock()
 
-from rikugan.ui.settings_dialog import _AddProviderDialog, _ModelFetcher  # noqa: E402
+from rikugan.ui.settings_dialog import _AddProviderDialog, _ModelFetcher
 
 # ---------------------------------------------------------------------------
 # _ModelFetcher
