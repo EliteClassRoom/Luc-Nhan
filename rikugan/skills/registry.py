@@ -7,6 +7,7 @@ import os
 from ..core.config import RikuganConfig
 from ..core.logging import log_debug, log_info
 from .loader import SkillDefinition, discover_skills
+from ..core.sanitize import strip_injection_markers
 
 
 class SkillRegistry:
@@ -102,13 +103,20 @@ class SkillRegistry:
         return list(self._skills.keys())
 
     def get_summary_for_prompt(self) -> str | None:
-        """Format a summary for inclusion in the system prompt."""
+        """Format a summary for inclusion in the system prompt.
+
+        Skill descriptions and slugs pass through ``strip_injection_markers``
+        before being inlined into the prompt — a description loaded from
+        an untrusted SKILL.md file must not be able to impersonate a
+        system / user / assistant marker.
+        """
         if not self._skills:
             return None
         lines = ["Available skills (user invokes with /slug, or you can call activate_skill):"]
         for slug, skill in sorted(self._skills.items()):
-            desc = skill.description or "(no description)"
-            lines.append(f"  - /{slug}: {desc}")
+            safe_slug = strip_injection_markers(slug)
+            desc = strip_injection_markers(skill.description or "(no description)")
+            lines.append(f"  - /{safe_slug}: {desc}")
         return "\n".join(lines)
 
     def match_triggers(self, user_text: str) -> SkillDefinition | None:

@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, get_type_hints
 
-from ..core.errors import ToolError
+from ..core.errors import ToolError, ToolValidationError
 from ..core.logging import log_error as _log_error
 from ..core.logging import log_trace
 
@@ -52,6 +52,7 @@ class ToolDefinition:
     category: str = "general"
     requires_decompiler: bool = False
     mutating: bool = False
+    requires_approval: bool = False
     timeout: float | None = None  # per-tool timeout in seconds (None = use default)
     handler: Callable | None = field(default=None, repr=False)
     requires: list[str] = field(default_factory=list)
@@ -185,6 +186,7 @@ def tool(
     category: str = "general",
     requires_decompiler: bool = False,
     mutating: bool = False,
+    requires_approval: bool = False,
     timeout: float | None = None,
     requires: list[str] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -231,6 +233,15 @@ def tool(
         if requires_decompiler and "hexrays" not in effective_requires:
             effective_requires.append("hexrays")
 
+        # Capture the signature once so the wrapper can reject
+        # hallucinated/extra arguments (e.g. the model passing ``count`` to
+        # ``read_function_disassembly``, which only takes ``address``) with an
+        # actionable message naming the valid parameters — instead of a bare
+        # TypeError that the model retries unchanged in a loop.
+        func_sig = inspect.signature(func)
+        valid_params = [p for p in func_sig.parameters if p not in ("self", "cls")]
+        accepts_str = ", ".join(valid_params) or "(no parameters)"
+
         defn = ToolDefinition(
             name=tool_name,
             description=tool_desc,
@@ -238,6 +249,7 @@ def tool(
             category=category,
             requires_decompiler=requires_decompiler,
             mutating=mutating,
+            requires_approval=requires_approval,
             timeout=timeout,
             handler=func,
             requires=effective_requires,
@@ -246,6 +258,16 @@ def tool(
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             log_trace(f"tool:{tool_name} CALL args={kwargs}")
+            # Validate arguments against the signature before calling func.
+            # Signature.bind() raises TypeError only for argument-count / name
+            # mismatches — never for TypeErrors raised inside the body — so this
+            # cleanly separates "model sent bad args" from "tool raised".
+            try:
+                func_sig.bind(*args, **kwargs)
+            except TypeError as e:
+                msg = f"Invalid arguments for {tool_name}: {e} This tool accepts: {accepts_str}."
+                _log_error(f"tool:{tool_name} EXCEPTION: {msg}")
+                raise ToolValidationError(msg, tool_name=tool_name) from e
             try:
                 result = func(*args, **kwargs)
                 log_trace(f"tool:{tool_name} OK result_len={len(str(result))}")

@@ -39,7 +39,7 @@ from ..constants import (
     SKILLS_DIR_NAME,
 )
 from .host import get_user_config_base_dir
-from .logging import log_error
+from .logging import log_error, log_info, log_warning
 
 # Built-in provider default models — used as a fallback when the user's
 # saved config has an empty model string for a provider.
@@ -163,6 +163,13 @@ class RikuganConfig:
     encrypt_api_keys: bool = False
     _encryption_block: dict = field(default_factory=dict, repr=False)
 
+    # Session-local: True once ``decrypt_stored_keys`` succeeded for the
+    # blob currently in ``_encryption_block``. The blob itself is retained
+    # (it is the only durable copy of the keys — password-less save()
+    # re-emits it verbatim), so this flag is what stops the UI from
+    # re-prompting for a password within the same session.
+    _keys_decrypted: bool = field(default=False, repr=False)
+
     _config_dir: str = field(default_factory=_default_config_dir, repr=False)
 
     @property
@@ -277,6 +284,7 @@ class RikuganConfig:
         d = asdict(self)
         d.pop("_config_dir", None)
         d.pop("_encryption_block", None)
+        d.pop("_keys_decrypted", None)
         d["schema_version"] = CONFIG_SCHEMA_VERSION
 
         if self.encrypt_api_keys and password:
@@ -292,6 +300,49 @@ class RikuganConfig:
             d["provider"]["api_key"] = ""
             for info in d.get("providers", {}).values():
                 info["api_key"] = ""
+            # Mirror the new blob and mark this session's pending-prompt
+            # state resolved, so later password-less saves re-emit it
+            # verbatim instead of downgrading.
+            self._encryption_block = d["encryption"]
+            self._keys_decrypted = True
+        elif self.encrypt_api_keys and self._encryption_block:
+            # Password-less save (e.g. a UI toggle) on an encrypted config:
+            # re-emit the stored blob verbatim instead of downgrading keys
+            # to plaintext. The blob is the only durable copy of the keys —
+            # never mutate or re-encrypt it here; plaintext keys exist only
+            # in memory (the dump above is a snapshot, so zeroing these
+            # fields does not touch the live config).
+            d["encryption"] = {"enabled": True, **self._encryption_block}
+            d["provider"]["api_key"] = ""
+            for info in d.get("providers", {}).values():
+                info["api_key"] = ""
+        elif self.encrypt_api_keys:
+            # Encrypted mode without a stored blob (flag set but the config
+            # was never saved with a password): refuse to write plaintext
+            # keys. Degrade the file to a coherent disabled state — the
+            # persisted flag must not survive pointing at disabled
+            # encryption, or a reload restores the degenerate in-memory
+            # state. The live session is untouched.
+            has_keys = bool(d["provider"]["api_key"]) or any(
+                info.get("api_key") for info in d.get("providers", {}).values()
+            )
+            d["encrypt_api_keys"] = False
+            d["encryption"] = {"enabled": False}
+            if has_keys:
+                d["provider"]["api_key"] = ""
+                for info in d.get("providers", {}).values():
+                    info["api_key"] = ""
+                log_warning(
+                    "Config saved without password and no stored encryption "
+                    "block: API keys were NOT persisted (would be written as "
+                    "plaintext). Re-enter the keys and re-enable encryption."
+                )
+            else:
+                log_info(
+                    "Config saved without password and no stored encryption "
+                    "block: encryption disabled in the saved file (no keys "
+                    "to protect)."
+                )
         else:
             d["encryption"] = {"enabled": False}
 
@@ -312,6 +363,7 @@ class RikuganConfig:
         if enc.get("enabled"):
             self.encrypt_api_keys = True
             self._encryption_block = enc
+            self._keys_decrypted = False  # fresh blob — prompt again this session
 
         self._apply_loaded_config(data)
 
@@ -332,8 +384,27 @@ class RikuganConfig:
 
         if "provider" in data:
             for k, v in data["provider"].items():
-                if hasattr(self.provider, k):
-                    setattr(self.provider, k, v)
+                if not hasattr(self.provider, k):
+                    continue
+                # Numeric provider fields: hand-edited configs sometimes
+                # leave these as JSON strings ("0.3", "4096").  Coerce in
+                # place when possible; reject (skip) values that cannot
+                # be parsed so validate()/save() never raise TypeError.
+                if k == "temperature":
+                    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+                        continue
+                    try:
+                        v = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                elif k in ("max_tokens", "context_window"):
+                    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+                        continue
+                    try:
+                        v = int(v)
+                    except (TypeError, ValueError):
+                        continue
+                setattr(self.provider, k, v)
         self.providers = data.get("providers", {})
         self.custom_providers = data.get("custom_providers", {})
         for k in (
@@ -360,6 +431,7 @@ class RikuganConfig:
             "parallel_agent_enabled",
             "parallel_agent_max_concurrent",
             "oauth_consent_accepted",
+            "preserve_context",
             "encrypt_api_keys",
             "ida_output_log_level",
             "knowledge_enabled",
@@ -391,7 +463,8 @@ class RikuganConfig:
                     val = "on_error"
                 # Boolean fields must be real JSON booleans — reject
                 # truthy strings/integers so a hand-edited config file
-                # can never silently enable central persistence.
+                # can never silently enable security/UX gates (consent,
+                # encryption, context preservation, agent discovery, …).
                 _BOOLEAN_FIELDS = {
                     "auto_context",
                     "plan_mode_default",
@@ -402,19 +475,27 @@ class RikuganConfig:
                     "knowledge_show_retrieved_in_chat",
                     "hide_strings",
                     "parallel_agent_enabled",
+                    "oauth_consent_accepted",
+                    "preserve_context",
+                    "a2a_auto_discover",
+                    "encrypt_api_keys",
                 }
                 if k in _BOOLEAN_FIELDS and not isinstance(val, bool):
                     continue
                 setattr(self, k, val)
 
     def has_encrypted_keys(self) -> bool:
-        """True if the config was loaded with encrypted keys pending decryption."""
-        return self.encrypt_api_keys and bool(self._encryption_block)
+        """True if encrypted keys are present and still pending decryption."""
+        return self.encrypt_api_keys and bool(self._encryption_block) and not self._keys_decrypted
 
     def decrypt_stored_keys(self, password: str) -> bool:
         """Decrypt stored API keys using *password*.
 
         Returns True on success, False on wrong password.
+
+        The stored blob is retained (only ``_keys_decrypted`` flips) so a
+        later password-less ``save()`` can re-emit it verbatim instead of
+        downgrading the keys to plaintext.
         """
         if not self._encryption_block:
             return True
@@ -435,8 +516,7 @@ class RikuganConfig:
         saved = self.providers.get(self.provider.name, {})
         if saved.get("api_key"):
             self.provider.api_key = saved["api_key"]
-
-        self._encryption_block = {}
+        self._keys_decrypted = True
         return True
 
     def _snapshot_current_provider(self) -> None:

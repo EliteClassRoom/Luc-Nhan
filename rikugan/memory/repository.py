@@ -93,6 +93,9 @@ class SQLiteKnowledgeRepository:
             value.content,
             value.confidence,
             expected_revision=expected_revision,
+            status=value.status,
+            verdict_claim=value.verdict_claim,
+            verification_citations=list(value.verification_citations),
         )
 
     def list_memories(self) -> list[KnowledgeMemory]:
@@ -108,6 +111,9 @@ class SQLiteKnowledgeRepository:
                 entity_refs=list(f.entity_refs),
                 tags=list(f.tags),
                 confidence=f.confidence,
+                status=f.status,
+                verdict_claim=f.verdict_claim,
+                verification_citations=list(f.verification_citations),
             )
             for f in facts
         ]
@@ -137,19 +143,17 @@ class SQLiteKnowledgeRepository:
 
     def list_entities(self) -> list[KnowledgeEntity]:
         """List all current entities."""
-        # WorkspaceStore doesn't have list_entities yet — use raw query
-        rows = self._store._conn.execute("SELECT * FROM entities ORDER BY created_at").fetchall()
         return [
             KnowledgeEntity(
-                id=row["entity_id"],
+                id=entity.entity_id,
                 binary_id=self.owner_memory_id,
-                type=row["entity_type"],
-                name=row["name"],
-                display_name=json.loads(row["metadata"]).get("display_name", ""),
-                address=json.loads(row["metadata"]).get("address", ""),
-                tags=json.loads(row["tags"]),
+                type=entity.entity_type,
+                name=entity.name,
+                display_name=entity.metadata.get("display_name", ""),
+                address=entity.metadata.get("address", ""),
+                tags=list(entity.tags),
             )
-            for row in rows
+            for entity in self._store.list_entities()
         ]
 
     # ------------------------------------------------------------------
@@ -251,6 +255,9 @@ class SQLiteKnowledgeRepository:
                 title=record.title,
                 content=record.content,
                 confidence=record.confidence,
+                status=record.status,
+                verdict_claim=record.verdict_claim,
+                verification_citations=list(record.verification_citations),
             ),
             outcome=outcome,
         )
@@ -265,6 +272,9 @@ class SQLiteKnowledgeRepository:
         tags: list[str] | None = None,
         title: str | None = None,
         confidence: float = _FACT_WRITE_CONFIDENCE,
+        status: str = "unverified",
+        verdict_claim: str = "",
+        verification_citations: list[str] | None = None,
     ) -> SavedKnowledgeMemory:
         """Save an exploration finding with graph metadata.
 
@@ -277,7 +287,7 @@ class SQLiteKnowledgeRepository:
         Returns a :class:`SavedKnowledgeMemory`; ``outcome`` is
         ``"created"`` for a new fact and ``"deduplicated"`` for an
         exact semantic match. Semantic identity is keyed only on
-        ``(fact_type, content)`` — entity_refs and tags are recorded
+        ``(fact_type, content)``; entity_refs and tags are recorded
         as first-write graph metadata and are not part of dedup.
         """
         from .workspace import new_record_id
@@ -302,6 +312,9 @@ class SQLiteKnowledgeRepository:
             ),
             entity_refs=entity_refs,
             tags=tags,
+            status=status if category == "hypothesis" else "unverified",
+            verdict_claim=verdict_claim if category == "hypothesis" else "",
+            verification_citations=list(verification_citations or []) if category == "hypothesis" else [],
         )
         return SavedKnowledgeMemory(
             record=KnowledgeMemory(
@@ -311,6 +324,9 @@ class SQLiteKnowledgeRepository:
                 title=record.title,
                 content=record.content,
                 confidence=record.confidence,
+                status=record.status,
+                verdict_claim=record.verdict_claim,
+                verification_citations=list(record.verification_citations),
             ),
             outcome=outcome,
         )

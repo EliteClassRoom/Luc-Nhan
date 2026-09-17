@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import os
@@ -93,6 +94,24 @@ def resolve_anthropic_auth(
             return oauth, "oauth"
 
     return "", ""
+
+
+def _sdk_request_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Repack kwargs for the installed anthropic SDK version.
+
+    anthropic SDK >= 1.0 removed ``temperature`` (and ``top_p``/``top_k``)
+    from ``Messages.create()``/``stream()`` — passing it raises
+    ``TypeError: Messages.stream() got an unexpected keyword argument
+    'temperature'``.  All versions accept ``extra_body``, which is merged
+    into the request JSON, so routing temperature through it keeps the
+    wire payload identical on old and new SDKs alike.
+    """
+    temperature = kwargs.pop("temperature", None)
+    if temperature is not None:
+        extra_body = dict(kwargs.get("extra_body") or {})
+        extra_body.setdefault("temperature", temperature)
+        kwargs["extra_body"] = extra_body
+    return kwargs
 
 
 class AnthropicProvider(LLMProvider):
@@ -290,9 +309,13 @@ class AnthropicProvider(LLMProvider):
                     # ``_is_valid_anthropic_raw_parts`` guarantees *raw_parts*
                     # is a non-empty ``list[dict]``; the isinstance check
                     # lets mypy narrow the ``Any`` return of ``getattr`` so
-                    # ``list(...)`` type-checks without an ignore.
                     assert isinstance(raw_parts, list)
-                    formatted.append({"role": "assistant", "content": list(raw_parts)})
+                    # Deep-copy so per-request mutations (cache_control injection,
+                    # MiniMax's cache_control stripping) never reach back into
+                    # Message._raw_parts. Shallow `[dict(b) for b in raw_parts]`
+                    # is not enough: tool_use ``input`` and any other nested
+                    # content blocks share their inner dicts with the source.
+                    formatted.append({"role": "assistant", "content": copy.deepcopy(raw_parts)})
                     continue
 
                 content: list = []
@@ -591,7 +614,7 @@ class AnthropicProvider(LLMProvider):
 
     def _call_api(self, client: Any, kwargs: dict[str, Any]) -> Any:
         """Invoke the Anthropic messages.create API."""
-        return client.messages.create(**kwargs)
+        return client.messages.create(**_sdk_request_kwargs(kwargs))
 
     def _stream_chunks(
         self,
@@ -607,26 +630,11 @@ class AnthropicProvider(LLMProvider):
         """
         stream_ref: list = []
         stream_ready = threading.Event()
-
-        def _watchdog() -> None:
-            """Close the stream when cancel_event fires."""
-            if cancel_event is None:
-                return
-            cancel_event.wait()
-            # Wait for the consumer to enter the with-block and set stream_ref[0].
-            if not stream_ready.wait(timeout=2.0):
-                return
-            s = stream_ref[0] if stream_ref else None
-            if s is not None:
-                try:
-                    s.close()
-                except Exception as exc:
-                    log_debug(f"AnthropicProvider stream.close() during cancel failed: {exc}")
-
-        watchdog: threading.Thread | None = None
-        if cancel_event is not None:
-            watchdog = threading.Thread(target=_watchdog, daemon=True)
-            watchdog.start()
+        # Per-request watchdog: force-closes the stream when cancel_event
+        # fires; ``done`` (set in the finally below) makes it exit when the
+        # stream finishes instead of parking forever on the loop cancel event.
+        done = self._spawn_cancel_watchdog(cancel_event, stream_ref, stream_ready)
+        kwargs = _sdk_request_kwargs(kwargs)
 
         try:
             with client.messages.stream(**kwargs) as stream:
@@ -715,7 +723,7 @@ class AnthropicProvider(LLMProvider):
                             )
                         elif block.type == "thinking":
                             in_thinking = True
-                            yield StreamChunk(text="<think>\n")
+                            yield StreamChunk(text="<think>\n", is_thinking=True)
                         elif block.type == "text":
                             if block.text:
                                 _raw_text.append(block.text)
@@ -725,7 +733,7 @@ class AnthropicProvider(LLMProvider):
                         delta = event.delta
                         if delta.type == "thinking_delta":
                             _raw_thinking.append(delta.thinking)
-                            yield StreamChunk(text=delta.thinking)
+                            yield StreamChunk(text=delta.thinking, is_thinking=True)
                         elif delta.type == "text_delta":
                             _raw_text.append(delta.text)
                             yield StreamChunk(text=delta.text)
@@ -810,3 +818,5 @@ class AnthropicProvider(LLMProvider):
                 return
             log_error(f"AnthropicProvider.chat_stream error: {e}")
             self._handle_api_error(e)
+        finally:
+            done.set()

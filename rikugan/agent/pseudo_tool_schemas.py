@@ -300,7 +300,7 @@ DELEGATE_EXTERNAL_TASK_SCHEMA: dict = {
                     "description": (
                         "The task description to send to the external "
                         "agent. Be specific — the external agent has "
-                        "no Luc Nhan tool access, so include any "
+                        "no Rikugan/IDA tool access, so include any "
                         "binary details (addresses, decompiled "
                         "snippets, function names) inline."
                     ),

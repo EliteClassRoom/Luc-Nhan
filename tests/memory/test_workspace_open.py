@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import sqlite3
 
-import pytest
-
 from rikugan.memory.backup import BackupVerificationError
 from rikugan.memory.workspace import MemoryLocator, new_memory_id
 from rikugan.memory.workspace_open import open_workspace_for_write, restore_v1_backup_offline
@@ -43,8 +41,12 @@ def test_backup_failure_aborts_before_migration(tmp_path, monkeypatch) -> None:
         "rikugan.memory.workspace_open.create_backup",
         lambda *a, **k: (_ for _ in ()).throw(BackupVerificationError("boom")),
     )
-    with pytest.raises(BackupVerificationError, match="boom"):
+    try:
         open_workspace_for_write(paths, owner, locator.backups(owner))
+    except BackupVerificationError as exc:
+        assert "boom" in str(exc), f"unexpected error message: {exc}"
+    else:
+        raise AssertionError("expected BackupVerificationError, no exception raised")
     with sqlite3.connect(paths.database) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
 

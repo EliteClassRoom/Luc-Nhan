@@ -23,7 +23,7 @@ from ..core.errors import (
     ToolError,
     ToolNotFoundError,
 )
-from ..core.logging import log_debug, log_error, log_info
+from ..core.logging import log_debug, log_error, log_info, log_warning
 from ..core.sanitize import (
     sanitize_skill_body,
     sanitize_tool_result,
@@ -69,6 +69,7 @@ from .loop_commands import (
     _handle_memory_command,
     _handle_report_command,
     _handle_undo_command,
+    _handle_verify_command,
     normalize_goal,
 )
 from .minify import minify_messages, minify_text
@@ -79,7 +80,6 @@ from .modes.orchestra import run_orchestra_mode
 from .modes.plan import run_plan_mode
 from .modes.research import run_research_mode
 from .mutation import MutationRecord, build_reverse_record, capture_pre_state
-from .plan_mode import parse_plan as _parse_plan_impl
 from .pseudo_tool_schemas import (
     ASK_USER_SCHEMA,
     DELEGATE_EXTERNAL_TASK_SCHEMA,
@@ -281,6 +281,12 @@ def _parse_user_command(user_message: str) -> _ParsedCommand:
             direct_command="/report",
             direct_arg=stripped[7:].strip() if len(stripped) > 7 else "",
         )
+    if lower == "/verify" or lower.startswith("/verify "):
+        return _ParsedCommand(
+            message=stripped,
+            direct_command="/verify",
+            direct_arg=stripped[7:].strip() if len(stripped) > 7 else "",
+        )
     if lower == "/orchestra" or lower.startswith("/orchestra "):
         return _ParsedCommand(message=stripped[10:].strip() if len(stripped) > 10 else "", use_orchestra_mode=True)
     # /case <action> <args...> — analysis case management
@@ -354,18 +360,34 @@ class AgentLoop:
         skill_registry: SkillRegistry | None = None,
         host_name: str = "IDA Pro",
         parent_loop: AgentLoop | None = None,
-    ):
+        cancel_event: threading.Event | None = None,
+        unattended: bool = False,
+        max_turns: int | None = None,
+    ) -> None:
         self.provider = provider
         self.tools = tool_registry
         self.config = config
         self.session = session
         self.skills = skill_registry
         self.host_name = host_name
-        self._cancelled: threading.Event = parent_loop._cancelled if parent_loop else threading.Event()
+        # Explicit cancel_event wins over parent_loop inheritance so the
+        # SubagentManager-owned event remains authoritative for orchestra
+        # children. ``is not None`` (not truthiness) so the exact caller
+        # object is retained.
+        if cancel_event is not None:
+            self._cancelled: threading.Event = cancel_event
+        elif parent_loop is not None:
+            self._cancelled = parent_loop._cancelled
+        else:
+            self._cancelled = threading.Event()
+        # Only a loop that created its own event may clear it in run().
+        # An event supplied via cancel_event or inherited from
+        # parent_loop belongs to the caller — clearing it would silently
+        # discard a user cancellation that arrived between runs.
+        self._owns_cancel_event: bool = cancel_event is None and parent_loop is None
         self._running: bool = False
         self._consecutive_errors: int = 0
         self._tools_disabled_for_turn: bool = False
-        # Thread-safe queues for user answers and tool approvals (no race condition)
         # Subagents share the parent's queues so UI signals reach them.
         self._user_answer_queue: queue.Queue[str] = (
             parent_loop._user_answer_queue if parent_loop else queue.Queue(maxsize=1)
@@ -375,6 +397,18 @@ class AgentLoop:
         )
         self._approval_queue: queue.Queue[str] = parent_loop._approval_queue if parent_loop else queue.Queue(maxsize=1)
         self._always_allow_scripts: bool = parent_loop._always_allow_scripts if parent_loop else False
+        # Unattended loops run without an attached UI: nobody answers
+        # approval/question queues, so interactive gates must be removed from
+        # the tool surface and rejected at dispatch (see _build_tools_schema
+        # and the _unattended guards in the tool handlers).
+        self._unattended: bool = unattended
+        # Hard turn ceiling for the normal-mode loop. ``None`` means fall
+        # back to the legacy 100-turn default in ``run_normal_loop`` so
+        # top-level callers (and existing tests) are unchanged. Subagents
+        # set this from SubagentRunner._build_loop to enforce their
+        # per-run budget as a hard ceiling rather than just an advisory
+        # prompt-text instruction.
+        self._max_turns: int | None = max_turns
         self.plan_mode = False
 
         # Post-error docs-review: max 1 reviewer call per user message.
@@ -393,7 +427,11 @@ class AgentLoop:
         self.memory_service = None
         self._memory_authority = None
         # Mutation log for /undo support — typed once (see MutationRecord).
+        # Guarded by _mutation_lock: subagent threads append via
+        # record_mutations while the loop thread appends in
+        # _execute_single_tool (ThreadPoolExecutor parallel runs).
         self._mutation_log: list[MutationRecord] = []
+        self._mutation_lock = threading.Lock()
 
         # Exploration mode state (populated when /modify or /explore is used)
         self._exploration_state: ExplorationState | None = None
@@ -403,6 +441,33 @@ class AgentLoop:
         from .modes.research import ResearchState as _RS
 
         self._research_state: _RS | None = None
+
+    @property
+    def unattended(self) -> bool:
+        """True when no UI is attached to answer approval/question gates."""
+        return self._unattended
+
+    def drain_mutations(self) -> list[MutationRecord]:
+        """Return this loop's mutation records and clear the log.
+
+        Used by :class:`SubagentRunner` to hand a finished child run's
+        mutations to the parent loop's /undo log.
+        """
+        with self._mutation_lock:
+            records = list(self._mutation_log)
+            self._mutation_log.clear()
+            return records
+
+    def record_mutations(self, records: list[MutationRecord]) -> None:
+        """Append mutation records to this loop's /undo log.
+
+        Thread-safe: subagent threads call this concurrently with the
+        loop's own appends.
+        """
+        if not records:
+            return
+        with self._mutation_lock:
+            self._mutation_log.extend(records)
 
     @property
     def is_running(self) -> bool:
@@ -708,7 +773,10 @@ class AgentLoop:
         Checks explicit /slug invocation first, then falls back to
         trigger pattern matching on the user's natural language.
 
-        Returns (rewritten_message, skill_or_None).
+        Returns (rewritten_message, skill_or_None). Plan-mode skills are
+        the exception: the message is returned unrewritten (the plan-mode
+        runner injects the skill body exactly once via
+        _SKILL_PLAN_GENERATION_PROMPT — rewriting here would duplicate it).
         """
         if not self.skills:
             return (user_message, None)
@@ -717,6 +785,8 @@ class AgentLoop:
         skill, remaining = self.skills.resolve_skill_invocation(user_message)
         if skill is not None:
             log_debug(f"AgentLoop: skill invocation /{skill.slug}")
+            if skill.mode == "plan":
+                return (remaining, skill)
             rewritten = (
                 f"[Skill: {skill.name}]\n{sanitize_skill_body(skill.body, skill.name)}\n\nUser request: {remaining}"
             )
@@ -726,17 +796,14 @@ class AgentLoop:
         skill = self.skills.match_triggers(user_message)
         if skill is not None:
             log_debug(f"AgentLoop: trigger-matched skill /{skill.slug}")
+            if skill.mode == "plan":
+                return (user_message, skill)
             rewritten = (
                 f"[Skill: {skill.name}]\n{sanitize_skill_body(skill.body, skill.name)}\n\nUser request: {user_message}"
             )
             return (rewritten, skill)
 
         return (user_message, None)
-
-    @staticmethod
-    def _parse_plan(text: str) -> list[str]:
-        """Parse a numbered plan from LLM text into step strings."""
-        return _parse_plan_impl(text)
 
     def _format_provider_error_for_user(self, error: ProviderError) -> str:
         """Return a user-facing provider error message for chat display."""
@@ -1040,7 +1107,7 @@ class AgentLoop:
         # semantics.  GLM providers reject malformed/incomplete tool args
         # instead of falling back to ``{}``; non-GLM providers keep the
         # existing ``{}`` + warning fallback unchanged.
-        is_glm = self.config.provider.extra.get("dialect") == "glm" or self.provider.name == "glm"
+        is_glm = _is_glm_provider(self.config, self.provider)
 
         provider_messages, estimated_prompt_tokens, estimated_usage = self._prepare_provider_messages(system_prompt)
         # Do not emit a pre-stream estimate — it causes the display to jump
@@ -1192,6 +1259,20 @@ class AgentLoop:
             # streamed text in the UI and waste tokens).  Instead keep the
             # partial result and warn.  If nothing was streamed yet, re-raise
             # so _stream_llm_turn's retry layer can handle it as before.
+            #
+            # Exception: a transport-layer chunked-read failure
+            # (``peer closed connection`` / ``incomplete chunked read``)
+            # is always treated as a retryable, transient network
+            # error. The chunks that did arrive are typically the
+            # model's prefill noise, not user-facing content, so we
+            # re-raise unconditionally and let the retry layer restart
+            # the request from scratch.
+            if _is_chunked_read_error(e):
+                log_error(
+                    f"Provider stream broke (transport chunked-read error) "
+                    f"after {chunk_count} chunks: {e}. Re-raising for retry."
+                )
+                raise
             has_partial = bool(assistant_text_parts) or bool(tool_calls)
             if not has_partial:
                 raise
@@ -1200,11 +1281,13 @@ class AgentLoop:
                 f"Provider stream broke after {chunk_count} chunks with partial output: {e}. "
                 "Keeping partial response and warning the user."
             )
+            # Surface as an error event. The chat view renders it
+            # distinctly so the user knows to retry if they need the
+            # rest of the answer.
             yield TurnEvent.error_event(
                 f"{self._format_provider_error_for_user(e)} "
                 "The response above is incomplete — it was cut off mid-stream."
             )
-
         last_usage, need_usage_update = self._finalize_stream_usage(
             last_usage, estimated_usage, estimated_prompt_tokens
         )
@@ -1405,18 +1488,19 @@ class AgentLoop:
         if not tools_schema:
             return None
 
-        # Parse GLM config to check guard.enabled and ceiling.
-        # Only the lazy import itself may fail silently (e.g. circular
-        # import edge case) -- invalid GLM extra values must surface as
-        # ValueError, not be swallowed, so the user knows their config
-        # is broken rather than silently losing the guard.
-        try:
-            from ..core.glm_config import parse_glm_extra
-        except ImportError:
-            log_debug("GLM guard: glm_config module unavailable, skipping guard")
-            return None
-
-        parsed_glm_config = parse_glm_extra(self.config.provider.extra, self.config.provider.model)
+        # Read the already-validated GLMConfig from the provider instance
+        # when available (the canonical GLMProvider path). Fall back to
+        # a fresh parse for non-GLM providers that nevertheless report
+        # ``dialect == "glm"`` (custom providers, test doubles) so the
+        # guard still activates.
+        parsed_glm_config = getattr(self.provider, "glm_config", None)
+        if parsed_glm_config is None:
+            try:
+                from ..core.glm_config import parse_glm_extra
+            except ImportError:
+                log_debug("GLM guard: glm_config module unavailable, skipping guard")
+                return None
+            parsed_glm_config = parse_glm_extra(self.config.provider.extra, self.config.provider.model)
 
         if not parsed_glm_config.guard.enabled:
             return None
@@ -1515,6 +1599,12 @@ class AgentLoop:
             # so a description here would duplicate the first line. Return
             # empty.
             return ""
+        if name == "delegate_external_task":
+            # Approval prompt must show exactly what will run externally:
+            # the target agent name and the full task text.
+            agent = str(args.get("agent", "?"))
+            task = str(args.get("task", ""))
+            return f"Delegate task to external agent '{agent}': {task}"
         if name in ("rename_function",):
             return f"Rename function {args.get('old_name', '?')} → {args.get('new_name', '?')}"
         if name in ("rename_variable",):
@@ -1644,7 +1734,7 @@ class AgentLoop:
             "# Your Task\n\n"
             "Diagnose why this script failed. Check every IDA API call against "
             "the `ida-scripting` skill and the bundled offline docs. Return the "
-            "structured VERDICT block described in your system prompt.\n"
+            "structured VERDICT block described in your task instructions.\n"
             "Do NOT call execute_python — you are a reviewer, not an executor."
         )
         task = "\n".join(task_lines)
@@ -1656,6 +1746,7 @@ class AgentLoop:
             host_name=self.host_name,
             skill_registry=self.skills,
             parent_loop=self,
+            unattended=self._unattended,
         )
 
         try:
@@ -1720,34 +1811,45 @@ class AgentLoop:
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return tr
 
-        # execute_python always requires explicit approval.
-        # Static validator (validate_idapython) still runs pre-execute to
-        # block known-hallucinated APIs. The docs-reviewer now runs
-        # POST-error (see the except block below) instead of pre-execute.
-        if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
-            code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
-            if isinstance(code, str) and code.strip():
-                try:
-                    validation = validate_idapython(code)
-                except Exception as e:  # pragma: no cover — defensive
-                    log_error(f"docs-gate validation failed: {e}")
-                    validation = None
+        # execute_python always requires explicit approval, and any tool
+        # whose definition sets requires_approval (e.g. install_microcode_optimizer,
+        # which exec()s LLM-authored optimizer code) is gated identically.
+        defn = self.tools.get(tc.name)
+        needs_approval = tc.name == constants.EXECUTE_PYTHON_TOOL_NAME or (defn is not None and defn.requires_approval)
+        if needs_approval and self._unattended:
+            content = (
+                f"Error: Tool '{tc.name}' requires user approval but this is an unattended "
+                "subagent (no user is attached to approve it). Continue the task without it."
+            )
+            log_debug(f"Blocked approval-gated tool in unattended subagent: {tc.name}")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr
+        if needs_approval:
+            if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
+                code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
+                if isinstance(code, str) and code.strip():
+                    try:
+                        validation = validate_idapython(code)
+                    except Exception as e:  # pragma: no cover — defensive
+                        log_error(f"docs-gate validation failed: {e}")
+                        validation = None
 
-                if validation is not None and validation.is_blocked:
-                    # Hard block: hallucinated API detected pre-execute.
-                    block_msg = (
-                        "Script blocked by static validator (hallucinated API detected):\n"
-                        f"{validation.format_for_agent()}\n"
-                        "Fix the API usage and resubmit."
-                    )
-                    tr = ToolResult(
-                        tool_call_id=tc.id,
-                        name=tc.name,
-                        content=block_msg,
-                        is_error=True,
-                    )
-                    yield TurnEvent.tool_result_event(tc.id, tc.name, block_msg, True)
-                    return tr
+                    if validation is not None and validation.is_blocked:
+                        # Hard block: hallucinated API detected pre-execute.
+                        block_msg = (
+                            "Script blocked by static validator (hallucinated API detected):\n"
+                            f"{validation.format_for_agent()}\n"
+                            "Fix the API usage and resubmit."
+                        )
+                        tr = ToolResult(
+                            tool_call_id=tc.id,
+                            name=tc.name,
+                            content=block_msg,
+                            is_error=True,
+                        )
+                        yield TurnEvent.tool_result_event(tc.id, tc.name, block_msg, True)
+                        return tr
 
             approved = yield from self._wait_for_approval(tc)
             if not approved:
@@ -1756,8 +1858,18 @@ class AgentLoop:
                 yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
                 return tr
 
-        defn = self.tools.get(tc.name)
         is_mutating = defn is not None and defn.mutating
+
+        if is_mutating and self._unattended and self.config.approve_mutations:
+            content = (
+                f"Error: Tool '{tc.name}' mutates the database and mutation approval is "
+                "enabled, but this is an unattended subagent (no user is attached to "
+                "approve it). Continue the task without it."
+            )
+            log_debug(f"Blocked mutation-approval tool in unattended subagent: {tc.name}")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr
 
         if is_mutating and self.config.approve_mutations:
             approved = yield from self._wait_for_approval(tc)
@@ -1804,7 +1916,8 @@ class AgentLoop:
                         reverse_args=record.reverse_arguments,
                     )
                 else:
-                    self._mutation_log.append(record)
+                    with self._mutation_lock:
+                        self._mutation_log.append(record)
                     log_debug(f"Mutation recorded: {record.description}")
                     yield TurnEvent.mutation_recorded(
                         tool_name=record.tool_name,
@@ -1850,10 +1963,11 @@ class AgentLoop:
                     if augmented:
                         result = augmented
 
-        # Sanitize tool output before it enters the conversation.
-        # Error messages may contain attacker-controlled content (e.g. function
-        # names), so strip injection markers even though we skip full wrapping.
-        sanitized = sanitize_tool_result(result, tc.name) if not is_error else strip_injection_markers(result)
+        # Sanitize tool output before it enters the conversation. Errors are
+        # wrapped too: tracebacks can carry attacker-controlled content
+        # (function names, symbol paths), and DATA_INTEGRITY_SECTION promises
+        # delimiter wrapping for ALL untrusted tool output.
+        sanitized = sanitize_tool_result(result, tc.name)
 
         # Profile: strip IOCs from tool results when any IOC filter is enabled
         profile = self.config.get_active_profile()
@@ -2077,7 +2191,9 @@ class AgentLoop:
                 host_name=self.host_name,
                 skill_registry=self.skills,
                 parent_loop=self,
+                unattended=self._unattended,
             ),
+            loop=self,
         )
 
         # Auto-ingest the *final* research note into the raw knowledge
@@ -2110,7 +2226,17 @@ class AgentLoop:
     def _handle_spawn_subagent_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle the spawn_subagent pseudo-tool."""
         task = tc.arguments.get("task", "")
-        max_turns = tc.arguments.get("max_turns", 20)
+        # ``max_turns`` arrives as a raw JSON int from the model — validate
+        # it here so a malicious or hallucinated ``0`` (or negative) is
+        # reported as a tool error rather than silently promoted to 100
+        # via Python truthiness on the runner side.
+        raw_max_turns = tc.arguments.get("max_turns", 20)
+        if isinstance(raw_max_turns, bool) or not isinstance(raw_max_turns, int) or raw_max_turns < 1:
+            max_turns: int | None = None  # fall through to default below
+        else:
+            max_turns = raw_max_turns
+        if raw_max_turns != max_turns:
+            log_debug(f"spawn_subagent: invalid max_turns={raw_max_turns!r}, falling back to default")
         if not task:
             content = "Error: 'task' is required."
             is_err = True
@@ -2123,6 +2249,7 @@ class AgentLoop:
                     host_name=self.host_name,
                     skill_registry=self.skills,
                     parent_loop=self,
+                    unattended=self._unattended,
                 )
                 raw = yield from runner.run_task(task, max_turns=max_turns)
                 content = sanitize_tool_result(raw or "(Subagent produced no output)", "spawn_subagent")
@@ -2155,6 +2282,15 @@ class AgentLoop:
 
     def _handle_ask_user_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle the ask_user pseudo-tool."""
+        if self._unattended:
+            content = (
+                "Error: ask_user is unavailable in an unattended subagent (no user is "
+                "attached to answer). Decide yourself using the available context and continue."
+            )
+            log_debug("Blocked ask_user in unattended subagent")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr
         question = tc.arguments.get("question", "")
         raw_options = tc.arguments.get("options", [])
         # Filter out empty/whitespace-only options. Some LLMs send
@@ -2187,6 +2323,28 @@ class AgentLoop:
 
         if not agent_name or not task:
             content = "Error: both 'agent' and 'task' are required."
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+
+        if self._unattended:
+            content = (
+                "Error: delegate_external_task requires user approval but this is an "
+                "unattended subagent (no user is attached to approve it). "
+                "Continue the task without it."
+            )
+            log_debug("Blocked delegate_external_task in unattended subagent")
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+
+        # Approval gate: delegation spawns an external CLI agent (or HTTP
+        # endpoint) driven by LLM-authored task text — the same risk class
+        # as execute_python. Route through the shared approval queue so the
+        # UI prompt and the headless serve-mode HTTP /tool-approval path
+        # both apply. The explicit /a2a slash command bypasses this
+        # handler entirely (run_a2a_mode) and stays ungated.
+        approved = yield from self._wait_for_approval(tc)
+        if not approved:
+            content = "External task delegation denied by user."
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
 
@@ -2417,6 +2575,17 @@ class AgentLoop:
 
         tools_schema = list(self.tools.to_provider_format())
 
+        if self._unattended:
+            # No UI answers this loop's approval/question queues — never
+            # advertise tools that would block in _wait_for_queue. The
+            # SubagentRunner registry view already drops these; this repeat
+            # filter keeps the invariant local to the loop for direct
+            # constructions (tests, future callers).
+            gated = {constants.EXECUTE_PYTHON_TOOL_NAME} | {
+                d.name for d in self.tools.list_tools() if d.requires_approval
+            }
+            tools_schema = [t for t in tools_schema if t.get("function", {}).get("name") not in gated]
+
         # Filter to skill-allowed tools if the skill restricts them
         if active_skill and active_skill.allowed_tools:
             allowed = set(active_skill.allowed_tools)
@@ -2474,8 +2643,9 @@ class AgentLoop:
             tools_schema.append(SAVE_MEMORY_SCHEMA)
 
         tools_schema.append(SPAWN_SUBAGENT_SCHEMA)
-        tools_schema.append(ASK_USER_SCHEMA)
-        tools_schema.append(DELEGATE_EXTERNAL_TASK_SCHEMA)
+        if not self._unattended:
+            tools_schema.append(ASK_USER_SCHEMA)
+            tools_schema.append(DELEGATE_EXTERNAL_TASK_SCHEMA)
 
         # Deduplicate — Anthropic rejects requests with duplicate tool names
         seen: set = set()
@@ -2505,6 +2675,8 @@ class AgentLoop:
             return lambda: _handle_knowledge_command(self, cmd.direct_arg)
         if cmd.direct_command == "/report":
             return lambda: _handle_report_command(self, cmd.direct_arg)
+        if cmd.direct_command == "/verify":
+            return lambda: _handle_verify_command(self, cmd.direct_arg)
         return None
 
     def _dispatch_direct(
@@ -2531,7 +2703,12 @@ class AgentLoop:
         This generator should be consumed from a background thread,
         while the UI reads events via the event_queue or directly iterates.
         """
-        self._cancelled.clear()
+        # Reset stale state only when the event is ours. An inherited or
+        # externally-supplied event may already carry a user cancellation
+        # (e.g. set between two pipeline child runs) — clearing it here
+        # loses that cancellation silently.
+        if self._owns_cancel_event:
+            self._cancelled.clear()
         self._docs_reviewer_invoked = False
         self._running = True
         self.session.is_running = True
@@ -2687,12 +2864,90 @@ class AgentLoop:
 
 _EVENT_QUEUE_MAXSIZE = 500
 
+# Lifecycle / control events that must never be dropped on a saturated
+# queue. The UI uses these to advance its run state machine
+# (``TURN_START`` / ``TURN_END``), render the final assistant message
+# (``TEXT_DONE`` — drop = user never sees the reply), surface tool
+# completion (``TOOL_RESULT``, ``TOOL_CALL_*``), gate user consent
+# (``TOOL_APPROVAL_REQUEST`` — drop = tool runs without approval, a
+# security regression), drive plan-mode progression
+# (``PLAN_GENERATED`` / ``PLAN_STEP_START`` / ``PLAN_STEP_DONE`` —
+# drop = plan approval never surfaces), or finalize the run
+# (``CANCELLED`` / ``ERROR`` / ``RECOVERY_START``). The
+# ``_BACKGROUND_RUNNER_CONTROL_EVENT_TYPES`` set is the single source of
+# truth — if a new ``TurnEventType`` becomes a lifecycle marker, add it
+# here and the put helper will route it correctly.
+#
+# Stream deltas (``TEXT_DELTA`` / ``REASONING_DELTA``) stay on the
+# low-latency passthrough because the coalescing buffer already absorbs
+# their backpressure; their loss is acceptable because the final
+# ``TEXT_DONE`` carries the full text. See Phase 3 round-1 finding in
+# task-4-report.md for the rationale shift (TEXT_DONE is itself a
+# control event because dropping it hides the final message).
+_BACKGROUND_RUNNER_CONTROL_EVENT_TYPES: frozenset[TurnEventType] = frozenset(
+    {
+        TurnEventType.TURN_START,
+        TurnEventType.TURN_END,
+        TurnEventType.TEXT_DONE,
+        TurnEventType.TOOL_CALL_START,
+        TurnEventType.TOOL_CALL_ARGS_DELTA,
+        TurnEventType.TOOL_CALL_DONE,
+        TurnEventType.TOOL_CALL_DISCARDED,
+        TurnEventType.TOOL_RESULT,
+        TurnEventType.TOOL_APPROVAL_REQUEST,
+        TurnEventType.SAVE_APPROVAL_REQUEST,
+        TurnEventType.RECOVERY_START,
+        TurnEventType.CANCELLED,
+        TurnEventType.ERROR,
+        TurnEventType.USAGE_UPDATE,
+        TurnEventType.USER_QUESTION,
+        TurnEventType.PLAN_GENERATED,
+        TurnEventType.PLAN_STEP_START,
+        TurnEventType.PLAN_STEP_DONE,
+    }
+)
+
+# Bounded blocking timeout for control-event puts. Chosen inside the brief's
+# 5-10s window: long enough to absorb UI pauses (panel switching, modal
+# dialogs, brief UI thread stalls on Windows under load) yet short enough
+# that a wedged consumer surfaces as a log warning within a couple of
+# turns. Log+warn recovery is sufficient per the Phase 3 plan; the future
+# "persistent recovery queue" upgrade path is documented in the design
+# notes below.
+_CONTROL_PUT_TIMEOUT = 5.0
+
+# Stream-delta bounded put. Kept short on purpose: deltas are stream-rate
+# high-frequency events and the coalescing buffer already absorbs most
+# backpressure upstream. Dropping a delta is acceptable (the final
+# ``TEXT_DONE`` carries the full text), so we do NOT escalate to a
+# blocking put. This is intentional and matches the legacy behaviour.
+_DELTA_PUT_TIMEOUT = 1.0
+
+# The sentinel ``None`` is the producer's "I'm done" signal. Use a slightly
+# tighter timeout so a dead consumer doesn't park the daemon thread for
+# the full 5s when nothing is left to do — the daemon exits either way,
+# but this keeps shutdown snappy.
+_SENTINEL_PUT_TIMEOUT = 1.0
+
 
 class BackgroundAgentRunner:
     """Runs the AgentLoop in a background thread, bridging to a bounded queue.
 
-    When the queue is full, consecutive TEXT_DELTA events are coalesced
-    into a single event instead of being dropped.
+    When the queue is full, consecutive TEXT_DELTA / REASONING_DELTA events
+    are coalesced into a single event instead of being dropped. Other
+    events route through one of three bounded put helpers (see
+    ``_BACKGROUND_RUNNER_CONTROL_EVENT_TYPES`` and ``_CONTROL_PUT_TIMEOUT``):
+
+    * ``_put_control`` — blocking bounded put (5s) for lifecycle events
+      (``TURN_*``, ``TOOL_*``, ``CANCELLED``, ``ERROR``, ``RECOVERY_START``,
+      etc.). Times out with a ``log_warning`` instead of dropping, so the
+      UI never observes a missed state transition.
+    * ``_put_delta`` — non-blocking-ish bounded put (1s, drop on timeout)
+      for stream-delta flushes. Coalescing already absorbs most backpressure
+      upstream; this is a final safety net.
+    * ``_put_sentinel`` — bounded put for the end-of-stream ``None``. The
+      bounded timeout ensures the daemon thread exits cleanly even when the
+      consumer is dead or the queue is permanently saturated.
     """
 
     def __init__(self, agent_loop: AgentLoop):
@@ -2727,8 +2982,8 @@ class BackgroundAgentRunner:
         pending buffer is reasoning) before it is enqueued, and it is
         never coalesced itself.
 
-        Control events and the sentinel are never dropped — ``_safe_put``
-        uses ``timeout=1`` with ``except queue.Full`` to avoid deadlock.
+        Control events and the sentinel use bounded blocking puts so they
+        never get silently dropped — see ``_put_control`` / ``_put_sentinel``.
         """
         pending_type: TurnEventType | None = None
         pending_buffer: list[str] = []
@@ -2747,24 +3002,52 @@ class BackgroundAgentRunner:
                 pending_buffer.clear()
                 pending_type = None
                 return
-            try:
-                self.event_queue.put(evt, timeout=1)
-            except queue.Full:
-                log_debug(f"Event queue full, dropping coalesced {pending_type.value}")
+            _put_delta(evt)
             pending_buffer.clear()
             pending_type = None
 
-        def _safe_put(event: TurnEvent) -> None:
-            """Put without blocking indefinitely on a full queue.
+        def _put_control(event: TurnEvent) -> None:
+            """Blocking bounded put for lifecycle events. Logs+returns on timeout."""
+            try:
+                self.event_queue.put(event, timeout=_CONTROL_PUT_TIMEOUT)
+            except queue.Full:
+                log_warning(
+                    f"BackgroundAgentRunner: control event "
+                    f"{event.type.value} could not be enqueued within "
+                    f"{_CONTROL_PUT_TIMEOUT:.1f}s — consumer is wedged or "
+                    "queue saturated. Logging+dropping. UI may need to "
+                    "reconcile state."
+                )
 
-            Used for control events and sentinel — these must never
-            deadlock the producer thread.
+        def _put_delta(event: TurnEvent) -> None:
+            """Bounded put for stream deltas. Drops on timeout (debug-log).
+
+            Uses the deliberately short ``_DELTA_PUT_TIMEOUT`` — deltas are
+            high-frequency, coalescing already absorbs most backpressure,
+            and a drop here is acceptable because the final TEXT_DONE
+            carries the full text. See block comment on the constant.
             """
             try:
-                self.event_queue.put(event, timeout=1)
+                self.event_queue.put(event, timeout=_DELTA_PUT_TIMEOUT)
             except queue.Full:
                 log_debug(f"Event queue full, dropping {event.type.value}")
 
+        def _put_sentinel() -> None:
+            """Bounded put for the end-of-stream sentinel.
+
+            Must never block forever — the daemon thread is otherwise
+            stuck if the consumer died. Logs an error and returns on
+            timeout so ``_run`` can finish and the thread can exit.
+            """
+            try:
+                self.event_queue.put(None, timeout=_SENTINEL_PUT_TIMEOUT)
+            except queue.Full:
+                log_error(
+                    "BackgroundAgentRunner: sentinel could not be enqueued "
+                    f"within {_SENTINEL_PUT_TIMEOUT:.1f}s — consumer is "
+                    "wedged or dead. Daemon thread exiting without "
+                    "notifying consumer; UI must detect via timeout."
+                )
         try:
             for event in self.agent_loop.run(user_message):
                 if event.type == TurnEventType.TEXT_DELTA:
@@ -2795,24 +3078,29 @@ class BackgroundAgentRunner:
                             pending_buffer.clear()
                             pending_type = None
                         self.event_queue.put(event)
-                elif event.type == TurnEventType.RECOVERY_START:
-                    discard = event.metadata.get("discard_transient_reasoning", False)
-                    if discard and pending_type == TurnEventType.REASONING_DELTA:
-                        pending_buffer.clear()
-                        pending_type = None
+                elif event.type in _BACKGROUND_RUNNER_CONTROL_EVENT_TYPES:
+                    if event.type == TurnEventType.RECOVERY_START:
+                        # RECOVERY_START is a hard boundary: drop the
+                        # pending reasoning buffer if the recovery flow
+                        # says so, otherwise flush before the control.
+                        discard = event.metadata.get("discard_transient_reasoning", False)
+                        if discard and pending_type == TurnEventType.REASONING_DELTA:
+                            pending_buffer.clear()
+                            pending_type = None
+                        else:
+                            _flush_pending()
                     else:
                         _flush_pending()
-                    _safe_put(event)
+                    _put_control(event)
                 else:
                     _flush_pending()
-                    _safe_put(event)
+                    _put_delta(event)
         except Exception as e:
             log_error(f"BackgroundAgentRunner error: {e}\n{traceback.format_exc()}")
             _flush_pending()
-            _safe_put(TurnEvent.error_event(str(e)))
+            _put_control(TurnEvent.error_event(str(e)))
         finally:
-            _flush_pending()
-            self.event_queue.put(None)  # Sentinel
+            _put_sentinel()
 
     def cancel(self) -> None:
         self.agent_loop.cancel()
@@ -2823,3 +3111,37 @@ class BackgroundAgentRunner:
             return self.event_queue.get(timeout=timeout)
         except queue.Empty:
             return None
+
+
+def _is_chunked_read_error(exc: BaseException) -> bool:
+    """Return True when *exc* is a transport-layer ``incomplete chunked read``.
+
+    The OpenAI / Anthropic SDKs surface upstream HTTP/1.1 stream
+    truncation as ``APIConnectionError`` with messages like
+    ``peer closed connection without sending complete message body
+    (incomplete chunked read)``. These are always transient and
+    retryable: the chunks that did arrive are typically model
+    prefill noise, not user-facing content, so the right action is
+    to re-raise so the retry layer can resend the request.
+    """
+    msg = str(exc or "").lower()
+    if not msg:
+        return False
+    needles = (
+        "incomplete chunked read",
+        "peer closed connection",
+        "connection broken",
+        "incomplete read",
+    )
+    return any(needle in msg for needle in needles)
+
+
+def _is_glm_provider(config: RikuganConfig, provider: LLMProvider) -> bool:
+    """True iff the active provider speaks the GLM dialect.
+
+    Single source of truth shared by the guard factory and the
+    recovery builder. Returns True when ``provider.extra`` carries
+    ``dialect == "glm"`` or the provider advertises itself as GLM.
+    """
+    extra = getattr(getattr(config, "provider", None), "extra", None) or {}
+    return extra.get("dialect") == "glm" or getattr(provider, "name", "") == "glm"

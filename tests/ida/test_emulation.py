@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -47,19 +48,42 @@ def _set_x86() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "metapc"
     sys.modules["ida_ida"].inf_is_64bit.return_value = False
     sys.modules["ida_ida"].inf_is_32bit.return_value = True
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 32
 
 
 def _set_x64() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "metapc"
     sys.modules["ida_ida"].inf_is_64bit.return_value = True
     sys.modules["ida_ida"].inf_is_32bit.return_value = False
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 64
 
 
 def _set_unsupported_arch() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "ARM"
     sys.modules["ida_ida"].inf_is_64bit.return_value = True
     sys.modules["ida_ida"].inf_is_32bit.return_value = False
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 64
 
+
+def _make_ida_mock(
+    *,
+    procname: str = "metapc",
+    app_bitness: int | None = 64,
+) -> MagicMock:
+    """Build a stand-in ``ida_ida`` for the IDA >= 7.6 contract.
+
+    ``app_bitness`` feeds ``inf_get_app_bitness()`` (16/32/64).
+    ``None`` removes the attribute so ``_ida_bitness`` surfaces its
+    ``IDA bitness query failed`` ToolError, simulating a build where
+    the symbol is absent.
+    """
+    fresh = unittest.mock.MagicMock()
+    fresh.inf_get_procname.return_value = procname
+    if app_bitness is not None:
+        fresh.inf_get_app_bitness.return_value = app_bitness
+    else:
+        del fresh.inf_get_app_bitness
+    return fresh
 
 # ---------------------------------------------------------------------------
 # Pure helpers.
@@ -96,6 +120,32 @@ class TestPureHelpers(unittest.TestCase):
         self.assertFalse(emu.is_hex_or_int(None))
         self.assertFalse(emu.is_hex_or_int(""))
         self.assertFalse(emu.is_hex_or_int("xyz"))
+
+    def test_coerce_addr_accepts_int_hex_dec_and_integral_float(self) -> None:
+        # Regression: LLMs emit addresses as floats in JSON; is_hex_or_int
+        # rejects them but _coerce_addr must accept the integral form.
+        self.assertEqual(emu._coerce_addr(0x401000, ctx="t"), 0x401000)
+        self.assertEqual(emu._coerce_addr("0x401000", ctx="t"), 0x401000)
+        self.assertEqual(emu._coerce_addr("4198400", ctx="t"), 4198400)
+        self.assertEqual(emu._coerce_addr(4198400.0, ctx="t"), 4198400)  # integral float
+        self.assertEqual(emu._coerce_addr("0x00401000", ctx="t"), 0x401000)  # padded hex
+
+    def test_coerce_addr_rejects_garbage(self) -> None:
+        for bad in (True, None, "", "xyz", 4198400.5, [1]):
+            with self.assertRaises(ToolError):
+                emu._coerce_addr(bad, ctx="t")
+
+    def test_normalize_memory_ranges_unwraps_text_and_accepts_float(self) -> None:
+        # Regression: LLM providers serialize nested range args as {"$text": "<json>"}.
+        out = emu._normalize_memory_ranges(
+            [{"$text": '{"address": 268734464, "size": 45056}'}], tool_name="emulate_code"
+        )
+        self.assertEqual(out, [(268734464, 45056)])
+        # Plain dicts and integral-float addresses also work.
+        self.assertEqual(
+            emu._normalize_memory_ranges([{"address": 4198400.0, "size": 16}], tool_name="emulate_code"),
+            [(4198400, 16)],
+        )
 
     def test_coerce_register_value_masks(self) -> None:
         self.assertEqual(emu.coerce_register_value(0xFFFFFFFF, 4), 0xFFFFFFFF)
@@ -200,6 +250,36 @@ class TestPureHelpers(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Bitness detection via ida_ida.inf_get_app_bitness() (the IDA >=7.6 API).
+# IDA 9.x has no inf_is_32bit() and removed get_inf_structure();
+# inf_get_app_bitness() is the single reliable source returning 16/32/64.
+# ---------------------------------------------------------------------------
+
+
+class TestBitnessDetection(unittest.TestCase):
+    """``_ida_bitness`` reads ``ida_ida.inf_get_app_bitness()`` and returns
+    the exact bitness. Configures ``emu.ida_ida`` directly so the test stays
+    robust when another module re-installs the mocks."""
+
+    def tearDown(self) -> None:
+        # Restore the bound mock to its default (64-bit) state.
+        emu.ida_ida.inf_get_app_bitness.return_value = 64
+
+    def test_32bit_db(self) -> None:
+        # Regression for the user's reported error on a 32-bit IDB in IDA 9.4.
+        emu.ida_ida.inf_get_app_bitness.return_value = 32
+        self.assertEqual(emu._ida_bitness(), 32)
+
+    def test_64bit_db(self) -> None:
+        emu.ida_ida.inf_get_app_bitness.return_value = 64
+        self.assertEqual(emu._ida_bitness(), 64)
+
+    def test_16bit_db(self) -> None:
+        emu.ida_ida.inf_get_app_bitness.return_value = 16
+        self.assertEqual(emu._ida_bitness(), 16)
+
+
+# ---------------------------------------------------------------------------
 # Argument-validation paths via the public tools.
 # ---------------------------------------------------------------------------
 
@@ -269,6 +349,68 @@ class TestArchitectureValidation(unittest.TestCase):
                 max_output_size=8192,
             )
 
+class TestIdaBitnessArchResolution(unittest.TestCase):
+    """Arch resolution via ``ida_ida.inf_get_app_bitness()`` (IDA >= 7.6)."""
+
+    def setUp(self) -> None:
+        self._saved = sys.modules["ida_ida"]
+
+    def tearDown(self) -> None:
+        sys.modules["ida_ida"] = self._saved
+
+    def _fake_unicorn(self):
+        class _FakeUnicorn:
+            UC_ARCH_X86 = 0
+            UC_MODE_32 = 1
+            UC_MODE_64 = 2
+
+        return _FakeUnicorn()
+
+    def test_resolve_arch_x86(self) -> None:
+        mock_ida = _make_ida_mock(app_bitness=32)
+        sys.modules["ida_ida"] = mock_ida
+        emu.ida_ida = mock_ida
+        try:
+            arch = emu._resolve_arch(self._fake_unicorn())
+        finally:
+            emu.ida_ida = self._saved
+        self.assertEqual(arch.label, "x86")
+        self.assertEqual(arch.ptr_size, 4)
+        self.assertEqual(arch.ip_reg, "eip")
+
+    def test_resolve_arch_x64(self) -> None:
+        mock_ida = _make_ida_mock(app_bitness=64)
+        sys.modules["ida_ida"] = mock_ida
+        emu.ida_ida = mock_ida
+        try:
+            arch = emu._resolve_arch(self._fake_unicorn())
+        finally:
+            emu.ida_ida = self._saved
+        self.assertEqual(arch.label, "x64")
+        self.assertEqual(arch.ptr_size, 8)
+        self.assertEqual(arch.ip_reg, "rip")
+
+    def test_ida_bitness_raises_tool_error_when_getter_missing(self) -> None:
+        mock_ida = _make_ida_mock(app_bitness=None)
+        sys.modules["ida_ida"] = mock_ida
+        emu.ida_ida = mock_ida
+        try:
+            with self.assertRaises(ToolError) as ctx:
+                emu._ida_bitness()
+        finally:
+            emu.ida_ida = self._saved
+        self.assertIn("IDA bitness query failed", str(ctx.exception))
+
+    def test_resolve_arch_propagates_bitness_query_tool_error(self) -> None:
+        mock_ida = _make_ida_mock(app_bitness=None)
+        sys.modules["ida_ida"] = mock_ida
+        emu.ida_ida = mock_ida
+        try:
+            with self.assertRaises(ToolError) as ctx:
+                emu._resolve_arch(self._fake_unicorn())
+        finally:
+            emu.ida_ida = self._saved
+        self.assertIn("IDA bitness query failed", str(ctx.exception))
 
 # ---------------------------------------------------------------------------
 # Real Unicorn integration — runs each scenario in a fresh subprocess via

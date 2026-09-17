@@ -59,6 +59,15 @@ class GLMProvider(OpenAIProvider):
     hooks that need GLM-specific fields are overridden.
     """
 
+    # Z.AI must never receive the user's real OpenAI key via the
+    # OPENAI_API_KEY env fallback; without a configured key the "no-key"
+    # placeholder branch in _get_client is the effective path.
+    _ALLOW_OPENAI_ENV_KEY = False
+
+    # GLM-specific model id family — overrides the OpenAI defaults so
+    # ``_fetch_models_live`` keeps ``glm-5.2`` / ``glm-5.1`` ids when
+    # listing live models from the Z.AI endpoint.
+    _MODEL_ID_PREFIXES: tuple[str, ...] = ("glm-",)
     def __init__(
         self,
         api_key: str = "",
@@ -87,6 +96,20 @@ class GLMProvider(OpenAIProvider):
     @property
     def name(self) -> str:
         return self._provider_name
+
+    @property
+    def glm_config(self) -> GLMConfig:
+        """The parsed GLM dialect config snapshot.
+
+        Exposed so callers (the agent loop, recovery builder) can
+        consume the already-validated :class:`GLMConfig` instead of
+        re-parsing ``provider.extra`` on every turn. Re-parsing would
+        re-validate user-saved values and could surface
+        :class:`ValueError` after the provider was already
+        constructed — invalid config now raises at ``__init__`` time
+        and this property is a cheap read.
+        """
+        return self._glm_config
 
     # -- Client construction ------------------------------------------------
 

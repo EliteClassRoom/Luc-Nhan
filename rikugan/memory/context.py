@@ -339,14 +339,34 @@ def _render_memories(pack: RetrievalPack) -> str:
         return ""
     lines = []
     for m in pack.memories:
-        flags = []
-        if m.verified:
-            flags.append("verified")
+        flags: list[str] = []
+        # Hypothesis status is the authoritative marker; render
+        # verified (✓), wrong (✗), or unverified (◌) explicitly so
+        # future agents and humans can tell a checked-but-false
+        # claim from one still awaiting verification.
+        if m.type == "hypothesis":
+            if m.status == "verified":
+                flags.append("✓ verified")
+            elif m.status == "wrong":
+                flags.append("✗ wrong")
+            else:
+                flags.append("◌ unverified")
+        else:
+            if m.verified:
+                flags.append("verified")
         if m.confidence >= 0.7:
             flags.append("high-confidence")
         tag = f" [{','.join(flags)}]" if flags else ""
         lines.append(f"- **{_safe_field(m.title, 100)}** {m.type}{tag}")
         lines.append(f"  {_safe_field(m.content, 300)}")
+        # Surface the verdict evidence for hypotheses so the LLM and
+        # the user can see *why* a claim was judged verified or wrong.
+        if m.type == "hypothesis" and m.status in {"verified", "wrong"}:
+            if m.verdict_claim:
+                lines.append(f"  verdict: {_safe_field(m.verdict_claim, 300)}")
+            if m.verification_citations:
+                cites = ", ".join(_safe_field(c, 200) for c in m.verification_citations[:6])
+                lines.append(f"  citations: {cites}")
         if m.entity_refs:
             lines.append(f"  entities: {', '.join(m.entity_refs[:6])}")
         if m.tags:

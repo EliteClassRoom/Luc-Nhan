@@ -1298,6 +1298,8 @@ class RikuganPanelCore(QWidget):
         self._ctrl.switch_tab(tab_id)
         self._restore_messages_if_needed(tab_id)
         self._update_token_display()
+        # Rebind the Knowledge tab to the switched-to session's binary.
+        self._on_knowledge_event_refresh("tab_changed")
 
     def _tab_id_at_index(self, index: int) -> str | None:
         """Find the tab_id for a given tab index via the stored property (O(1))."""
@@ -1616,6 +1618,8 @@ class RikuganPanelCore(QWidget):
         # switch.  No auto-restore — the user opens History
         # explicitly when they want a previous chat.
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
+        # Rebind the Knowledge tab to the newly opened binary's store.
+        self._on_knowledge_event_refresh("database_changed")
 
     def _on_submit(self, text: str) -> None:
         if not text or self._is_shutdown:
@@ -1823,6 +1827,7 @@ class RikuganPanelCore(QWidget):
             TurnEventType.RESEARCH_NOTE_SAVED,
             TurnEventType.EXPLORATION_FINDING,
             TurnEventType.MEMORY_SAVED,
+            TurnEventType.HYPOTHESIS_VERDICT,
         ):
             self._on_knowledge_event_refresh(event.type.value)
         if event.usage:
@@ -2513,6 +2518,9 @@ class RikuganPanelCore(QWidget):
                 self._rebuild_history_tab(attach.tab_id, attach.session)
             elif attach.status is HistoryAttachStatus.ALREADY_OPEN:
                 self._focus_tab(attach.tab_id)
+            # Rebind the Knowledge tab to the loaded session's binary
+            # (per-binary store model — no per-history snapshot).
+            self._on_knowledge_event_refresh("history_loaded")
             # Any successful attach resolution clears a retained
             # retry-load id (reviewer MEDIUM #2): the user's goal — open
             # the session — is satisfied, so a stale retry-load id

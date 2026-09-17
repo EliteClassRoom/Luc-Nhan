@@ -222,11 +222,23 @@ def _write_exploration_to_sqlite(
     address: int | None,
     relevance: str,
     evidence: str = "",
+    *,
+    status: str = "unverified",
+    verdict_claim: str = "",
+    verification_citations: list[str] | None = None,
+    title: str | None = None,
+    confidence: float | None = None,
 ) -> None:
     """Write a single exploration finding to the SQLite memory service.
 
-    Failures are logged via ``log_error`` and swallowed — the JSONL
+    Failures are logged via ``log_error`` and swallowed; the JSONL
     fallback path is owned by the caller and may still succeed.
+
+    *title* and *confidence* are optional reviewer-supplied overrides
+    that replace the relevance-derived defaults. Only ``hypothesis``
+    records persist *status* / *verdict_claim* / *verification_citations*;
+    other categories are normalized to ``unverified`` with empty
+    verdict metadata, matching the JSONL writer.
     """
     from ..core.logging import log_error
 
@@ -235,17 +247,34 @@ def _write_exploration_to_sqlite(
         entity_refs.append(f"func:0x{int(address):x}")
     cat = (category or "general").strip().lower() or "general"
     tags = [cat] if cat else ["general"]
-    title = _memory_title(summary)
+    resolved_title = (
+        title.strip()
+        if isinstance(title, str) and title.strip()
+        else _memory_title(summary)
+    )
+    resolved_confidence = (
+        float(confidence)
+        if confidence is not None and 0.0 <= float(confidence) <= 1.0
+        else _relevance_to_confidence(relevance)
+    )
+    mem_status = status if cat == "hypothesis" else "unverified"
+    mem_verdict = verdict_claim if cat == "hypothesis" else ""
+    mem_citations = (
+        list(verification_citations or []) if cat == "hypothesis" else None
+    )
     try:
         memory_service.save_exploration_finding(
             None,
             category=cat,
-            title=title,
+            title=resolved_title,
             content=summary,
-            confidence=_relevance_to_confidence(relevance),
+            confidence=resolved_confidence,
             entity_refs=entity_refs,
             tags=tags,
             source="exploration",
+            status=mem_status,
+            verdict_claim=mem_verdict,
+            verification_citations=mem_citations,
         )
     except Exception as e:
         log_error(f"SQLite exploration write failed: {e}")
@@ -263,17 +292,11 @@ def _write_exploration_to_jsonl(
     memory_id: str | None = None,
     title: str | None = None,
     confidence: float | None = None,
+    status: str = "unverified",
+    verdict_claim: str = "",
+    verification_citations: list[str] | None = None,
 ) -> None:
     """Upsert a memory + entity/relation record for a single finding.
-
-    ``memory_id`` lets the caller supply a precomputed id; when
-    omitted the function falls back to the deterministic id derived
-    from the (corrected) ``summary`` and ``address``.
-
-    ``title`` and ``confidence`` override the derived values so the
-    caller can persist reviewer-corrected fields (e.g. a renamed
-    function title or a recalibrated confidence after a correction
-    cycle). When omitted, ``title`` is the first summary line and
     ``confidence`` follows the legacy ``relevance`` map.
     """
     if not store:
@@ -321,6 +344,14 @@ def _write_exploration_to_jsonl(
         pass
     entity_refs.append(eid)
 
+    # Hypothesis findings carry their own verdict metadata; everything
+    # else is recorded as unverified until ``/verify`` promotes it.
+    mem_status = status if cat == "hypothesis" else "unverified"
+    mem_verdict = verdict_claim if cat == "hypothesis" else ""
+    mem_citations = (
+        list(verification_citations or []) if cat == "hypothesis" else []
+    )
+    mem_verified = bool(cat == "hypothesis" and mem_status == "verified")
     memory = KnowledgeMemory(
         id=mem_id,
         binary_id=paths.binary_id,
@@ -332,7 +363,10 @@ def _write_exploration_to_jsonl(
         tags=[cat, "exploration"],
         confidence=resolved_confidence,
         importance=importance,
-        verified=relevance == "high",
+        verified=mem_verified,
+        status=mem_status,
+        verdict_claim=mem_verdict,
+        verification_citations=mem_citations,
         created_at=_now_iso(),
         updated_at=_now_iso(),
     )
@@ -366,6 +400,12 @@ def ingest_exploration_finding(
     evidence: str = "",
     function_name: str = "",
     *,
+    memory_id: str | None = None,
+    status: str = "unverified",
+    verdict_claim: str = "",
+    verification_citations: list[str] | None = None,
+    title: str | None = None,
+    confidence: float | None = None,
     memory_service: BinaryMemoryService | None = None,
 ) -> None:
     """Upsert a memory + entity/relation record for a single finding.
@@ -378,20 +418,38 @@ def ingest_exploration_finding(
     regardless of the flag, preserving call sites in
     ``rikugan/tests/knowledge/test_ingest.py`` and other pre-migration
     sources.
+
+    *title* and *confidence* are optional reviewer-supplied overrides
+    that replace the relevance-derived defaults so a reviewer-corrected
+    record survives the finalization pass. Only ``hypothesis`` records
+    persist *status* / *verdict_claim* / *verification_citations*;
+    other categories are normalized to ``unverified`` with empty
+    verdict metadata.
     """
     if memory_service is not None:
-        _write_exploration_to_sqlite(memory_service, category, summary, address, relevance, evidence)
+        _write_exploration_to_sqlite(
+            memory_service, category, summary, address, relevance, evidence,
+            status=status,
+            verdict_claim=verdict_claim,
+            verification_citations=verification_citations,
+            title=title,
+            confidence=confidence,
+        )
     if not _LEGACY_JSONL_DUAL_WRITE:
         return
     if not store:
         return
     try:
-        _write_exploration_to_jsonl(store, paths, category, summary, address, relevance, evidence, function_name)
+        _write_exploration_to_jsonl(
+            store, paths, category, summary, address, relevance, evidence, function_name,
+            memory_id=memory_id, status=status, verdict_claim=verdict_claim,
+            verification_citations=verification_citations,
+            title=title, confidence=confidence,
+        )
     except Exception as e:
         from ..core.logging import log_error
 
         log_error(f"JSONL exploration write failed: {e}")
-
 
 def _normalize_addr_for_id(address: int | None) -> str:
     """Deprecated: thin wrapper kept for back-compat.
@@ -400,6 +458,7 @@ def _normalize_addr_for_id(address: int | None) -> str:
     directly so ID formatting is uniform across the module.
     """
     return normalize_address(address)
+
 
 
 def _entity_id_for(category: str, entity_type: str, address: int | None, name: str) -> str:

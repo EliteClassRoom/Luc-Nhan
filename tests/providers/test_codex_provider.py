@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from rikugan.core.errors import AuthenticationError
+from rikugan.core.errors import AuthenticationError, ProviderError
 from rikugan.core.types import LLMRequestContext, Message, Role
 from rikugan.providers.codex_provider import CodexProvider, _id_token_info, codex_auth_status
 
@@ -213,6 +215,45 @@ class TestCodexRequestContextPayloadEquivalence(unittest.TestCase):
             "the context must be a pure pass-through for non-GLM "
             "providers.",
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 6: retryable transient-error classification.
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRetryableErrors(unittest.TestCase):
+    """Server-side and connection-level failures must classify retryable=True."""
+
+    def setUp(self) -> None:
+        self.p = CodexProvider()
+
+    @staticmethod
+    def _http_error(code: int, body: bytes) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError("https://chatgpt.test", code, "err", None, io.BytesIO(body))
+
+    def test_http_5xx_is_retryable(self):
+        for code in (500, 502, 503, 504):
+            with self.subTest(code=code):
+                with self.assertRaises(ProviderError) as ctx:
+                    self.p._handle_api_error(self._http_error(code, b"upstream down"))
+                self.assertTrue(ctx.exception.retryable, f"HTTP {code} must be retryable")
+                self.assertEqual(ctx.exception.status_code, code)
+
+    def test_http_4xx_is_not_retryable(self):
+        with self.assertRaises(ProviderError) as ctx:
+            self.p._handle_api_error(self._http_error(400, b'{"error": "bad request"}'))
+        self.assertFalse(ctx.exception.retryable)
+
+    def test_url_error_is_retryable(self):
+        with self.assertRaises(ProviderError) as ctx:
+            self.p._handle_api_error(urllib.error.URLError("connection refused"))
+        self.assertTrue(ctx.exception.retryable)
+
+    def test_generic_error_is_not_retryable(self):
+        with self.assertRaises(ProviderError) as ctx:
+            self.p._handle_api_error(RuntimeError("something broke"))
+        self.assertFalse(ctx.exception.retryable)
 
 
 if __name__ == "__main__":

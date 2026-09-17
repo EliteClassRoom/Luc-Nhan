@@ -109,6 +109,11 @@ def _score_memory(mem: KnowledgeMemory, terms: list[str], term_set: set[str]) ->
     """Score a memory against query terms.
 
     Hits in title/tags/verified earn more because they're curated.
+    Hypothesis status changes the trust multiplier applied at the
+    end: verified claims earn a 1.25x boost, wrong claims are
+    explicitly downranked (0.1x) so a future agent doesn't surface a
+    rejected hypothesis as a relevant match, and unverified claims
+    get no boost.
     """
     if not terms:
         return 0.0
@@ -131,7 +136,12 @@ def _score_memory(mem: KnowledgeMemory, terms: list[str], term_set: set[str]) ->
                 score += 1.0
         if term in mem.entity_refs:
             score += 2.0
-    if mem.verified:
+    if mem.type == "hypothesis":
+        if mem.status == "wrong":
+            score *= 0.1
+        elif mem.verified:
+            score *= 1.25
+    elif mem.verified:
         score *= 1.25
     score += mem.confidence * 0.5
     score += mem.importance * 0.3

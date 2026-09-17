@@ -347,15 +347,21 @@ class StreamChunk:
     tool_args_delta: str = ""
     finish_reason: str | None = None
     usage: TokenUsage | None = None
-    is_tool_call_start: bool = False
-    is_tool_call_end: bool = False
     # Incremental reasoning/thinking text from the provider (separate from
     # the user-visible ``text`` channel). None when the provider does not
     # stream reasoning.
     reasoning_delta: str | None = None
+    # True for chunks emitted while the model is inside a thinking block
+    # (``<think...`` for Anthropic-style providers). Lets downstream
+    # filters (e.g. MiniMax native tool-call recovery) pass thinking text
+    # through verbatim instead of treating it as user-visible output.
+    is_thinking: bool = False
+    # Tool-call lifecycle flags. ``is_tool_call_start`` opens a new
+    # call; ``is_tool_call_end`` closes it.
+    is_tool_call_start: bool = False
+    is_tool_call_end: bool = False
     # Provider-specific raw response parts (e.g. Gemini parts with thought_signatures).
     raw_parts: Any = None
-
 
 # ---------------------------------------------------------------------------
 # User approval / decision protocol

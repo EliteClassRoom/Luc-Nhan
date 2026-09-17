@@ -1,0 +1,6 @@
+{
+  "extraPaths": [".venv/Lib/site-packages"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "reportMissingImports": "warning"
+}

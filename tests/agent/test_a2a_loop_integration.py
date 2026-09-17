@@ -130,10 +130,14 @@ class TestSlashToDispatcher(unittest.TestCase):
 
 
 class TestCancelFlow(unittest.TestCase):
-    """Cancellation threading: loop._cancelled is forwarded to the dispatcher."""
+    """Cancellation threading: loop._cancelled is forwarded to the dispatcher
+    and a pre-cancelled run surfaces as ``CancellationError`` (which the
+    outer ``AgentLoop.run`` converts into a ``CANCELLED`` event).
+    """
 
     def test_cancelled_event_reaches_subprocess(self) -> None:
         """Setting ``loop._cancelled`` must be observable by the subprocess bridge."""
+        from rikugan.core.errors import CancellationError
         from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
         from rikugan.agent.modes.a2a import run_a2a_mode
 
@@ -149,6 +153,10 @@ class TestCancelFlow(unittest.TestCase):
 
         def fake_run(*args, **kwargs):
             received["cancel"] = kwargs.get("cancel_event")
+            # The dispatcher's SubprocessBridge translates an
+            # A2AEvent(type="cancelled") into TurnEvent.error_event("cancelled");
+            # run_a2a_mode then re-raises CancellationError because
+            # loop._cancelled is set.
             yield A2AEvent(type="cancelled", text="cancelled", done=True)
             return ""
 
@@ -159,7 +167,8 @@ class TestCancelFlow(unittest.TestCase):
             "rikugan.agent.a2a.dispatcher.SubprocessBridge.run_task",
             new=fake_run,
         ):
-            list(run_a2a_mode(loop, "claude do thing", "", []))
+            with self.assertRaises(CancellationError):
+                list(run_a2a_mode(loop, "claude do thing", "", []))
 
         # The cancel event forwarded to the bridge is the
         # SAME object as loop._cancelled — no copy.

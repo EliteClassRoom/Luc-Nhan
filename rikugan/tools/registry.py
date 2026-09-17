@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
-from ..constants import TOOL_RESULT_TRUNCATE_LEN
+from ..constants import EXECUTE_PYTHON_TOOL_NAME, TOOL_RESULT_TRUNCATE_LEN
 from ..core.errors import ToolError, ToolNotFoundError, ToolValidationError
 from ..core.logging import log_debug
 from .base import ToolDefinition
@@ -76,8 +76,10 @@ class ToolRegistry:
                     if isinstance(value, bool):
                         coerced[key] = int(value)
                     elif not isinstance(value, int):
-                        # Handle "30", "30.0", etc.
-                        coerced[key] = int(float(value))
+                        try:
+                            coerced[key] = int(value, 0)
+                        except (TypeError, ValueError):
+                            coerced[key] = int(float(value))
                 elif expected == "number" and not isinstance(value, (int, float)):
                     coerced[key] = float(value)
                 elif expected == "boolean" and not isinstance(value, bool):
@@ -126,8 +128,9 @@ class ToolRegistry:
         defs: list[ToolDefinition] = []
         for name in dir(module):
             obj = getattr(module, name)
-            if callable(obj) and isinstance(getattr(obj, "_tool_definition", None), ToolDefinition):
-                defs.append(obj._tool_definition)
+            defn = getattr(obj, "_tool_definition", None)
+            if callable(obj) and isinstance(defn, ToolDefinition):
+                defs.append(defn)
         if defs:
             with self._lock:
                 for d in defs:
@@ -175,6 +178,76 @@ class ToolRegistry:
     def list_tools(self) -> list[ToolDefinition]:
         with self._lock:
             return list(self._tools.values())
+
+    def read_only_view(self) -> "ToolRegistry":
+        """Return a new registry that exposes only the non-mutating tools.
+
+        The returned registry shares the underlying dispatch_wrapper
+        and capability state with the original but is fully isolated
+        in terms of registered tools. Useful for spawning subagents
+        that must not mutate the analyzed database (e.g. the
+        hypothesis verifier in ``/verify``): even if the subagent's
+        prompt is ignored, it can only call read-only tools, so the
+        ``mutating`` flag on :class:`ToolDefinition` is a hard
+        contract rather than a polite request.
+        """
+        view = ToolRegistry(dispatch_wrapper=self._dispatch_wrapper)
+        with self._lock:
+            for name, defn in self._tools.items():
+                if defn.mutating:
+                    continue
+                view._tools[name] = defn
+            view._capabilities.update(self._capabilities)
+        return view
+
+    def allowlist(self, names: list[str]) -> "ToolRegistry":
+        """Return a new registry exposing only the requested tool names.
+
+        Mirrors :meth:`read_only_view` for the per-subagent tool filter
+        driven by ``SubAgentSpec.tools``. The returned registry shares the
+        source registry's ``_dispatch_wrapper`` and ``_capabilities`` but
+        is fully isolated in terms of registered tools: mutating the view
+        (registration / unregistration) cannot leak back into the parent.
+        Unknown names are silently dropped after a ``log_debug`` so a
+        stale or LLM-generated delegation name does not abort the child.
+        Duplicate requested names are de-duplicated by membership but
+        registration order is preserved.
+        """
+        view = ToolRegistry(dispatch_wrapper=self._dispatch_wrapper)
+        wanted = set(names)
+        with self._lock:
+            for name, defn in self._tools.items():
+                if name not in wanted:
+                    continue
+                view._tools[name] = defn
+            view._capabilities.update(self._capabilities)
+        if names:
+            registered = set(view._tools.keys())
+            missing = [n for n in names if n not in registered]
+            for name in missing:
+                log_debug(f"ToolRegistry.allowlist: requested tool {name!r} not registered")
+        return view
+
+    def without_approval_gated_tools(self) -> "ToolRegistry":
+        """Return a new registry excluding tools that need interactive approval.
+
+        Unattended subagents (bulk-renamer deep workers, SubagentManager
+        background threads) have nobody answering their approval queues: an
+        approval-gated call would block the child in
+        ``AgentLoop._wait_for_queue`` forever. This view drops
+        ``execute_python`` and every tool whose :class:`ToolDefinition` sets
+        ``requires_approval`` so the gate can never be reached. Mirrors
+        :meth:`read_only_view` / :meth:`allowlist`: shares the dispatch
+        wrapper and capabilities, isolated tool table.
+        """
+        view = ToolRegistry(dispatch_wrapper=self._dispatch_wrapper)
+        with self._lock:
+            for name, defn in self._tools.items():
+                if name == EXECUTE_PYTHON_TOOL_NAME or defn.requires_approval:
+                    continue
+                view._tools[name] = defn
+            view._capabilities.update(self._capabilities)
+        return view
 
     def list_available_tools(self) -> list[ToolDefinition]:
         """Return only tools whose capability requirements are satisfied.
@@ -261,6 +334,7 @@ class ToolRegistry:
         if dispatch_wrapper is not None:
             handler = dispatch_wrapper(handler)
 
+        future = None
         try:
             # Mutating tools serialize so concurrent agents don't interleave IDB
             # writes — this keeps capture_pre_state / undo records coherent.
@@ -272,7 +346,8 @@ class ToolRegistry:
                 future = _executor.submit(handler, **arguments)
                 result = future.result(timeout=timeout)
         except FuturesTimeoutError:
-            future.cancel()
+            if future is not None:
+                future.cancel()
             raise ToolError(
                 f"Tool {name} timed out after {timeout}s",
                 tool_name=name,
@@ -344,11 +419,13 @@ class ToolRegistry:
         if dispatch_wrapper is not None:
             handler = dispatch_wrapper(handler)
 
+        future = None
         try:
             future = _executor.submit(handler, **arguments)
             result = future.result(timeout=timeout)
         except FuturesTimeoutError:
-            future.cancel()
+            if future is not None:
+                future.cancel()
             raise ToolError(
                 f"Tool {name} timed out after {timeout}s",
                 tool_name=name,

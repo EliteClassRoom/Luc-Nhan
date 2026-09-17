@@ -275,4 +275,66 @@ class TestBundleImport:
         import_workspace_bundle(bundle, target_repo)
         for fact in target_store.list_facts():
             assert re.fullmatch(r"[0-9a-f]{64}", fact.semantic_hash)
+
+    def test_tampered_member_sha_rejected(self, tmp_path: Path) -> None:
+        """Tampering a member post-export must fail sha256 verification on import."""
+        import zipfile
+
+        bundle = _seed_and_export(tmp_path)
+        target_store, target_repo, _ = _open_target(tmp_path, "memory_tamper")
+
+        # Rewrite a member's contents in place so its declared sha256 no
+        # longer matches reality.
+        with zipfile.ZipFile(bundle, "r") as zf:
+            manifest = zf.read("manifest.json").decode("utf-8")
+            first_member = next(
+                n for n in zf.namelist() if n.startswith("records/") and n.endswith(".jsonl")
+            )
+            original_payload = zf.read(first_member)
+        tampered = original_payload.replace(b"\n", b"X\n", 1)
+        tampered_path = tmp_path / "tampered.zip"
+        with zipfile.ZipFile(bundle, "r") as src, zipfile.ZipFile(
+            tampered_path, "w", zipfile.ZIP_DEFLATED
+        ) as dst:
+            for item in src.infolist():
+                data = src.read(item.filename)
+                if item.filename == first_member:
+                    data = tampered
+                dst.writestr(item, data)
+        # The manifest sha no longer matches the tampered member.
+        with pytest.raises(ValueError, match="sha256|mismatch|tamper|integrity"):
+            import_workspace_bundle(tampered_path, target_repo)
+        target_store.close()
+
+    def test_oversized_member_rejected_before_full_inflation(self, tmp_path: Path) -> None:
+        """A member whose manifest declares a smaller uncompressed_size than
+        reality must be rejected without blowing memory.
+        """
+        import json as _json
+        import zipfile
+
+        bundle = _seed_and_export(tmp_path)
+        target_store, target_repo, _ = _open_target(tmp_path, "memory_oversize")
+
+        # Lie about the uncompressed_size in the manifest — declare it as 1.
+        with zipfile.ZipFile(bundle, "r") as src:
+            manifest_data = _json.loads(src.read("manifest.json"))
+            target_entry = next(
+                f for f in manifest_data["files"] if f["name"].startswith("records/")
+            )
+            target_entry["uncompressed_size"] = 1
+            original_manifest = src.read("manifest.json")
+        # Rebuild zip with the doctored manifest.
+        doctored_path = tmp_path / "oversize.zip"
+        with zipfile.ZipFile(bundle, "r") as src, zipfile.ZipFile(
+            doctored_path, "w", zipfile.ZIP_DEFLATED
+        ) as dst:
+            for item in src.infolist():
+                if item.filename == "manifest.json":
+                    dst.writestr(item, _json.dumps(manifest_data).encode("utf-8"))
+                else:
+                    dst.writestr(item, src.read(item.filename))
+        with pytest.raises(ValueError, match="size|mismatch|exceeds"):
+            import_workspace_bundle(doctored_path, target_repo)
+        target_store.close()
         target_store.close()

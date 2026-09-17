@@ -51,7 +51,7 @@ try:
 except ImportError:
     pass
 
-from rikugan.agent.turn import TurnEvent  # noqa: E402
+from rikugan.agent.turn import TurnEvent, TurnEventType  # noqa: E402
 from rikugan.core.types import Message, Role  # noqa: E402
 from rikugan.ui.chat_view import ChatView, MessageSpec, RestoreWorker  # noqa: E402
 
@@ -412,6 +412,76 @@ class TestReasoningResetBetweenTurns(unittest.TestCase):
 
         assert self._view._think_buffer == ""
         assert self._view._waiting_think_close is False
+
+class TestPlanStepDoneStatus(unittest.TestCase):
+    """``PLAN_STEP_DONE`` carries outcome text
+    (``completed``/``turn_limit``/``error``) that the UI must map to
+    the matching ``PlanStepWidget`` status — collapsing it to
+    ``done`` always would hide the distinction between a normally
+    completed step and one that exhausted its per-step turn budget.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        cls._qapp = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        self._view = _ChatViewHarness.make()
+
+        # Stub plan_view so handle_event can record the calls without
+        # needing a real PlanView (the harness already sets _plan_view
+        # to None).
+        from rikugan.ui import plan_view as _pv
+
+        self._pv = _pv
+        recorded = []
+
+        class _StubPlanView:
+            def set_step_status(self, idx, status):
+                recorded.append((idx, status))
+
+        self._recorded = recorded
+        self._view._plan_view = _StubPlanView()
+
+    def _dispatch_plan_done(self, outcome: str, index: int = 0) -> None:
+        self._view.handle_event(
+            TurnEvent(
+                type=TurnEventType.PLAN_STEP_DONE,
+                plan_step_index=index,
+                text=outcome,
+            )
+        )
+
+    def test_completed_maps_to_done(self) -> None:
+        self._dispatch_plan_done("completed")
+        assert self._recorded == [(0, "done")]
+
+    def test_turn_limit_maps_to_turn_limit(self) -> None:
+        """A ``turn_limit`` outcome must reach PlanView as
+        ``turn_limit``, not ``done`` — that's the whole point of the
+        fix."""
+        self._dispatch_plan_done("turn_limit")
+        assert self._recorded == [(0, "turn_limit")]
+
+    def test_error_maps_to_error(self) -> None:
+        self._dispatch_plan_done("error")
+        assert self._recorded == [(0, "error")]
+
+    def test_unknown_outcome_maps_to_done(self) -> None:
+        """Unknown outcomes fall back to ``done`` for forward-compat."""
+        self._dispatch_plan_done("weird_outcome")
+        assert self._recorded == [(0, "done")]
+
+    def test_helper_direct(self) -> None:
+        """Pin the mapping helper itself."""
+        from rikugan.ui.chat_view import _plan_step_done_status
+
+        assert _plan_step_done_status("completed") == "done"
+        assert _plan_step_done_status("turn_limit") == "turn_limit"
+        assert _plan_step_done_status("error") == "error"
+        assert _plan_step_done_status("") == "done"
 
 
 if __name__ == "__main__":

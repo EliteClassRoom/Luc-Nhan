@@ -1,14 +1,64 @@
 """IDA PluginForm wrapper for the Rikugan Tools panel (dockable view)."""
 
 from __future__ import annotations
-
 import importlib
+import importlib.util as _importlib_util
 from typing import Any
 
 from rikugan.ui.qt_compat import QTimer, QVBoxLayout, QWidget
 from rikugan.ui.tools_panel import ToolsPanel
 
-idaapi = importlib.import_module("idaapi")
+# Probe the IDA SDK presence cheaply with ``find_spec`` (does not run
+# module code).  Mirrors ``actions._probe_ida`` so every IDA-host
+# module shares the same import pattern — Shiboken UAF mitigation on
+# Python ≥ 3.11 (see ``AGENTS.md`` §1).
+_IDA_MODULES_TOOLS_FORM: tuple[str, ...] = ("idaapi",)
+
+
+def _probe_ida_tools_form() -> bool:
+    for _m in _IDA_MODULES_TOOLS_FORM:
+        try:
+            spec = _importlib_util.find_spec(_m)
+        except (ValueError, ModuleNotFoundError):
+            continue
+        if spec is None:
+            return False
+    return True
+
+
+_HAS_IDA_TOOLS_FORM = _probe_ida_tools_form()
+_ida_tools_form_loaded = False
+
+
+def _ensure_ida_tools_form() -> bool:
+    """Import ``idaapi`` and bind it as a module attribute.
+
+    Idempotent: subsequent calls are free.  Mirrors ``actions._ensure_ida``.
+    Returns ``_HAS_IDA_TOOLS_FORM`` so callers can early-out when IDA is
+    absent (e.g. during unit tests that stub the IDA SDK).
+    """
+    global _ida_tools_form_loaded
+    if _ida_tools_form_loaded:
+        return _HAS_IDA_TOOLS_FORM
+    _ida_tools_form_loaded = True
+    if not _HAS_IDA_TOOLS_FORM:
+        return False
+    import sys as _sys
+
+    try:
+        for _m in _IDA_MODULES_TOOLS_FORM:
+            setattr(_sys.modules[__name__], _m, importlib.import_module(_m))
+        return True
+    except ImportError:
+        return False
+
+
+# Bind the name eagerly when IDA is present so the rest of this file
+# (class bodies, type annotations) can refer to ``idaapi`` without going
+# through ``__getattr__``.  When IDA is absent, the name remains unbound
+# and the ``if _HAS_IDA_TOOLS_FORM:`` block below is skipped entirely.
+if _ensure_ida_tools_form():
+    idaapi = importlib.import_module("idaapi")  # type: ignore[assignment]
 
 
 def _form_to_qt_widget(plugin_form_cls: Any, form: Any) -> Any:

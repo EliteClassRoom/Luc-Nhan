@@ -48,23 +48,6 @@ ORCHESTRA_BASE_PROMPT = """You are the OrchestraMainAgent, an expert orchestrato
 - All sub-agent results are fed back into your context for synthesis
 - You can delegate multiple independent subtasks in parallel
 - If a sub-agent fails, decide whether to retry or adjust the approach
-
-Return your response in this format when taking action:
-```
-ACTION: delegate_task | submit | complete
-TASK: <brief task description>
-```
-
-When delegating:
-```
-ACTION: delegate_task
-TASK: <task name>
-INSTRUCTION: <detailed instruction for sub-agent>
-CONTEXT: <relevant context>
-TOOLS: <comma-separated tool names>
-MODEL: <model name>
-MAX_STEPS: <max turns>
-```
 """
 
 

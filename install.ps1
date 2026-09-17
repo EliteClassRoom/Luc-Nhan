@@ -1,14 +1,14 @@
 # ──────────────────────────────────────────────────────────────────────
 # Rikugan — universal installer (Windows)
 #
-#   irm https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.ps1 | iex
 #
 # Or with arguments:
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.ps1))) -Target ida
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.ps1))) -Target ida
 #
 # Environment variables:
 #   RIKUGAN_DIR     — where to clone the repo   (default: ~\.rikugan)
-#   RIKUGAN_BRANCH  — git branch to check out   (default: main)
+#   RIKUGAN_BRANCH  — git branch to check out   (default: master)
 #   IDA_PYTHON      — override Python for IDA    (forwarded to install_ida.bat)
 # ──────────────────────────────────────────────────────────────────────
 
@@ -19,9 +19,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoUrl = "https://github.com/buzzer-re/Rikugan.git"
+$RepoUrl = "https://github.com/EliteClassRoom/rikugan.git"
 $InstallDir = if ($env:RIKUGAN_DIR) { $env:RIKUGAN_DIR } else { Join-Path $HOME ".rikugan" }
-$Branch = if ($env:RIKUGAN_BRANCH) { $env:RIKUGAN_BRANCH } else { "main" }
+$Branch = if ($env:RIKUGAN_BRANCH) { $env:RIKUGAN_BRANCH } else { "master" }
 
 # ── Helpers ──────────────────────────────────────────────────────────
 function Write-Info    { param($Msg) Write-Host "[*] $Msg" -ForegroundColor Cyan }

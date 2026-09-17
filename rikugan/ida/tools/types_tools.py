@@ -115,26 +115,34 @@ def _create_struct_ida9(name: str, field_list: list) -> str:
         return f"Failed to create empty UDT for struct '{name}'"
 
     TERR_OK = getattr(ida_typeinf, "TERR_OK", 0)
+    # ETF_MAY_DESTROY lets a member that overlaps an existing one replace it
+    # (otherwise add_udm raises TERR_OVERLAP "member overlaps ...")
+    ETF_MAY_DESTROY = getattr(ida_typeinf, "ETF_MAY_DESTROY", 0)
 
     for fld in field_list:
         fname = fld["name"]
         ftype_str = fld.get("type", "int")
         offset_bytes = fld.get("offset")
 
-        # Compute offset in bits (IDA 9.x UDT offsets are in bits)
-        offset_bits = offset_bytes * 8 if offset_bytes is not None else 0
+        # Compute offset in bits (IDA 9.x UDT offsets are in bits).
+        # Fields without an explicit offset append sequentially at the end;
+        # defaulting them to 0 would make every such field overlap at bit 0.
+        offset_bits = offset_bytes * 8 if offset_bytes is not None else tif.get_size() * 8
 
         # Try add_udm with string type (IDA 9.x accepts str directly)
         try:
-            err = tif.add_udm(fname, ftype_str, offset_bits)
-        except (TypeError, Exception):
+            err = tif.add_udm(fname, ftype_str, offset_bits, ETF_MAY_DESTROY)
+        except (TypeError, ValueError):
             # Fallback: parse type and use udm_t object
-            ftif = _parse_type(ftype_str)
-            if ftif is None:
-                ftif = ida_typeinf.tinfo_t()
-                ida_typeinf.parse_decl(ftif, None, "int;", ida_typeinf.PT_SIL)
-            udm = ida_typeinf.udm_t(fname, ftif, offset_bits)
-            err = tif.add_udm(udm)
+            try:
+                ftif = _parse_type(ftype_str)
+                if ftif is None:
+                    ftif = ida_typeinf.tinfo_t()
+                    ida_typeinf.parse_decl(ftif, None, "int;", ida_typeinf.PT_SIL)
+                udm = ida_typeinf.udm_t(fname, ftif, offset_bits)
+                err = tif.add_udm(udm, ETF_MAY_DESTROY)
+            except ValueError as exc:
+                return f"Failed to add field '{fname}' (type={ftype_str}, offset={offset_bits // 8}): {exc}"
 
         if fld.get("comment") and err == TERR_OK:
             # Set comment on the member we just added
@@ -180,15 +188,21 @@ def _modify_struct_ida9(
     TERR_OK = getattr(ida_typeinf, "TERR_OK", 0)
 
     if action == "add_field":
-        offset_bits = offset * 8 if offset >= 0 else 0
+        # Append at the end when no offset given; defaulting to 0 would
+        # overlap the first member and raise TERR_OVERLAP
+        offset_bits = offset * 8 if offset >= 0 else tif.get_size() * 8
+        ETF_MAY_DESTROY = getattr(ida_typeinf, "ETF_MAY_DESTROY", 0)
         try:
-            err = tif.add_udm(field_name, field_type, offset_bits)
-        except (TypeError, Exception):
+            err = tif.add_udm(field_name, field_type, offset_bits, ETF_MAY_DESTROY)
+        except (TypeError, ValueError):
             ftif = _parse_type(field_type)
             if ftif is None:
                 return f"Failed to parse type '{field_type}'"
             udm = ida_typeinf.udm_t(field_name, ftif, offset_bits)
-            err = tif.add_udm(udm)
+            try:
+                err = tif.add_udm(udm, ETF_MAY_DESTROY)
+            except ValueError as exc:
+                return f"Failed to add field '{field_name}' (type={field_type}, offset={offset_bits // 8}): {exc}"
         if err == TERR_OK:
             return f"Added field '{field_name}' ({field_type}) to '{name}'"
         return f"Failed to add field (error code {err})"

@@ -237,29 +237,14 @@ def get_binary_info() -> str:
     """
 
     lines: list[str] = []
-    # IDA 9.x uses ida_ida.inf_get_procname() etc. instead of get_inf_structure()
     try:
         lines.append(f"Processor: {ida_ida.inf_get_procname()}")
-        if ida_ida.inf_is_64bit():
-            lines.append("Bits: 64")
-        elif ida_ida.inf_is_32bit():
-            lines.append("Bits: 32")
-        else:
-            lines.append("Bits: 16")
+        lines.append(f"Bits: {ida_ida.inf_get_app_bitness()}")
         lines.append(f"Entry point: 0x{ida_ida.inf_get_start_ea():x}")
         lines.append(f"Min address: 0x{ida_ida.inf_get_min_ea():x}")
         lines.append(f"Max address: 0x{ida_ida.inf_get_max_ea():x}")
     except AttributeError:
-        # Fallback for older IDA
-        try:
-            info = idaapi.get_inf_structure()
-            lines.append(f"Processor: {info.procname}")
-            lines.append(f"Bits: {16 if info.is_16bit() else 32 if info.is_32bit() else 64}")
-            lines.append(f"Entry point: 0x{info.start_ea:x}")
-            lines.append(f"Min address: 0x{info.min_ea:x}")
-            lines.append(f"Max address: 0x{info.max_ea:x}")
-        except (AttributeError, TypeError):
-            lines.append("Processor: (unavailable)")  # IDA API not supported
+        lines.append("Processor: (unavailable)")  # IDA API not supported
 
     try:
         lines.append(f"File type: {idaapi.get_file_type_name()}")
@@ -333,11 +318,10 @@ def _resolve_addr_or_name(value: str) -> int:
 
 
 def _pointer_size() -> int:
-    """Return the binary's pointer width in bytes (2/4/8), defaulting to 8."""
-    try:
-        return 8 if ida_ida.inf_is_64bit() else 4 if ida_ida.inf_is_32bit() else 2
-    except AttributeError:
-        return 8
+    """Return the binary's pointer width in bytes (2/4/8)."""
+    # inf_get_app_bitness() (IDA >=7.6) returns 16/32/64 directly — it replaces
+    # the never-existent inf_is_32bit() and the removed get_inf_structure().
+    return {16: 2, 32: 4, 64: 8}.get(ida_ida.inf_get_app_bitness(), 8)
 
 
 def _read_raw_bytes(ea: int, size: int) -> bytes:

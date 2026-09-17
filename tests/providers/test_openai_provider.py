@@ -7,6 +7,7 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -513,6 +514,122 @@ class TestOpenAIStreamLateIdArgsReplay(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Reasoning content + tool call boundary tests.
+#
+# Plain OpenAI (capability.reasoning_content == False) lanes legacy o-series
+# reasoning into the visible-text channel wrapped in ``<think>...</think>``
+# markers. The close marker is emitted once the reasoning lane ends, which
+# always precedes the TOOL_CALL_END event. The lifecycle must stay complete
+# (one START/END pair) and the wrapper must be closed before the end so the
+# agent loop never carries an unclosed ``<think>`` block past the tool call.
+# ---------------------------------------------------------------------------
+
+
+def _reasoning_chunk(reasoning_content: str):
+    """A delta whose only payload is reasoning_content (the legacy o-series
+    path used by plain OpenAI when capability.reasoning_content is False)."""
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=None,
+                    reasoning_content=reasoning_content,
+                    tool_calls=None,
+                ),
+                finish_reason=None,
+            )
+        ],
+        usage=None,
+    )
+
+
+class TestOpenAIStreamReasoningAndToolCall(unittest.TestCase):
+    def test_inline_think_then_tool_call_emit_order(self) -> None:
+        """When reasoning arrives before a structured tool call in the
+        plain OpenAI legacy ``<think>`` lane, the provider emits the
+        open, the reasoning text, then the close as soon as the
+        reasoning lane ends — before the tool-call lifecycle in this
+        scenario — and the tool call still gets a complete
+        START/END pair with the wrapper closed before the END."""
+        p = _make_provider()
+        chunks = [
+            _reasoning_chunk("thinking"),
+            _delta_chunk(
+                tool_calls=[
+                    _tc_delta(index=0, id="call_1", name="do_thing", arguments="{}"),
+                ],
+            ),
+            _delta_chunk(finish_reason="tool_calls"),
+        ]
+        emitted = list(p._iter_stream_chunks(iter(chunks)))
+
+        # Find lifecycle markers by type and position.
+        text_events = [(i, c.text) for i, c in enumerate(emitted) if c.text]
+        opens = [i for i, t in text_events if t == "<think>"]
+        closes = [i for i, t in text_events if t == "</think>\n"]
+        starts = [i for i, c in enumerate(emitted) if c.is_tool_call_start]
+        ends = [i for i, c in enumerate(emitted) if c.is_tool_call_end]
+        self.assertEqual(len(opens), 1)
+        self.assertEqual(len(closes), 1)
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(len(ends), 1)
+        self.assertLess(opens[0], closes[0])
+        self.assertLess(starts[0], ends[0])
+        # The wrapper must be closed before the tool-call lifecycle ends.
+        self.assertLess(closes[0], ends[0])
+        # Balanced, contiguous wrapper in the visible channel.
+        self.assertEqual(
+            "".join(t for _, t in text_events), "<think>thinking</think>\n"
+        )
+
+    def test_reasoning_then_tool_call_in_same_chunk(self) -> None:
+        """A single delta with both reasoning_content and tool_calls
+        must still emit a complete tool-call lifecycle: the reasoning
+        wrapper is opened, the tool call starts, and the ``<think>``
+        close fires on the finish-chunk — between START and END —
+        so the wrapper is closed before the tool call ends."""
+        # Build a delta that carries both reasoning_content and a tool
+ # call, then a finish-chunk.
+        combined = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None,
+                        reasoning_content="thinking",
+                        tool_calls=[
+                            _tc_delta(index=0, id="call_1", name="do_thing", arguments="{}"),
+                        ],
+                    ),
+                finish_reason=None,
+                ),
+            ],
+            usage=None,
+        )
+        finish = _delta_chunk(finish_reason="tool_calls")
+        p = _make_provider()
+        emitted = list(p._iter_stream_chunks(iter([combined, finish])))
+
+        text_events = [(i, c.text) for i, c in enumerate(emitted) if c.text]
+        opens = [i for i, t in text_events if t == "<think>"]
+        closes = [i for i, t in text_events if t == "</think>\n"]
+        starts = [i for i, c in enumerate(emitted) if c.is_tool_call_start]
+        ends = [i for i, c in enumerate(emitted) if c.is_tool_call_end]
+        self.assertEqual(len(opens), 1)
+        self.assertEqual(len(closes), 1)
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(len(ends), 1)
+        self.assertLess(opens[0], closes[0])
+        self.assertLess(starts[0], ends[0])
+        # Same-delta reasoning + tool call: the close fires on the
+        # finish chunk, between START and END, still before the END.
+        self.assertLess(starts[0], closes[0])
+        self.assertLess(closes[0], ends[0])
+        self.assertEqual(
+            "".join(t for _, t in text_events), "<think>thinking</think>\n"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Task 5: payload equivalence.
 #
 # Threading an ``LLMRequestContext`` through the pipeline must not change
@@ -542,6 +659,50 @@ class TestOpenAIRequestContextPayloadEquivalence(unittest.TestCase):
             "the context must be a pure pass-through for non-GLM "
             "providers.",
         )
+
+
+class TestOpenAIModelIdPrefixes(unittest.TestCase):
+    """``_MODEL_ID_PREFIXES`` is a class attribute overridable by subclasses."""
+
+    def test_default_prefixes_include_openai_chat_families(self):
+        from rikugan.providers.openai_provider import OpenAIProvider
+
+        self.assertIn("gpt-", OpenAIProvider._MODEL_ID_PREFIXES)
+        self.assertIn("o1-", OpenAIProvider._MODEL_ID_PREFIXES)
+
+    def test_subclass_can_override_prefixes(self):
+        from rikugan.providers.openai_provider import OpenAIProvider
+
+        class _Stub(OpenAIProvider):
+            _MODEL_ID_PREFIXES = ("custom-",)
+            _builtin_models = staticmethod(lambda: [])
+
+        stub = _Stub(api_key="x", model="custom-1")
+        self.assertEqual(stub._MODEL_ID_PREFIXES, ("custom-",))
+
+    def test_glm_provider_keeps_glm_prefix(self):
+        from rikugan.providers.glm_provider import GLMProvider
+
+        stub = GLMProvider(api_key="x", model="glm-5.2")
+        self.assertIn("glm-", GLMProvider._MODEL_ID_PREFIXES)
+
+    def test_glm_live_fetch_keeps_glm_ids(self):
+        from rikugan.providers.glm_provider import GLMProvider
+
+        stub = GLMProvider(api_key="x", model="glm-5.2")
+        fake_response = SimpleNamespace(
+            data=[
+                SimpleNamespace(id="glm-5.2"),
+                SimpleNamespace(id="glm-5.1"),
+                SimpleNamespace(id="gpt-4o"),
+            ]
+        )
+        with patch.object(stub, "_get_client", return_value=SimpleNamespace(models=SimpleNamespace(list=lambda: fake_response))):
+            models = stub._fetch_models_live()
+        ids = [m.id for m in models]
+        self.assertIn("glm-5.2", ids)
+        self.assertIn("glm-5.1", ids)
+        self.assertNotIn("gpt-4o", ids)
 
 
 if __name__ == "__main__":

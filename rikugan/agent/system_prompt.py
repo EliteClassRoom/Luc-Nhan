@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from ..core.logging import log_debug
 from ..core.profile import IOC_FILTER_CATEGORIES
-from ..core.sanitize import quote_untrusted, sanitize_binary_context, sanitize_memory
+from ..core.sanitize import MEMORY_MAX_CHARS, quote_untrusted, sanitize_binary_context, sanitize_memory
 from ..tools.catalog import format_tools_catalog as _format_tools_catalog  # re-export
 from .prompts.ida import IDA_BASE_PROMPT
 
@@ -45,7 +45,7 @@ def build_system_prompt(
     # Central memory: structured facts from SQLite + manual notes from
     # MEMORY.md unmanaged region. Both supplied by BinaryMemoryService.
     if structured_memory:
-        parts.append(f"\n{structured_memory}")
+        parts.append("\n" + quote_untrusted(structured_memory, "structured_memory", max_length=MEMORY_MAX_CHARS))
     if manual_memory_notes:
         parts.append(f"\n## Manual Notes\n{sanitize_memory(manual_memory_notes)}")
 
@@ -83,7 +83,7 @@ def build_system_prompt(
         parts.append(f"\n## Available Tools\n{', '.join(tool_names)}")
 
     if skill_summary:
-        parts.append(f"\n## Skills\n{skill_summary}")
+        parts.append("\n## Skills\n" + quote_untrusted(skill_summary, "skill_summary"))
 
     if extra_context:
         parts.append(f"\n## Additional Context\n{extra_context}")

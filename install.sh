@@ -2,19 +2,19 @@
 # ──────────────────────────────────────────────────────────────────────
 # Rikugan — universal installer (Linux / macOS)
 #
-#   curl -fsSL https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.sh | bash -s -- --ida
+#   curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.sh | bash -s -- --ida
 #
 # Environment variables:
 #   RIKUGAN_DIR     — where to clone the repo   (default: ~/.rikugan)
-#   RIKUGAN_BRANCH  — git branch to check out   (default: main)
-#   IDA_PYTHON      — override Python for IDA    (forwarded to install_ida.sh)
+#   RIKUGAN_BRANCH  — git branch to check out   (default: master)
+
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO_URL="https://github.com/buzzer-re/Rikugan.git"
+REPO_URL="https://github.com/EliteClassRoom/rikugan.git"
 INSTALL_DIR="${RIKUGAN_DIR:-$HOME/.rikugan}"
-BRANCH="${RIKUGAN_BRANCH:-main}"
+BRANCH="${RIKUGAN_BRANCH:-master}"
 
 # ── Colors ───────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
@@ -45,7 +45,7 @@ for arg in "$@"; do
             TARGET="ida"
             ;;
         --help|-h)
-            echo "Usage: curl -fsSL https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.sh | bash -s -- [OPTIONS]"
+            echo "Usage: curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.sh | bash -s -- [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --ida       Install for IDA Pro"

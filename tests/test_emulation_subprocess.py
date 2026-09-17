@@ -42,6 +42,7 @@ def _main() -> int:
     )
     sys.modules["ida_ida"].inf_is_64bit.return_value = bool(is_64)
     sys.modules["ida_ida"].inf_is_32bit.return_value = not is_64
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 64 if is_64 else 32
 
     from dataclasses import dataclass
     from unittest.mock import MagicMock

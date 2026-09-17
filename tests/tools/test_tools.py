@@ -308,6 +308,31 @@ class TestToolDecorator(unittest.TestCase):
         with self.assertRaises(ToolError):
             failing_tool()
 
+    def test_unexpected_kwarg_raises_validation_error_with_valid_params(self):
+        """A hallucinated/extra argument must raise ToolValidationError listing
+        the valid parameters, so the model can self-correct instead of
+        retrying the same bad call in a loop.
+
+        Reproduces the read_disassembly vs read_function_disassembly
+        confusion: the model passes ``count`` to a tool that only takes
+        ``address``.
+        """
+        from rikugan.core.errors import ToolValidationError
+
+        @tool(name="read_function_disassembly")
+        def read_function_disassembly(address: str) -> str:
+            """Read the full disassembly of a function."""
+            return "ok"
+
+        with self.assertRaises(ToolValidationError) as ctx:
+            read_function_disassembly(address="0x1000", count=30)
+
+        msg = str(ctx.exception)
+        # The valid parameter must be named so the model knows what to keep.
+        self.assertIn("address", msg)
+        # The bogus parameter must be named so the model knows what to drop.
+        self.assertIn("count", msg)
+
     def test_tool_description_uses_full_docstring(self):
         """Tool description should be the full docstring, not just the first line.
 

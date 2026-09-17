@@ -77,6 +77,8 @@ class SubagentManager:
         max_turns: int = 20,
         category: str = "",
         mode: str = "",
+        tools: list[str] | None = None,
+        model: str = "",
     ) -> str:
         """Spawn a new subagent in a background thread. Returns agent ID.
 
@@ -84,6 +86,13 @@ class SubagentManager:
             mode: Specific mode to run the agent in. If set to
                 "exploration", "plan", or "research", the subagent
                 will run in that mode instead of the normal agent loop.
+            tools: Optional allowlist of tool names exposed to the child.
+                When ``None`` or empty the full parent registry is used.
+                Unknown names are silently dropped (see
+                :meth:`ToolRegistry.allowlist`).
+            model: Optional model override for the child run. The parent
+                provider/config are never mutated; the override is
+                applied to a shallow copy inside :class:`SubagentRunner`.
         """
         agent_id = uuid.uuid4().hex[:12]
         cancel = threading.Event()
@@ -109,31 +118,48 @@ class SubagentManager:
         # Determine system addendum based on agent type
         system_addendum = self._build_system_addendum(agent_type, perks or [])
 
-        # Override max_turns for known agent types
+        # Resolve the per-delegation tool registry. An allowlist of None
+        # or the empty list both mean "use the parent registry" so the
+        # behaviour is identical to the pre-fix path for existing callers.
+        if tools:
+            resolved_tools = self._tools.allowlist(tools)
+        else:
+            resolved_tools = self._tools
+
+        # Override max_turns for known agent types. The runner constructor
+        # rejects ``max_turns=0`` outright, so an explicit ``== 0`` test is
+        # used here instead of ``or`` truthiness — otherwise a legitimate
+        # zero in ``max_turns`` would silently promote to the type default.
         if agent_type == "network_recon":
             from .agents.network_recon import NETWORK_RECON_MAX_TURNS
 
-            max_turns = max_turns or NETWORK_RECON_MAX_TURNS
+            if max_turns == 0:
+                max_turns = NETWORK_RECON_MAX_TURNS
         elif agent_type == "report_writer":
             from .agents.report_writer import REPORT_WRITER_MAX_TURNS
 
-            max_turns = max_turns or REPORT_WRITER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = REPORT_WRITER_MAX_TURNS
         elif agent_type == "ida_code_reader":
             from .agents.ida_code_reader import IDA_CODE_READER_MAX_TURNS
 
-            max_turns = max_turns or IDA_CODE_READER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = IDA_CODE_READER_MAX_TURNS
         elif agent_type == "ida_microcode_reader":
             from .agents.ida_microcode_reader import IDA_MICROCODE_READER_MAX_TURNS
 
-            max_turns = max_turns or IDA_MICROCODE_READER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = IDA_MICROCODE_READER_MAX_TURNS
         elif agent_type == "ida_disasm_reader":
             from .agents.ida_disasm_reader import IDA_DISASM_READER_MAX_TURNS
 
-            max_turns = max_turns or IDA_DISASM_READER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = IDA_DISASM_READER_MAX_TURNS
         elif agent_type == "ida_docs_reviewer":
             from .agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_MAX_TURNS
 
-            max_turns = max_turns or IDA_DOCS_REVIEWER_MAX_TURNS
+            if max_turns == 0:
+                max_turns = IDA_DOCS_REVIEWER_MAX_TURNS
 
         # Emit spawned event
         self._event_queue.put(
@@ -147,13 +173,36 @@ class SubagentManager:
 
         thread = threading.Thread(
             target=self._run_agent,
-            args=(agent_id, task, max_turns, system_addendum, cancel, mode),
+            args=(agent_id, task, max_turns, system_addendum, cancel, mode, resolved_tools, model),
             daemon=True,
             name=f"rikugan-subagent-{agent_id[:6]}",
         )
         thread.start()
-        log_info(f"Subagent spawned: id={agent_id}, name={name!r}, type={agent_type}, mode={mode!r}")
+        log_info(
+            f"Subagent spawned: id={agent_id}, name={name!r}, type={agent_type}, mode={mode!r}, tools={len(tools) if tools else 0}, model={model!r}"
+        )
         return agent_id
+
+    def _finalize_cancellation(self, info: "SubagentInfo") -> None:
+        """Mark a subagent CANCELLED and emit the cancellation event once.
+
+        Acts as the single source of truth for status transitions to
+        ``CANCELLED`` so racing callers (cancel API, worker preflight,
+        worker event loop, worker exception path) cannot emit the
+        cancellation event twice. The first call mutates the record and
+        emits the failure event; subsequent calls are no-ops.
+        """
+        if info.status == SubagentStatus.CANCELLED:
+            return
+        info.status = SubagentStatus.CANCELLED
+        info.completed_at = time.time()
+        self._event_queue.put(
+            TurnEvent.subagent_failed(
+                agent_id=info.id,
+                name=info.name,
+                error="Cancelled by user",
+            )
+        )
 
     def register(
         self,
@@ -235,13 +284,6 @@ class SubagentManager:
                         error=summary,
                     )
                 )
-        elif status == SubagentStatus.RUNNING:
-            self._event_queue.put(
-                TurnEvent.subagent_progress(
-                    agent_id=agent_id,
-                    turn_count=turn_count,
-                )
-            )
 
     def cancel(self, agent_id: str) -> None:
         """Cancel a running or pending subagent."""
@@ -250,15 +292,7 @@ class SubagentManager:
             cancel.set()
         info = self._agents.get(agent_id)
         if info and info.status in (SubagentStatus.PENDING, SubagentStatus.RUNNING):
-            info.status = SubagentStatus.CANCELLED
-            info.completed_at = time.time()
-            self._event_queue.put(
-                TurnEvent.subagent_failed(
-                    agent_id=agent_id,
-                    name=info.name,
-                    error="Cancelled by user",
-                )
-            )
+            self._finalize_cancellation(info)
 
     def get(self, agent_id: str) -> SubagentInfo | None:
         """Look up a subagent by ID."""
@@ -340,8 +374,16 @@ class SubagentManager:
         system_addendum: str,
         cancel: threading.Event,
         mode: str = "",
+        tool_registry: ToolRegistry | None = None,
+        model_override: str = "",
     ) -> None:
-        """Background thread target: run a subagent to completion."""
+        """Background thread target: run a subagent to completion.
+
+        ``tool_registry`` defaults to the manager's full registry when the
+        caller (the pre-fix path) does not provide one. ``model_override``
+        is forwarded to :class:`SubagentRunner` and is empty (= use the
+        parent provider) for the legacy callers.
+        """
         from .subagent import SubagentRunner  # deferred to avoid circular import
 
         info = self._agents[agent_id]
@@ -349,11 +391,12 @@ class SubagentManager:
 
         runner = SubagentRunner(
             provider=self._provider,
-            tool_registry=self._tools,
+            tool_registry=tool_registry if tool_registry is not None else self._tools,
             config=self._config,
             host_name=self._host_name,
             skill_registry=self._skills,
             cancel_event=cancel,
+            model_override=model_override,
         )
 
         try:
@@ -369,17 +412,18 @@ class SubagentManager:
                 )
             else:
                 gen = runner.run_task(task, max_turns=max_turns, system_addendum=system_addendum)
+
+            # Preflight: honour a cancellation that arrived before the worker
+            # started iterating. ``AgentLoop.run()`` resets its event on
+            # entry, so we must surface the cancellation here without
+            # entering the loop.
+            if cancel.is_set():
+                self._finalize_cancellation(info)
+                return
+
             for event in gen:
                 if cancel.is_set():
-                    info.status = SubagentStatus.CANCELLED
-                    info.completed_at = time.time()
-                    self._event_queue.put(
-                        TurnEvent.subagent_failed(
-                            agent_id=agent_id,
-                            name=info.name,
-                            error="Cancelled by user",
-                        )
-                    )
+                    self._finalize_cancellation(info)
                     return
 
                 if event.type.value == "turn_end":
@@ -397,6 +441,15 @@ class SubagentManager:
 
                 if event.usage:
                     info.token_usage = event.usage
+
+            # If a cancellation raced the worker to completion, the manager
+            # may already have transitioned this record to CANCELLED. Keep
+            # that state instead of overwriting it with COMPLETED.
+            if info.status == SubagentStatus.CANCELLED:
+                return
+            if cancel.is_set():
+                self._finalize_cancellation(info)
+                return
 
             info.summary = final_text
             info.status = SubagentStatus.COMPLETED
@@ -418,6 +471,9 @@ class SubagentManager:
             )
 
         except Exception as e:
+            if cancel.is_set():
+                self._finalize_cancellation(info)
+                return
             info.status = SubagentStatus.FAILED
             info.completed_at = time.time()
             info.summary = f"Error: {e}"

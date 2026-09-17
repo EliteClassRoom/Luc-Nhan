@@ -39,25 +39,30 @@ def _assistant_messages(count: int) -> list[Message]:
 
 
 class _ChunkCollector:
-    """Collect chunk_ready emissions from a worker without spinning Qt events."""
+    """Drain the worker's queue synchronously after ``run()`` completes."""
 
     def __init__(self) -> None:
         self.specs: list = []
         self.finished = False
 
-    def on_chunk(self, chunk) -> None:
-        self.specs.extend(chunk.specs)
-
-    def on_finished(self) -> None:
-        self.finished = True
+    def drain(self, worker: RestoreWorker) -> None:
+        while True:
+            try:
+                kind, payload = worker.queue.get_nowait()
+            except Exception:
+                break
+            if kind == "chunk":
+                self.specs.extend(payload.specs)
+            elif kind == "finished":
+                self.finished = True
 
 
 def _run_worker(worker: RestoreWorker) -> _ChunkCollector:
     collector = _ChunkCollector()
-    worker.chunk_ready.connect(collector.on_chunk)
-    worker.finished_ok.connect(collector.on_finished)
     worker.run()  # synchronous in-test: no QThread.start()
+    collector.drain(worker)
     return collector
+
 
 
 class TestRestoreWorkerCap(unittest.TestCase):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import tempfile
 import unittest
 from unittest.mock import MagicMock
@@ -23,6 +24,7 @@ from rikugan.agent.modes.research import (
     write_and_review_note,
 )
 from rikugan.agent.turn import TurnEvent, TurnEventType
+from rikugan.core.errors import CancellationError
 
 
 class TestParseResearchCommand(unittest.TestCase):
@@ -273,9 +275,11 @@ class TestSafeNotePath(unittest.TestCase):
                     self.skipTest("symlink creation requires privileges on this Windows install")
                 finally:
                     import shutil
+
                     shutil.rmtree(test_target, ignore_errors=True)
             finally:
                 import shutil
+
                 shutil.rmtree(test_dir, ignore_errors=True)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -289,12 +293,14 @@ class TestSafeNotePath(unittest.TestCase):
                     _safe_note_path(tmpdir, "escape", "foo")
             finally:
                 import shutil
+
                 shutil.rmtree(sibling, ignore_errors=True)
 
 
 def _resolve(path: str) -> os.PathLike[str]:
     """Resolve a path to its absolute form (helper for assertions)."""
     import pathlib
+
     return pathlib.Path(path).resolve()
 
 
@@ -394,6 +400,7 @@ class TestWriteAndReviewNotePathSafety(unittest.TestCase):
                 self.assertEqual(os.listdir(sibling), [])
             finally:
                 import shutil
+
                 shutil.rmtree(sibling, ignore_errors=True)
 
     def test_symlink_escape_blocked(self):
@@ -416,9 +423,11 @@ class TestWriteAndReviewNotePathSafety(unittest.TestCase):
                     self.skipTest("symlink creation requires privileges on this Windows install")
                 finally:
                     import shutil
+
                     shutil.rmtree(test_target, ignore_errors=True)
             finally:
                 import shutil
+
                 shutil.rmtree(test_dir, ignore_errors=True)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -433,7 +442,61 @@ class TestWriteAndReviewNotePathSafety(unittest.TestCase):
                 self.assertEqual(os.listdir(sibling), [])
             finally:
                 import shutil
+
                 shutil.rmtree(sibling, ignore_errors=True)
+
+
+def _review_run_result(text: str):
+    """Generator mimicking SubagentRunner.run_task's return protocol."""
+    if False:  # pragma: no cover - generator marker
+        yield None
+    return text
+
+
+class TestWriteAndReviewNoteCancellation(unittest.TestCase):
+    """Cancellation must abort the note pipeline between child runs."""
+
+    def _drive(self, runner, loop):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = ResearchState(notes_dir=tmpdir)
+            gen = write_and_review_note(
+                state=state,
+                genre="general",
+                title="note",
+                content="content",
+                related_notes=[],
+                runner_factory=lambda: runner,
+                loop=loop,
+            )
+            with self.assertRaises(CancellationError):
+                list(gen)
+
+    def test_cancel_after_review_aborts_before_next_child(self):
+        loop = MagicMock()
+        loop._cancelled = threading.Event()
+        calls = []
+
+        class _Runner:
+            def run_task(self, prompt, max_turns=20, silent=False):
+                calls.append(1)
+                if len(calls) == 1:
+                    loop._cancelled.set()  # user cancels during the reviewer
+                    return _review_run_result("PASS - all claims verified")
+                raise AssertionError("pipeline must abort before the next child run")
+
+        self._drive(_Runner(), loop)
+        self.assertEqual(len(calls), 1, "no further child run may start after cancellation")
+
+    def test_child_cancellation_error_propagates(self):
+        """A CancellationError from a child run must not be swallowed as a pipeline failure."""
+        loop = MagicMock()
+        loop._cancelled = threading.Event()
+
+        class _Runner:
+            def run_task(self, prompt, max_turns=20, silent=False):
+                raise CancellationError("cancelled mid child run")
+
+        self._drive(_Runner(), loop)
 
 
 if __name__ == "__main__":

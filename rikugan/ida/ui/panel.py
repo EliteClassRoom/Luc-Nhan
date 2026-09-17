@@ -4,9 +4,8 @@ This module provides IDA Pro theme integration, automatically detecting
 the current color scheme (dark/light) and applying appropriate styling.
 """
 
-from __future__ import annotations
-
 import importlib
+import importlib.util as _importlib_util
 from typing import Any
 
 from rikugan.core.early_log import _early_log, _early_log_crash
@@ -18,8 +17,57 @@ from .actions import RikuganUIHooks
 from .session_controller import IdaSessionController
 from .tools_form import RikuganToolsForm
 
-idaapi = importlib.import_module("idaapi")
-ida_kernwin = importlib.import_module("ida_kernwin")
+# Probe the IDA SDK presence cheaply with ``find_spec`` (does not run
+# module code).  Mirrors ``actions._probe_ida`` so a single import path
+# pattern covers every IDA-host module — Shiboken UAF mitigation on
+# Python ≥ 3.11 (see ``AGENTS.md`` §1).
+_IDA_MODULES_PANEL: tuple[str, ...] = ("idaapi", "ida_kernwin")
+
+
+def _probe_ida_panel() -> bool:
+    for _m in _IDA_MODULES_PANEL:
+        try:
+            spec = _importlib_util.find_spec(_m)
+        except (ValueError, ModuleNotFoundError):
+            continue
+        if spec is None:
+            return False
+    return True
+
+
+_HAS_IDA_PANEL = _probe_ida_panel()
+_ida_panel_loaded = False
+
+
+def _ensure_ida_panel() -> bool:
+    """Import ``idaapi`` / ``ida_kernwin`` and bind them as module attrs.
+
+    Idempotent: subsequent calls are free.  Mirrors ``actions._ensure_ida``.
+    Returns ``_HAS_IDA_PANEL`` so callers can early-out when IDA is absent.
+    """
+    global _ida_panel_loaded
+    if _ida_panel_loaded:
+        return _HAS_IDA_PANEL
+    _ida_panel_loaded = True
+    if not _HAS_IDA_PANEL:
+        return False
+    import sys as _sys
+
+    try:
+        for _m in _IDA_MODULES_PANEL:
+            setattr(_sys.modules[__name__], _m, importlib.import_module(_m))
+        return True
+    except ImportError:
+        return False
+
+
+# Bind the names eagerly when IDA is present so the rest of this file
+# (class bodies, type annotations) can refer to ``idaapi`` etc. without
+# going through ``__getattr__``.  When IDA is absent, the names remain
+#   unbound and the ``if _HAS_IDA_PANEL:`` block below is skipped entirely.
+if _ensure_ida_panel():
+    idaapi = importlib.import_module("idaapi")  # type: ignore[assignment]
+    ida_kernwin = importlib.import_module("ida_kernwin")
 
 
 def _form_to_qt_widget(plugin_form_cls: Any, form: Any) -> Any:
