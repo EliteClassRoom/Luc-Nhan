@@ -200,6 +200,12 @@ _KNOWN_GLM_MODELS: dict[str, GLMModelMetadata] = {
         reasoning_effort=False,
     ),
 }
+# Unknown ``glm-5.x`` IDs inherit the GLM-5.2 contract (effort control,
+# streamed tool args, 1M window): Z.AI ships new coding-plan models faster
+# than this dict can track, and 5.x family members share the API contract.
+def _glm5_family_metadata() -> GLMModelMetadata:
+    return _KNOWN_GLM_MODELS["glm-5.2"]
+
 
 #: Conservative defaults for unknown GLM model IDs — reasoning content is
 #: assumed (the user picked GLM), but streamed tool arguments and
@@ -220,6 +226,8 @@ def get_glm_model_metadata(model_id: str) -> GLMModelMetadata:
     still build a safe request without silently adding fields the upstream
     endpoint may reject.
     """
+    if model_id.startswith("glm-5."):
+        return _KNOWN_GLM_MODELS.get(model_id) or _glm5_family_metadata()
     return _KNOWN_GLM_MODELS.get(model_id, _UNKNOWN_GLM_METADATA)
 
 
