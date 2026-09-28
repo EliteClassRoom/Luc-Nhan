@@ -188,12 +188,12 @@ class TestSilenceSDKDebugLoggers(unittest.TestCase):
     """Regression: ``silence_sdk_debug_loggers`` must raise the level on
     chat-halting SDK loggers so an OpenAI request that contains non-ASCII
     content does not crash the logging thread with UnicodeEncodeError on
-    Windows cp1252 streams. The test snapshots only the four SDK logger
-    levels so it does not interfere with the rikugan.core.logging
+    Windows cp1252 streams. The test snapshots only the SDK logger
+    levels it touches so it does not interfere with the rikugan.core.logging
     singleton, the Rikugan logger's handler set, or any sibling tests.
     """
 
-    _SDK_LOGGERS = ("openai", "openai._base_client", "httpx", "httpcore")
+    _SDK_LOGGERS = ("openai", "openai._base_client", "httpx", "httpcore", "mcp.client.stdio")
 
     def setUp(self):
         self._prior_levels = {
@@ -217,6 +217,15 @@ class TestSilenceSDKDebugLoggers(unittest.TestCase):
 
         silence_sdk_debug_loggers()
         self.assertEqual(logging.getLogger("httpx").level, logging.WARNING)
+
+    def test_mcp_stdio_logger_level_is_critical(self):
+        """The mcp SDK tolerates non-JSON stdout lines (server startup
+        banners) by design but logs them with a full traceback — suppressed
+        at CRITICAL; real failures surface via Rikugan's own errors."""
+        from rikugan.core.logging import silence_sdk_debug_loggers
+
+        silence_sdk_debug_loggers()
+        self.assertEqual(logging.getLogger("mcp.client.stdio").level, logging.CRITICAL)
 
     def test_helper_is_idempotent(self):
         from rikugan.core.logging import silence_sdk_debug_loggers
