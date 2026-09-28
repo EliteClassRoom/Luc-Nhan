@@ -158,7 +158,7 @@ class TestSplitFrontmatter(unittest.TestCase):
 
     def test_empty_body(self):
         text = "---\nname: Test\n---\n"
-        fm, body = _split_frontmatter(text)
+        fm, _body = _split_frontmatter(text)
         self.assertIn("name: Test", fm)
 
 
@@ -258,7 +258,7 @@ class TestSkillRegistry(unittest.TestCase):
         reg = SkillRegistry(self.tmpdir)
         reg.discover()
 
-        skill, remaining = reg.resolve_skill_invocation("just a normal message")
+        skill, _remaining = reg.resolve_skill_invocation("just a normal message")
         self.assertIsNone(skill)
 
     def test_summary_for_prompt_strips_injection_markers(self):

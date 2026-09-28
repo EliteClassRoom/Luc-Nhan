@@ -20,7 +20,7 @@ from rikugan.core.types import (
     Role,
     ToolCall,
     ToolResult,
-)  # noqa: E402
+)
 
 
 def _make_provider():
@@ -683,7 +683,7 @@ class TestOpenAIModelIdPrefixes(unittest.TestCase):
     def test_glm_provider_keeps_glm_prefix(self):
         from rikugan.providers.glm_provider import GLMProvider
 
-        stub = GLMProvider(api_key="x", model="glm-5.2")
+        GLMProvider(api_key="x", model="glm-5.2")
         self.assertIn("glm-", GLMProvider._MODEL_ID_PREFIXES)
 
     def test_glm_live_fetch_keeps_glm_ids(self):

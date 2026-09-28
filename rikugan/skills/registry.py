@@ -6,8 +6,8 @@ import os
 
 from ..core.config import RikuganConfig
 from ..core.logging import log_debug, log_info
-from .loader import SkillDefinition, discover_skills
 from ..core.sanitize import strip_injection_markers
+from .loader import SkillDefinition, discover_skills
 
 
 class SkillRegistry:

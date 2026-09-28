@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import sys
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -22,7 +21,7 @@ class _FakeManager:
         self.spawn_calls: list[dict] = []
         self.register_calls: list[dict] = []
 
-    def spawn(self, **kwargs):  # noqa: ANN001 - signature mirrors SubagentManager.spawn
+    def spawn(self, **kwargs):
         self.spawn_calls.append(kwargs)
         return "fake-id"
 

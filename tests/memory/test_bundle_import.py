@@ -286,7 +286,7 @@ class TestBundleImport:
         # Rewrite a member's contents in place so its declared sha256 no
         # longer matches reality.
         with zipfile.ZipFile(bundle, "r") as zf:
-            manifest = zf.read("manifest.json").decode("utf-8")
+            zf.read("manifest.json").decode("utf-8")
             first_member = next(
                 n for n in zf.namelist() if n.startswith("records/") and n.endswith(".jsonl")
             )
@@ -302,7 +302,7 @@ class TestBundleImport:
                     data = tampered
                 dst.writestr(item, data)
         # The manifest sha no longer matches the tampered member.
-        with pytest.raises(ValueError, match="sha256|mismatch|tamper|integrity"):
+        with pytest.raises(ValueError, match=r"sha256|mismatch|tamper|integrity"):
             import_workspace_bundle(tampered_path, target_repo)
         target_store.close()
 
@@ -323,7 +323,7 @@ class TestBundleImport:
                 f for f in manifest_data["files"] if f["name"].startswith("records/")
             )
             target_entry["uncompressed_size"] = 1
-            original_manifest = src.read("manifest.json")
+            src.read("manifest.json")
         # Rebuild zip with the doctored manifest.
         doctored_path = tmp_path / "oversize.zip"
         with zipfile.ZipFile(bundle, "r") as src, zipfile.ZipFile(
@@ -334,7 +334,7 @@ class TestBundleImport:
                     dst.writestr(item, _json.dumps(manifest_data).encode("utf-8"))
                 else:
                     dst.writestr(item, src.read(item.filename))
-        with pytest.raises(ValueError, match="size|mismatch|exceeds"):
+        with pytest.raises(ValueError, match=r"size|mismatch|exceeds"):
             import_workspace_bundle(doctored_path, target_repo)
         target_store.close()
         target_store.close()

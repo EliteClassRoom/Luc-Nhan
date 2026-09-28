@@ -22,7 +22,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.types import LLMRequestContext, Message, Role, StreamChunk  # noqa: E402
+from rikugan.core.types import LLMRequestContext, Message, Role, StreamChunk
 
 # ---------------------------------------------------------------------------
 # Default model and builtin metadata

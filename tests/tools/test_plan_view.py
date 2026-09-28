@@ -10,7 +10,7 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui.plan_view import PlanStepWidget, PlanView  # noqa: E402
+from rikugan.ui.plan_view import PlanStepWidget, PlanView
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -179,7 +179,7 @@ class ToolRegistry:
         with self._lock:
             return list(self._tools.values())
 
-    def read_only_view(self) -> "ToolRegistry":
+    def read_only_view(self) -> ToolRegistry:
         """Return a new registry that exposes only the non-mutating tools.
 
         The returned registry shares the underlying dispatch_wrapper
@@ -200,7 +200,7 @@ class ToolRegistry:
             view._capabilities.update(self._capabilities)
         return view
 
-    def allowlist(self, names: list[str]) -> "ToolRegistry":
+    def allowlist(self, names: list[str]) -> ToolRegistry:
         """Return a new registry exposing only the requested tool names.
 
         Mirrors :meth:`read_only_view` for the per-subagent tool filter
@@ -228,7 +228,7 @@ class ToolRegistry:
                 log_debug(f"ToolRegistry.allowlist: requested tool {name!r} not registered")
         return view
 
-    def without_approval_gated_tools(self) -> "ToolRegistry":
+    def without_approval_gated_tools(self) -> ToolRegistry:
         """Return a new registry excluding tools that need interactive approval.
 
         Unattended subagents (bulk-renamer deep workers, SubagentManager

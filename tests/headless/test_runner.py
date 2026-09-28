@@ -13,7 +13,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.headless.runner import (  # noqa: E402 — mocks must install first
+from rikugan.headless.runner import (
     EXIT_APPROVAL_REQUIRED,
     EXIT_CANCELLED,
     EXIT_CONFIG_ERROR,

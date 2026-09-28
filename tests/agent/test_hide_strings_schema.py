@@ -22,13 +22,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)
 
-from tests.mocks.ida_mock import install_ida_mocks  # noqa: E402
+from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig  # noqa: E402
-from rikugan.core.types import Message, Role, ToolCall, ToolResult  # noqa: E402
-
+from rikugan.core.config import RikuganConfig
+from rikugan.core.types import ToolCall
 
 HIDDEN_TOOLS = ("list_strings", "search_strings")
 

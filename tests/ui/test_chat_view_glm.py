@@ -51,9 +51,9 @@ try:
 except ImportError:
     pass
 
-from rikugan.agent.turn import TurnEvent, TurnEventType  # noqa: E402
-from rikugan.core.types import Message, Role  # noqa: E402
-from rikugan.ui.chat_view import ChatView, MessageSpec, RestoreWorker  # noqa: E402
+from rikugan.agent.turn import TurnEvent, TurnEventType
+from rikugan.core.types import Message, Role
+from rikugan.ui.chat_view import ChatView, MessageSpec, RestoreWorker
 
 
 class _ChatViewHarness:

@@ -299,7 +299,6 @@ below are mandatory:
 
 - Confidence **> 0.90** (decompile + xrefs + strings agree): call
   `rename_function` directly. No new evidence comment required.
-# pi-lens-ignore: RUF001
 - Confidence **0.70 – 0.90**: rename only together with a
   repeatable function-level evidence comment. The exact order is:
   1. Call `get_function_comment(address, repeatable=True)` to read.

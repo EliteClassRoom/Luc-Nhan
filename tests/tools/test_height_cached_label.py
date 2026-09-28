@@ -20,8 +20,8 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui import message_widgets as _mw  # noqa: E402
-from rikugan.ui.message_widgets import (  # noqa: E402
+from rikugan.ui import message_widgets as _mw
+from rikugan.ui.message_widgets import (
     AssistantMessageWidget,
     _HeightCachedLabel,
 )

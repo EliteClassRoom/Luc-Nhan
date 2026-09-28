@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
-import threading
 import tempfile
+import threading
 import unittest
 from unittest.mock import MagicMock
 
@@ -344,7 +344,7 @@ class TestWriteAndReviewNotePathSafety(unittest.TestCase):
         """../../etc gets sanitized to 'etc' — file ends up under notes_dir."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = ResearchState(notes_dir=tmpdir)
-            ev, exc = self._drive_one_step(state, "../../etc", "evil", "content")
+            _ev, exc = self._drive_one_step(state, "../../etc", "evil", "content")
             # Function should NOT raise — the slugify layer sanitized
             # the input into a safe name.
             self.assertIsNone(exc)
@@ -360,7 +360,7 @@ class TestWriteAndReviewNotePathSafety(unittest.TestCase):
         """../../../etc/passwd gets sanitized to 'etcpasswd' — file under notes_dir."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = ResearchState(notes_dir=tmpdir)
-            ev, exc = self._drive_one_step(state, "networking", "../../../etc/passwd", "content")
+            _ev, exc = self._drive_one_step(state, "networking", "../../../etc/passwd", "content")
             self.assertIsNone(exc)
             files = []
             for root, _, fnames in os.walk(tmpdir):
@@ -374,7 +374,7 @@ class TestWriteAndReviewNotePathSafety(unittest.TestCase):
         """Null bytes are an unambiguous attack — they must be rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = ResearchState(notes_dir=tmpdir)
-            ev, exc = self._drive_one_step(state, "networking\x00evil", "title", "content")
+            _ev, exc = self._drive_one_step(state, "networking\x00evil", "title", "content")
             self.assertIsInstance(exc, ValueError)
 
     def test_no_file_written_outside_notes_dir(self):
@@ -393,7 +393,7 @@ class TestWriteAndReviewNotePathSafety(unittest.TestCase):
                 ]
                 for genre, title in malicious:
                     try:
-                        ev, exc = self._drive_one_step(state, genre, title, "x")
+                        _ev, _exc = self._drive_one_step(state, genre, title, "x")
                     except Exception:
                         pass
                 # Sibling must be empty — no traversal succeeded
@@ -435,7 +435,7 @@ class TestWriteAndReviewNotePathSafety(unittest.TestCase):
             try:
                 os.symlink(sibling, os.path.join(tmpdir, "escape"))
                 state = ResearchState(notes_dir=tmpdir)
-                ev, exc = self._drive_one_step(state, "escape", "foo", "x")
+                _ev, exc = self._drive_one_step(state, "escape", "foo", "x")
                 self.assertIsInstance(exc, ValueError)
                 self.assertIn("traversal", str(exc).lower())
                 # Sibling must remain empty

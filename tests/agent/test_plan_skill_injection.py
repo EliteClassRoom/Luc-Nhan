@@ -52,7 +52,7 @@ class TestPlanSkillNoRewrite(unittest.TestCase):
 
     def test_trigger_matched_plan_skill_unrewritten(self):
         loop = self._loop_with(_FakeSkill("deobfuscation", "plan"))
-        msg, skill = AgentLoop._resolve_skill(loop, "please help, triggerword here")
+        msg, _skill = AgentLoop._resolve_skill(loop, "please help, triggerword here")
         self.assertEqual(msg, "please help, triggerword here")
         self.assertNotIn("SKILL BODY CONTENT", msg)
 

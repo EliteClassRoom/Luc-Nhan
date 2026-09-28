@@ -12,7 +12,7 @@ ensure_pyside6_stubs()
 # Ensure the real module is loaded even if another test stubbed it.
 sys.modules.pop("rikugan.ui.theme.widgets_mutation", None)
 
-from rikugan.ui.theme.widgets_mutation import (  # noqa: E402
+from rikugan.ui.theme.widgets_mutation import (
     get_tool_result_editor_style,
 )
 

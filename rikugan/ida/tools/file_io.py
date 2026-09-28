@@ -81,7 +81,7 @@ def _resolve_under_root(parts: list[str]) -> Path:
     try:
         common = os.path.commonpath([str(root), str(candidate)])
     except ValueError as exc:
-        raise _FileToolError(f"path is not within the binary folder: {exc}")
+        raise _FileToolError(f"path is not within the binary folder: {exc}") from exc
     if common != str(root):
         raise _FileToolError("path escapes the analyzed binary folder")
     return candidate
@@ -101,7 +101,7 @@ def _ensure_parent_no_symlink(parent: Path) -> None:
     try:
         common = os.path.commonpath([str(root), str(parent)])
     except ValueError as exc:
-        raise _FileToolError(f"path is not within the binary folder: {exc}")
+        raise _FileToolError(f"path is not within the binary folder: {exc}") from exc
     if common != str(root):
         raise _FileToolError("path escapes the analyzed binary folder")
 
@@ -117,11 +117,11 @@ def _ensure_parent_no_symlink(parent: Path) -> None:
         else:
             try:
                 next_path.mkdir(parents=False, exist_ok=False)
-            except FileExistsError:
+            except FileExistsError as exc:
                 if next_path.is_symlink():
-                    raise _FileToolError(f"refusing symlink parent component: {next_path}")
+                    raise _FileToolError(f"refusing symlink parent component: {next_path}") from exc
             except OSError as exc:
-                raise _FileToolError(f"failed to create parent directory: {exc}")
+                raise _FileToolError(f"failed to create parent directory: {exc}") from exc
         cursor = next_path
 
 

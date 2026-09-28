@@ -234,7 +234,7 @@ class TestFinalizeExploreMemory(unittest.TestCase):
             self.assertIn("evidence=ok", kwargs["fact"])
             self.assertIn(mem_id, kwargs["fact"])
 
-    def test_id_alignment_after_correction(self):
+    def test_id_alignment_after_content_correction(self):
         """Plan §5.43 alignment: when review rewrites mem.content,
         the raw-store memory id and the central-index id must both
         equal the original candidate id. Regression-guard for the

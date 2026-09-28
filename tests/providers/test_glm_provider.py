@@ -34,11 +34,11 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from tests import purge_rikugan_stubs  # noqa: E402
+from tests import purge_rikugan_stubs
 
 purge_rikugan_stubs()
 
-from rikugan.core.types import (  # noqa: E402
+from rikugan.core.types import (
     LLMRequestContext,
     Message,
     Role,

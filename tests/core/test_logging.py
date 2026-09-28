@@ -16,7 +16,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.logging import (  # noqa: E402
+from rikugan.core.logging import (
     IDAHandler,
     _FlushFileHandler,
     get_logger,
@@ -402,8 +402,8 @@ class TestProviderBoundarySilencesSDKLoggers(unittest.TestCase):
 # Structured attempt logging (telemetry allowlist)
 # ---------------------------------------------------------------------------
 
-from rikugan.core.log_sinks import _JSONFormatter  # noqa: E402
-from rikugan.core.logging import log_structured  # noqa: E402
+from rikugan.core.log_sinks import _JSONFormatter
+from rikugan.core.logging import log_structured
 
 
 def test_json_formatter_includes_allowlisted_attempt_event():
@@ -444,8 +444,8 @@ def test_structured_strings_strip_role_markers_and_surrogates():
 # Telemetry integration: one allowlisted record per logical attempt
 # ---------------------------------------------------------------------------
 
-from rikugan.agent.modes.turn_helpers import execute_single_turn  # noqa: E402
-from rikugan.core.types import (  # noqa: E402
+from rikugan.agent.modes.turn_helpers import execute_single_turn
+from rikugan.core.types import (
     LLMRequestContext,
     Message,
     ModelInfo,
@@ -455,10 +455,10 @@ from rikugan.core.types import (  # noqa: E402
     TokenUsage,
     TurnDisposition,
 )
-from rikugan.providers.base import LLMProvider  # noqa: E402
-from rikugan.state.session import SessionState  # noqa: E402
-from rikugan.tools.base import ParameterSchema, ToolDefinition  # noqa: E402
-from rikugan.tools.registry import ToolRegistry  # noqa: E402
+from rikugan.providers.base import LLMProvider
+from rikugan.state.session import SessionState
+from rikugan.tools.base import ParameterSchema, ToolDefinition
+from rikugan.tools.registry import ToolRegistry
 
 # Reasoning payload large enough to trip the hard ceiling.
 _DEGENERATED_REASONING = "outputting read_bytes tool now\n" * 3500
@@ -641,7 +641,7 @@ def test_normal_turn_logs_single_content_free_record():
 # Telemetry for error/cancellation paths (one record per started attempt)
 # ---------------------------------------------------------------------------
 
-from rikugan.core.errors import CancellationError, ProviderError  # noqa: E402
+from rikugan.core.errors import CancellationError, ProviderError
 
 
 class _ErroringGLMProvider(_ScriptedGLMProvider):

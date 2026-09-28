@@ -137,9 +137,9 @@ class TestCancelFlow(unittest.TestCase):
 
     def test_cancelled_event_reaches_subprocess(self) -> None:
         """Setting ``loop._cancelled`` must be observable by the subprocess bridge."""
-        from rikugan.core.errors import CancellationError
         from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
         from rikugan.agent.modes.a2a import run_a2a_mode
+        from rikugan.core.errors import CancellationError
 
         cancel = threading.Event()
         cancel.set()  # pre-cancelled

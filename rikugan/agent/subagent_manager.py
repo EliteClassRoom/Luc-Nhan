@@ -183,7 +183,7 @@ class SubagentManager:
         )
         return agent_id
 
-    def _finalize_cancellation(self, info: "SubagentInfo") -> None:
+    def _finalize_cancellation(self, info: SubagentInfo) -> None:
         """Mark a subagent CANCELLED and emit the cancellation event once.
 
         Acts as the single source of truth for status transitions to

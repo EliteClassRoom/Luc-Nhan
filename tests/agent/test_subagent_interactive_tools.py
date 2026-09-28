@@ -30,9 +30,9 @@ install_ida_mocks()
 
 from rikugan import constants
 from rikugan.agent.loop import AgentLoop
+from rikugan.agent.mutation import MutationRecord
 from rikugan.agent.subagent import SubagentRunner
 from rikugan.agent.turn import TurnEventType
-from rikugan.agent.mutation import MutationRecord
 from rikugan.core.config import RikuganConfig
 from rikugan.core.types import (
     ModelInfo,

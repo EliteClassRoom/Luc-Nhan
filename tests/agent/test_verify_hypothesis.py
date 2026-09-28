@@ -432,7 +432,7 @@ class TestVerifierReadOnlyToolView(unittest.TestCase):
     """
 
     def _build_loop_with_tools(self) -> AgentLoop:
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from rikugan.tools.base import ToolDefinition
         from rikugan.tools.registry import ToolRegistry
 
         loop = AgentLoop.__new__(AgentLoop)
@@ -479,7 +479,7 @@ class TestVerifierReadOnlyToolView(unittest.TestCase):
         )
 
     def test_read_only_view_omits_every_mutating_definition(self):
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from rikugan.tools.base import ToolDefinition
         from rikugan.tools.registry import ToolRegistry
 
         reg = ToolRegistry()
@@ -508,7 +508,7 @@ class TestVerifierReadOnlyToolView(unittest.TestCase):
             self.assertNotIn(n, view_names)
 
     def test_read_only_view_isolated_from_parent(self):
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from rikugan.tools.base import ToolDefinition
         from rikugan.tools.registry import ToolRegistry
 
         reg = ToolRegistry()
