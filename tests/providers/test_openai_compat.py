@@ -132,3 +132,75 @@ def test_compat_default_constructor_never_leaks_env_key_to_sdk(monkeypatch):
     p = OpenAICompatProvider(api_key="", api_base="")
     p._get_client()
     assert fake.OpenAI.call_args.kwargs["api_key"] == "no-key"
+
+
+# ---------------------------------------------------------------------------
+# _ENDPOINT_LAG_MODELS: documented models missing from /v1/models
+# ---------------------------------------------------------------------------
+
+#: The exact payload ``GET https://api.minimax.io/v1/models`` returned —
+#: eight ids, none of them the M3.1 preview.
+_MINIMAX_LISTING = [
+    "MiniMax-M3",
+    "MiniMax-M2.7",
+    "MiniMax-M2.7-highspeed",
+    "MiniMax-M2.5",
+    "MiniMax-M2.5-highspeed",
+    "MiniMax-M2.1",
+    "MiniMax-M2.1-highspeed",
+    "MiniMax-M2",
+]
+
+
+def _compat_with_listing(ids, api_base="https://api.minimax.io/v1"):
+    from types import SimpleNamespace
+
+    from rikugan.providers.openai_compat import OpenAICompatProvider
+
+    p = OpenAICompatProvider(api_key="sk-test", api_base=api_base, model="MiniMax-M3")
+    p._client = SimpleNamespace(
+        models=SimpleNamespace(list=lambda: SimpleNamespace(data=[SimpleNamespace(id=i) for i in ids]))
+    )
+    return p
+
+
+def test_lag_model_merged_into_live_minimax_listing():
+    """M3.1 Flash Preview is served but unlisted, so it must appear
+    alongside the eight ids the endpoint does advertise."""
+    models = _compat_with_listing(_MINIMAX_LISTING).list_models()
+    ids = [m.id for m in models]
+    assert "MiniMax-M3.1-Flash-Preview" in ids
+    assert "MiniMax-M3" in ids
+    assert len(ids) == len(_MINIMAX_LISTING) + 1
+    m31 = next(m for m in models if m.id == "MiniMax-M3.1-Flash-Preview")
+    assert m31.context_window == 1_000_000
+    assert m31.max_output_tokens == 524_288
+    assert m31.supports_vision is True
+
+
+def test_lag_model_never_duplicates_an_advertised_id():
+    """Once MiniMax ships M3.1 in ``/v1/models``, the live entry wins —
+    the lag table must not shadow or duplicate it."""
+    listed = [*_MINIMAX_LISTING, "MiniMax-M3.1-Flash-Preview"]
+    models = _compat_with_listing(listed).list_models()
+    ids = [m.id for m in models]
+    assert ids.count("MiniMax-M3.1-Flash-Preview") == 1
+    assert len(ids) == len(listed)
+
+
+def test_lag_models_are_scoped_to_the_matching_host():
+    """A different OpenAI-compatible endpoint must not inherit MiniMax
+    model ids from the lag table."""
+    models = _compat_with_listing(["my-model"], api_base="https://api.example.com/v1").list_models()
+    assert [m.id for m in models] == ["my-model"]
+
+
+def test_lag_model_reachable_when_endpoint_fails():
+    """When ``/v1/models`` errors out entirely, the lag entries keep the
+    plan-gated model selectable instead of collapsing to one echo entry."""
+    from rikugan.providers.openai_compat import OpenAICompatProvider
+
+    p = OpenAICompatProvider(api_key="sk-test", api_base="https://api.minimax.io/v1", model="MiniMax-M3")
+    p._client = None  # no openai SDK installed -> list_models raises, caught
+    p._get_client = lambda: (_ for _ in ()).throw(RuntimeError("endpoint down"))
+    assert "MiniMax-M3.1-Flash-Preview" in [m.id for m in p.list_models()]

@@ -327,6 +327,13 @@ class MiniMaxProvider(AnthropicProvider):
     # so we maintain it locally and resolve it by model id.  Values follow the
     # MiniMax Anthropic-compatible Messages API documentation.
     _MODEL_LIMITS: ClassVar[dict[str, dict[str, int]]] = {
+        "MiniMax-M3.1-Flash-Preview": {
+            # M3.1 Flash Preview — Token Plan / MiniMax Code only.  MiniMax
+            # documents a 1M context window and publishes no separate output
+            # cap for the preview, so it inherits the M3 contract.
+            "context_window": 1_000_000,
+            "max_output_tokens": 524_288,
+        },
         "MiniMax-M3": {
             "context_window": 1_000_000,
             "max_output_tokens": 524_288,
@@ -362,18 +369,32 @@ class MiniMaxProvider(AnthropicProvider):
     }
 
     @classmethod
+    def _is_m3_family(cls, model_id: str) -> bool:
+        """True for the M3 generation (``MiniMax-M3``, ``MiniMax-M3.1-*``, ...).
+
+        The whole family is multimodal with a 1M context window and supports
+        ``thinking: {"type": "adaptive"}``; M2.x is text-only with
+        permanently-on thinking.  Matching on the family prefix means a
+        newer M3 variant MiniMax ships ahead of ``_MODEL_LIMITS`` still
+        inherits the M3 contract instead of falling back to M2.x.
+        """
+        return (model_id or "").strip().lower().startswith("minimax-m3")
+
+    @classmethod
     def _limits_for_model(cls, model_id: str) -> tuple[int, int]:
         """Return ``(context_window, max_output_tokens)`` for a MiniMax model id.
 
         MiniMax's /anthropic/v1/models endpoint only returns id/display_name
         metadata — no context or output-token limits — so we resolve them from
-        the local ``_MODEL_LIMITS`` table.  Unknown ids fall back to the
-        documented M2.x defaults.
+        the local ``_MODEL_LIMITS`` table.  Unknown M3-family ids inherit the
+        M3 contract; anything else falls back to the documented M2.x
+        defaults.
         """
-        if not model_id:
+        limits = cls._MODEL_LIMITS.get(model_id) if model_id else None
+        if limits is None and cls._is_m3_family(model_id):
+            limits = cls._MODEL_LIMITS["MiniMax-M3"]
+        if limits is None:
             limits = cls._MODEL_LIMITS["MiniMax-M2.5"]
-        else:
-            limits = cls._MODEL_LIMITS.get(model_id) or cls._MODEL_LIMITS["MiniMax-M2.5"]
         return limits["context_window"], limits["max_output_tokens"]
 
     def __init__(
@@ -447,10 +468,11 @@ class MiniMaxProvider(AnthropicProvider):
                 context_window=ctx,
                 max_output_tokens=max_out,
                 supports_tools=True,
-                supports_vision=model_id == "MiniMax-M3",  # M3 multimodal per docs; M2.x text-only
+                supports_vision=MiniMaxProvider._is_m3_family(model_id),  # M3 family multimodal; M2.x text-only
             )
 
         return [
+            _make("MiniMax-M3.1-Flash-Preview", "MiniMax M3.1 Flash Preview"),
             _make("MiniMax-M3", "MiniMax M3"),
             _make("MiniMax-M2.7", "MiniMax M2.7"),
             _make("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
@@ -479,7 +501,7 @@ class MiniMaxProvider(AnthropicProvider):
                         context_window=ctx,
                         max_output_tokens=max_out,
                         supports_tools=True,
-                        supports_vision=model_id == "MiniMax-M3",
+                        supports_vision=self._is_m3_family(model_id),
                     )
                 )
             return models or self._builtin_models()
@@ -498,7 +520,7 @@ class MiniMaxProvider(AnthropicProvider):
     ) -> dict[str, Any]:
         """Build request kwargs, stripping cache_control (not supported by MiniMax).
 
-        Additionally enables automatic ``thinking`` for ``MiniMax-M3`` (per the
+        Additionally enables automatic ``thinking`` for the M3 family (per the
         MiniMax Anthropic-compatible API docs: ``thinking: {"type": "adaptive"}``).
         M2.x models already have thinking permanently enabled and cannot disable
         it, so no explicit ``thinking`` payload is added for them.
@@ -539,9 +561,12 @@ class MiniMaxProvider(AnthropicProvider):
             if isinstance(tool, dict):
                 tool.pop("cache_control", None)
 
-        # MiniMax-M3 thinking: enabled automatically.  The MiniMax docs only
-        # describe the ``adaptive`` mode for M3 — no manual token budget.
-        if (self.model or "").strip().lower() == "minimax-m3":
+        # MiniMax M3-family thinking: enabled automatically.  The docs
+        # describe ``adaptive`` for the whole family, and M3.1-Flash-Preview
+        # always thinks — sending ``disabled`` returns 400 — so ``adaptive``
+        # is safe for every M3 id.  M2.x thinking is permanently on and
+        # cannot be disabled, so nothing is added for them.
+        if self._is_m3_family(self.model):
             kwargs["thinking"] = {"type": "adaptive"}
 
         return kwargs
