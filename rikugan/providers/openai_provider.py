@@ -197,7 +197,14 @@ class OpenAIProvider(LLMProvider):
     #: sent to a different host as a bearer credential.
     _ALLOW_OPENAI_ENV_KEY: bool = True
 
-    def __init__(self, api_key: str = "", api_base: str = "", model: str = "gpt-4o", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        api_key: str = "",
+        api_base: str = "",
+        model: str = "gpt-4o",
+        extra: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         if not api_key and self._ALLOW_OPENAI_ENV_KEY:
             api_key = os.environ.get("OPENAI_API_KEY", "")
         super().__init__(api_key=api_key, api_base=api_base, model=model)
