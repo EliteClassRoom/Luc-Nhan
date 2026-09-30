@@ -123,6 +123,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counters instead of failing: the missing keys coerce to defaults via
   `TokenUsage()` and `int`, and `last_prompt_tokens` falls back to
   `0` rather than rejecting the session.
+- **`ask_user` choice buttons now appear for every question.** Some
+  models send `options` shaped in ways the agent loop did not handle,
+  so the question rendered with no usable buttons. When a model sent
+  `options` as a bare string the loop iterated it character by
+  character — a question meant to offer "Yes" rendered three
+  meaningless buttons labelled `Y`, `e` and `s` and the intended
+  choice was unrecoverable. When a model sent options as objects
+  (`{"label": "Yes"}`) the `isinstance(o, str)` filter discarded
+  every entry, so the question rendered with **no buttons at all**
+  and the user had nothing to click — the literal "doesn't display
+  the option" symptom. Normalization now happens at the LLM-argument
+  boundary in `_handle_ask_user_tool` (`rikugan/agent/loop.py`)
+  before the list reaches `UserQuestionWidget`: a lone string becomes
+  a single choice, dicts contribute their `label` (falling back to
+  their string form), whitespace-only and duplicate entries are
+  dropped, and non-`list` containers are flattened into one. LLM
+  tool-call arguments are untrusted input derived from model output
+  over hostile binary content, so malformed shapes must never raise;
+  a question whose options all normalize away still falls back to
+  free-text answering (text input stays unlocked) instead of leaving
+  the user stuck.
 
 ## [1.13.2] - 2026-07-20
 

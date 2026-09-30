@@ -344,6 +344,168 @@ def _sanitize_save_memory_category(raw: object) -> str:
     return text or "general"
 
 
+# Keys we look for, in priority order, when an ``ask_user`` option arrives as
+# a dict/object. The UI's ``UserQuestionWidget`` only knows ``label``, but
+# some model providers and tool-call wrappers serialize choice lists using
+# ``text`` / ``value`` / ``name`` instead — we accept any of them so the
+# user always sees buttons instead of an empty panel. Order matters: the
+# first key that yields a non-empty string wins.
+_ASK_USER_OPTION_LABEL_KEYS: tuple[str, ...] = ("label", "text", "value", "name")
+
+
+def _extract_ask_user_option_label(item: object) -> str | None:
+    """Return a usable label string for one ``ask_user`` option, or ``None``.
+
+    Accepts ``str`` (returned stripped — empty/whitespace drops to ``None``),
+    ``dict``/mapping (looks up ``label`` → ``text`` → ``value`` → ``name``
+    in order), and arbitrary objects with a ``label``/``text``/``value``/
+    ``name`` attribute (for dataclass-style payloads some tool-call adapters
+    produce). Anything else is dropped: callers MUST render a real button
+    label, never a raw Python ``repr`` like ``{'label': 'Yes'}``.
+
+    The function never raises — malformed inputs are treated as ``None``
+    and dropped by the caller.
+    """
+    try:
+        if isinstance(item, str):
+            stripped = item.strip()
+            return stripped or None
+        if isinstance(item, (dict,)):
+            for key in _ASK_USER_OPTION_LABEL_KEYS:
+                if key in item:
+                    value = item[key]
+                    if isinstance(value, str):
+                        stripped = value.strip()
+                        if stripped:
+                            return stripped
+                    elif value is not None and not isinstance(
+                        value, (list, tuple, dict, set)
+                    ):
+                        # Primitive scalar (int / float / bool) — stringify so
+                        # ``{"value": 1}`` still surfaces as "1". Nested
+                        # containers are deliberately rejected: a label whose
+                        # value is itself a dict/list would otherwise render
+                        # as a raw Python ``repr`` (e.g. ``{'nested': 'deep'}``),
+                        # which is never useful as a button label.
+                        text = str(value).strip()
+                        if text:
+                            return text
+            return None
+        # Object with attributes (dataclass, pydantic, SimpleNamespace, …).
+        # We probe attribute access so adapters that produce typed objects
+        # rather than dicts still work.
+        for key in _ASK_USER_OPTION_LABEL_KEYS:
+            value = getattr(item, key, None)
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped:
+                    return stripped
+            elif value is not None and not isinstance(
+                value, (list, tuple, dict, set)
+            ):
+                text = str(value).strip()
+                if text:
+                    return text
+    except Exception:  # noqa: BLE001 — see docstring; must never raise.
+        return None
+    return None
+
+
+def _normalize_ask_user_options(raw: object) -> list[str]:
+    """Coerce an ``ask_user`` ``options`` argument into a clean ``list[str]``.
+
+    LLM tool-call arguments are untrusted input: a model can (and routinely
+    does) emit shapes the JSON schema never asked for. The historical
+    handler accepted only ``list[str]`` and silently truncated everything
+    else, which produced two user-visible defects:
+
+      * a bare ``options="Yes"`` was iterated character-by-character and
+        surfaced as three buttons labelled ``Y`` / ``e`` / ``s``;
+      * an ``options=[{"label": "Yes"}, …]`` payload was dropped entirely
+        because dicts failed the ``isinstance(o, str)`` filter, leaving
+        the user with zero buttons and an input field that the panel had
+        not locked.
+
+    This helper normalises every shape the brief calls out into a
+    ``list[str]`` of button labels, never raises, and preserves first-
+    occurrence order while de-duplicating case-insensitively (so a model
+    that emits ``["Yes", "yes", "YES"]`` still renders one button).
+
+    Returned contract:
+
+      * ``[]`` for missing, ``None``, empty, or whitespace-only input —
+        the panel uses ``bool(options)`` to decide whether to lock the
+        text input, so an open-ended question must yield ``[]``.
+      * Exactly one element for a bare scalar ``str`` / ``int`` / ``float``
+        (the LLM passed a single choice, not a list).
+      * One element per usable label for list/tuple input — entries that
+        can't be labelled are dropped silently.
+      * Nested list/tuple input is flattened one level so a stray
+        ``[["Yes", "No"]]`` still surfaces two buttons.
+      * Top-level ``dict`` with no matching key is dropped entirely (never
+        rendered as a Python ``repr``).
+    """
+    if raw is None:
+        return []
+    try:
+        # Bare string: the common LLM bug. Treat as a single option label,
+        # not as an iterable of characters.
+        if isinstance(raw, str):
+            stripped = raw.strip()
+            return [stripped] if stripped else []
+
+        # Bare dict: probe the label key set. No match → drop entirely.
+        # We intentionally do NOT fall back to ``str(raw)`` here — a raw
+        # Python ``repr`` would render as a useless button label.
+        if isinstance(raw, dict):
+            label = _extract_ask_user_option_label(raw)
+            return [label] if label else []
+
+        # Bare scalar (int / float / bool): stringify as a single option so
+        # ``options=123`` still produces a button the user can click. Booleans
+        # stringify to ``True``/``False`` which is at least actionable.
+        if isinstance(raw, (int, float, bool)):
+            text = str(raw).strip()
+            return [text] if text else []
+
+        # List / tuple / set: iterate. We flatten one level of nesting so
+        # a stray ``[["A", "B"]]`` (some tool-call serializers emit this)
+        # still surfaces its labels; deeper nesting is left alone so we
+        # don't surprise callers with magical recursion.
+        if isinstance(raw, (list, tuple)):
+            candidates: list[str] = []
+            for item in raw:
+                if isinstance(item, (list, tuple)):
+                    for nested in item:
+                        label = _extract_ask_user_option_label(nested)
+                        if label:
+                            candidates.append(label)
+                else:
+                    label = _extract_ask_user_option_label(item)
+                    if label:
+                        candidates.append(label)
+        else:
+            # Unknown scalar type (e.g. a custom object that isn't a list,
+            # dict, or string). Last-resort probe for a label attribute.
+            label = _extract_ask_user_option_label(raw)
+            candidates = [label] if label else []
+    except Exception:  # noqa: BLE001 — never let a malformed payload raise.
+        return []
+
+    # De-duplicate case-insensitively while preserving first-occurrence
+    # order. A model that emits ``["Yes", "yes", "YES"]`` should render
+    # exactly one button labelled ``Yes``.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for label in candidates:
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(label)
+    return deduped
+
+
 class AgentLoop:
     """The core agentic loop: stream LLM -> execute tools -> repeat.
 
@@ -2293,11 +2455,14 @@ class AgentLoop:
             return tr
         question = tc.arguments.get("question", "")
         raw_options = tc.arguments.get("options", [])
-        # Filter out empty/whitespace-only options. Some LLMs send
-        # ``options: [""]`` for open-ended questions; without filtering, the
-        # panel treats ``bool([""])`` as truthy, locks the text input, and
-        # renders a single empty button the user cannot act on.
-        options = [o for o in raw_options if isinstance(o, str) and o.strip()]
+        # Normalise the LLM-supplied ``options`` argument into a clean
+        # ``list[str]``. Models routinely send shapes the schema never asked
+        # for — a bare string (``"Yes"``), a list of dicts, or a number —
+        # so we coerce defensively. An empty result preserves the
+        # "open-ended question" contract: ``bool(options)`` decides whether
+        # the panel locks the text input. See ``_normalize_ask_user_options``
+        # for the full rationale.
+        options = _normalize_ask_user_options(raw_options)
         yield TurnEvent.user_question(question, options, tc.id)
         answer = self._wait_for_queue(self._user_answer_queue)
         content = f"User answered: {answer}"
