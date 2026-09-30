@@ -11,9 +11,9 @@ from .qt_compat import (
     QPlainTextEdit,
     QScrollArea,
     QSizePolicy,
+    Qt,
     QVBoxLayout,
     QWidget,
-    Qt,
 )
 from .styles import build_input_area_stylesheet
 from .theme.manager import ThemeManager

@@ -7,10 +7,6 @@ import tempfile
 import unittest
 from datetime import datetime
 
-from rikugan.memory.ingest import (
-    ingest_exploration_finding,
-    ingest_save_memory,
-)
 from rikugan.memory.paths import knowledge_paths
 from rikugan.memory.raw_store import KnowledgeRawStore
 from rikugan.memory.report import (
@@ -170,8 +166,8 @@ class TestConversationAppendix(unittest.TestCase):
         self.assertNotIn("binary data", appendix)
 
     def test_excludes_assistant_with_tool_calls(self):
-        from rikugan.memory import report as report_module
         from rikugan.core.types import ToolCall
+        from rikugan.memory import report as report_module
 
         tc = ToolCall(id="c1", name="decompile_function", arguments={})
         msgs = [

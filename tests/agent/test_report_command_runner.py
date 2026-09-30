@@ -24,7 +24,6 @@ from rikugan.agent.loop import AgentLoop, BackgroundAgentRunner
 from rikugan.agent.loop_commands import _handle_report_command
 from rikugan.agent.turn import TurnEventType
 from rikugan.core.config import RikuganConfig
-from rikugan.memory.ingest import ingest_save_memory
 from rikugan.memory.report import ReportSaveResult, build_report_context
 from rikugan.memory.schema import KnowledgeMemory
 from rikugan.state.session import SessionState

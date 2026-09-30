@@ -277,7 +277,7 @@ def read_bytes(
 
     _MAX_READ_BYTES = 1024
     ea = parse_addr(address)
-    size = int(size)
+    size = parse_addr(str(size))
     if size > _MAX_READ_BYTES:
         size = _MAX_READ_BYTES
 

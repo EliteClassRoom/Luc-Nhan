@@ -39,21 +39,13 @@ def maybe_import_legacy_jsonl(
     raised by ``import_workspace_bundle`` propagates and leaves the
     marker unset, so the next open retries the migration.
     """
-    row = workspace_store._conn.execute(
-        "SELECT value FROM workspace_meta WHERE key = ?",
-        (_LEGACY_JSONL_IMPORTED_KEY,),
-    ).fetchone()
-    if row is not None:
+    if workspace_store.get_meta(_LEGACY_JSONL_IMPORTED_KEY) is not None:
         return
 
     raw_store = KnowledgeRawStore(jsonl_paths)
     envelopes = jsonl_to_bundle_envelopes(raw_store, jsonl_paths)
     if not envelopes:
-        workspace_store._conn.execute(
-            "INSERT OR REPLACE INTO workspace_meta(key, value) VALUES(?, ?)",
-            (_LEGACY_JSONL_IMPORTED_KEY, datetime.now(UTC).isoformat()),
-        )
-        workspace_store._conn.commit()
+        workspace_store.set_meta(_LEGACY_JSONL_IMPORTED_KEY, datetime.now(UTC).isoformat())
         return
 
     bundle_path = write_envelopes_to_temp_bundle(envelopes, owner_memory_id)
@@ -63,11 +55,7 @@ def maybe_import_legacy_jsonl(
     finally:
         bundle_path.unlink(missing_ok=True)
 
-    workspace_store._conn.execute(
-        "INSERT OR REPLACE INTO workspace_meta(key, value) VALUES(?, ?)",
-        (_LEGACY_JSONL_IMPORTED_KEY, datetime.now(UTC).isoformat()),
-    )
-    workspace_store._conn.commit()
+    workspace_store.set_meta(_LEGACY_JSONL_IMPORTED_KEY, datetime.now(UTC).isoformat())
 
 
 def jsonl_to_bundle_envelopes(

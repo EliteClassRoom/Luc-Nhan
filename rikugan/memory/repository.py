@@ -143,19 +143,17 @@ class SQLiteKnowledgeRepository:
 
     def list_entities(self) -> list[KnowledgeEntity]:
         """List all current entities."""
-        # WorkspaceStore doesn't have list_entities yet — use raw query
-        rows = self._store._conn.execute("SELECT * FROM entities ORDER BY created_at").fetchall()
         return [
             KnowledgeEntity(
-                id=row["entity_id"],
+                id=entity.entity_id,
                 binary_id=self.owner_memory_id,
-                type=row["entity_type"],
-                name=row["name"],
-                display_name=json.loads(row["metadata"]).get("display_name", ""),
-                address=json.loads(row["metadata"]).get("address", ""),
-                tags=json.loads(row["tags"]),
+                type=entity.entity_type,
+                name=entity.name,
+                display_name=entity.metadata.get("display_name", ""),
+                address=entity.metadata.get("address", ""),
+                tags=list(entity.tags),
             )
-            for row in rows
+            for entity in self._store.list_entities()
         ]
 
     # ------------------------------------------------------------------

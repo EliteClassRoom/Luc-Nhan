@@ -53,6 +53,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Slow MCP servers no longer die at the 15s startup clamp** — `MCPManager`
+  computed the startup wait as `min(timeout, 15s)`, silently overriding the
+  per-server `timeout` field in `mcp.json` (schema default 30s). Cold-starting
+  stdio servers that need >15s to answer `initialize` (npx/uvx-based ones on
+  Windows routinely do) failed with "initialize timed out after 15.0s"
+  regardless of what you configured. The configured timeout is now honored
+  as-is; 15s remains only the fallback for unset/invalid (`<= 0`) values.
+- **`mcp` SDK banner traceback no longer floods the IDA console** — servers
+  that print startup text to stdout (an MCP spec violation, e.g. MiniMax's
+  "Starting Minimax MCP server") made the SDK's stdio reader dump a full
+  pydantic `ValidationError` traceback per launch. The SDK recovers from
+  these lines by design, so the `mcp.client.stdio` logger is now suppressed
+  at CRITICAL; genuine startup failures still surface as Rikugan's own
+  "initialize timed out" / "handshake failed" errors.
 - GLM requests no longer send `reasoning_effort` while thinking is disabled —
   `thinking.type = "disabled"` already expresses that, and the effort enum
   has no "disabled" member. The gate is now driven by the thinking level

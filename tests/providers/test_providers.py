@@ -181,7 +181,7 @@ class TestProviderDefaultSync(unittest.TestCase):
         from rikugan.core.config import PROVIDER_DEFAULT_MODELS
         from rikugan.providers.openai_provider import OpenAIProvider
 
-        p = OpenAIProvider.__new__(OpenAIProvider)
+        OpenAIProvider.__new__(OpenAIProvider)
         default = OpenAIProvider.__init__.__defaults__
         if default:
             constructor_model = default[2]  # model is 3rd default (api_key, api_base, model)
@@ -191,7 +191,7 @@ class TestProviderDefaultSync(unittest.TestCase):
         from rikugan.core.config import PROVIDER_DEFAULT_MODELS
         from rikugan.providers.gemini_provider import GeminiProvider
 
-        p = GeminiProvider.__new__(GeminiProvider)
+        GeminiProvider.__new__(GeminiProvider)
         default = GeminiProvider.__init__.__defaults__
         if default:
             constructor_model = default[1]  # model is 2nd default (api_key, model)
@@ -201,7 +201,7 @@ class TestProviderDefaultSync(unittest.TestCase):
         from rikugan.core.config import PROVIDER_DEFAULT_MODELS
         from rikugan.providers.minimax_provider import MiniMaxProvider
 
-        p = MiniMaxProvider.__new__(MiniMaxProvider)
+        MiniMaxProvider.__new__(MiniMaxProvider)
         default = MiniMaxProvider.__init__.__defaults__
         if default:
             constructor_model = default[2]  # model is 3rd default (api_key, api_base, model)

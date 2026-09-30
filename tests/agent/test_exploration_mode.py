@@ -131,7 +131,7 @@ class TestExplorationStateTransitions(unittest.TestCase):
             category="hypothesis", address=None,
             summary="Test", relevance="high",
         ))
-        allowed, reason = state.can_transition_to(ExplorationPhase.PLAN)
+        allowed, _reason = state.can_transition_to(ExplorationPhase.PLAN)
         self.assertTrue(allowed)
 
     def test_cannot_skip_phases(self):

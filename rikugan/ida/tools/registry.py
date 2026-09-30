@@ -31,6 +31,7 @@ from . import (
     strings,
     xrefs,
 )
+
 _BOOT_TOOL_MODULES = (
     navigation,
     functions,

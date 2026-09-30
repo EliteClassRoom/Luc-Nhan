@@ -8,8 +8,10 @@ import threading
 from collections.abc import Generator
 from typing import Any
 
+from ... import constants
 from ...core.config import RikuganConfig
 from ...core.logging import log_debug, log_error, log_info
+from ...core.sanitize import strip_injection_markers
 from ...core.types import Message, Role
 from ...providers.base import LLMProvider
 from ...skills.registry import SkillRegistry
@@ -154,10 +156,10 @@ class OrchestraMainAgent:
 
         history_lines: list[str] = []
         for entry in self._subtask_history[-10:]:
-            name = entry.get("name", "?")
-            status = entry.get("status", "")
-            result = entry.get("result", "")[:200]
-            history_lines.append(f"- **{name}** ({status}): {result}")
+            safe_name = strip_injection_markers(str(entry.get("name", "?")))
+            safe_status = strip_injection_markers(str(entry.get("status", "")))
+            safe_result = strip_injection_markers(str(entry.get("result", ""))[:200])
+            history_lines.append(f"- **{safe_name}** ({safe_status}): {safe_result}")
 
         history_str = "\n".join(history_lines) if history_lines else "No subtasks completed yet."
 
@@ -483,14 +485,31 @@ class OrchestraMainAgent:
                     yield TurnEvent.tool_result_event(tc["id"], tool_name, result, is_error)
 
                 elif tool_name in self.tools.list_names():
-                    try:
-                        result = self.tools.execute(tool_name, tool_args)
-                        is_error = False
-                    except Exception as e:
-                        result = f"Error: {e}"
-                        is_error = True
-                        log_error(f"Orchestra tool execution error: {tool_name}: {e}")
-                    yield TurnEvent.tool_result_event(tc["id"], tool_name, result, is_error)
+                    defn = self.tools.get(tool_name)
+                    needs_approval = tool_name == constants.EXECUTE_PYTHON_TOOL_NAME or (
+                        defn is not None and defn.requires_approval
+                    )
+                    if needs_approval:
+                        # Orchestra has no UI approval queue, so an approval
+                        # prompt is impossible here: refuse instead of
+                        # silently bypassing the AgentLoop approval gate.
+                        log_error(f"Orchestra refused approval-gated tool: {tool_name}")
+                        result = (
+                            f"Error: {tool_name} requires interactive user approval, "
+                            "which is unavailable in orchestra mode. Ask the user to "
+                            "run it outside delegation."
+                        )
+                        yield TurnEvent.tool_result_event(tc["id"], tool_name, result, True)
+
+                    else:
+                        try:
+                            result = self.tools.execute(tool_name, tool_args)
+                            is_error = False
+                        except Exception as e:
+                            result = f"Error: {e}"
+                            is_error = True
+                            log_error(f"Orchestra tool execution error: {tool_name}: {e}")
+                        yield TurnEvent.tool_result_event(tc["id"], tool_name, result, is_error)
 
                 else:
                     result = f"Error: Unknown orchestration tool: {tool_name}"

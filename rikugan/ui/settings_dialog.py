@@ -1649,45 +1649,68 @@ class SettingsDialog(QDialog):
         self._fetch_btn.setEnabled(True)
         self._fetched_models = models
 
+        # Resolve the id to restore ONCE, before mutating the combo.  Reading
+        # it later would see the half-populated combo, and the currentIndexChanged
+        # feedback from ``addItem`` re-enters ``_update_generation_defaults``
+        # mid-rebuild, so every value must be snapshotted up front.
         preferred_id = (self._model_restore_hint or "").strip()
         current_id = preferred_id or self._get_selected_model_id()
         previous_text = self._model_combo.currentText().strip()
-        self._model_combo.clear()
-        for m in models:
-            label = f"{m.name}  ({m.id})" if m.name != m.id else m.id
-            self._model_combo.addItem(label, m.id)
 
-        # Restore previous selection by model ID
-        matched = False
-        for i in range(self._model_combo.count()):
-            if self._model_combo.itemData(i) == current_id:
-                self._model_combo.setCurrentIndex(i)
-                matched = True
-                break
-        if not matched and models and not preserve_unmatched:
-            # Live fetch result — the fetched list is authoritative,
-            # so fall back to the first item if the current model is
-            # not in the list (e.g. provider rotated model lineup).
-            self._model_combo.setCurrentIndex(0)
-        elif not matched and preserve_unmatched:
-            # Initial / built-in population — keep the user's typed
-            # model as editable text so we never silently overwrite
-            # "llama3.1" with "gpt-4o" just because the combo is
-            # populated from an unrelated static list.
-            #
-            # We also insert/select a *custom* combo item whose
-            # ``itemData`` equals the preserved model id.  An editable
-            # ``QComboBox`` can otherwise keep ``currentIndex() == 0``
-            # while visually displaying the typed text, and
-            # ``_get_selected_model_id()`` prefers ``itemData(idx)``
-            # whenever the index is valid — that mismatch used to cause
-            # the dialog to display "llama3.1" but save "gpt-4o".
-            preserved_id = (current_id or previous_text or "").strip()
-            if preserved_id:
-                self._model_combo.addItem(preserved_id, preserved_id)
-                self._model_combo.setCurrentIndex(self._model_combo.count() - 1)
-            else:
-                self._model_combo.setCurrentText("")
+        # Signal-blocked rebuild: ``addItem`` fires currentIndexChanged, which
+        # would re-run _update_generation_defaults against a partially built
+        # combo and clobber the spin boxes we are about to set.
+        blocker = self._model_combo.blockSignals(True)
+        try:
+            self._model_combo.clear()
+            for m in models:
+                label = f"{m.name}  ({m.id})" if m.name != m.id else m.id
+                self._model_combo.addItem(label, m.id)
+
+            # Restore previous selection by model ID
+            matched = False
+            for i in range(self._model_combo.count()):
+                if self._model_combo.itemData(i) == current_id:
+                    self._model_combo.setCurrentIndex(i)
+                    matched = True
+                    break
+            if not matched and models and not preserve_unmatched:
+                # Live fetch result — the fetched list is authoritative for
+                # what the server advertises, but it is NOT authoritative
+                # about what the user is currently configured to run.  A model
+                # that works today is routinely absent from ``/models`` (new
+                # previews, Token-Plan-only ids, account-scoped rollouts), and
+                # silently jumping to index 0 would rewrite the user's config
+                # to a different model on every Refresh.  Keep the saved model
+                # as a custom item instead, mirroring the ``preserve_unmatched``
+                # branch below.
+                preserved_id = (current_id or previous_text or "").strip()
+                if preserved_id:
+                    self._model_combo.addItem(preserved_id, preserved_id)
+                    self._model_combo.setCurrentIndex(self._model_combo.count() - 1)
+                else:
+                    self._model_combo.setCurrentIndex(0)
+            elif not matched and preserve_unmatched:
+                # Initial / built-in population — keep the user's typed
+                # model as editable text so we never silently overwrite
+                # "llama3.1" with "gpt-4o" just because the combo is
+                # populated from an unrelated static list.
+                #
+                # We also insert/select a *custom* combo item whose
+                # ``itemData`` equals the preserved model id.  An editable
+                # ``QComboBox`` can otherwise keep ``currentIndex() == 0``
+                # while visually displaying the typed text, and
+                # ``_get_selected_model_id()`` prefers ``itemData(idx)``
+                # whenever the index is valid — that mismatch used to cause
+                # the dialog to display "llama3.1" but save "gpt-4o".
+                preserved_id = (current_id or previous_text or "").strip()
+                if preserved_id:
+                    self._model_combo.addItem(preserved_id, preserved_id)
+                    self._model_combo.setCurrentIndex(self._model_combo.count() - 1)
+                else:
+                    self._model_combo.setCurrentText("")
+        finally:
+            self._model_combo.blockSignals(blocker)
         self._model_restore_hint = ""
 
         if models:

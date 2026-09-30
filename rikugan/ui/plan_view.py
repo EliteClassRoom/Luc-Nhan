@@ -47,6 +47,11 @@ def _plan_step_color(t, status: str) -> str:
         return t.success
     if status == "error":
         return t.error
+    if status == "turn_limit":
+        # Distinct from both ``success`` (done) and ``error``
+        # (failed): a step that exhausted its turn budget stopped
+        # without committing the model intent.
+        return t.warning
     return t.muted_text
 
 
@@ -85,6 +90,11 @@ class PlanStepWidget(QFrame):
             self.setObjectName("plan_step_active")
         elif status == "done":
             self.setObjectName("plan_step_done")
+        elif status == "turn_limit":
+            # Distinct objectName so the per-status QSS hook (if any
+            # is added later) targets the step that hit the
+            # per-step turn budget without affecting regular steps.
+            self.setObjectName("plan_step_turn_limit")
         else:
             self.setObjectName("plan_step")
         # Force Qt to re-evaluate object-name selectors so dynamic
@@ -108,6 +118,11 @@ class PlanStepWidget(QFrame):
             glyph = "✗"
         elif self._status == "skipped":
             glyph = "−"
+        elif self._status == "turn_limit":
+            # Distinct from "done" so a step that exhausted its
+            # per-step turn budget reads as "stopped at limit"
+            # rather than "completed normally".
+            glyph = "⏱"
         else:
             glyph = "○"
         self._status_label.setText(glyph)

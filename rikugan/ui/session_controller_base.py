@@ -39,12 +39,14 @@ if TYPE_CHECKING:
     from ..agent.turn import TurnEvent
     from ..mcp.manager import MCPManager
     from ..memory.service import BinaryMemoryService
+    from ..memory.workspace_store import WorkspaceStore
     from ..providers.base import LLMProvider
     from ..providers.registry import ProviderRegistry
     from ..skills.registry import SkillRegistry
     from ..state.history import SessionHistory
     from ..state.session import SessionState
     from ..tools.registry import ToolRegistry
+
 else:
     AgentLoop = BackgroundAgentRunner = TurnEvent = None  # type: ignore[assignment]
     BinaryMemoryService = None  # type: ignore[assignment]
@@ -152,6 +154,13 @@ class SessionControllerBase:
         self._runners: dict[str, BackgroundAgentRunner] = {}
         self._pending_messages: dict[str, list[str]] = {}
         self._max_concurrent_agents = config.parallel_agent_max_concurrent if config.parallel_agent_enabled else 1
+        # Per-run WorkspaceStore (sqlite3 connection) for each tab. The
+        # store lives only for the duration of one agent run; it is
+        # replaced (and the previous instance closed) at the start of the
+        # next ``_wire_central_memory`` call and at ``on_agent_finished``.
+        # Without this tracking every agent run leaks one open connection
+        # on the same memory.db over a long IDA session.
+        self._memory_stores: dict[str, WorkspaceStore] = {}
         # Snapshot of the skill-relevant config fields so ``update_settings``
         # can skip the expensive ``_reload_skills`` filesystem rescan when
         # only non-skill config (provider/model/theme) changed. Theme-only
@@ -606,8 +615,18 @@ class SessionControllerBase:
         Called for every agent run. If identity resolution fails (bind
         returns ephemeral), this method returns early without injecting
         a service, so the loop runs without central memory.
+
+        Connection lifecycle: a fresh ``WorkspaceStore`` (with a fresh
+        ``sqlite3.Connection``) is built for every run. The previous
+        store for this tab is closed here (so the swap releases the
+        previous connection), the new store is closed on
+        ``on_agent_finished`` (so an idle tab also releases its
+        connection), and any exception raised after the store is
+        constructed closes the orphan before re-raising.
         """
         tid = tab_id if tab_id is not None else self._active_tab_id
+        store: WorkspaceStore | None = None
+        prev_store: WorkspaceStore | None = None
         try:
             from ..memory.authority import MemoryAuthorityIssuer
             from ..memory.manager import MemoryWorkspaceManager
@@ -678,12 +697,34 @@ class SessionControllerBase:
             loop._memory_authority = issuer.issue(context)
             loop._memory_manager = manager
             session.binary_memory_id = result.binding.memory_id
+            # Wiring succeeded. Hand the new store to the controller's
+            # per-tab slot and close the previous one (releases its
+            # connection — the leak fix).
+            prev_store = self._memory_stores.get(tid)
+            self._memory_stores[tid] = store
             log_info(f"Central memory wired: memory_id={result.binding.memory_id[:12]}")
         except Exception as e:
             log_error(f"Central memory wiring failed: {e}")
             import traceback
 
             log_error(traceback.format_exc())
+        finally:
+            # Exception-safety: if a store was created but wiring failed
+            # before we swapped it into the per-tab slot, close the orphan
+            # now. Idempotent close() makes this safe even if a previous
+            # run already touched the same instance.
+            if store is not None and self._memory_stores.get(tid) is not store:
+                try:
+                    store.close()
+                except Exception as close_err:  # pragma: no cover — defensive
+                    log_warning(f"Failed to close orphaned memory store: {close_err}")
+            # Always close the displaced previous store. Idempotent so
+            # safe even if on_agent_finished already closed it.
+            if prev_store is not None and prev_store is not store:
+                try:
+                    prev_store.close()
+                except Exception as close_err:  # pragma: no cover — defensive
+                    log_warning(f"Failed to close previous memory store: {close_err}")
 
     def get_event(self, tab_id: str | None = None, timeout: float = 0) -> TurnEvent | None:
         """Return the next event for *tab_id*'s runner (defaults to active tab).
@@ -748,6 +789,17 @@ class SessionControllerBase:
         """
         tid = tab_id if tab_id is not None else self._active_tab_id
         self._runners.pop(tid, None)
+
+        # Release the per-run sqlite3 connection held by BinaryMemoryService
+        # for this tab. The store's close() is idempotent so the next
+        # wire-up (which will also close the displaced instance) cannot
+        # raise on a second close.
+        finished_store = self._memory_stores.pop(tid, None)
+        if finished_store is not None:
+            try:
+                finished_store.close()
+            except Exception as close_err:  # pragma: no cover — defensive
+                log_warning(f"Failed to close memory store on run finish: {close_err}")
 
         # Re-persist the instance ID in the database so a freshly created
         # IDB still gets one recorded before the next checkpoint cycle.
@@ -1123,4 +1175,17 @@ class SessionControllerBase:
                     history.save_session(session)
                 except (OSError, ValueError) as e:
                     log_error(f"Failed to save session {tab_id} on shutdown: {e}")
+        # Release every per-tab sqlite3 connection. ``on_agent_finished``
+        # already closes the store for runs that finished cleanly, but
+        # cancelled or idle tabs would still hold an open connection at
+        # this point — close them all here so controller destruction
+        # never leaks a handle. Idempotent close() makes the double-close
+        # harmless.
+        if self._memory_stores:
+            for _tab_id, store in list(self._memory_stores.items()):
+                try:
+                    store.close()
+                except Exception as e:  # pragma: no cover — defensive
+                    log_warning(f"Failed to close memory store on shutdown: {e}")
+            self._memory_stores.clear()
         self._mcp_manager.shutdown()

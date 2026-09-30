@@ -49,11 +49,25 @@ _SUPPRESSED_SDK_LOGGERS: tuple[str, ...] = (
     "httpcore",
 )
 
+# The mcp SDK's stdio reader logs a full traceback via ``logger.exception``
+# for every non-JSON stdout line, then recovers and continues by design.
+# Servers that print startup banners to stdout (an MCP spec violation, e.g.
+# "Starting Minimax MCP server") trigger this on every launch — pure console
+# noise in IDA. Real failures still surface through Rikugan's own
+# "initialize timed out" / "handshake failed" errors.
+_CRITICALLY_SUPPRESSED_SDK_LOGGERS: tuple[str, ...] = ("mcp.client.stdio",)
+
 
 def silence_sdk_debug_loggers() -> None:
-    """Raise the level on chat-halting SDK loggers. Idempotent."""
+    """Raise the level on chat-halting SDK loggers. Idempotent.
+
+    Also silences (at CRITICAL) SDK loggers whose records are
+    tolerated-and-recovered noise — see ``_CRITICALLY_SUPPRESSED_SDK_LOGGERS``.
+    """
     for _name in _SUPPRESSED_SDK_LOGGERS:
         logging.getLogger(_name).setLevel(logging.WARNING)
+    for _name in _CRITICALLY_SUPPRESSED_SDK_LOGGERS:
+        logging.getLogger(_name).setLevel(logging.CRITICAL)
 
 
 def get_logger() -> logging.Logger:

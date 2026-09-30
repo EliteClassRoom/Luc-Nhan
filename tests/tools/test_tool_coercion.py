@@ -11,9 +11,9 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.tools.base import ParameterSchema, ToolDefinition  # noqa: E402
-from rikugan.tools.coercion import coerce_bool  # noqa: E402
-from rikugan.tools.registry import ToolRegistry  # noqa: E402
+from rikugan.tools.base import ParameterSchema, ToolDefinition
+from rikugan.tools.coercion import coerce_bool
+from rikugan.tools.registry import ToolRegistry
 
 
 def _make_defn(params: list[ParameterSchema]) -> ToolDefinition:

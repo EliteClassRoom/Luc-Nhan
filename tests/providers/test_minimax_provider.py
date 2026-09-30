@@ -22,7 +22,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.types import LLMRequestContext, Message, Role, StreamChunk  # noqa: E402
+from rikugan.core.types import LLMRequestContext, Message, Role, StreamChunk
 
 # ---------------------------------------------------------------------------
 # Default model and builtin metadata
@@ -70,6 +70,24 @@ class TestMiniMaxDefaultsAndMetadata(unittest.TestCase):
         self.assertTrue(caps.tool_use)
         self.assertTrue(caps.vision)  # largest model (M3) is multimodal
 
+    def test_builtin_models_include_m31_flash_preview(self) -> None:
+        """M3.1 Flash Preview is Token-Plan-only and absent from
+        ``/models`` listings, so the static list must carry it."""
+        from rikugan.providers.minimax_provider import MiniMaxProvider
+
+        m31 = next(m for m in MiniMaxProvider._builtin_models() if m.id == "MiniMax-M3.1-Flash-Preview")
+        self.assertEqual(m31.context_window, 1_000_000)
+        self.assertTrue(m31.supports_vision)  # M3 family is multimodal
+
+    def test_m3_family_inherits_contract_for_unlisted_ids(self) -> None:
+        """An M3-family id absent from ``_MODEL_LIMITS`` (a newer M3 variant
+        shipped ahead of the table) must not fall back to the 204800-token
+        M2.x contract."""
+        from rikugan.providers.minimax_provider import MiniMaxProvider
+
+        self.assertEqual(MiniMaxProvider._limits_for_model("MiniMax-M3.9"), (1_000_000, 524_288))
+        self.assertEqual(MiniMaxProvider._limits_for_model("MiniMax-M2.9"), (204_800, 204_800))
+
 
 # ---------------------------------------------------------------------------
 # Automatic thinking (M3 only)
@@ -101,6 +119,14 @@ class TestMiniMaxAutomaticThinking(unittest.TestCase):
     def test_m3_thinking_case_insensitive(self) -> None:
         kwargs = self._kwargs("minimax-m3")
         self.assertEqual(kwargs.get("thinking"), {"type": "adaptive"})
+
+    def test_m31_flash_preview_includes_adaptive_thinking(self) -> None:
+        """M3.1 always thinks and rejects ``thinking.type="disabled"`` with a
+        400, so the adapter must send ``adaptive`` for the whole M3 family —
+        not just the exact ``MiniMax-M3`` id."""
+        kwargs = self._kwargs("MiniMax-M3.1-Flash-Preview", max_tokens=131072)
+        self.assertEqual(kwargs.get("thinking"), {"type": "adaptive"})
+        self.assertEqual(kwargs.get("max_tokens"), 131072)
 
     def test_m2_does_not_add_thinking_payload(self) -> None:
         """M2.x models cannot disable thinking; we must not add a
@@ -424,6 +450,41 @@ class TestMiniMaxNativeToolCallRecovery(unittest.TestCase):
         raw = msg._raw_parts
         tool_use = [b for b in raw if b.get("type") == "tool_use"]
         self.assertEqual(len(tool_use), 2)
+
+
+class TestMiniMaxThinkingChannel(unittest.TestCase):
+    """Chunks emitted while in a thinking block must pass through verbatim
+    — the native tool-call XML recovery must not run on thinking deltas.
+    """
+
+    def _thinking_text_delta(self, text: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            type="content_block_delta",
+            delta=SimpleNamespace(type="thinking_delta", thinking=text),
+            index=0,
+        )
+
+    def test_thinking_chunk_passthrough_with_invoke_xml(self):
+        from rikugan.providers.minimax_provider import _NativeToolCallFilter
+
+        flt = _NativeToolCallFilter()
+        out = list(flt.feed(StreamChunk(text="", is_thinking=True)))
+        out += list(
+            flt.feed(
+                StreamChunk(
+                    text='<invoke name="rename_function"><address>0x1</address></invoke>',
+                    is_thinking=True,
+                )
+            )
+        )
+        out += list(flt.flush())
+        self.assertEqual(
+            [c for c in out if c.is_tool_call_start],
+            [],
+            "thinking-channel chunks must not produce tool calls",
+        )
+        joined = "".join(c.text for c in out if c.text)
+        self.assertIn("<invoke", joined, "thinking text must pass through")
 
 
 if __name__ == "__main__":

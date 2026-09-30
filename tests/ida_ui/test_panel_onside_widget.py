@@ -36,7 +36,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from tests.qt_stubs import _qt_class, ensure_pyside6_stubs  # noqa: E402
+from tests.qt_stubs import _qt_class, ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 

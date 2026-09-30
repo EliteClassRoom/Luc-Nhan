@@ -268,8 +268,10 @@ class MCPClient:
             env=self.config.env if self.config.env else None,
         )
 
-        # Use the configured timeout for handshake; default to 15s.
-        handshake_timeout = getattr(self.config, "timeout", 15.0) or 15.0
+        # Handshake is bounded by the per-server configured timeout — the
+        # same value the manager uses for its outer wait — so the manager
+        # never abandons a handshake that is still within its own bound.
+        handshake_timeout = self.config.resolve_timeout(MCP_DEFAULT_TIMEOUT)
 
         errlog = _safe_errlog()
         try:

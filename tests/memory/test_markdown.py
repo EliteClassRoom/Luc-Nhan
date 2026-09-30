@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -181,9 +183,7 @@ class TestMemoryProjector:
         assert state.projection_dirty is False
         store.close()
 
-    def test_project_works_when_portalocker_missing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_project_works_when_portalocker_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A user with portalocker not installed must not see
         ``ModuleNotFoundError`` during projection. The projector
         falls back to a process-local lock and still produces the
@@ -191,6 +191,7 @@ class TestMemoryProjector:
         """
         # Simulate portalocker being absent.
         import builtins as _bi
+
         orig_import = _bi.__import__
 
         def _fake_import(name, *args, **kwargs):
@@ -201,18 +202,16 @@ class TestMemoryProjector:
         monkeypatch.setattr(_bi, "__import__", _fake_import)
         # Reload the module so the projector re-probes portalocker.
         import importlib
+
         from rikugan.memory import markdown as _md
+
         importlib.reload(_md)
         try:
             memory_id = new_memory_id()
             paths = MemoryLocator(tmp_path).binary(memory_id)
-            store = WorkspaceStore.create(
-                paths, owner_memory_id=memory_id
-            )
+            store = WorkspaceStore.create(paths, owner_memory_id=memory_id)
             fid = new_record_id("fact")
-            store.put_fact(
-                fid, "algorithm", "RC4", "Uses RC4 for C2", 0.8, expected_revision=0
-            )
+            store.put_fact(fid, "algorithm", "RC4", "Uses RC4 for C2", 0.8, expected_revision=0)
 
             projector = _md.MemoryProjector()
             # Sanity: fallback path was selected.
@@ -225,33 +224,95 @@ class TestMemoryProjector:
         finally:
             importlib.reload(_md)
 
-    def test_lock_contention_marks_dirty_and_raises(self, tmp_path: Path) -> None:
-        """Cross-process lock contention must mark the projection dirty
-        and raise instead of silently degrading to an in-process lock."""
+    def test_lock_contention_at_enter_marks_dirty_and_returns(self, tmp_path: Path) -> None:
+        """portalocker raises contention from ``Lock.__enter__`` — the
+        constructor always succeeds — so the projector must mark the
+        projection dirty at acquire time and return gracefully instead
+        of raising to the caller."""
         memory_id = new_memory_id()
         paths = MemoryLocator(tmp_path).binary(memory_id)
         store = WorkspaceStore.create(paths, owner_memory_id=memory_id)
         fid = new_record_id("fact")
         store.put_fact(fid, "algorithm", "RC4", "Uses RC4", 0.8, expected_revision=0)
 
-        class _LockError(Exception):
+        class _LockException(Exception):
             pass
 
-        class _FakePortalocker:
-            class exceptions:
-                LockError = _LockError
+        calls: list[str] = []
 
-            @staticmethod
-            def Lock(*_args, **_kwargs):
-                raise _LockError("locked by another process")
+        class _FakePortalockerLock:
+            # Constructor MUST succeed: portalocker only builds the lock
+            # object here; the OS lock — and contention — happen in __enter__.
+            def __init__(self, path: str, **_kwargs: object) -> None:
+                calls.append(f"constructed:{Path(path).name}")
+
+            def __enter__(self) -> _FakePortalockerLock:
+                calls.append("enter")
+                raise _LockException("locked by another process")
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                calls.append("exit")
+                return False
+
+        class _FakePortalocker:
+            Lock = _FakePortalockerLock
 
         projector = MemoryProjector()
         projector._lock_module = _FakePortalocker
-        projector._lock_exc_type = _LockError
-        with pytest.raises(_LockError):
-            projector.project(paths, store)
+        projector._lock_exc_type = _LockException
+
+        # Must not raise: contention marks the projection dirty and returns.
+        projector.project(paths, store)
+
+        assert calls == [f"constructed:{paths.lock.name}", "enter"]
+        assert "exit" not in calls  # never held, never released
         assert store.projection_state().projection_dirty is True
+        # Projection was skipped, so no MEMORY.md was written this pass.
+        assert not paths.markdown.exists()
         store.close()
+
+    def test_real_portalocker_contention_marks_dirty_and_returns(self, tmp_path: Path) -> None:
+        """With a real portalocker holder on the same lock file,
+        ``project()`` must mark the projection dirty and return instead
+        of raising to the caller."""
+        portalocker = pytest.importorskip("portalocker")
+        memory_id = new_memory_id()
+        paths = MemoryLocator(tmp_path).binary(memory_id)
+        store = WorkspaceStore.create(paths, owner_memory_id=memory_id)
+        store.put_fact(new_record_id("fact"), "algorithm", "RC4", "Uses RC4", 0.8, expected_revision=0)
+
+        projector = MemoryProjector(lock_timeout=0.2)
+        if projector._lock_module is None:  # pragma: no cover - portalocker is a hard dep
+            pytest.skip("portalocker unavailable in this environment")
+
+        holder = portalocker.Lock(str(paths.lock), mode="a", timeout=5.0)
+        try:
+            holder.acquire()
+        except Exception as exc:  # pragma: no cover - platform cannot hold two locks
+            pytest.skip(f"portalocker cannot hold a second lock on this platform: {exc!r}")
+        try:
+            projector.project(paths, store)  # must return, not raise
+        finally:
+            holder.release()
+
+        assert store.projection_state().projection_dirty is True
+        assert not paths.markdown.exists()
+        store.close()
+
+    def test_probe_falls_back_to_exception_type_when_names_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """If portalocker is importable but exposes neither ``LockException``
+        nor ``LockError``, the probe must degrade to ``Exception`` — never
+        leave an ``except None`` clause waiting to raise TypeError."""
+        fake = ModuleType("portalocker")
+        fake_exceptions = ModuleType("portalocker.exceptions")
+        fake.exceptions = fake_exceptions
+        monkeypatch.setitem(sys.modules, "portalocker", fake)
+        monkeypatch.setitem(sys.modules, "portalocker.exceptions", fake_exceptions)
+
+        projector = MemoryProjector()
+
+        assert projector._lock_module is fake
+        assert projector._lock_exc_type is Exception
 
     def test_project_creates_markdown_for_empty_store(self, tmp_path: Path) -> None:
         memory_id = new_memory_id()
