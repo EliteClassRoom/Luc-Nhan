@@ -129,7 +129,9 @@ def _noisy_ida_import(module_name: str) -> Any:
 
 
 @tool(category="functions")
-def get_function_info(address: Annotated[str, "Function address (hex string)"]) -> str:
+def get_function_info(
+    address: Annotated[str, "Function address (hex string) or function name"],
+) -> str:
     """Get detailed information about a specific function."""
 
     ea = parse_addr(address)
@@ -223,7 +225,7 @@ def search_functions(
 
 @tool(category="functions")
 def get_function_name(
-    address: Annotated[str, "Function address (hex string)"],
+    address: Annotated[str, "Function address (hex string) or function name"],
 ) -> str:
     """Get the current name of a function at an address.
 
