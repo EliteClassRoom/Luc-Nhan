@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Provider-neutral Thinking level in Settings** — a single **Thinking**
+  combo in the Generation group replaces GLM's separate Thinking /
+  Reasoning-effort controls and works for every provider. The combo lists
+  the levels the selected model actually accepts, looked up in a new local
+  table (`rikugan/core/thinking.py`); no provider API advertises thinking
+  capability, so the table *is* the query. Models with no entry fall back
+  to the full `none → ultra` range and the chosen level is sent as-is.
+  - `'none'` is the storage spelling of "thinking off" — no separate toggle.
+  - Wired for the OpenAI family (`openai`, `openai_compat`, `ollama`,
+    custom OpenAI-compatible connections) as the top-level
+    `reasoning_effort` Chat Completions parameter, and for GLM via its
+    per-model level list. Anthropic / Gemini / MiniMax / Codex store and
+    display the setting but do not yet change their wire payloads.
+  - Unknown models default to `'none'` (opt-in) so existing OpenAI-family
+    configs keep sending exactly what they sent before; known models
+    default to `'high'`. A saved level a model does not support normalizes
+    to that model's default rather than failing config validation.
+  - GLM-5.3 is now a known model (200K context / 131,072 output), accepting
+    only the `high` and `max` levels.
 - **Multi-tab parallel agents** — multiple chat tabs can now run their agents
   concurrently instead of one-at-a-time. Switching tabs no longer cancels a
   running agent; each tab streams to its own view even while you read another.
@@ -34,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- GLM requests no longer send `reasoning_effort` while thinking is disabled —
+  `thinking.type = "disabled"` already expresses that, and the effort enum
+  has no "disabled" member. The gate is now driven by the thinking level
+  table instead of the coarse `reasoning_effort` metadata flag.
 - Headless/control API stays backward-compatible: `get_runner`,
   `get_event`, `cancel`, and `on_agent_finished` keep zero-argument defaults
   that target the active tab, so `headless/runner.py` and `control/server.py`

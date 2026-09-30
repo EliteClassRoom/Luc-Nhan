@@ -8,11 +8,12 @@ three things that the plain OpenAI adapter cannot express:
    the GLM endpoint sees prior thinking context on multi-turn
    conversations.  OpenAI omits this field entirely.
 2. **Request kwargs** carry GLM-specific extensions under
-   ``extra_body``: ``thinking`` (enable/disable/effort, with
-   ``clear_thinking`` polarity), optional ``tool_stream`` flag (streaming
-   only, tools-only), and optional ``reasoning_effort``.  These fields
-   are derived exclusively from :mod:`rikugan.core.glm_config` metadata
-   so unknown model IDs do not trigger upstream 400s.
+   ``extra_body``: ``thinking`` (enable/disable, with ``clear_thinking``
+   polarity), optional ``tool_stream`` flag (streaming only, tools-only),
+   and optional ``reasoning_effort``.  These fields are derived
+   exclusively from :mod:`rikugan.core.glm_config` metadata and the
+   :mod:`rikugan.core.thinking` level table so unknown model IDs do not
+   trigger upstream 400s.
 3. **Capabilities** advertise ``reasoning_content=True`` so the inherited
    ``_iter_stream_chunks`` yields ``reasoning_delta`` chunks instead of
    inlining ``<think>`` tags into the visible text channel.
@@ -39,6 +40,7 @@ from ..core.glm_config import (
     get_glm_model_metadata,
     parse_glm_extra,
 )
+from ..core.thinking import has_model_thinking_levels
 from ..core.types import (
     LLMRequestContext,
     Message,
@@ -273,7 +275,10 @@ class GLMProvider(OpenAIProvider):
           normally; ``{"type": "disabled"}`` when ``disable_thinking`` is
           set.  ``clear_thinking`` is the inverse of the user-saved
           ``preserve`` option (``clear_thinking = not preserve``).
-        * ``reasoning_effort`` — sent only when the model advertises it.
+        * ``reasoning_effort`` — sent only for models with a known entry
+          in the :mod:`rikugan.core.thinking` level table, and only while
+          thinking is enabled (or during a ``disable_thinking`` recovery,
+          where it is forced to ``"none"``).
         * ``tool_stream`` — sent only when the model advertises streamed
           tool arguments, the request is streaming (``request_context.streaming``
           is True), and ``tools`` is non-empty.  Sending this field on a
@@ -315,11 +320,16 @@ class GLMProvider(OpenAIProvider):
         else:
             extra_body["thinking"] = {"type": "disabled"}
 
-        # ``reasoning_effort`` — only on models that advertise it.
-        if self._glm_metadata.reasoning_effort:
+        # ``reasoning_effort`` — only on models whose accepted levels are
+        # known (``rikugan.core.thinking`` table).  Unknown GLM IDs get no
+        # effort field at all, so the endpoint cannot reject us for a
+        # parameter it does not take.  Thinking-off is expressed by
+        # omitting the field too: ``thinking.type = "disabled"`` already
+        # says it, and GLM's effort enum has no "disabled" member.
+        if has_model_thinking_levels(self.model):
             if request_context is not None and request_context.disable_thinking:
                 extra_body["reasoning_effort"] = "none"
-            else:
+            elif thinking.enabled:
                 extra_body["reasoning_effort"] = thinking.reasoning_effort
 
         # ``tool_stream`` — only on models that advertise streamed tool

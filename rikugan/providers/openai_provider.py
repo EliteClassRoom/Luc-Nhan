@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import os
@@ -163,12 +164,49 @@ def _format_openai_messages(
     return formatted
 
 
+def _parse_thinking_level(extra: dict[str, Any] | None) -> str:
+    """Extract the user's thinking level from a ``provider.extra`` dict.
+
+    Returns ``""`` when the user has not opted into thinking (absent /
+    empty extra, ``enabled`` false, or the ``"none"`` level) — that is the
+    pre-setting wire shape, where no ``reasoning_effort`` parameter is
+    sent at all.  Any other level string is passed through verbatim; the
+    model-list level table in :mod:`rikugan.core.thinking` drives which
+    levels Settings offers, and the endpoint is the final authority on
+    what it accepts.
+    """
+    if not extra:
+        return ""
+    thinking = extra.get("thinking")
+    if not isinstance(thinking, dict) or not thinking.get("enabled"):
+        return ""
+    level = thinking.get("reasoning_effort")
+    if not isinstance(level, str) or not level or level == "none":
+        return ""
+    return level
+
+
 class OpenAIProvider(LLMProvider):
     """Adapter for the OpenAI Chat Completions API."""
 
-    def __init__(self, api_key: str = "", api_base: str = "", model: str = "gpt-4o", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        api_key: str = "",
+        api_base: str = "",
+        model: str = "gpt-4o",
+        extra: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         super().__init__(api_key=api_key, api_base=api_base, model=model)
+        # Snapshot the raw extra dict so ProviderRegistry.get_or_create can
+        # deep-compare it and force a refresh when the thinking level
+        # changes without a credential change.
+        self._provider_extra_raw: dict[str, Any] | None = copy.deepcopy(extra) if extra else None
+        # ``reasoning_effort`` is only sent when the user explicitly opted
+        # into a thinking level; an absent/empty extra leaves the wire
+        # exactly as it was before the setting existed.
+        self._thinking_level: str = _parse_thinking_level(extra)
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -380,6 +418,11 @@ class OpenAIProvider(LLMProvider):
         }
         if tools:
             kwargs["tools"] = tools
+        if self._thinking_level:
+            # Top-level Chat Completions parameter (not ``extra_body``):
+            # this is the spelling OpenAI, o-series, Ollama's OpenAI
+            # shim, and every OpenAI-compatible endpoint expect.
+            kwargs["reasoning_effort"] = self._thinking_level
         return kwargs
 
     def _call_api(self, client: Any, kwargs: dict[str, Any]) -> Any:

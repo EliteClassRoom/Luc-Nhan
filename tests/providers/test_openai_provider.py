@@ -660,5 +660,84 @@ class TestOpenAIRequestContextPayloadEquivalence(unittest.TestCase):
         )
 
 
+class TestOpenAIThinkingLevelWire(unittest.TestCase):
+    """``provider.extra["thinking"]`` drives ``reasoning_effort``.
+
+    Chat Completions takes ``reasoning_effort`` as a top-level
+    parameter (not ``extra_body``), and it must be absent unless the
+    user explicitly opted into a non-``none`` level — an existing
+    OpenAI-family config with no ``extra`` must keep today's exact wire.
+    """
+
+    def _make(self, extra=None):
+        from rikugan.providers.openai_provider import OpenAIProvider
+
+        return OpenAIProvider(api_key="test-key", model="gpt-test", extra=extra)
+
+    def test_no_extra_sends_no_reasoning_effort(self) -> None:
+        p = self._make()
+        kwargs = p._build_request_kwargs([], None, 0.3, 128, "")
+        self.assertNotIn("reasoning_effort", kwargs)
+
+    def test_empty_extra_sends_no_reasoning_effort(self) -> None:
+        p = self._make({})
+        kwargs = p._build_request_kwargs([], None, 0.3, 128, "")
+        self.assertNotIn("reasoning_effort", kwargs)
+
+    def test_enabled_level_is_sent(self) -> None:
+        p = self._make({"thinking": {"enabled": True, "reasoning_effort": "high"}})
+        kwargs = p._build_request_kwargs([], None, 0.3, 128, "")
+        self.assertEqual(kwargs["reasoning_effort"], "high")
+
+    def test_level_is_sent_verbatim_for_unknown_models(self) -> None:
+        """The level table drives the Settings UI, not the wire: whatever
+        the user picked is forwarded as-is and the endpoint decides."""
+        p = self._make({"thinking": {"enabled": True, "reasoning_effort": "ultra"}})
+        kwargs = p._build_request_kwargs([], None, 0.3, 128, "")
+        self.assertEqual(kwargs["reasoning_effort"], "ultra")
+
+    def test_disabled_thinking_sends_nothing(self) -> None:
+        p = self._make({"thinking": {"enabled": False, "reasoning_effort": "high"}})
+        kwargs = p._build_request_kwargs([], None, 0.3, 128, "")
+        self.assertNotIn("reasoning_effort", kwargs)
+
+    def test_none_level_sends_nothing(self) -> None:
+        """``reasoning_effort="none"`` is the storage spelling of
+        "thinking off" and must not reach the wire."""
+        p = self._make({"thinking": {"enabled": True, "reasoning_effort": "none"}})
+        kwargs = p._build_request_kwargs([], None, 0.3, 128, "")
+        self.assertNotIn("reasoning_effort", kwargs)
+
+    def test_malformed_thinking_block_is_ignored(self) -> None:
+        """A hand-edited / non-dict thinking block must not crash
+        construction or invent a parameter."""
+        p = self._make({"thinking": "high"})
+        self.assertNotIn("reasoning_effort", p._build_request_kwargs([], None, 0.3, 128, ""))
+
+    def test_compat_and_ollama_inherit_the_behavior(self) -> None:
+        """The OpenAI-compatible adapters forward ``extra`` through their
+        ``**kwargs`` and must pick the level up with no code of their own."""
+        from rikugan.providers.ollama_provider import OllamaProvider
+        from rikugan.providers.openai_compat import OpenAICompatProvider
+
+        extra = {"thinking": {"enabled": True, "reasoning_effort": "medium"}}
+        for provider in (
+            OpenAICompatProvider(api_key="k", model="custom", extra=extra),
+            OllamaProvider(model="llama3.1", extra=extra),
+        ):
+            with self.subTest(provider=provider.name):
+                kwargs = provider._build_request_kwargs([], None, 0.3, 128, "")
+                self.assertEqual(kwargs["reasoning_effort"], "medium")
+
+    def test_extra_snapshot_is_deep_copied_for_registry_cache_busting(self) -> None:
+        """The registry deep-compares ``_provider_extra_raw``; sharing the
+        live config dict would let a later UI edit mutate the snapshot
+        invisibly and keep a stale provider cached."""
+        extra = {"thinking": {"enabled": True, "reasoning_effort": "high"}}
+        p = self._make(extra)
+        extra["thinking"]["reasoning_effort"] = "max"
+        self.assertEqual(p._provider_extra_raw["thinking"]["reasoning_effort"], "high")
+
+
 if __name__ == "__main__":
     unittest.main()

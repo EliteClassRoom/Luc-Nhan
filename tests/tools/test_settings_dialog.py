@@ -360,6 +360,7 @@ def _make_settings():
     dlg._api_key_edit = MagicMock()
     dlg._api_base_edit = MagicMock()
     dlg._temp_spin = MagicMock()
+    dlg._thinking_combo = MagicMock()
     dlg._explore_turns_spin = MagicMock()
     dlg._auto_context_cb = MagicMock()
     dlg._auto_save_cb = MagicMock()

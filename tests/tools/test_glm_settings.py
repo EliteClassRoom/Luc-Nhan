@@ -202,7 +202,12 @@ class TestGLMControlsVisibility(unittest.TestCase):
 
 
 class TestGLMControlsPersistence(unittest.TestCase):
-    """_sync_config_from_ui() must persist the exact GLM extra schema."""
+    """_sync_config_from_ui() must persist the exact GLM extra schema.
+
+    The thinking level is driven by the shared provider-neutral
+    ``_thinking_combo`` in the Generation group; the GLM group keeps
+    preserve / guard / endpoint only.
+    """
 
     def setUp(self) -> None:
         _ensure_qapplication()
@@ -214,14 +219,17 @@ class TestGLMControlsPersistence(unittest.TestCase):
         config.provider.extra = {"dialect": "glm"}
         return SettingsDialog(config), config
 
+    @staticmethod
+    def _select_level(dlg, level: str) -> None:
+        """Select ``level`` in the shared Thinking combo."""
+        idx = dlg._thinking_combo.findData(level)
+        assert idx >= 0, f"level {level!r} not offered: {[dlg._thinking_combo.itemData(i) for i in range(dlg._thinking_combo.count())]}"
+        dlg._thinking_combo.setCurrentIndex(idx)
+
     def test_sync_config_from_ui_persists_exact_extra(self) -> None:
         dlg, config = self._build_dialog()
         try:
-            dlg._glm_thinking_combo.setCurrentText("Disabled")
-            # Set effort combo to "none" via findData/setCurrentIndex
-            idx = dlg._glm_effort_combo.findData("none")
-            if idx >= 0:
-                dlg._glm_effort_combo.setCurrentIndex(idx)
+            self._select_level(dlg, "none")
             dlg._glm_preserve_cb.setChecked(True)
             dlg._glm_guard_cb.setChecked(True)
             dlg._glm_ceiling_spin.setValue(16_384)
@@ -246,13 +254,10 @@ class TestGLMControlsPersistence(unittest.TestCase):
         finally:
             dlg.done(0)
 
-    def test_adaptive_enabled_yields_enabled_true(self) -> None:
+    def test_non_none_level_yields_enabled_true(self) -> None:
         dlg, config = self._build_dialog()
         try:
-            dlg._glm_thinking_combo.setCurrentText("Adaptive")
-            idx = dlg._glm_effort_combo.findData("max")
-            if idx >= 0:
-                dlg._glm_effort_combo.setCurrentIndex(idx)
+            self._select_level(dlg, "max")
             dlg._glm_preserve_cb.setChecked(True)
             dlg._glm_guard_cb.setChecked(True)
             dlg._glm_ceiling_spin.setValue(16_384)
@@ -262,6 +267,7 @@ class TestGLMControlsPersistence(unittest.TestCase):
 
             thinking = config.provider.extra.get("thinking", {})
             self.assertTrue(thinking.get("enabled"))
+            self.assertEqual(thinking.get("reasoning_effort"), "max")
         finally:
             dlg.done(0)
 
@@ -271,7 +277,7 @@ class TestGLMControlsPersistence(unittest.TestCase):
         try:
             config.provider.extra = {
                 "dialect": "glm",
-                "thinking": {"enabled": False, "reasoning_effort": "high", "preserve": False},
+                "thinking": {"enabled": True, "reasoning_effort": "high", "preserve": False},
                 "degeneration_guard": {
                     "enabled": False,
                     "reasoning_token_ceiling": 8_192,
@@ -279,13 +285,32 @@ class TestGLMControlsPersistence(unittest.TestCase):
                     "recovery_max_tokens": 4_096,
                 },
             }
+            dlg._refresh_thinking_levels()
+            dlg._load_thinking_controls_from_config()
             dlg._load_glm_controls_from_config()
-            self.assertEqual(dlg._glm_thinking_combo.currentText(), "Disabled")
-            self.assertEqual(dlg._glm_effort_combo.currentData(), "high")
+            self.assertEqual(dlg._thinking_combo.currentData(), "high")
             self.assertFalse(dlg._glm_preserve_cb.isChecked())
             self.assertFalse(dlg._glm_guard_cb.isChecked())
             self.assertEqual(dlg._glm_ceiling_spin.value(), 8_192)
             self.assertEqual(dlg._glm_recovery_spin.value(), 4_096)
+        finally:
+            dlg.done(0)
+
+    def test_glm_preserve_false_survives_the_shared_thinking_write(self) -> None:
+        """GLM sync rebuilds the whole extra dict and runs first; the
+        shared thinking write must then keep the preserve value the
+        checkbox just wrote rather than resurrecting the old one."""
+        dlg, config = self._build_dialog()
+        try:
+            self._select_level(dlg, "high")
+            dlg._glm_preserve_cb.setChecked(False)
+
+            dlg._sync_config_from_ui()
+
+            self.assertEqual(
+                config.provider.extra["thinking"],
+                {"enabled": True, "reasoning_effort": "high", "preserve": False},
+            )
         finally:
             dlg.done(0)
 
@@ -295,10 +320,7 @@ class TestGLMControlsPersistence(unittest.TestCase):
         skip degeneration detection entirely."""
         dlg, config = self._build_dialog()
         try:
-            dlg._glm_thinking_combo.setCurrentText("Adaptive")
-            idx = dlg._glm_effort_combo.findData("max")
-            if idx >= 0:
-                dlg._glm_effort_combo.setCurrentIndex(idx)
+            self._select_level(dlg, "max")
             dlg._glm_preserve_cb.setChecked(True)
             dlg._glm_guard_cb.setChecked(False)
             dlg._glm_ceiling_spin.setValue(16_384)
@@ -570,6 +592,198 @@ class TestGLMZaiMigration(unittest.TestCase):
                 config.provider.extra,
                 "Dialect change must revert on Cancel (normal config-edit semantics), "
                 "only the migration marker is durable.",
+            )
+        finally:
+            dlg.done(0)
+
+
+class TestThinkingCombo(unittest.TestCase):
+    """The provider-neutral Thinking combo: per-model level lists, and the
+    provider-neutral storage schema written back into ``provider.extra``."""
+
+    def setUp(self) -> None:
+        _ensure_qapplication()
+
+    def _build_dialog(self, model: str = "gpt-test", extra=None):
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        config = RikuganConfig()
+        config.provider.name = "openai"
+        config.provider.model = model
+        if extra is not None:
+            config.provider.extra = extra
+        dlg = SettingsDialog(config)
+        return dlg, config
+
+    @staticmethod
+    def _levels(dlg) -> list:
+        return [dlg._thinking_combo.itemData(i) for i in range(dlg._thinking_combo.count())]
+
+    @staticmethod
+    def _select_model(dlg, model_id: str) -> None:
+        dlg._model_combo.clear()
+        dlg._model_combo.addItem(model_id, model_id)
+        dlg._model_combo.setCurrentIndex(0)
+
+    # --- Level list population -----------------------------------------
+
+    def test_restricted_model_offers_only_its_own_levels(self) -> None:
+        """GLM-5.3 supports high and max only — the combo must not offer
+        levels the endpoint would reject."""
+        dlg, _ = self._build_dialog()
+        try:
+            self._select_model(dlg, "glm-5.3")
+            self.assertEqual(self._levels(dlg), ["high", "max"])
+        finally:
+            dlg.done(0)
+
+    def test_known_model_defaults_to_high(self) -> None:
+        """A model whose levels are known gets a sensible active default."""
+        dlg, _ = self._build_dialog()
+        try:
+            self._select_model(dlg, "glm-5.3")
+            self.assertEqual(dlg._thinking_combo.currentData(), "high")
+        finally:
+            dlg.done(0)
+
+    def test_unknown_model_offers_the_full_default_range(self) -> None:
+        from rikugan.core.thinking import DEFAULT_THINKING_LEVELS
+
+        dlg, _ = self._build_dialog()
+        try:
+            self._select_model(dlg, "some-unreleased-model")
+            self.assertEqual(self._levels(dlg), list(DEFAULT_THINKING_LEVELS))
+        finally:
+            dlg.done(0)
+
+    def test_unknown_model_defaults_to_none(self) -> None:
+        """Opt-in default: sending reasoning_effort to a model that never
+        advertised thinking makes the endpoint 400, so unknown models
+        start with thinking off."""
+        dlg, _ = self._build_dialog()
+        try:
+            self._select_model(dlg, "some-unreleased-model")
+            self.assertEqual(dlg._thinking_combo.currentData(), "none")
+        finally:
+            dlg.done(0)
+
+    def test_glm_5_2_offers_its_seven_levels(self) -> None:
+        dlg, _ = self._build_dialog()
+        try:
+            self._select_model(dlg, "glm-5.2")
+            self.assertEqual(
+                self._levels(dlg),
+                ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+            )
+        finally:
+            dlg.done(0)
+
+    def test_selection_survives_a_model_switch_that_still_offers_it(self) -> None:
+        """Switching between two models with overlapping levels must not
+        reset the user's choice."""
+        dlg, _ = self._build_dialog()
+        try:
+            self._select_model(dlg, "glm-5.2")
+            dlg._thinking_combo.setCurrentIndex(dlg._thinking_combo.findData("xhigh"))
+            self._select_model(dlg, "glm-5.3")
+            # "xhigh" is not offered by glm-5.3 → fall back to its default.
+            self.assertEqual(dlg._thinking_combo.currentData(), "high")
+
+            dlg._thinking_combo.setCurrentIndex(dlg._thinking_combo.findData("max"))
+            self._select_model(dlg, "glm-5.2")
+            self.assertEqual(dlg._thinking_combo.currentData(), "max")
+        finally:
+            dlg.done(0)
+
+    # --- Persistence ---------------------------------------------------
+
+    def test_none_level_persists_enabled_false(self) -> None:
+        dlg, config = self._build_dialog()
+        try:
+            dlg._thinking_combo.setCurrentIndex(dlg._thinking_combo.findData("none"))
+            dlg._sync_config_from_ui()
+            self.assertEqual(
+                config.provider.extra["thinking"],
+                {"enabled": False, "reasoning_effort": "none", "preserve": True},
+            )
+        finally:
+            dlg.done(0)
+
+    def test_active_level_persists_enabled_true(self) -> None:
+        dlg, config = self._build_dialog()
+        try:
+            dlg._thinking_combo.setCurrentIndex(dlg._thinking_combo.findData("ultra"))
+            dlg._sync_config_from_ui()
+            self.assertEqual(
+                config.provider.extra["thinking"],
+                {"enabled": True, "reasoning_effort": "ultra", "preserve": True},
+            )
+        finally:
+            dlg.done(0)
+
+    def test_sync_preserves_sibling_extra_keys(self) -> None:
+        """Custom-provider extras are opaque; the thinking write must merge
+        into them rather than replace the dict."""
+        dlg, config = self._build_dialog(extra={"some_option": {"a": 1}})
+        try:
+            dlg._thinking_combo.setCurrentIndex(dlg._thinking_combo.findData("high"))
+            dlg._sync_config_from_ui()
+            self.assertEqual(config.provider.extra["some_option"], {"a": 1})
+            self.assertIn("thinking", config.provider.extra)
+        finally:
+            dlg.done(0)
+
+    def test_sync_keeps_an_existing_preserve_flag(self) -> None:
+        dlg, config = self._build_dialog(
+            extra={"thinking": {"enabled": True, "reasoning_effort": "high", "preserve": False}}
+        )
+        try:
+            dlg._thinking_combo.setCurrentIndex(dlg._thinking_combo.findData("max"))
+            dlg._sync_config_from_ui()
+            self.assertIs(config.provider.extra["thinking"]["preserve"], False)
+        finally:
+            dlg.done(0)
+
+    def test_saved_level_is_restored_on_reopen(self) -> None:
+        """A saved level round-trips back into the combo on the next open."""
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        config = RikuganConfig()
+        config.provider.name = "openai"
+        config.provider.model = "glm-5.3"
+        config.provider.extra = {"thinking": {"enabled": True, "reasoning_effort": "max", "preserve": True}}
+        dlg = SettingsDialog(config)
+        try:
+            self.assertEqual(dlg._thinking_combo.currentData(), "max")
+        finally:
+            dlg.done(0)
+
+    def test_saved_level_unsupported_by_model_falls_back_instead_of_being_injected(self) -> None:
+        """A stale saved level (e.g. "ultra" saved for another model) must
+        not be spliced into the combo as an out-of-list item."""
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        config = RikuganConfig()
+        config.provider.name = "openai"
+        config.provider.model = "glm-5.3"
+        config.provider.extra = {"thinking": {"enabled": True, "reasoning_effort": "ultra", "preserve": True}}
+        dlg = SettingsDialog(config)
+        try:
+            self.assertEqual(self._levels(dlg), ["high", "max"])
+            self.assertEqual(dlg._thinking_combo.currentData(), "high")
+        finally:
+            dlg.done(0)
+
+    def test_thinking_is_written_for_non_glm_providers_too(self) -> None:
+        """The setting is provider-neutral: an OpenAI-family config gets
+        the same schema, which is what OpenAIProvider reads."""
+        dlg, config = self._build_dialog()
+        try:
+            dlg._thinking_combo.setCurrentIndex(dlg._thinking_combo.findData("ultra"))
+            dlg._on_accept()
+            self.assertEqual(
+                config.provider.extra["thinking"],
+                {"enabled": True, "reasoning_effort": "ultra", "preserve": True},
             )
         finally:
             dlg.done(0)

@@ -16,7 +16,6 @@ from ..core.glm_config import (
     GLM_ENDPOINT_BASE_URLS,
     GLM_ENDPOINT_CODING_PLAN,
     GLM_ENDPOINT_STANDARD,
-    REASONING_EFFORT_VALUES,
     REASONING_TOKEN_CEILING_DEFAULT,
     REASONING_TOKEN_CEILING_MAX,
     REASONING_TOKEN_CEILING_MIN,
@@ -27,6 +26,7 @@ from ..core.glm_config import (
 )
 from ..core.log_sinks import set_host_log_level
 from ..core.logging import log_debug, log_error
+from ..core.thinking import default_thinking_level, get_thinking_levels, has_model_thinking_levels
 from ..core.types import ModelInfo
 from ..providers.auth_cache import resolve_auth_cached
 from ..providers.ollama_provider import DEFAULT_OLLAMA_URL
@@ -375,6 +375,11 @@ class SettingsDialog(QDialog):
         playout.addStretch()
         self._tabs.addTab(provider_tab, "Provider")
 
+        # Initialise the thinking combo from the selected model, then
+        # apply the saved level on top of it.
+        self._refresh_thinking_levels()
+        self._load_thinking_controls_from_config()
+
         # Initialise GLM controls from config and set visibility.
         self._load_glm_controls_from_config()
         self._refresh_glm_controls()
@@ -617,6 +622,17 @@ class SettingsDialog(QDialog):
         self._context_spin.setValue(self._config.provider.context_window)
         gen_form.addRow("Context Window:", self._context_spin)
 
+        # Provider-neutral thinking level.  Item contents come from the
+        # per-model level table in ``rikugan.core.thinking`` and are
+        # rebuilt whenever the selected model changes.
+        self._thinking_combo = QComboBox()
+        self._thinking_combo.setToolTip(
+            "Reasoning effort sent to the provider.\n"
+            "Lists the known levels for the selected model; unknown models fall back to "
+            "none→ultra.\n'none' disables thinking."
+        )
+        gen_form.addRow("Thinking:", self._thinking_combo)
+
         return gen_group
 
     def _build_behavior_group(self) -> QGroupBox:
@@ -836,34 +852,14 @@ class SettingsDialog(QDialog):
         """Build the GLM reasoning resilience controls group.
 
         Visible only when the active provider has
-        ``extra["dialect"] == "glm"``.  Exposes product-level controls
-        only (thinking on/off/effort, preserve, guard enable/ceiling/
-        recovery).  Repetition/window/meta thresholds are not exposed.
+        ``extra["dialect"] == "glm"``.  The thinking *level* lives in the
+        provider-neutral ``Thinking`` combo in the Generation group; this
+        group owns the GLM-only controls (preserve, degeneration guard,
+        and the Z.AI endpoint type).  Repetition/window/meta thresholds
+        are not exposed.
         """
         glm_group = QGroupBox("GLM Reasoning Resilience")
         glm_form = QFormLayout(glm_group)
-
-        # Thinking mode: Adaptive (enabled) or Disabled
-        self._glm_thinking_combo = QComboBox()
-        self._glm_thinking_combo.addItem("Adaptive", True)
-        self._glm_thinking_combo.addItem("Disabled", False)
-        self._glm_thinking_combo.setToolTip(
-            "Adaptive: GLM reasoning/thinking is enabled for requests.\nDisabled: thinking is turned off entirely."
-        )
-        glm_form.addRow("Thinking:", self._glm_thinking_combo)
-
-        # Reasoning effort — only meaningful for GLM-5.2, but we always
-        # show the combo and disable it for models that don't advertise
-        # ``reasoning_effort`` support.
-        self._glm_effort_combo = QComboBox()
-        for effort in sorted(REASONING_EFFORT_VALUES):
-            self._glm_effort_combo.addItem(effort, effort)
-        self._glm_effort_combo.setToolTip(
-            "Reasoning effort sent to the GLM endpoint.\n"
-            "GLM-5.2 supports: max, xhigh, high, medium, low, minimal, none.\n"
-            "Other GLM models use the default 'max' and cannot change it."
-        )
-        glm_form.addRow("Reasoning effort:", self._glm_effort_combo)
 
         # Preserve thinking context across turns
         self._glm_preserve_cb = QCheckBox("Preserve reasoning context across turns")
@@ -921,28 +917,105 @@ class SettingsDialog(QDialog):
         glm_group.setVisible(False)
         return glm_group
 
+    def _refresh_thinking_levels(self) -> None:
+        """Rebuild the Thinking combo from the selected model's level list.
+
+        The per-model list comes from :mod:`rikugan.core.thinking`; models
+        with no table entry get the full default range.  Selection
+        priority: keep the current level if the new list still offers it,
+        else fall back to the saved config level, else the model default
+        for known models / ``"none"`` for unknown ones.
+
+        Unknown models default to ``"none"`` deliberately — sending
+        ``reasoning_effort`` to a model that never advertised thinking (e.g.
+        ``gpt-4o``) makes the endpoint reject the request, and the
+        opt-in default preserves today's wire for existing users.
+        """
+        # Before the (deferred) model population the combo is empty, so
+        # fall back to the saved model — otherwise the initial list would
+        # be built from "" and show the permissive default range.
+        model_id = self._get_selected_model_id() or self._config.provider.model
+        levels = get_thinking_levels(model_id)
+
+        current = self._thinking_combo.currentData()
+        self._thinking_combo.clear()
+        for level in levels:
+            self._thinking_combo.addItem(level, level)
+
+        if current in levels:
+            self._thinking_combo.setCurrentIndex(levels.index(current))
+            return
+
+        saved = self._saved_thinking_level()
+        if saved in levels:
+            self._thinking_combo.setCurrentIndex(levels.index(saved))
+        elif has_model_thinking_levels(model_id):
+            fallback = default_thinking_level(levels)
+            self._thinking_combo.setCurrentIndex(levels.index(fallback))
+        else:
+            self._thinking_combo.setCurrentIndex(levels.index("none") if "none" in levels else 0)
+
+    def _saved_thinking_level(self) -> str:
+        """Return the level persisted in ``config.provider.extra``."""
+        extra = self._config.provider.extra
+        if not isinstance(extra, dict):
+            return "none"
+        thinking = extra.get("thinking")
+        if not isinstance(thinking, dict) or not thinking.get("enabled", True):
+            return "none"
+        level = thinking.get("reasoning_effort")
+        return level if isinstance(level, str) and level else "none"
+
+    def _load_thinking_controls_from_config(self) -> None:
+        """Select the saved thinking level in the combo, if it is offered.
+
+        Runs after :meth:`_refresh_thinking_levels` so the combo already
+        holds the selected model's level list; a saved level the model
+        does not support is left at the refresh fallback rather than
+        injected as an out-of-list item.
+        """
+        level = self._saved_thinking_level()
+        idx = self._thinking_combo.findData(level)
+        if idx >= 0:
+            self._thinking_combo.setCurrentIndex(idx)
+
+    def _sync_thinking_to_extra(self) -> None:
+        """Write the Thinking combo back into ``config.provider.extra``.
+
+        Stores the provider-neutral GLM-compatible schema
+        ``{"enabled": bool, "reasoning_effort": str, "preserve": bool}``
+        so every provider shares one setting shape: ``enabled`` is
+        ``level != "none"`` and ``reasoning_effort`` is the level itself.
+        """
+        level = self._thinking_combo.currentData() or "none"
+        extra = self._config.provider.extra
+        if not isinstance(extra, dict):
+            extra = {}
+        previous = extra.get("thinking")
+        preserve = previous.get("preserve", True) if isinstance(previous, dict) else True
+        if not isinstance(preserve, bool):
+            preserve = True
+        extra["thinking"] = {
+            "enabled": level != "none",
+            "reasoning_effort": str(level),
+            "preserve": preserve,
+        }
+        self._config.provider.extra = extra
+
     def _load_glm_controls_from_config(self) -> None:
         """Populate GLM UI controls from ``config.provider.extra``.
 
         Called on initial build and whenever the provider changes.  If
         the extra dict lacks GLM keys (or is not a GLM dialect), the
-        controls are left at their defaults.
+        controls are left at their defaults.  The thinking level is not
+        read here — the shared Thinking combo owns it via
+        :meth:`_load_thinking_controls_from_config`.
         """
         extra = self._config.provider.extra
         if not isinstance(extra, dict) or extra.get("dialect") != GLM_DIALECT:
             return
 
         thinking = extra.get("thinking") or {}
-        if thinking.get("enabled", True):
-            self._glm_thinking_combo.setCurrentIndex(0)  # Adaptive
-        else:
-            self._glm_thinking_combo.setCurrentIndex(1)  # Disabled
-
-        effort = thinking.get("reasoning_effort", "max")
-        idx = self._glm_effort_combo.findData(effort)
-        if idx >= 0:
-            self._glm_effort_combo.setCurrentIndex(idx)
-
         self._glm_preserve_cb.setChecked(thinking.get("preserve", True))
 
         guard = extra.get("degeneration_guard") or {}
@@ -971,12 +1044,9 @@ class SettingsDialog(QDialog):
         if not isinstance(extra, dict) or extra.get("dialect") != GLM_DIALECT:
             return
 
-        # Read thinking combo (index 0 = Adaptive/enabled, 1 = Disabled)
-        thinking_enabled = self._glm_thinking_combo.currentData()
-        if thinking_enabled is None:
-            thinking_enabled = True
-
-        effort = self._glm_effort_combo.currentData() or "max"
+        # Thinking level comes from the shared Generation-group combo;
+        # the GLM group only supplies the preserve toggle.
+        level = self._thinking_combo.currentData() or "none"
 
         preserve = self._glm_preserve_cb.isChecked()
         guard_enabled = self._glm_guard_cb.isChecked()
@@ -991,8 +1061,8 @@ class SettingsDialog(QDialog):
             "dialect": GLM_DIALECT,
             "endpoint_type": str(endpoint_type),
             "thinking": {
-                "enabled": bool(thinking_enabled),
-                "reasoning_effort": str(effort),
+                "enabled": str(level) != "none",
+                "reasoning_effort": str(level),
                 "preserve": bool(preserve),
             },
             "degeneration_guard": {
@@ -1047,10 +1117,6 @@ class SettingsDialog(QDialog):
         is_glm = isinstance(extra, dict) and extra.get("dialect") == GLM_DIALECT
         self._glm_group.setVisible(is_glm)
         if is_glm:
-            # Update effort combo enabled state based on model metadata.
-            model_id = self._config.provider.model
-            metadata = get_glm_model_metadata(model_id)
-            self._glm_effort_combo.setEnabled(metadata.reasoning_effort)
             self._clamp_glm_recovery_to_model()
 
     def _clamp_glm_recovery_to_model(self) -> None:
@@ -1657,7 +1723,11 @@ class SettingsDialog(QDialog):
           a high value and the new provider metadata has a lower cap).
         * Context Window is left alone on same-model population so a user
           who has manually tuned it is not silently overridden.
+        * The Thinking combo is rebuilt for the newly selected model — this
+          method is the single funnel reached by combo ``currentIndexChanged``,
+          ``_on_models_ready`` and the built-in population path.
         """
+        self._refresh_thinking_levels()
         model_id = self._get_selected_model_id()
         info = self._find_model_info(model_id)
         if info is None:
@@ -1775,7 +1845,10 @@ class SettingsDialog(QDialog):
         self._config.provider.max_tokens = self._max_tokens_spin.value()
         self._config.provider.context_window = self._context_spin.value()
         # Sync GLM controls back to extra if the active provider is GLM.
+        # Runs first: it rebuilds the whole extra dict, so the shared
+        # thinking level must be written on top of the result.
         self._sync_glm_controls_to_config()
+        self._sync_thinking_to_extra()
 
     # --- Accept ---
 
@@ -1847,8 +1920,11 @@ class SettingsDialog(QDialog):
         self._config.provider.temperature = self._temp_spin.value()
         self._config.provider.max_tokens = self._max_tokens_spin.value()
         self._config.provider.context_window = self._context_spin.value()
-        # Sync GLM controls back to extra before persisting.
+        # Sync GLM controls back to extra before persisting.  Runs first:
+        # it rebuilds the extra dict, then the shared thinking level is
+        # written on top of it.
         self._sync_glm_controls_to_config()
+        self._sync_thinking_to_extra()
         self._config.auto_context = self._auto_context_cb.isChecked()
         self._config.checkpoint_auto_save = self._auto_save_cb.isChecked()
         self._config.exploration_turn_limit = self._explore_turns_spin.value()
