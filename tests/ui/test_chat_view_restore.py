@@ -100,6 +100,11 @@ from rikugan.ui.tool_widgets import (
     ExecutePythonWidget,
     ToolCallWidget,
 )
+from rikugan.ui.message_widgets import (
+    AssistantMessageWidget,
+    UserMessageWidget,
+)
+from tests.qt_real import requires_real_qt
 
 
 def _user_msg(content: str) -> Message:
@@ -683,6 +688,165 @@ class TestRestoreExecutePython(unittest.TestCase):
         self.assertIsInstance(widgets[0], ExecutePythonWidget)
         self.assertFalse(widgets[0]._result_block.isHidden())
         self.assertTrue(widgets[0]._is_error)
+
+
+@requires_real_qt
+class AsyncRestoreEndToEndTests(unittest.TestCase):
+    """End-to-end regression for Bug 2: a real ``ChatView`` must
+    actually paint real widgets after ``restore_from_messages_async``.
+
+    The pre-fix bug: ``_on_worker_finished`` (``QThread.finished``
+    slot) used to stop the drain timer and ``deleteLater`` every
+    placeholder the moment the worker exited — which for a typical
+    small/short session happens *before* the first 50 ms timer tick,
+    so the drain never ran and zero widgets were built.
+
+    These tests drive a real ``ChatView`` with the offscreen Qt
+    platform, pump ``processEvents`` until the restore finishes, and
+    assert that real ``UserMessageWidget`` / ``AssistantMessageWidget``
+    instances are present in the layout.  They MUST fail against the
+    pre-fix code (the bug produced 0 widgets regardless of pump
+    duration) and pass against the fixed code.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        cls._qapp = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        # Real ``ChatView()`` — we need the actual Qt widget tree so
+        # ``findChildren`` walks real ``UserMessageWidget`` /
+        # ``AssistantMessageWidget`` instances.  ``ChatView`` is a
+        # ``QScrollArea`` subclass; resizing gives it a real
+        # viewport so ``setFixedWidth`` inside the restore is a
+        # no-op rather than zero-width clipping placeholders.
+        self.view = ChatView()
+        self.view.resize(640, 480)
+        self.addCleanup(self.view.deleteLater)
+
+    def _user(self, content: str, msg_id: str) -> Message:
+        m = Message(role=Role.USER, content=content)
+        m.id = msg_id
+        return m
+
+    def _assistant(self, content: str, msg_id: str) -> Message:
+        m = Message(role=Role.ASSISTANT, content=content)
+        m.id = msg_id
+        return m
+
+    def _pump_until_done(self, expected_min_user: int, expected_min_assistant: int, timeout_s: float = 3.0) -> None:
+        """Pump ``processEvents`` until both expected widget counts are
+        present and ``_in_restore`` has cleared, or until ``timeout_s``
+        elapses.  Fail loudly with observed counts on deadline so a
+        regression surfaces the zero-widgets failure mode.
+        """
+        import time
+
+        deadline = time.monotonic() + timeout_s
+        last_user = -1
+        last_assistant = -1
+        self._qapp.processEvents()
+        while time.monotonic() < deadline:
+            last_user = len(self.view.findChildren(UserMessageWidget))
+            last_assistant = len(self.view.findChildren(AssistantMessageWidget))
+            if last_user >= expected_min_user and last_assistant >= expected_min_assistant and not self.view._in_restore:
+                # Spin a few more turns to flush any late queue items.
+                for _ in range(10):
+                    self._qapp.processEvents()
+                return
+            self._qapp.processEvents()
+            time.sleep(0.001)  # yield to scheduler for timer ticks
+        raise AssertionError(
+            f"restore did not paint widgets within {timeout_s}s "
+            f"(observed user={last_user}, assistant={last_assistant}; "
+            f"expected user>={expected_min_user}, "
+            f"assistant>={expected_min_assistant}, _in_restore="
+            f"{self.view._in_restore}). This is the Bug 2 failure mode "
+            f"(\\_on\\_worker\\_finished killed the drain before chunks "
+            f"landed)."
+        )
+
+    def test_two_message_session_paints_user_and_assistant(self) -> None:
+        """The minimal repro: a 2-message session must yield both
+        a ``UserMessageWidget`` and an ``AssistantMessageWidget``."""
+        self.view.restore_from_messages_async(
+            [self._user("hello", "u1"), self._assistant("hi", "a1")]
+        )
+        self._pump_until_done(expected_min_user=1, expected_min_assistant=1)
+        # Clean terminal flags.
+        self.assertFalse(self.view._in_restore)
+        self.assertIsNone(self.view._restore_poll_timer)
+        self.assertEqual(self.view._placeholders, {})
+
+    def test_eighty_message_session_paints_every_widget(self) -> None:
+        """The bug is timing-independent at the operator level. 80
+        messages under the default cap of 100 must paint 40 user +
+        40 assistant widgets with no leftover placeholders.
+        """
+        messages: list[Message] = []
+        for i in range(80):
+            if i % 2 == 0:
+                messages.append(self._user(f"q{i}", f"u{i}"))
+            else:
+                messages.append(self._assistant(f"a{i}", f"a{i}"))
+        self.view.restore_from_messages_async(messages)
+        self._pump_until_done(expected_min_user=40, expected_min_assistant=40)
+        # No leftover placeholders — every chunk's spec was consumed.
+        self.assertEqual(self.view._placeholders, {})
+        self.assertIsNone(self.view._restore_poll_timer)
+
+    def test_load_older_grows_cap_and_re_renders(self) -> None:
+        """The ``max_rendered`` cap path must also produce widgets when
+        the user clicks \"Load older\".  Use a session larger than the
+        default cap so the first restore leaves placeholders, then
+        re-render with a grown cap and confirm more widgets land.
+        """
+        from rikugan.ui.chat_view import _RESTORE_DEFAULT_MAX_RENDERED
+
+        total = _RESTORE_DEFAULT_MAX_RENDERED + 50
+        messages: list[Message] = []
+        for i in range(total):
+            if i % 2 == 0:
+                messages.append(self._user(f"q{i}", f"u{i}"))
+            else:
+                messages.append(self._assistant(f"a{i}", f"a{i}"))
+        self.view.restore_from_messages_async(messages)
+        # First restore: cap = default; at least one chunk worth of
+        # widgets must land.
+        self._pump_until_done(expected_min_user=1, expected_min_assistant=1)
+        # \"Load older\" grows the cap and re-runs the restore.
+        self.view._load_older_clicked()
+        # After the second restore with the grown cap, more widgets
+        # must have landed (the cap doubled to at least 200 here).
+        self._pump_until_done(
+            expected_min_user=_RESTORE_DEFAULT_MAX_RENDERED // 2,
+            expected_min_assistant=_RESTORE_DEFAULT_MAX_RENDERED // 2,
+        )
+        # Cap grew.
+        self.assertGreater(
+            self.view._restore_max_rendered, _RESTORE_DEFAULT_MAX_RENDERED
+        )
+
+    def test_cancel_tears_down_timer_and_clears_state(self) -> None:
+        """``_cancel_restore`` must stop the drain timer and clear
+        ``_in_restore`` — never leave a timer spinning.
+
+        Regression guard for the safety-net branch in the new drain
+        ownership model.  Without it, a Cancel could leak because
+        ``_on_worker_finished`` was no longer doing it.
+        """
+        messages = [self._user(f"q{i}", f"u{i}") for i in range(40)]
+        self.view.restore_from_messages_async(messages)
+        # Give the timer a tick to start, then cancel.
+        self._qapp.processEvents()
+        self.view._cancel_restore()
+        # Pump to flush the timer's stop.
+        for _ in range(20):
+            self._qapp.processEvents()
+        self.assertIsNone(self.view._restore_poll_timer)
+        self.assertFalse(self.view._in_restore)
 
 
 if __name__ == "__main__":

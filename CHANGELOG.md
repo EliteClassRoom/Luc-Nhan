@@ -75,6 +75,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_event`, `cancel`, and `on_agent_finished` keep zero-argument defaults
   that target the active tab, so `headless/runner.py` and `control/server.py`
   are unaffected by the multi-runner refactor.
+- **Restored chat history now actually renders.** Opening a saved chat from
+  History could attach the session without rendering a single message,
+  leaving a blank chat. Root cause: `RestoreWorker` (a `QThread` in
+  `rikugan/ui/chat_view.py`) pushed its built-message chunks onto a
+  main-thread `queue.Queue` drained by a 50 ms `QTimer`. `QThread.finished`
+  is delivered through the event loop, so whenever the worker finished
+  before the next tick — a typical session does, well under one tick of
+  work — `_on_worker_finished` ran first, stopped the drain timer, and
+  `deleteLater()`d every remaining `MessagePlaceholder`, discarding every
+  queued chunk. Size was irrelevant: 2, 10, 40, and 80-message sessions
+  with 2000-character bodies all produced zero rendered widgets — every
+  restored session was affected, not just long ones. The worker now
+  guarantees its chunks reach the UI before `finished` is emitted,
+  regardless of how fast it runs.
+- **Rikugan now opens into your most recent chat.** On startup it loads
+  the newest saved session for the currently open binary instead of
+  starting from a blank `New Chat` draft. This reverses the 1.12.0
+  "start fresh" decision: the startup-restore branch in
+  `_apply_history_list_result` was already complete (newest-first sort
+  on `updated_at`, IDB scope via `db_instance_id` with path fallback) but
+  no production code ever set the flag that enables it, so the whole
+  startup branch was unreachable. The flag is now set when the panel
+  finishes wiring up the UI and a history list request is kicked off;
+  `_apply_history_loaded` already has a matching startup-load branch that
+  suppresses error copy on failure. Sessions remain scoped to the
+  currently open binary, and if there is nothing to restore the load
+  silently falls back to a blank draft. Switching to a *different*
+  binary still starts from a blank draft — a file switch is an explicit
+  user action, so it keeps the 1.12.0 behaviour.
+- **Reopening a saved chat no longer loses its token counts.** The
+  context bar dropped back to 0% and cumulative usage reset to zero
+  every time a past conversation was reopened, because
+  `SessionHistory.save_session` never wrote the session's
+  `last_prompt_tokens` / `total_usage` counters to disk and
+  `load_session` never restored them — the fields existed in memory
+  (and were being updated on every turn) but were simply omitted from
+  the persisted payload, an oversight rather than a deliberate
+  exclusion: `current_turn` round-trips correctly, so the omission was
+  visible against the surrounding code. `SessionState` already declared
+  both fields and `TokenUsage.__post_init__` already coerces hostile
+  values (None / floats / strings / negatives) through
+  `coerce_token_count`, so no new normalization path was needed —
+  `save_session` now writes them with the rest of the state and
+  `load_session` passes them back into the `SessionState` constructor.
+  Sessions saved by earlier versions still load cleanly with zeroed
+  counters instead of failing: the missing keys coerce to defaults via
+  `TokenUsage()` and `int`, and `last_prompt_tokens` falls back to
+  `0` rather than rejecting the session.
 
 ## [1.13.2] - 2026-07-20
 
