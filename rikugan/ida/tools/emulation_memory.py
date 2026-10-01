@@ -305,9 +305,8 @@ def _check_setup(
         )
 
 
-def _seg_bounds(seg: Any) -> tuple[int, int] | None:
-    """Return ``(start_ea, end_ea)`` for *seg*."""
-
+def _seg_bounds(seg: Any) -> tuple[int, int]:
+    """Return ``(start_ea, end_ea)`` for *seg*; raises when unusable."""
     try:
         return int(seg.start_ea), int(seg.end_ea)
     except (AttributeError, TypeError, ValueError) as e:
@@ -361,6 +360,8 @@ def _is_bss(seg: Any) -> bool:
 def _segments() -> list[tuple[int, int, int, bool]]:
     """Read the IDB segment table once: ``(start, end, perms, is_bss)``."""
 
+    _require_ida()
+    assert ida_segment is not None  # narrowed for the type checker; _require_ida raised otherwise
     try:
         count = int(ida_segment.get_segm_qty())
     except Exception as e:
@@ -404,6 +405,8 @@ def _read_page_bytes(address: int, size: int, is_bss: bool) -> bytes:
     invent zeros.
     """
 
+    _require_ida()
+    assert ida_bytes is not None  # narrowed for the type checker; _require_ida raised otherwise
     try:
         result = ida_bytes.get_bytes_and_mask(address, size)
     except Exception as e:

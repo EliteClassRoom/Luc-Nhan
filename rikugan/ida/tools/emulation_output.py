@@ -502,7 +502,7 @@ def _capture_lines(result: EmulationResult, label: str, payload: bytes) -> list[
         >= _MIN_REPORTED_CHARS
     )
     lines: list[str] = []
-    if from_buffer:
+    if from_buffer and meta is not None:
         for name in _ENCODINGS:
             text = str(meta.get(name) or "")
             if text:

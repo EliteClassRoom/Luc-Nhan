@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import inspect
 import traceback
+import types
 import typing
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -144,9 +145,11 @@ def _resolve_type(annotation: Any) -> tuple:
         base = real_args[0] if real_args else str
         return _resolve_type(base)
 
-    # Handle Optional
-    if origin is typing.Union and len(args) == 2 and type(None) in args:
-        inner = args[0] if args[1] is type(None) else args[1]  # type: ignore[misc]
+    # Handle Optional — typing.Optional[X] and the PEP 604 ``X | None``
+    # spelling alike (the latter has no ``__origin__``; typing.get_origin
+    # reports types.UnionType).
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType) and type(None) in args:
+        inner = next(a for a in args if a is not type(None))  # type: ignore[misc]
         json_type, extra, _ = _resolve_type(inner)
         return json_type, extra, inner
 
@@ -190,7 +193,7 @@ def _build_parameters(func: Callable) -> list[ParameterSchema]:
 
         # Determine required and default
         has_default = param.default is not inspect.Parameter.empty
-        is_optional = getattr(annotation, "__origin__", None) is typing.Union and type(None) in getattr(
+        is_optional = typing.get_origin(annotation) in (typing.Union, types.UnionType) and type(None) in getattr(
             annotation, "__args__", ()
         )
 

@@ -46,7 +46,7 @@ import json
 import math
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -454,10 +454,10 @@ def _normalize_registers(raw: Any, arch: ArchMode, *, tool_name: str) -> dict[st
                 f"{tool_name}: register {name!r} does not exist in a 32-bit database",
                 tool_name=tool_name,
             )
-        base = owner.get(name)
-        if base is None:
+        owner_base = owner.get(name)
+        if owner_base is None:
             raise ToolError(f"{tool_name}: unknown register {name!r}", tool_name=tool_name)
-        supplied.setdefault(base, []).append(
+        supplied.setdefault(owner_base, []).append(
             (name, _coerce_int(value, ctx=f"{tool_name}: registers.{name}", tool_name=tool_name))
         )
 
@@ -814,7 +814,7 @@ def _build_abi(
 # ---------------------------------------------------------------------------
 
 
-def _merge_ranges(ranges: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+def _merge_ranges(ranges: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
     """Merge overlapping/adjacent ``(address, size)`` pairs into spans.
 
     The pairs are sizes, not ends: a range request is ``(address, size)``,
@@ -1542,12 +1542,12 @@ def _run_tool(
     # the real mapping and the prepared register state instead of pretending
     # a run happened.
     if (cancel is not None and cancel.is_set()) or time.monotonic() >= deadline:
-        aborted = cancel is not None and cancel.is_set()
+        was_cancelled = cancel is not None and cancel.is_set()
         return EmulationResult(
-            status="cancelled" if aborted else "timeout",
+            status="cancelled" if was_cancelled else "timeout",
             reason=(
                 "cancelled before emulation started"
-                if aborted
+                if was_cancelled
                 else "wall-clock deadline reached while preparing memory"
             ),
             entry_pc=start,
@@ -1601,29 +1601,29 @@ def emulate_code(
         "eip/rip are taken from start_address and cannot be overridden.",
     ],
     memory_ranges: Annotated[
-        list[dict],
+        list[dict] | None,
         "Optional extra IDB address ranges to map (encrypted input, key, "
         "lookup tables). Each entry is {address, size} where address is an "
         "int or '0x' hex string and size is a positive integer.",
-    ] = (),
+    ] = None,
     capture_ranges: Annotated[
-        list[dict],
+        list[dict] | None,
         "Optional output buffers to read back at the end of emulation. Each "
         "entry is {address, size, label} or {stack_offset, size, label} — "
         "exactly one of address / signed stack_offset, at most 4096 bytes and "
         "16 entries. stack_offset is relative to the entry SP after ABI setup.",
-    ] = (),
+    ] = None,
     instruction_limit: Annotated[
         int,
         "Upper bound on instructions executed (default 100000, hard cap 1000000).",
     ] = _DEFAULT_INSTRUCTION_LIMIT,
     memory_buffers: Annotated[
-        list[dict],
+        list[dict] | None,
         "Optional scratch/input buffers written into the emulated address "
         "space: {address, size, data_hex, permissions}. permissions is 'r' or "
         "'rw' (default 'rw'); scratch memory is never executable and must not "
         "overlap IDB pages.",
-    ] = (),
+    ] = None,
     execution_mode: Annotated[
         str,
         "'range' (default) for a straight instruction range, 'function' to run "
@@ -1634,15 +1634,15 @@ def emulate_code(
         "Required in function mode. x86: cdecl / stdcall / fastcall. x64: win64 / sysv64.",
     ] = "",
     arguments: Annotated[
-        list,
+        list | None,
         "Function-mode argument values (integers or hex strings), passed in "
         "declaration order through the calling convention. Rejected in range mode.",
-    ] = (),
+    ] = None,
     code_ranges: Annotated[
-        list[dict],
+        list[dict] | None,
         "Optional explicit executable IDB ranges ({address, size}). Execution "
         "outside the main range and these allowlist entries stops with range_exit.",
-    ] = (),
+    ] = None,
     timeout_seconds: Annotated[
         float,
         "Wall-clock budget for the run (default 5.0, hard cap 20.0). A timeout "
@@ -1674,14 +1674,14 @@ def emulate_code(
         start=start,
         stop=stop,
         registers=registers,
-        memory_ranges=memory_ranges,
-        code_ranges=code_ranges,
-        memory_buffers=memory_buffers,
-        capture_specs=_normalize_capture_specs(capture_ranges, tool_name="emulate_code", default_label="output"),
+        memory_ranges=memory_ranges or (),
+        code_ranges=code_ranges or (),
+        memory_buffers=memory_buffers or (),
+        capture_specs=_normalize_capture_specs(capture_ranges or (), tool_name="emulate_code", default_label="output"),
         implicit_capture=None,
         execution_mode=execution_mode,
         calling_convention=calling_convention,
-        arguments=arguments,
+        arguments=arguments or (),
         instruction_limit=instruction_limit,
         timeout_seconds=timeout_seconds,
         collect_strings=collect_strings,
@@ -1713,17 +1713,17 @@ def resolve_emulated_string(
         "Maximum bytes to scan for NUL terminators (default 4096, hard cap 4096).",
     ] = _MAX_OUTPUT_BYTES,
     memory_ranges: Annotated[
-        list[dict],
+        list[dict] | None,
         "Optional extra IDB address ranges to map (encrypted input, key, lookup).",
-    ] = (),
+    ] = None,
     instruction_limit: Annotated[
         int,
         "Upper bound on instructions executed (default 100000, hard cap 1000000).",
     ] = _DEFAULT_INSTRUCTION_LIMIT,
     memory_buffers: Annotated[
-        list[dict],
+        list[dict] | None,
         "Optional scratch/input buffers: {address, size, data_hex, permissions}.",
-    ] = (),
+    ] = None,
     execution_mode: Annotated[
         str,
         "'range' (default) or 'function'.",
@@ -1733,13 +1733,13 @@ def resolve_emulated_string(
         "Required in function mode. x86: cdecl / stdcall / fastcall. x64: win64 / sysv64.",
     ] = "",
     arguments: Annotated[
-        list,
+        list | None,
         "Function-mode argument values (integers or hex strings).",
-    ] = (),
+    ] = None,
     code_ranges: Annotated[
-        list[dict],
+        list[dict] | None,
         "Optional explicit executable IDB ranges ({address, size}).",
-    ] = (),
+    ] = None,
     output_stack_offset: Annotated[
         int | None,
         "Signed offset from the entry SP to capture instead of output_address "
@@ -1799,14 +1799,14 @@ def resolve_emulated_string(
         start=start,
         stop=stop,
         registers=registers,
-        memory_ranges=memory_ranges,
-        code_ranges=code_ranges,
-        memory_buffers=memory_buffers,
+        memory_ranges=memory_ranges or (),
+        code_ranges=code_ranges or (),
+        memory_buffers=memory_buffers or (),
         capture_specs=_normalize_capture_specs((), tool_name="resolve_emulated_string", default_label="output"),
         implicit_capture=implicit_capture,
         execution_mode=execution_mode,
         calling_convention=calling_convention,
-        arguments=arguments,
+        arguments=arguments or (),
         instruction_limit=instruction_limit,
         timeout_seconds=timeout_seconds,
         collect_strings=collect_strings,
