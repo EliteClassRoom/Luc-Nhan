@@ -116,16 +116,32 @@ small routine actually compute?" and the routine is self-contained:
 - Any small range (≤ a few hundred instructions) where static analysis
   is ambiguous but bounded dynamic execution would be conclusive.
 
-**Do NOT emulate** when the routine calls external APIs, issues syscalls
-(`syscall`/`sysenter`/`int 0x2e`/`int 0x80`), or branches outside the
-range you can map — the run will report `range_exit`,
-`unsupported_instruction`, or `unmapped_memory`. Use `execute_python`
-or an optimizer-based approach instead.
+**Do NOT model external APIs, syscalls or software interrupts** with these
+tools. They stop with an explicit reason; they do not provide OS/API stubs
+or custom callbacks. Use an approved reimplementation or optimizer instead.
 
-Key discipline: `stop_address` is **exclusive**; `registers` must be
-non-empty and must not include `eip`/`rip`; map every input buffer in
-`memory_ranges`. For the full workflow (recon → register setup →
-status interpretation → annotation), activate the `/emulator` skill.
+Key discipline:
+- Default `execution_mode="range"` uses an exclusive `stop_address`; stop
+  before `ret` unless a valid return frame already exists. Registers must be
+  non-empty and must not include `eip`/`rip`.
+- Whole functions use `execution_mode="function"` and an explicit verified
+  `calling_convention`: x86 cdecl/stdcall/fastcall or x64 win64/sysv64.
+  Pass `arguments` in declaration order and `registers={}` if no extra
+  state is needed. The stop address is also the synthetic return sentinel.
+- `memory_ranges` snapshots actual IDB inputs. `memory_buffers` supplies
+  known scratch/input bytes (`address`, `size`, `data_hex`, `r`/`rw`); it
+  cannot overlap IDB pages or grant execute permission.
+- Internal helpers require executable `code_ranges`; mapping data does
+  not authorize running it.
+- Capture by address or signed `stack_offset`; the string shortcut accepts
+  `output_address` XOR `output_stack_offset`. `collect_strings=True`
+  discovers candidates from changed bytes when output offsets are unknown.
+- Budgets: 100k/1M instructions, 5s/20s wall time including setup, 16 MiB
+  mapped memory including the 1 MiB stack, 16 captures of at most 4096 bytes.
+  Timeout/cancellation preserve CPU partial state, never fabricate an
+  aborted snapshot. Captured text is bounded and encoding is not certain.
+For the full recon → entry setup → status → annotation workflow, activate
+the `/emulator` skill.
 """
 
 SAFETY_SECTION = """\

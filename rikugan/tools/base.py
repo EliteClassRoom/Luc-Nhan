@@ -79,6 +79,11 @@ class ToolDefinition:
     timeout: float | None = None  # per-tool timeout in seconds (None = use default)
     handler: Callable | None = field(default=None, repr=False)
     requires: list[str] = field(default_factory=list)
+    # True  -> the registry wraps the handler in the host dispatcher.
+    # False -> the handler runs unwrapped and dispatches its own host
+    #          sections via ``rikugan.tools.execution.run_on_host_thread``
+    #          (used by emulation, whose CPU phase must stay on the worker).
+    main_thread: bool = True
 
     def to_json_schema(self) -> dict[str, Any]:
         properties: dict[str, Any] = {}
@@ -212,6 +217,7 @@ def tool(
     requires_approval: bool = False,
     timeout: float | None = None,
     requires: list[str] | None = None,
+    main_thread: bool = True,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator to register a function as an agent tool.
 
@@ -276,6 +282,7 @@ def tool(
             timeout=timeout,
             handler=func,
             requires=effective_requires,
+            main_thread=main_thread,
         )
 
         @functools.wraps(func)

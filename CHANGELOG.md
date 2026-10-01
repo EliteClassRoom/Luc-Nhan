@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Read-only emulation inputs and function setup** — `memory_buffers` supplies
+  known non-executable scratch bytes, `code_ranges` authorizes IDB helpers,
+  and function mode builds x86 cdecl/stdcall/fastcall or x64 win64/sysv64 frames.
+  Captures support signed initial-stack offsets; optional discovery reports
+  string candidates overlapping changed bytes, including unknown-offset stack
+  output. Existing range mode keeps explicit register and stack state.
+
 - **Provider-neutral Thinking level in Settings** — a single **Thinking**
   combo in the Generation group replaces GLM's separate Thinking /
   Reasoning-effort controls and works for every provider. The combo lists
@@ -44,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Emulation runs outside the IDA main thread** after a host-thread snapshot.
+  Cancellation and a bounded wall deadline cover setup and CPU execution;
+  CPU-started interruptions preserve partial state. Tool execution context is
+  isolated per worker; other tools retain their existing main-thread behavior.
+
 - **Mutating tools now serialize** (`ToolRegistry._mutate_lock`) so concurrent
   agents don't interleave IDB writes. This keeps the undo stack coherent
   across tabs. `/undo` remains global (reverses the most recent mutation
@@ -52,6 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   concurrent background tabs no longer make it flicker between values.
 
 ### Fixed
+
+- **Emulation fidelity and limits** — snapshots use exact segment/page
+  intersections, original permissions and IDA's packed initialized-byte mask;
+  only genuine BSS undefined bytes are zero-filled. Padding, permission
+  conflicts, IDB/scratch page overlap and stack collisions fail explicitly.
+  Register aliases, flags, instruction budgets and per-instruction syscall/
+  interrupt gates are honored. Cross-page write discovery tracks exact changed
+  bytes independently of the bounded write log. Output prioritizes bounded
+  capture/discovery summaries and preserves independent encoding candidates.
+  Win64 shadow space is reserved without overwriting caller-initialized bytes.
 
 - **Address tools accept a function/symbol name, not just `0x…`** — the model
   routinely passes a name where a tool documents an address

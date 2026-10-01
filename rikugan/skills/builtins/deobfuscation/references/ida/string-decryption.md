@@ -9,8 +9,8 @@
 This reference describes standalone Python workflows using `unicorn` + `capstone` + `pefile`. In Luc Nhan:
 
 - **Pattern discovery (regex signature)** → use `list_strings` / `search_strings` to scan for known byte patterns, or use `execute_python` with `re` + `ida_bytes.get_bytes` over `.text`. The regex eggs themselves are pure byte patterns and apply identically.
-- **Emulation** → `emulate_code` and `resolve_emulated_string` cover the common case when the decryptor is self-contained (no API calls, no branches leaving the routine). Pass the routine's `start_address` and the address immediately after its last instruction as the exclusive `stop_address`; set `registers` for the calling convention; add `memory_ranges` for the encrypted input, key bytes, or lookup tables that live outside the routine. `resolve_emulated_string` is the shortcut when you know the output buffer address — it returns raw bytes plus ASCII / UTF-8 / UTF-16LE candidates.
-- **Sliced-block emulation with custom hooks** (the stack-snapshot diff technique in the ADV section, the `unicorn_block()` helper in the Conti section) → **not supported by `emulate_code`** (no custom `UC_HOOK_CODE` callback, no `reg_write(RIP, ...)`). For these, fall back to `execute_python` (requires user approval) and drive a Unicorn instance manually. This is the more powerful path but adds approval friction.
+- **Emulation** → use `emulate_code` / `resolve_emulated_string` for self-contained decryptors. Range slices stop before an unframed `ret`; whole functions use `execution_mode="function"`, verified `calling_convention` and `arguments`. Snapshot IDB inputs through `memory_ranges`, provide known runtime bytes through `memory_buffers`, and declare executable internal helpers in `code_ranges`. Capture known locals by signed `stack_offset` / `output_stack_offset`; use `collect_strings=True` when final output offsets are unknown.
+- **Custom per-instruction hooks** → not exposed by the built-in tools. Initial/final dirty-memory discovery is built in; a specific mid-execution snapshot or forced IP rewrite still requires an explicitly approved manual workflow. Do not route ordinary sliced-block or stack-string recovery to script execution merely because it uses the stack.
 - **Bulk extraction** (run the decryptor against every regex hit) → `execute_python` only. Built-in tools are designed for one-shot per-call analysis.
 - **IDA 9.x caveat**: this file's snippets use `capstone` (third-party, version-stable) and `idc.print_insn_mnem` (unchanged across IDA versions). No IDA 9.x migration is needed for the snippets in this file. The legacy enum-annotation pattern (`idc.add_enum` / `add_enum_member`) — which **is** removed in IDA 9.x — is covered separately in `api-hashing.md`.
 
@@ -138,6 +138,7 @@ emulate_code(
   memory_ranges = [...],                     # any input/key region
   capture_ranges = [{"address": <output_ea>, "size": 64, "label": "decrypted"}],
   instruction_limit = 100000,
+  collect_strings = True,                    # final changed-byte string candidates
 )
 ```
 
@@ -337,7 +338,7 @@ def trace(uc, address, size, user_data):
 
 After `emu_start`, read the plaintext from `[stack_base + stack_string_offset, stack_base + stack_string_offset + str_len)`.
 
-> **In Luc Nhan**: this technique uses a custom `UC_HOOK_CODE` callback with closure state — `emulate_code` cannot express it. Run it through `execute_python` (requires user approval). Alternatively, if you can identify the output buffer offset via static analysis first (decompile + read the function's frame layout), fall back to `resolve_emulated_string` with `output_address = stack_base + offset` — much simpler, no approval gate.
+> **In Luc Nhan**: try `collect_strings=True` on the bounded slice to recover final strings from changed memory without guessing stack addresses. If static frame analysis gives the entry-SP-relative local offset, pass `output_stack_offset` and `max_output_size` to `resolve_emulated_string`, or use a signed `capture_ranges` stack offset. This is initial/final discovery, not a custom mid-execution callback: strings overwritten before the run ends still require the approved manual hook technique.
 
 **Why this is different from fixed offsets**: it discovers the runtime stack offset of the plaintext without needing to know the function's frame layout. Works for any decryptor that writes output to the stack, regardless of where in the frame it lands. Generalizable beyond ADV — any "the function wrote its output somewhere on the stack, find where" task benefits.
 
@@ -407,7 +408,7 @@ Sample strings produced from `adv6.bin` include registry keys, file paths under 
 | `[\x40-\x43\x46]\x83[\xf8-\xfb\xfe]...` byte signature fires (ADV `sub al, key` loop) | Part B |
 | Sample might have both | Run both — Conti emits both ADV and its custom loop |
 | You know the decryptor's RVA and the output buffer address | `resolve_emulated_string` (built-in tool) — both A and B reduce to this once you've identified the routine |
-| You don't know where on the stack the plaintext lands | Part B's stack-snapshot diff technique (via `execute_python`) |
+| You don't know where on the stack the final plaintext lands | `emulate_code(..., collect_strings=True)`; custom mid-execution snapshots remain manual |
 
 ---
 

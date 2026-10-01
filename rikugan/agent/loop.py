@@ -2053,7 +2053,7 @@ class AgentLoop:
 
         log_debug(f"Executing tool {tc.name}")
         try:
-            result = self.tools.execute_coerced(tc.name, exec_args)
+            result = self.tools.execute_coerced(tc.name, exec_args, cancel_event=self._cancelled)
             is_error = False
             # Hysteresis: decrement instead of resetting so a single success
             # after several failures doesn't fully clear the counter.

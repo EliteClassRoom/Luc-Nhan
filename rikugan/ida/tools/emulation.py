@@ -1,285 +1,182 @@
 """Bounded CPU emulation tools for deobfuscation workflows.
 
 Two read-only tools that wrap a per-call Unicorn engine to execute a
-self-contained IDA code range without modifying the IDB or running the
-target binary:
+self-contained region of an IDA database without modifying the IDB or
+running the target binary:
 
-* ``emulate_code`` for arbitrary instruction ranges (decoder loops, custom
-  crypto stubs, control-flow flattening reconstruction).
+* ``emulate_code`` for instruction ranges (decoder loops, custom crypto
+  stubs, control-flow flattening reconstruction) and for whole functions
+  through an explicit calling convention.
 * ``resolve_emulated_string`` for the common string-extraction case where
   a known output buffer is captured after the same bounded run.
 
-Design constraints (see plan: ``.kilo/plans/1784279972842-...``):
+Design constraints:
 
 * The module imports no IDA symbols eagerly and never imports the
-  ``unicorn`` SDK at module load. Importing stays lazy until the first
-  tool call. If the runtime dependency is missing the tools raise
-  ``ToolError`` with an actionable message rather than failing plugin
-  startup, but the schema still advertises them.
-* Execution is a strict half-open range ``[start, stop)``. Execution
-  leaving that range — including the target of a call/branch/jump —
-  immediately stops with status ``range_exit`` and a partial result.
-* No API/syscall stubs. ``syscall`` / ``sysenter`` / ``int 0x2e`` /
-  ``int 0x80`` are detected up front and reported as
-  ``unsupported_instruction``. External call/branch targets fall out
-  naturally through the ``range_exit`` rule.
-* Memory is mapped from real IDA segments that contain the requested
-  addresses. Source virtual addresses are preserved; aggregate mapped
-  bytes are capped at 16 MiB. The synthetic stack is the only memory
-  that is always writable. Writes to read-only IDB mappings produce a
-  ``permission_error`` stop with the offending address.
-* Instruction limit defaults to 100_000 with a 1_000_000 hard cap.
-
-The module exposes pure helpers (``page_align_down``, ``merge_contiguous``,
-``coerce_register_value``, ``_decode_string_candidates``, ``format_result``,
-``_build_mapping_plan``) that unit tests can exercise without a live IDA
-database or a Unicorn engine.
+  ``unicorn`` SDK at module load. If the runtime dependency is missing
+  the tools raise ``ToolError`` with an actionable message rather than
+  failing plugin startup, but the schema still advertises them.
+* The two tools opt out of the registry's outer host dispatch
+  (``main_thread=False``). They snapshot architecture + memory on the
+  host thread via :func:`run_on_host_thread` and run Unicorn on the
+  worker that the registry already handed them. No IDA handle, segment
+  object or ``ida_*`` module reference survives into the CPU phase.
+* No API/syscall stubs. Every ``syscall`` / ``sysenter`` / ``int imm8`` /
+  ``int3`` / ``int1`` / ``into`` / ``ud2`` is rejected *before it executes* —
+  including behind an instruction prefix (REX only in 64-bit mode, where
+  0x40-0x4f are prefixes; in 32-bit mode the same bytes are ``inc``/``dec``
+  and run normally). A blocked instruction is not counted as executed.
+* Memory comes from the IDA snapshot
+  (:func:`rikugan.ida.tools.emulation_memory.snapshot_memory`): exact
+  segment-intersection bytes, IDB permissions never widened, a writable
+  synthetic stack, and explicitly declared non-executable scratch buffers.
+  Reads/writes into page padding are denied instead of silently zero-filled.
+* Runtime is bounded by an instruction budget and a real wall-clock
+  deadline that starts before the host-side memory snapshot. A timeout or a
+  cancellation never claims completion: when the CPU phase was initialised it
+  returns registers, captures and discoveries, and when the snapshot itself
+  was aborted there is no memory state to report, so the result carries only
+  the status and the reason.
 """
 
 from __future__ import annotations
 
 import importlib
 import json
+import math
+import threading
+import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Annotated, Any
 
-from ...core.errors import ToolError
-from ...core.logging import log_debug
-from ...tools.base import tool
+from rikugan.core.errors import ToolError
+from rikugan.core.logging import log_debug
+from rikugan.ida.tools.emulation_memory import SnapshotAborted, snapshot_memory
+from rikugan.ida.tools.emulation_output import (
+    decode_string_candidates,
+    extract_strings,
+    format_result,
+)
+from rikugan.ida.tools.emulation_types import (
+    ArchMode,
+    CaptureRequest,
+    EmulationResult,
+    MemoryBuffer,
+    MemorySnapshot,
+)
+from rikugan.tools.base import tool
+from rikugan.tools.execution import get_execution_context, run_on_host_thread
 
 # ---------------------------------------------------------------------------
-# IDA imports — lazy ``importlib`` so the module loads without IDA Pro. The
-# tool handlers run on the host's main thread through the existing registry
-# dispatch wrapper (see ``rikugan/ida/tools/registry.py``).
+# IDA imports — lazy ``importlib`` so the module loads without IDA Pro.
+# Only the architecture probe below touches them, and it always runs on
+# the host thread.
 # ---------------------------------------------------------------------------
 
-ida_ida = ida_segment = ida_bytes = None
+ida_ida = None
 try:
     ida_ida = importlib.import_module("ida_ida")
-    ida_segment = importlib.import_module("ida_segment")
-    ida_bytes = importlib.import_module("ida_bytes")
 except ImportError as e:  # pragma: no cover - exercised in non-IDA tests
     log_debug(f"IDA modules not available for emulation tools: {e}")
 
-
 # ---------------------------------------------------------------------------
-# Plan-mandated constants. Centralized here so tests import one location.
+# Limits. Centralized so tests import one location.
 # ---------------------------------------------------------------------------
 
 _PAGE_SIZE = 0x1000
 
-# Aggregate mapped IDA bytes cap. Whole segments are mapped to keep source
-# virtual addresses; this bounds the worst case.
-_MAX_MAPPED_IDB_BYTES = 16 * 1024 * 1024
-
-# Synthetic stack size.
+# Synthetic stack size (also the aggregate cap contributor).
 _STACK_SIZE = 1 * 1024 * 1024
+
+# Aggregate mapped bytes cap, stack included.
+_MAX_MAPPED_BYTES = 16 * 1024 * 1024
 
 # Default + hard cap on emulator instructions per call.
 _DEFAULT_INSTRUCTION_LIMIT = 100_000
 _MAX_INSTRUCTION_LIMIT = 1_000_000
 
-# Maximum payload length captured per output range.
-_MAX_OUTPUT_BYTES = 4096
+# Default + hard cap on the wall-clock runtime budget (seconds).
+_DEFAULT_TIMEOUT_SECONDS = 5.0
+_MAX_TIMEOUT_SECONDS = 20.0
 
-# Bounded summary of distinct write events captured in a run.
+# Maximum payload length captured per output range / capture count.
+_MAX_OUTPUT_BYTES = 4096
+_MAX_CAPTURES = 16
+
+# Bounded write-event summary; the *total* is reported separately as
+# ``EmulationResult.write_event_count``.
 _MAX_WRITE_ENTRIES = 64
 
-# Syscall / far-control opcodes detected up front and reported as
-# ``unsupported_instruction`` before any instruction executes.
-_UNSUPPORTED_OPCODE_PREFIXES = (
-    b"\x0f\x05",  # syscall
-    b"\x0f\x34",  # sysenter
-    b"\xcd\x2e",  # int 0x2e (Windows syscall)
-    b"\xcd\x80",  # int 0x80 (Linux syscall)
-)
+# Discovery cap for ``collect_strings`` plus its scan budget.
+_MAX_DISCOVERY_CANDIDATES = 64
+_DISCOVERY_MARGIN = 64  # unchanged bytes kept around a changed neighbourhood
+_DISCOVERY_WINDOW_CANDIDATES = 64  # per-window cap before filtering
+_DISCOVERY_SCAN_CAP = 256 * 1024  # total bytes decoded across all windows
 
+# Execution modes.
+_MODE_RANGE = "range"
+_MODE_FUNCTION = "function"
 
-# ---------------------------------------------------------------------------
-# Data classes.
-# ---------------------------------------------------------------------------
+# Syscall / system-instruction opcodes rejected before they execute. Every
+# ``int`` form is refused, plus ``int3`` (0xcc), ``int1`` (0xf1) and ``into``
+# (0xce), which are traps or only conditionally trap. ``syscall`` /
+# ``sysenter`` may sit behind instruction prefixes, so the check walks the
+# prefix chain rather than looking at the entry bytes only.
+_SYSCALL_OPCODES = (b"\x0f\x05", b"\x0f\x34")
 
+# Opcodes that are architecturally invalid on x86 and would fault inside the
+# engine instead of running: ``ud2`` is the common deliberate trap.
+_INVALID_OPCODES = (b"\x0f\x0b",)
 
-@dataclass(frozen=True)
-class ArchMode:
-    """Resolved Unicorn architecture/mode pair with its IDA source bitness."""
+# Instruction prefixes skipped before the opcode is inspected. 0x40-0x4F are
+# legacy prefixes too; in 64-bit mode they are REX, and in 32-bit mode they
+# are ``inc``/``dec`` — real instructions the scan must not skip.
+_PREFIX_BYTES = frozenset({0x66, 0x67, 0xF0, 0xF2, 0xF3, 0x2E, 0x3E, 0x26, 0x36, 0x64, 0x65})
 
-    label: str  # "x86" or "x64"
-    arch_const: int  # unicorn.UC_ARCH_X86 (set by ``_resolve_arch``)
-    mode_const: int  # unicorn.UC_MODE_32 or UC_MODE_64 (set by ``_resolve_arch``)
-    ptr_size: int  # 4 or 8 — used for register-width validation
-    ip_reg: str  # "eip" or "rip"
-    sp_reg: str  # "esp" or "rsp"
-    flags_reg: str  # "eflags" or "rflags"
-    stack_base: int  # synthetic stack virtual address
+# Bytes that are prefixes only in 64-bit mode (REX).
+_REX_BYTES = frozenset(range(0x40, 0x50))
 
-
-@dataclass
-class EmulationResult:
-    """Structured return value of the runner (formatted by ``format_result``).
-
-    ``status`` is one of: ``completed``, ``range_exit``, ``instruction_limit``,
-    ``unmapped_memory``, ``permission_error``, ``unsupported_instruction``,
-    ``emulator_error``.
-    """
-
-    status: str = "emulator_error"
-    reason: str = "(not executed)"
-    entry_pc: int = 0
-    stop_pc: int = 0
-    instruction_count: int = 0
-    architecture: str = "x86"
-    mapped_ranges: list[tuple[int, int, int]] = field(default_factory=list)
-    final_registers: dict[str, int] = field(default_factory=dict)
-    writes: list[dict[str, Any]] = field(default_factory=list)
-    captures: dict[str, bytes] = field(default_factory=dict)
-    captured_strings: dict[str, dict[str, Any]] = field(default_factory=dict)
-
-
-@dataclass
-class CaptureRequest:
-    """An output range the runner will read into ``captures`` at the end."""
-
-    address: int
-    size: int
-    label: str  # human-readable key in the result dict
-
-
-@dataclass
-class MappingPlan:
-    """Computed plan of memory regions to map into Unicorn."""
-
-    page_aligned_regions: list[tuple[int, int, int, bool]]
-    total_bytes: int
-    stack_top: int
-    stack_base: int
-
+_MAX_INSN_BYTES = 15
 
 # ---------------------------------------------------------------------------
-# Helpers — pure, no IDA / Unicorn dependency. Imported by unit tests.
+# Architecture resolution (IDA-backed; runs on the host thread).
 # ---------------------------------------------------------------------------
 
 
-def page_align_down(address: int) -> int:
-    """Return *address* rounded down to the nearest page boundary."""
+def _load_unicorn() -> Any:
+    """Import the Unicorn SDK or raise an actionable ``ToolError``."""
 
-    return address & ~(_PAGE_SIZE - 1)
-
-
-def page_align_up(address: int) -> int:
-    """Return the next page boundary >= *address* (``0`` → ``PAGE_SIZE``)."""
-
-    if address <= 0:
-        return _PAGE_SIZE
-    return ((address + _PAGE_SIZE - 1) // _PAGE_SIZE) * _PAGE_SIZE
-
-
-def merge_contiguous(regions: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
-    """Merge overlapping or adjacent ``(start, end)`` ranges.
-
-    ``end`` is exclusive. Adjacency is treated as overlap (``a.end == b.start``)
-    so page-aligned boundaries collapse into one mapping.
-    """
-
-    if not regions:
-        return []
-    ordered = sorted(((int(s), int(e)) for s, e in regions), key=lambda r: r[0])
-    merged: list[list[int]] = [list(ordered[0])]
-    for s, e in ordered[1:]:
-        if s <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], e)
-        else:
-            merged.append([s, e])
-    return [(s, e) for s, e in merged]
-
-
-def is_hex_or_int(value: Any) -> bool:
-    """True if *value* would round-trip through ``int(value, 0)``."""
-
-    if isinstance(value, bool):  # bool is a subclass of int — reject explicitly
-        return False
-    if isinstance(value, int):
-        return True
-    if not isinstance(value, str):
-        return False
     try:
-        int(value, 0)
-        return True
-    except (TypeError, ValueError):
-        return False
+        return importlib.import_module("unicorn")
+    except ImportError as e:
+        raise ToolError(
+            "Unicorn CPU emulator is not installed. Install project "
+            "dependencies to use emulate_code/resolve_emulated_string: "
+            f"{e}",
+            tool_name="emulate_code",
+        ) from e
 
 
-def _coerce_addr(value: Any, *, ctx: str) -> int:
-    """Coerce an address the LLM supplied as int, integral float, or hex/decimal string.
+def _ida_bitness() -> int:
+    """Return binary bitness (16/32/64) via ``ida_ida.inf_get_app_bitness()``.
 
-    Addresses are always integers; ``is_hex_or_int`` rejects integral floats
-    (e.g. ``4198400.0``) which LLMs routinely emit in JSON.
+    IDA 9.x has no ``inf_is_32bit`` module function and removed
+    ``get_inf_structure()``; ``inf_get_app_bitness()`` (added in 7.6)
+    returns the exact bitness directly.
     """
+    if ida_ida is None:
+        raise ToolError(
+            "IDA bitness API unavailable — cannot resolve x86/x64 mode",
+            tool_name="emulate_code",
+        )
     try:
-        if isinstance(value, bool):
-            raise ValueError
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float) and value.is_integer():
-            return int(value)
-        if isinstance(value, str):
-            return int(value, 0)
-    except (TypeError, ValueError):
-        pass
-    raise ToolError(f"{ctx} must be an integer or hex string", tool_name="emulate_code")
-
-
-def _unwrap_range_item(item: Any) -> Any:
-    """Unwrap a ``{"$text": "<json>"}`` wrapper.
-
-    Some LLM providers serialize nested structured tool args (lists of
-    objects like ``memory_ranges``) as a ``$text`` JSON string. Unwrap it
-    so the real object reaches range parsing.
-    """
-    if isinstance(item, Mapping) and len(item) == 1 and "$text" in item:
-        raw = item["$text"]
-        if isinstance(raw, str):
-            try:
-                return json.loads(raw)
-            except (ValueError, TypeError):
-                return item
-    return item
-
-
-def coerce_register_value(value: Any, ptr_size: int) -> int:
-    """Coerce a register value the LLM supplied as JSON int or hex string.
-
-    Negative Python ints raise ``ToolError`` to make accidental bit-pattern
-    mistakes obvious. Values that exceed the register width are masked down
-    silently because the LLM routinely sends ``0xFFFFFFFFFFFFFFFF`` for
-    32-bit flags where the upper bits are architecturally irrelevant.
-    """
-
-    if isinstance(value, bool) or value is None:
-        raise ToolError(f"Invalid register value: {value!r}")
-    if isinstance(value, int):
-        if value < 0:
-            raise ToolError(f"Negative register values are not allowed: {value}")
-        return value & ((1 << (8 * ptr_size)) - 1)
-    if isinstance(value, str):
-        try:
-            coerced = int(value, 0)
-        except (TypeError, ValueError) as e:
-            raise ToolError(f"Invalid register value {value!r}: {e}") from e
-        if coerced < 0:
-            raise ToolError(f"Negative register values are not allowed: {coerced}")
-        return coerced & ((1 << (8 * ptr_size)) - 1)
-    raise ToolError(f"Invalid register value: {value!r}")
-
-
-def detect_unsupported_opcodes(code: bytes) -> str | None:
-    """Return a precise reason if *code* begins with a forbidden opcode."""
-
-    for prefix in _UNSUPPORTED_OPCODE_PREFIXES:
-        if code.startswith(prefix):
-            return f"unsupported opcode at entry: {prefix.hex()}"
-    return None
+        return int(ida_ida.inf_get_app_bitness())
+    except AttributeError as e:
+        raise ToolError(
+            f"IDA bitness query failed: {e}",
+            tool_name="emulate_code",
+        ) from e
 
 
 def _stack_base_for(ptr_size: int) -> int:
@@ -288,15 +185,124 @@ def _stack_base_for(ptr_size: int) -> int:
     return 0x7FFE_0000 if ptr_size == 4 else 0x7FFE_0000_0000
 
 
-# ---------------------------------------------------------------------------
-# Architecture + register handling.
-# ---------------------------------------------------------------------------
+def _resolve_arch(unicorn: Any) -> ArchMode:
+    """Resolve architecture/mode pair from IDA's inf and Unicorn consts."""
+
+    if ida_ida is None:
+        raise ToolError(
+            "IDA bits/architecture not available — cannot resolve x86/x64 mode",
+            tool_name="emulate_code",
+        )
+    try:
+        procname = str(ida_ida.inf_get_procname() or "")
+    except AttributeError as e:
+        raise ToolError(f"IDA processor query failed: {e}", tool_name="emulate_code") from e
+    bits = _ida_bitness()
+
+    if procname.lower() not in ("metapc", "pc"):
+        raise ToolError(
+            f"Unsupported architecture {procname!r}: emulate_code/resolve_emulated_string "
+            "currently supports only x86 and x64 IDA databases (metapc processor)",
+            tool_name="emulate_code",
+        )
+
+    if bits == 64:
+        return ArchMode(
+            label="x64",
+            arch_const=unicorn.UC_ARCH_X86,
+            mode_const=unicorn.UC_MODE_64,
+            ptr_size=8,
+            ip_reg="rip",
+            sp_reg="rsp",
+            flags_reg="rflags",
+            stack_base=_stack_base_for(8),
+        )
+    if bits == 32:
+        return ArchMode(
+            label="x86",
+            arch_const=unicorn.UC_ARCH_X86,
+            mode_const=unicorn.UC_MODE_32,
+            ptr_size=4,
+            ip_reg="eip",
+            sp_reg="esp",
+            flags_reg="eflags",
+            stack_base=_stack_base_for(4),
+        )
+    raise ToolError(
+        f"IDA reports {bits}-bit code — emulate_code/resolve_emulated_string "
+        "support only x86 (32-bit) and x64 databases",
+        tool_name="emulate_code",
+    )
 
 
-# Unified register names exposed to the LLM. Entries are
-# ``(unified_name, register_width_bytes)``. ``ip_reg`` and ``sp_reg`` are
-# special-cased — the former is set from ``start_address`` and cannot be
-# overridden; the latter defaults to ``stack_top`` when omitted.
+def _register_id_map(unicorn: Any) -> dict[str, int]:
+    """Build ``{register_name: UC_X86_REG_*}`` for every register we touch."""
+
+    pony = unicorn.x86_const
+    out: dict[str, int] = {}
+    for name in _REGISTER_SLOTS["x86"] | _REGISTER_SLOTS["x64"]:
+        reg_id = getattr(pony, f"UC_X86_REG_{name.upper()}", None)
+        if reg_id is not None:
+            out[name] = int(reg_id)
+    for ip_alias in ("eip", "rip"):
+        reg_id = getattr(pony, f"UC_X86_REG_{ip_alias.upper()}", None)
+        if reg_id is not None:
+            out[ip_alias] = int(reg_id)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Register names. Every alias the tools accept maps onto one native
+# register; conflicting alias values are rejected instead of being
+# resolved by dict ordering.
+# ---------------------------------------------------------------------------
+
+_REGISTER_SLOTS: dict[str, dict[str, tuple[str, ...]]] = {
+    "x86": {
+        "eax": ("eax", "ax", "al", "ah"),
+        "ebx": ("ebx", "bx", "bl", "bh"),
+        "ecx": ("ecx", "cx", "cl", "ch"),
+        "edx": ("edx", "dx", "dl", "dh"),
+        "esi": ("esi", "si"),
+        "edi": ("edi", "di"),
+        "ebp": ("ebp", "bp"),
+        "esp": ("esp", "sp"),
+        "eflags": ("eflags",),
+    },
+    "x64": {
+        "rax": ("rax", "eax", "ax", "al", "ah"),
+        "rbx": ("rbx", "ebx", "bx", "bl", "bh"),
+        "rcx": ("rcx", "ecx", "cx", "cl", "ch"),
+        "rdx": ("rdx", "edx", "dx", "dl", "dh"),
+        "rsi": ("rsi", "esi", "si", "sil"),
+        "rdi": ("rdi", "edi", "di", "dil"),
+        "rbp": ("rbp", "ebp", "bp", "bpl"),
+        "rsp": ("rsp", "esp", "sp", "spl"),
+        "r8": ("r8", "r8d", "r8w", "r8b"),
+        "r9": ("r9", "r9d", "r9w", "r9b"),
+        "r10": ("r10", "r10d", "r10w", "r10b"),
+        "r11": ("r11", "r11d", "r11w", "r11b"),
+        "r12": ("r12", "r12d", "r12w", "r12b"),
+        "r13": ("r13", "r13d", "r13w", "r13b"),
+        "r14": ("r14", "r14d", "r14w", "r14b"),
+        "r15": ("r15", "r15d", "r15w", "r15b"),
+        "rflags": ("rflags", "eflags"),
+    },
+}
+
+# Explicit widths for the sub-registers; everything else is derived from
+# the name suffix below. ``sil``/``dil``/``bpl``/``spl`` are 64-bit-mode
+# names only and appear in the x64 slot table alone.
+_NAMED_WIDTHS: dict[str, int] = {
+    "al": 1, "ah": 1, "bl": 1, "bh": 1, "cl": 1, "ch": 1, "dl": 1, "dh": 1,
+    "sil": 1, "dil": 1, "bpl": 1, "spl": 1,
+    "ax": 2, "bx": 2, "cx": 2, "dx": 2, "si": 2, "di": 2, "bp": 2, "sp": 2,
+}  # fmt: skip
+for _n in range(8, 16):
+    _NAMED_WIDTHS[f"r{_n}b"] = 1
+    _NAMED_WIDTHS[f"r{_n}w"] = 2
+
+# Unified register names reported in results (x86 sees only its own).
 _UNIFIED_REGISTERS: dict[str, int] = {
     "eax": 4,
     "ebx": 4,
@@ -327,543 +333,815 @@ _UNIFIED_REGISTERS: dict[str, int] = {
 }
 
 
-def _load_unicorn() -> Any:
-    """Import the Unicorn SDK or raise an actionable ``ToolError``."""
+def _register_width(name: str) -> int:
+    """Width in bytes of a register alias (``eax`` -> 4, ``r8w`` -> 2)."""
+
+    width = _NAMED_WIDTHS.get(name)
+    if width is not None:
+        return width
+    if name.endswith("d"):
+        return 4
+    if name.startswith("e"):
+        return 4
+    return 8
+
+
+# ---------------------------------------------------------------------------
+# Value coercion helpers (pure).
+# ---------------------------------------------------------------------------
+
+
+def _coerce_int(value: Any, *, ctx: str, tool_name: str) -> int:
+    """Coerce an LLM-supplied non-negative integer (int, hex string, integral float)."""
 
     try:
-        return importlib.import_module("unicorn")
-    except ImportError as e:
+        if isinstance(value, bool):
+            raise ValueError
+        if isinstance(value, int):
+            coerced = value
+        elif isinstance(value, float) and value.is_integer():
+            coerced = int(value)
+        elif isinstance(value, str):
+            coerced = int(value, 0)
+        else:
+            raise ValueError
+    except (TypeError, ValueError):
         raise ToolError(
-            "Unicorn CPU emulator is not installed. Install project "
-            "dependencies to use emulate_code/resolve_emulated_string: "
-            f"{e}",
-            tool_name="emulate_code",
-        ) from e
-
-
-def _ida_bitness() -> int:
-    """Return binary bitness (16/32/64) via ``ida_ida.inf_get_app_bitness()``.
-
-    IDA 9.x has no ``inf_is_32bit`` module function (only ``inf_is_32bit_exactly`` /
-    ``inf_is_32bit_or_higher`` — the legacy ``is_32bit()`` meant "32-or-higher"), and
-    ``get_inf_structure()`` was removed in 9.0. ``inf_get_app_bitness()`` (added in
-    7.6) returns the exact bitness directly and is the single reliable source.
-    """
-    if ida_ida is None:
+            f"{ctx} must be an integer or hex string, got {value!r}",
+            tool_name=tool_name,
+        ) from None
+    if coerced < 0:
         raise ToolError(
-            "IDA bitness API unavailable — cannot resolve x86/x64 mode",
-            tool_name="emulate_code",
+            f"{ctx} must not be negative, got {coerced}",
+            tool_name=tool_name,
         )
+    return coerced
+
+
+def _coerce_signed_int(value: Any, *, ctx: str, tool_name: str) -> int:
+    """Coerce a signed integer or hex string (e.g. ``-16`` / ``"-0x10"``)."""
+
     try:
-        return int(ida_ida.inf_get_app_bitness())
-    except AttributeError as e:
-        # Pre-7.6 IDA Python lacks the symbol entirely.
+        if isinstance(value, bool):
+            raise ValueError
+        if isinstance(value, int):
+            coerced = value
+        elif isinstance(value, float) and value.is_integer():
+            coerced = int(value)
+        elif isinstance(value, str):
+            coerced = int(value, 0)
+        else:
+            raise ValueError
+    except (TypeError, ValueError):
         raise ToolError(
-            f"IDA bitness query failed: {e}",
-            tool_name="emulate_code",
-        ) from e
+            f"{ctx} must be a signed integer or hex string, got {value!r}",
+            tool_name=tool_name,
+        ) from None
+    return coerced
 
 
-def _resolve_arch(unicorn: Any) -> ArchMode:
-    """Resolve architecture/mode pair from IDA's inf and known Unicorn consts."""
+def _coerce_addr(value: Any, *, ctx: str, tool_name: str = "emulate_code") -> int:
+    """Coerce an address the LLM supplied as int, integral float, or hex string."""
 
-    if ida_ida is None:
-        raise ToolError(
-            "IDA bits/architecture not available — cannot resolve x86/x64 mode",
-            tool_name="emulate_code",
-        )
-    try:
-        procname = str(ida_ida.inf_get_procname() or "")
-    except AttributeError as e:
-        raise ToolError(f"IDA processor query failed: {e}", tool_name="emulate_code") from e
-    bits = _ida_bitness()
-    is_64 = bits == 64
-    is_32 = bits == 32
-
-    if procname.lower() not in ("metapc", "pc"):
-        raise ToolError(
-            f"Unsupported architecture {procname!r}: emulate_code/resolve_emulated_string "
-            "currently supports only x86 and x64 IDA databases (metapc processor)",
-            tool_name="emulate_code",
-        )
-
-    if is_64 and not is_32:
-        return ArchMode(
-            label="x64",
-            arch_const=unicorn.UC_ARCH_X86,
-            mode_const=unicorn.UC_MODE_64,
-            ptr_size=8,
-            ip_reg="rip",
-            sp_reg="rsp",
-            flags_reg="rflags",
-            stack_base=_stack_base_for(8),
-        )
-    if is_32 and not is_64:
-        return ArchMode(
-            label="x86",
-            arch_const=unicorn.UC_ARCH_X86,
-            mode_const=unicorn.UC_MODE_32,
-            ptr_size=4,
-            ip_reg="eip",
-            sp_reg="esp",
-            flags_reg="eflags",
-            stack_base=_stack_base_for(4),
-        )
-    raise ToolError(
-        "IDA reports neither 32-bit nor 64-bit code — cannot select emulation mode",
-        tool_name="emulate_code",
-    )
+    return _coerce_int(value, ctx=ctx, tool_name=tool_name)
 
 
-def _register_id_map(unicorn: Any) -> dict[str, int]:
-    """Build ``{unified_name: UC_X86_REG_*}`` for all registers we expose.
+def _unwrap_range_item(item: Any) -> Any:
+    """Unwrap a ``{"$text": "<json>"}`` wrapper around a structured argument.
 
-    Includes ``eip``/``rip`` even though we don't expose it as a unified
-    register name — the runner needs the ID to set the entry IP from
-    ``start_address``.
+    Some providers serialize nested structured tool args (lists of
+    objects) as a ``$text`` JSON string.
     """
 
-    pony = unicorn.x86_const
-    out: dict[str, int] = {}
-    for unified in _UNIFIED_REGISTERS:
-        attr = f"UC_X86_REG_{unified.upper()}"
-        reg_id = getattr(pony, attr, None)
-        if reg_id is None:
-            continue
-        out[unified] = int(reg_id)
-    for ip_alias in ("eip", "rip"):
-        attr = f"UC_X86_REG_{ip_alias.upper()}"
-        reg_id = getattr(pony, attr, None)
-        if reg_id is not None:
-            out[ip_alias] = int(reg_id)
+    if isinstance(item, Mapping) and len(item) == 1 and "$text" in item:
+        raw = item["$text"]
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except (ValueError, TypeError):
+                return item
+    return item
+
+
+def _normalize_registers(raw: Any, arch: ArchMode, *, tool_name: str) -> dict[str, int]:
+    """Validate the register object and collapse aliases onto native registers.
+
+    ``{"eax": 41, "rax": 43}`` is a conflict, not a "last one wins" —
+    dict ordering would decide the answer, and the model cannot see that.
+    """
+
+    if not isinstance(raw, Mapping):
+        raise ToolError(
+            f"{tool_name}: registers must be an object of register name -> value",
+            tool_name=tool_name,
+        )
+    slots = _REGISTER_SLOTS[arch.label]
+    owner: dict[str, str] = {}
+    for base, aliases in slots.items():
+        for alias in aliases:
+            owner[alias] = base
+
+    supplied: dict[str, list[tuple[str, int]]] = {}
+    for key, value in raw.items():
+        name = str(key).lower()
+        if name in ("eip", "rip", "ip") or name == arch.ip_reg:
+            raise ToolError(
+                f"{tool_name}: {name} is taken from start_address and cannot be overridden",
+                tool_name=tool_name,
+            )
+        if arch.ptr_size == 4 and name in _UNIFIED_REGISTERS and _UNIFIED_REGISTERS[name] == 8:
+            raise ToolError(
+                f"{tool_name}: register {name!r} does not exist in a 32-bit database",
+                tool_name=tool_name,
+            )
+        base = owner.get(name)
+        if base is None:
+            raise ToolError(f"{tool_name}: unknown register {name!r}", tool_name=tool_name)
+        supplied.setdefault(base, []).append(
+            (name, _coerce_int(value, ctx=f"{tool_name}: registers.{name}", tool_name=tool_name))
+        )
+
+    bits = 8 * arch.ptr_size
+    resolved: dict[str, int] = {}
+    for base, entries in supplied.items():
+        value = 0
+        claimed = 0  # bits already named by another alias of this register
+        for name, raw_value in entries:
+            width = _register_width(name)
+            byte_offset = 1 if name in ("ah", "bh", "ch", "dh") else 0
+            shift = 8 * byte_offset
+            mask = ((1 << (8 * width)) - 1) << shift
+            chunk = (raw_value & ((1 << (8 * width)) - 1)) << shift
+            # Every bit two aliases both name must carry the same value.
+            # ``rax=0x141`` with ``eax=0x41`` contradicts (bit 8), and so does
+            # ``eax=0x100`` with ``al=0x42`` (byte 0) — neither is decided by
+            # dict ordering, and a zero is a stated value here.
+            if (claimed & mask) and (value ^ chunk) & mask & claimed:
+                raise ToolError(
+                    f"{tool_name}: conflicting values for {base} ({'/'.join(n for n, _ in entries)})",
+                    tool_name=tool_name,
+                )
+            value |= chunk
+            claimed |= mask
+        resolved[base] = value & ((1 << bits) - 1)
+    return resolved
+
+
+# ---------------------------------------------------------------------------
+# Tool-argument normalisation (pure; runs before any IDA call).
+# ---------------------------------------------------------------------------
+
+
+def _normalize_memory_ranges(
+    memory_ranges: Sequence[Any],
+    *,
+    tool_name: str,
+) -> list[tuple[int, int]]:
+    """``{address, size}`` -> ``[(address, size)]``."""
+
+    out: list[tuple[int, int]] = []
+    for idx, item in enumerate(memory_ranges or ()):
+        item = _unwrap_range_item(item)
+        if not isinstance(item, Mapping):
+            raise ToolError(
+                f"{tool_name}: memory_ranges[{idx}] must be an object with 'address' and 'size'",
+                tool_name=tool_name,
+            )
+        addr = _coerce_addr(item.get("address"), ctx=f"{tool_name}: memory_ranges[{idx}].address", tool_name=tool_name)
+        size = item.get("size")
+        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+            raise ToolError(
+                f"{tool_name}: memory_ranges[{idx}].size must be a positive integer",
+                tool_name=tool_name,
+            )
+        out.append((addr, int(size)))
     return out
 
 
+def _normalize_code_ranges(code_ranges: Sequence[Any], *, tool_name: str) -> list[tuple[int, int]]:
+    """Explicit executable allowlist in the IDB: ``{address, size}``."""
+
+    return _normalize_memory_ranges(code_ranges, tool_name=tool_name)
+
+
+def _normalize_buffers(
+    memory_buffers: Sequence[Any],
+    *,
+    tool_name: str,
+) -> list[MemoryBuffer]:
+    """``{address, size, data_hex, permissions}`` -> scratch/input buffers.
+
+    Every cap — per buffer and aggregate — is checked against the *declared*
+    size before the hex string is decoded, so an oversized payload never
+    allocates.
+    """
+
+    out: list[MemoryBuffer] = []
+    seen: set[int] = set()
+    declared_total = 0
+    for idx, item in enumerate(memory_buffers or ()):
+        item = _unwrap_range_item(item)
+        if not isinstance(item, Mapping):
+            raise ToolError(
+                f"{tool_name}: memory_buffers[{idx}] must be an object with "
+                "'address', 'size', 'data_hex' and 'permissions'",
+                tool_name=tool_name,
+            )
+        ctx = f"{tool_name}: memory_buffers[{idx}]"
+        addr = _coerce_addr(item.get("address"), ctx=f"{ctx}.address", tool_name=tool_name)
+        size = item.get("size")
+        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+            raise ToolError(f"{ctx}.size must be a positive integer", tool_name=tool_name)
+        declared_total += size
+        if declared_total > _MAX_MAPPED_BYTES:
+            raise ToolError(
+                f"{tool_name}: memory_buffers declare {declared_total} bytes, over the "
+                f"{_MAX_MAPPED_BYTES} aggregate mapping cap",
+                tool_name=tool_name,
+            )
+        perms = str(item.get("permissions") or "rw").strip().lower()
+        if perms not in ("r", "rw"):
+            raise ToolError(
+                f"{ctx}.permissions must be 'r' or 'rw' (scratch memory is never executable)",
+                tool_name=tool_name,
+            )
+        data_hex = item.get("data_hex")
+        if not isinstance(data_hex, str):
+            raise ToolError(f"{ctx}.data_hex must be a hex string", tool_name=tool_name)
+        if len(data_hex) % 2:
+            raise ToolError(f"{ctx}.data_hex must have an even number of hex digits", tool_name=tool_name)
+        if len(data_hex) // 2 > size:
+            raise ToolError(
+                f"{ctx}.data_hex holds {len(data_hex) // 2} bytes but size is {size}",
+                tool_name=tool_name,
+            )
+        try:
+            data = bytes.fromhex(data_hex)
+        except ValueError:
+            raise ToolError(f"{ctx}.data_hex is not valid hexadecimal", tool_name=tool_name) from None
+        if addr in seen:
+            raise ToolError(f"{ctx}.address 0x{addr:x} is supplied more than once", tool_name=tool_name)
+        seen.add(addr)
+        out.append(
+            MemoryBuffer(
+                address=addr,
+                size=int(size),
+                data=data,
+                permissions=1 if perms == "r" else 3,
+            )
+        )
+    return out
+
+
+def _normalize_capture_specs(
+    capture_ranges: Sequence[Any],
+    *,
+    tool_name: str,
+    default_label: str,
+) -> list[dict[str, Any]]:
+    """Validate capture specs before the stack layout is known.
+
+    Each spec carries exactly one of ``address`` / ``stack_offset``.
+    ``stack_offset`` is resolved against the initial SP after ABI setup.
+    """
+
+    specs: list[dict[str, Any]] = []
+    labels: set[str] = set()
+    for idx, item in enumerate(capture_ranges or ()):
+        item = _unwrap_range_item(item)
+        ctx = f"{tool_name}: capture_ranges[{idx}]"
+        if not isinstance(item, Mapping):
+            raise ToolError(
+                f"{ctx} must be an object with exactly one of 'address' or 'stack_offset', plus 'size' and 'label'",
+                tool_name=tool_name,
+            )
+        has_addr = "address" in item and item.get("address") not in (None, "")
+        has_off = "stack_offset" in item and item.get("stack_offset") is not None
+        if has_addr == has_off:
+            raise ToolError(
+                f"{ctx} must supply exactly one of 'address' or 'stack_offset'",
+                tool_name=tool_name,
+            )
+        size = item.get("size")
+        if not isinstance(size, int) or isinstance(size, bool) or not (1 <= size <= _MAX_OUTPUT_BYTES):
+            raise ToolError(f"{ctx}.size must be in 1..{_MAX_OUTPUT_BYTES}", tool_name=tool_name)
+        label = str(item.get("label") or f"{default_label}_{idx}")
+        if label in labels:
+            raise ToolError(f"{ctx}.label {label!r} is used twice", tool_name=tool_name)
+        labels.add(label)
+        spec: dict[str, Any] = {"size": int(size), "label": label}
+        if has_addr:
+            spec["address"] = _coerce_addr(item.get("address"), ctx=f"{ctx}.address", tool_name=tool_name)
+        else:
+            spec["stack_offset"] = _coerce_signed_int(
+                item.get("stack_offset"), ctx=f"{ctx}.stack_offset", tool_name=tool_name
+            )
+        specs.append(spec)
+    if len(specs) > _MAX_CAPTURES:
+        raise ToolError(
+            f"{tool_name}: at most {_MAX_CAPTURES} capture ranges are allowed",
+            tool_name=tool_name,
+        )
+    return specs
+
+
+def _normalize_arguments(arguments: Sequence[Any], *, tool_name: str) -> list[int]:
+    """ABI argument values (integers or hex strings)."""
+
+    if isinstance(arguments, (str, Mapping)):
+        raise ToolError(
+            f"{tool_name}: arguments must be a list of integer or hex-string values",
+            tool_name=tool_name,
+        )
+    out: list[int] = []
+    for idx, item in enumerate(arguments or ()):
+        item = _unwrap_range_item(item)
+        if isinstance(item, (list, tuple)):
+            raise ToolError(
+                f"{tool_name}: arguments[{idx}] must be a single value, not a nested list",
+                tool_name=tool_name,
+            )
+        out.append(_coerce_int(item, ctx=f"{tool_name}: arguments[{idx}]", tool_name=tool_name))
+    return out
+
+
+def _validate_timeout(timeout_seconds: Any, *, tool_name: str) -> float:
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+        raise ToolError(
+            f"{tool_name}: timeout_seconds must be a number of seconds",
+            tool_name=tool_name,
+        )
+    value = float(timeout_seconds)
+    if not math.isfinite(value) or value <= 0:
+        raise ToolError(
+            f"{tool_name}: timeout_seconds must be finite and > 0 (got {timeout_seconds!r})",
+            tool_name=tool_name,
+        )
+    return min(value, _MAX_TIMEOUT_SECONDS)
+
+
 # ---------------------------------------------------------------------------
-# IDA-side helpers (require real IDA; rejected when None during execution).
+# Calling convention / ABI setup (pure).
+# ---------------------------------------------------------------------------
+
+_ABI_X86: dict[str, tuple[tuple[str, ...], int]] = {
+    # convention -> (argument registers, first stack-argument offset from SP)
+    "cdecl": ((), 4),
+    "stdcall": ((), 4),
+    "fastcall": (("ecx", "edx"), 4),
+}
+
+_ABI_X64: dict[str, tuple[tuple[str, ...], int]] = {
+    "win64": (("rcx", "rdx", "r8", "r9"), 40),  # 32-byte shadow space above the return address
+    "sysv64": (("rdi", "rsi", "rdx", "rcx", "r8", "r9"), 8),
+}
+
+_MAX_ABI_ARGUMENTS = 32
+
+
+@dataclass(frozen=True)
+class _AbiSetup:
+    """Register state + stack layout derived from the calling convention."""
+
+    registers: dict[str, int]
+    stack_pointer: int
+    stack_writes: tuple[tuple[int, bytes], ...]
+
+
+def _build_abi(
+    arch: ArchMode,
+    *,
+    tool_name: str,
+    convention: str,
+    arguments: Sequence[int],
+    registers: dict[str, int],
+    return_address: int | None,
+) -> _AbiSetup:
+    """Lay out arguments for *convention* on the synthetic stack.
+
+    ``return_address`` is the stop sentinel planted at ``[SP]`` in function
+    mode. In range mode (``convention`` empty) nothing is planted and an
+    explicitly supplied ESP/RSP is kept as-is, so range mode never needs a
+    calling convention. A supplied SP in function mode must be inside the
+    synthetic stack and is aligned to the convention's entry alignment —
+    it is never silently replaced by the default.
+    """
+
+    state = dict(registers)
+    ptr = arch.ptr_size
+    stack_top = arch.stack_base + _STACK_SIZE - 0x100
+    stack_limit = arch.stack_base + _STACK_SIZE
+    # `in`, not truthiness: an explicit rsp=0 is a stated (invalid) value, not
+    # "unset".
+    if arch.sp_reg in state:
+        supplied_sp = int(state[arch.sp_reg])
+        if not (arch.stack_base <= supplied_sp < stack_limit):
+            raise ToolError(
+                f"{tool_name}: {arch.sp_reg}=0x{supplied_sp:x} is outside the 1 MiB synthetic stack",
+                tool_name=tool_name,
+            )
+    else:
+        supplied_sp = stack_top
+
+    if not convention:
+        # Range mode: no convention, no sentinel, no argument layout.
+        return _AbiSetup(
+            registers=state,
+            stack_pointer=int(supplied_sp),
+            stack_writes=(),
+        )
+
+    table = _ABI_X86 if ptr == 4 else _ABI_X64
+    if convention not in table:
+        allowed = ", ".join(sorted(table))
+        raise ToolError(
+            f"{tool_name}: calling_convention {convention!r} is not valid for {arch.label}; expected one of {allowed}",
+            tool_name=tool_name,
+        )
+    if len(arguments) > _MAX_ABI_ARGUMENTS:
+        raise ToolError(
+            f"{tool_name}: at most {_MAX_ABI_ARGUMENTS} arguments are supported",
+            tool_name=tool_name,
+        )
+
+    arg_regs, stack_offset = table[convention]
+    if ptr == 8:
+        # SysV / Win64 require RSP % 16 == 8 at function entry, i.e. the
+        # return address sits on a 16-byte-aligned frame.
+        stack_pointer = (int(supplied_sp) & ~0xF) + 8
+    else:
+        stack_pointer = int(supplied_sp) & ~0xF
+
+    def _stack_slot(address: int, length: int, what: str) -> None:
+        if address < arch.stack_base or address + length > stack_limit:
+            raise ToolError(
+                f"{tool_name}: {what} at 0x{address:x}..0x{address + length:x} does not fit in "
+                "the 1 MiB synthetic stack",
+                tool_name=tool_name,
+            )
+
+    writes: list[tuple[int, bytes]] = []
+    for index, value in enumerate(arguments):
+        masked = value & ((1 << (8 * ptr)) - 1)
+        if index < len(arg_regs):
+            reg = arg_regs[index]
+            if reg in state and state[reg] != masked:
+                raise ToolError(
+                    f"{tool_name}: argument {index} = 0x{masked:x} conflicts with explicit {reg} = 0x{state[reg]:x}",
+                    tool_name=tool_name,
+                )
+            state[reg] = masked
+            continue
+        address = stack_pointer + stack_offset + (index - len(arg_regs)) * ptr
+        _stack_slot(address, ptr, f"argument {index}")
+        writes.append((address, masked.to_bytes(ptr, "little")))
+
+    if return_address is not None:
+        _stack_slot(stack_pointer, ptr, "return sentinel")
+        writes.insert(0, (stack_pointer, int(return_address).to_bytes(ptr, "little")))
+    if ptr == 8 and convention == "win64":
+        # Reserve the callee's 32-byte shadow space; never widen page permissions.
+        _stack_slot(stack_pointer + 8, 32, "win64 shadow space")
+    return _AbiSetup(
+        registers=state,
+        stack_pointer=stack_pointer,
+        stack_writes=tuple(writes),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Instruction-level helpers (pure).
 # ---------------------------------------------------------------------------
 
 
-def _resolve_segment(ea: int) -> Any | None:
-    """Return the IDA segment containing ``ea`` or ``None``."""
+def _merge_ranges(ranges: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge overlapping/adjacent ``(address, size)`` pairs into spans.
 
-    if ida_segment is None:
-        return None
-    seg = ida_segment.getseg(ea)
-    if seg is None:
-        return None
-    try:
-        start = int(seg.start_ea)
-        end = int(seg.end_ea)
-    except (AttributeError, TypeError):
-        return None
-    if start <= ea < end:
-        return seg
+    The pairs are sizes, not ends: a range request is ``(address, size)``,
+    so the exclusive end is only computed here.
+    """
+
+    ordered = sorted((int(s), int(s) + int(size)) for s, size in ranges if int(size) > 0)
+    merged: list[list[int]] = []
+    for start, end in ordered:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(s, e) for s, e in merged]
+
+
+def _within(ranges: Sequence[tuple[int, int]], start: int, size: int) -> bool:
+    """True if ``[start, start+size)`` fits inside a single merged *range*."""
+
+    end = start + max(1, size)
+    for lo, hi in ranges:
+        if start >= lo and end <= hi:
+            return True
+    return False
+
+
+def _scan_forbidden(data: bytes, *, ptr_size: int = 8) -> str | None:
+    """Return a reason if *data* is a syscall / system / interrupt trap.
+
+    Instruction prefixes are skipped, so ``66 0f 05`` is caught as
+    ``syscall`` too. In 64-bit mode bytes 0x40-0x4f are REX prefixes and are
+    skipped; in 32-bit mode the same bytes are ``inc``/``dec`` and must run.
+
+    Only the *start* of the instruction is inspected — immediates are never
+    treated as opcodes. Every ``int`` form is refused, plus ``int3``,
+    ``int1`` and ``into``: none of them has a meaning here, and Unicorn
+    would either execute them or raise an opaque engine exception.
+    """
+
+    prefixes = _PREFIX_BYTES | _REX_BYTES if ptr_size == 8 else _PREFIX_BYTES
+    index = 0
+    while index < len(data):
+        byte = data[index]
+        if byte in prefixes:
+            index += 1
+            continue
+        chunk = data[index : index + 2]
+        for opcode in _SYSCALL_OPCODES:
+            if chunk == opcode:
+                return f"unsupported instruction: {opcode.hex()} (no system-call emulation)"
+        for opcode in _INVALID_OPCODES:
+            if chunk == opcode:
+                return f"unsupported instruction: {opcode.hex()} (architecturally invalid)"
+        if chunk == b"\x0f\x01":
+            return "unsupported instruction: 0f01 (no system instruction emulation)"
+        if byte == 0xCD and index + 1 < len(data):
+            return f"unsupported instruction: cd{data[index + 1]:02x} (no software-interrupt emulation)"
+        if byte in (0xCC, 0xF1, 0xCE):
+            name = {0xCC: "int3", 0xF1: "int1", 0xCE: "into"}[byte]
+            return f"unsupported instruction: {name} (no trap emulation)"
+        break
     return None
 
 
-def _seg_perms(seg: Any) -> int:
-    """Translate IDA segment permission bits to a translated R/W/X mask."""
-
-    try:
-        perm = int(seg.perm) & 0x7
-    except (AttributeError, TypeError):
-        return 1  # Read-only fallback
-    out = 0
-    if perm & 4:
-        out |= 1  # R
-    if perm & 2:
-        out |= 2  # W
-    if perm & 1:
-        out |= 4  # X
-    return out
-
-
-def _read_segment_bytes(seg: Any) -> bytes | None:
-    """Read the whole segment into a ``bytes`` (or ``None`` on failure)."""
-
-    if ida_bytes is None or seg is None:
-        return None
-    try:
-        start = int(seg.start_ea)
-        size = int(seg.end_ea) - start
-    except (AttributeError, TypeError):
-        return None
-    if size <= 0 or size > _MAX_MAPPED_IDB_BYTES:
-        return None
-    try:
-        data = ida_bytes.get_bytes(start, size)
-    except Exception as exc:
-        log_debug(f"_read_segment_bytes failed at 0x{start:x}: {exc}")
-        return None
-    if data is None or len(data) != size:
-        return None
-    return bytes(data)
-
-
-def _pick_permission_for_range(start: int, end: int) -> int:
-    """Best-effort permission translation for a planned mapping."""
-
-    if ida_segment is None:
-        return 7  # RWX fallback when IDA is missing (test mode)
-    perms = 1
-    for ea in (start, (start + end) // 2, end - 1):
-        seg = _resolve_segment(ea)
-        if seg is not None:
-            perms |= _seg_perms(seg)
-    return perms or 1
-
-
-def _build_mapping_plan(
-    *,
-    arch: ArchMode,
-    start_address: int,
-    stop_address: int,
-    extra_ranges: Sequence[tuple[int, int]],
-    captures: Sequence[CaptureRequest],
-) -> MappingPlan:
-    """Compute the page-aligned Unicorn mapping plan and validate constraints."""
-
-    if start_address >= stop_address:
-        raise ToolError(
-            f"start_address (0x{start_address:x}) must be < stop_address (0x{stop_address:x})",
-            tool_name="emulate_code",
-        )
-
-    raw_ranges: list[tuple[int, int]] = [(start_address, stop_address)]
-    for addr, size in extra_ranges:
-        if size <= 0:
-            raise ToolError(f"memory range size must be positive: {size}", tool_name="emulate_code")
-        raw_ranges.append((int(addr), int(addr) + int(size)))
-    for cap in captures:
-        if cap.size <= 0 or cap.size > _MAX_OUTPUT_BYTES:
-            raise ToolError(
-                f"capture range '{cap.label}' size {cap.size} outside 1..{_MAX_OUTPUT_BYTES}",
-                tool_name="emulate_code",
-            )
-        raw_ranges.append((int(cap.address), int(cap.address) + int(cap.size)))
-
-    merged = merge_contiguous(raw_ranges)
-    if not merged:
-        raise ToolError("No memory ranges resolved for emulation", tool_name="emulate_code")
-
-    page_regions: list[tuple[int, int, int, bool]] = []
-    total = 0
-
-    # Page-align each input range first, then merge so adjacent ranges that
-    # only touched on page boundaries collapse into a single mapping.
-    aligned_pairs = [(page_align_down(start), page_align_up(end)) for start, end in merged]
-    for aligned_start, aligned_end in merge_contiguous(aligned_pairs):
-        size = aligned_end - aligned_start
-        if size <= 0 or size > _MAX_MAPPED_IDB_BYTES:
-            raise ToolError(
-                f"memory range 0x{aligned_start:x}..0x{aligned_end:x} exceeds {_MAX_MAPPED_IDB_BYTES:#x} page",
-                tool_name="emulate_code",
-            )
-        total += size
-        if total > _MAX_MAPPED_IDB_BYTES:
-            raise ToolError(
-                f"aggregate mapped bytes {total:#x} exceed {_MAX_MAPPED_IDB_BYTES:#x} cap",
-                tool_name="emulate_code",
-            )
-        perms = _pick_permission_for_range(aligned_start, aligned_end)
-        page_regions.append((aligned_start, size, perms, False))
-
-    page_regions.append((arch.stack_base, _STACK_SIZE, 3, True))  # R|W synthetic stack
-    total += _STACK_SIZE
-    if total > _MAX_MAPPED_IDB_BYTES:
-        raise ToolError(
-            f"aggregate mapped bytes {total:#x} (including stack) exceed cap",
-            tool_name="emulate_code",
-        )
-
-    stack_top = arch.stack_base + _STACK_SIZE - 0x100
-    return MappingPlan(
-        page_aligned_regions=page_regions,
-        total_bytes=total,
-        stack_base=arch.stack_base,
-        stack_top=stack_top,
-    )
-
-
-def _ida_perms_to_unicorn(perms: int, unicorn: Any) -> int:
-    """Convert translated IDA R/W/X mask to a Unicorn ``UC_PROT_*`` value."""
-
-    out = unicorn.UC_PROT_NONE
-    if perms & 1:
-        out |= unicorn.UC_PROT_READ
-    if perms & 2:
-        out |= unicorn.UC_PROT_WRITE
-    if perms & 4:
-        out |= unicorn.UC_PROT_EXEC
-    if out == unicorn.UC_PROT_NONE:
-        out = unicorn.UC_PROT_READ
-    return out
-
-
-def _write_segment_payloads(
-    engine: Any,
-    arch: ArchMode,
-    start_address: int,
-    stop_address: int,
-    extra_ranges: Sequence[tuple[int, int]],
-) -> None:
-    """Copy the IDB bytes covered by the requested ranges into *engine*."""
-
-    regions = [(start_address, stop_address)]
-    regions.extend(extra_ranges)
-    for start, end in merge_contiguous(regions):
-        seg = _resolve_segment(start)
-        if seg is None:
-            continue
-        payload = _read_segment_bytes(seg)
-        if payload is None:
-            continue
-        va_start = page_align_down(start)
-        offset = start - va_start
-        length = end - start
-        if offset + length > len(payload):
-            length = len(payload) - offset
-        if length <= 0:
-            continue
-        try:
-            engine.mem_write(start, payload[offset : offset + length])
-        except Exception as e:
-            log_debug(f"_write_segment_payloads: write to 0x{start:x} failed: {e}")
-
-
 # ---------------------------------------------------------------------------
-# Emulation runner.  No side effects beyond the engine instance; returns a
-# fully-populated ``EmulationResult``.  Bounded by ``max_instructions``.
+# CPU runner. No IDA references past this line: everything it needs is in
+# the ``MemorySnapshot``.
 # ---------------------------------------------------------------------------
 
 
-def _run(
+def run_emulation(
     *,
     arch: ArchMode,
-    start_address: int,
-    stop_address: int,
-    registers: Mapping[str, Any],
-    extra_ranges: Sequence[tuple[int, int]],
+    snapshot: MemorySnapshot,
+    entry_pc: int,
+    stop_pc: int,
+    execution_mode: str,
+    registers: Mapping[str, int],
+    stack_writes: Sequence[tuple[int, bytes]],
     captures: Sequence[CaptureRequest],
-    max_instructions: int,
+    code_ranges: Sequence[tuple[int, int]] = (),
+    max_instructions: int = _DEFAULT_INSTRUCTION_LIMIT,
+    collect_strings: bool = False,
+    deadline: float | None = None,
+    cancel_event: threading.Event | None = None,
+    tool_name: str = "emulate_code",
 ) -> EmulationResult:
-    plan = _build_mapping_plan(
-        arch=arch,
-        start_address=start_address,
-        stop_address=stop_address,
-        extra_ranges=extra_ranges,
-        captures=captures,
-    )
+    """Execute the mapped snapshot on Unicorn and return a bounded result.
+
+    The engine runs at the snapshot's own virtual addresses: the tools must
+    report the addresses the IDB holds, and every operand form Unicorn 2.1.4
+    decodes (``[rsp+8]``, ``[rbx]``, absolute ``moffs``) resolves against them.
+
+    ``deadline`` is an absolute ``time.monotonic()`` bound; it is handed
+    to Unicorn in microseconds and re-checked from the code hook.
+    """
 
     unicorn = _load_unicorn()
     reg_ids = _register_id_map(unicorn)
-    if arch.ip_reg not in reg_ids or arch.sp_reg not in reg_ids:
+    missing = [n for n in (arch.ip_reg, arch.sp_reg, arch.flags_reg) if n not in reg_ids]
+    if missing:
         raise ToolError(
-            f"Unicorn x86 register constants missing for {arch.label!r}",
-            tool_name="emulate_code",
+            f"Unicorn x86 register constants missing for {arch.label}: {', '.join(missing)}",
+            tool_name=tool_name,
         )
 
-    # Build the engine. Any failure here is a configuration / package issue,
-    # not an emulation outcome — surface it as ``ToolError`` so the LLM sees
-    # an actionable message instead of a partial ``emulator_error``.
     try:
         engine = unicorn.Uc(arch.arch_const, arch.mode_const)
     except Exception as e:
-        raise ToolError(f"Failed to construct Unicorn engine: {e}", tool_name="emulate_code") from e
+        raise ToolError(f"Failed to construct Unicorn engine: {e}", tool_name=tool_name) from e
 
-    # Map every region (IDB pages first, then synthetic stack).
-    for start, size, perms, is_stack in plan.page_aligned_regions:
-        if is_stack:
-            try:
-                engine.mem_map(
-                    start,
-                    size,
-                    unicorn.UC_PROT_READ | unicorn.UC_PROT_WRITE,
-                )
-            except Exception as e:
-                raise ToolError(
-                    f"Failed to map synthetic stack at 0x{start:x}: {e}",
-                    tool_name="emulate_code",
-                ) from e
-        else:
-            try:
-                engine.mem_map(start, size, _ida_perms_to_unicorn(perms, unicorn))
-            except Exception as e:
-                raise ToolError(
-                    f"Failed to map IDB page 0x{start:x}..0x{start + size:x}: {e}",
-                    tool_name="emulate_code",
-                ) from e
+    mapped_ranges = [
+        (region.address, region.address + region.size, region.permissions)
+        for region in snapshot.regions
+        if not region.synthetic
+    ]
+    result = EmulationResult(
+        entry_pc=entry_pc,
+        stop_pc=entry_pc,
+        architecture=arch.label,
+        mapped_ranges=mapped_ranges,
+    )
 
-    _write_segment_payloads(engine, arch, start_address, stop_address, extra_ranges)
+    for region in snapshot.regions:
+        prot = unicorn.UC_PROT_NONE
+        if region.permissions & 1:
+            prot |= unicorn.UC_PROT_READ
+        if region.permissions & 2:
+            prot |= unicorn.UC_PROT_WRITE
+        if region.permissions & 4:
+            prot |= unicorn.UC_PROT_EXEC
+        try:
+            engine.mem_map(region.address, region.size, prot)
+        except Exception as e:
+            raise ToolError(
+                f"Failed to map 0x{region.address:x}..0x{region.address + region.size:x}: {e}",
+                tool_name=tool_name,
+            ) from e
+        if region.data:
+            engine.mem_write(region.address, region.data)
 
-    # Initial registers.
-    final_registers: dict[str, int] = {}
-    for unified, width in _UNIFIED_REGISTERS.items():
-        value = registers.get(unified)
-        if value is None:
-            coerced = 0
-        else:
-            coerced = coerce_register_value(value, arch.ptr_size)
-        # On x86, the 64-bit-only registers don't exist — skip them.
-        if (
-            arch.ptr_size == 4
-            and width == 8
-            and unified
-            in {
-                "r8",
-                "r9",
-                "r10",
-                "r11",
-                "r12",
-                "r13",
-                "r14",
-                "r15",
-                "rflags",
-            }
-        ):
-            continue
-        final_registers[unified] = coerced
-        reg_id = reg_ids.get(unified)
+    # Stack initialization happens inside the already-mapped synthetic
+    # stack; no page permission is ever widened for it.
+    for address, payload in stack_writes:
+        engine.mem_write(address, payload)
+
+    # Registers: native slots only, defaults 0 (explicit flags survive).
+    slot_names = _REGISTER_SLOTS[arch.label]
+    ptr_mask = (1 << (8 * arch.ptr_size)) - 1
+    initial: dict[str, int] = {}
+    for base in slot_names:
+        value = int(registers.get(base, 0)) & ptr_mask
+        initial[base] = value
+        reg_id = reg_ids.get(base)
         if reg_id is None:
             continue
         try:
-            engine.reg_write(reg_id, coerced)
-        except Exception:
-            pass  # ignored — Unicorn will not run if a required register is invalid.
+            engine.reg_write(reg_id, value)
+        except Exception as e:
+            # Silently continuing would emulate with a state the caller
+            # never asked for; surface it instead.
+            raise ToolError(
+                f"Failed to initialise register {base} on the {arch.label} engine: {e}",
+                tool_name=tool_name,
+            ) from e
+    engine.reg_write(reg_ids[arch.ip_reg], entry_pc)
+    result.initial_registers = _expand_registers(initial, arch)
 
-    # SP defaults to ``stack_top`` when the caller didn't supply ``esp``/``rsp``.
-    sp_value = final_registers.get(arch.sp_reg)
-    if sp_value is None or sp_value == 0:
-        sp_value = plan.stack_top
-        final_registers[arch.sp_reg] = sp_value
-    sp_reg_id = reg_ids[arch.sp_reg]
-    try:
-        engine.reg_write(sp_reg_id, sp_value)
-    except Exception:
-        pass
-
-    ip_reg_id = reg_ids[arch.ip_reg]
-    flags_reg_id = reg_ids[arch.flags_reg]
-    try:
-        engine.reg_write(flags_reg_id, 0)
-    except Exception:
-        pass
-
-    # Detect forbidden opcodes up front.
-    try:
-        entry_bytes = bytes(engine.mem_read(start_address, 4))
-    except Exception as exc:
-        return EmulationResult(
-            status="emulator_error",
-            reason=f"could not read entry opcode at 0x{start_address:x}: {exc}",
-            entry_pc=start_address,
-            stop_pc=start_address,
-            instruction_count=0,
-            architecture=arch.label,
-            mapped_ranges=[(s, s + sz, p) for s, sz, p, is_stack in plan.page_aligned_regions if not is_stack],
-            final_registers=final_registers,
-        )
-    forbidden = detect_unsupported_opcodes(entry_bytes)
-    if forbidden is not None:
-        return EmulationResult(
-            status="unsupported_instruction",
-            reason=forbidden,
-            entry_pc=start_address,
-            stop_pc=start_address,
-            instruction_count=0,
-            architecture=arch.label,
-            mapped_ranges=[(s, s + sz, p) for s, sz, p, is_stack in plan.page_aligned_regions if not is_stack],
-            final_registers=final_registers,
-        )
+    allowed = _merge_ranges([(entry_pc, max(0, stop_pc - entry_pc)), *code_ranges])
+    # Byte coverage is independent of permissions (including write-only IDB
+    # segments). Unicorn enforces page permissions; padding stays invalid.
+    valid = _merge_ranges((start, end - start) for start, end, _perms in snapshot.valid_ranges)
+    executable_valid = _merge_ranges((start, end - start) for start, end, perms in snapshot.valid_ranges if perms & 4)
 
     limit = max(1, min(_MAX_INSTRUCTION_LIMIT, int(max_instructions or _DEFAULT_INSTRUCTION_LIMIT)))
-    stop_state = {"status": "completed", "reason": f"reached stop address 0x{stop_address:x}", "stop_pc": start_address}
-    instruction_count = [0]
+    ip_reg_id = reg_ids[arch.ip_reg]
+    state: dict[str, Any] = {
+        "status": "",
+        "reason": "",
+        "stop_pc": entry_pc,
+        "count": 0,
+        "writes": [],
+        "write_events": 0,
+        "dirty_pages": set(),
+    }
 
-    def _update_reg_state() -> None:
-        for unified in _UNIFIED_REGISTERS:
-            reg_id = reg_ids.get(unified)
-            if reg_id is None:
-                continue
-            if arch.ptr_size == 4 and unified in {
-                "r8",
-                "r9",
-                "r10",
-                "r11",
-                "r12",
-                "r13",
-                "r14",
-                "r15",
-                "rflags",
-            }:
-                continue
-            try:
-                final_registers[unified] = int(engine.reg_read(reg_id)) & ((1 << (8 * arch.ptr_size)) - 1)
-            except Exception:
-                pass
-
-    # Hook: code — track instruction count, range exit, instruction limit.
-    def code_hook(uc, address, _size, _user):
-        instruction_count[0] += 1
+    def _pc() -> int:
         try:
-            next_ip = int(engine.reg_read(ip_reg_id))
+            return int(engine.reg_read(ip_reg_id))
         except Exception:
-            next_ip = address
-        if next_ip < start_address or next_ip >= stop_address:
-            stop_state["status"] = "range_exit"
-            stop_state["reason"] = f"PC left range at 0x{next_ip:x}"
-            stop_state["stop_pc"] = next_ip
-            uc.emu_stop()
+            return entry_pc
+
+    def _stop(status: str, reason: str, pc: int | None = None) -> None:
+        state["status"] = status
+        state["reason"] = reason
+        state["stop_pc"] = _pc() if pc is None else pc
+        engine.emu_stop()
+
+    # Snapshot the initial bytes of mapped pages once, so string discovery
+    # can diff modified pages without re-reading memory per instruction.
+    page_initial: dict[int, bytes] = {}
+    if collect_strings:
+        for region in snapshot.regions:
+            start = region.address
+            end = region.address + region.size
+            offset = 0
+            while start + offset < end:
+                page = (start + offset) & ~(_PAGE_SIZE - 1)
+                if page not in page_initial:
+                    chunk = engine.mem_read(page, _PAGE_SIZE)
+                    page_initial[page] = bytes(chunk)
+                offset += _PAGE_SIZE
+
+    def code_hook(_uc, address, size, _user):
+        # Runs *before* the instruction at `address`. Reached-stop has
+        # precedence, then the "may we run this" gates, then the budget:
+        # `count` is the number of instructions that already executed, so
+        # `limit=1` runs exactly one.
+        next_ip = _pc()
+        if next_ip == stop_pc:
+            reached = (
+                f"function returned to 0x{next_ip:x}"
+                if execution_mode == _MODE_FUNCTION
+                else f"reached stop address 0x{next_ip:x}"
+            )
+            _stop("completed", reached, next_ip)
             return
-        if instruction_count[0] >= limit:
-            stop_state["status"] = "instruction_limit"
-            stop_state["reason"] = f"hit instruction limit {limit} at 0x{next_ip:x}"
-            stop_state["stop_pc"] = next_ip
-            uc.emu_stop()
+        # Some Unicorn builds hand the hook a bogus size for an instruction
+        # the decoder rejected; never read a huge span on that report.
+        if not (0 < size <= _MAX_INSN_BYTES):
+            _stop("unsupported_instruction", f"undecodable instruction at 0x{next_ip:x}", next_ip)
+            return
+        if not _within(allowed, address, size):
+            _stop("range_exit", f"execution left the allowed ranges at 0x{next_ip:x}", next_ip)
+            return
+        if not _within(executable_valid, address, size):
+            _stop(
+                "range_exit",
+                f"instruction at 0x{next_ip:x} is not backed by executable IDB bytes",
+                next_ip,
+            )
+            return
+        forbidden = _scan_forbidden(bytes(engine.mem_read(address, size)), ptr_size=arch.ptr_size)
+        if forbidden is not None:
+            _stop("unsupported_instruction", f"{forbidden} at 0x{address:x}", next_ip)
+            return
+        if cancel_event is not None and cancel_event.is_set():
+            _stop("cancelled", "cancelled before the next instruction", next_ip)
+            return
+        if state["count"] >= limit:
+            _stop("instruction_limit", f"instruction limit {limit} reached", next_ip)
+            return
+        if deadline is not None and state["count"] % 64 == 0 and time.monotonic() >= deadline:
+            _stop("timeout", "wall-clock deadline reached", next_ip)
+            return
+        state["count"] += 1
 
-    # Hook: memory-write — record bounded, coalesced changes.
-    write_log: list[dict[str, Any]] = []
-
-    def write_hook(uc, _access, address, size, value, _user):
-        if len(write_log) < _MAX_WRITE_ENTRIES * 2:
-            write_log.append(
+    def write_hook(_uc, _access, address, size, value, _user):
+        state["write_events"] += 1
+        span = (int(address) & ~(_PAGE_SIZE - 1), int(address) + max(1, int(size)))
+        state["dirty_pages"].update(range(span[0], span[1], _PAGE_SIZE))
+        if len(state["writes"]) < _MAX_WRITE_ENTRIES:
+            width = max(1, min(_PAGE_SIZE, int(size)))
+            state["writes"].append(
                 {
                     "address": int(address),
                     "size": int(size),
-                    "hex_preview": f"0x{int(value) & ((1 << min(64, max(8, int(size) * 8))) - 1):x}",
+                    "hex_preview": f"{int(value) & ((1 << min(64, 8 * width)) - 1):x}",
                 }
             )
 
-    # Hook: invalid memory or instruction — translate to status.
-    def invalid_mem_hook(uc, access, address, _size, _value, _user):
-        try:
-            next_ip = int(engine.reg_read(ip_reg_id))
-        except Exception:
-            next_ip = address
-        # Distinguish unmapped vs. permission violations.
-        if access & (unicorn.UC_MEM_READ_UNMAPPED | unicorn.UC_MEM_WRITE_UNMAPPED | unicorn.UC_MEM_FETCH_UNMAPPED):
-            stop_state["status"] = "unmapped_memory"
-            stop_state["reason"] = f"unmapped access (0x{int(address):x}) at PC 0x{next_ip:x}"
-        else:
-            stop_state["status"] = "permission_error"
-            stop_state["reason"] = f"permission violation at 0x{int(address):x} (PC 0x{next_ip:x})"
-        stop_state["stop_pc"] = next_ip
-        uc.emu_stop()
+    def _validity_reason(access: int, address: int, size: int) -> str | None:
+        if not _within(valid, address, size):
+            return f"access to unmapped/byte padding at 0x{address:x} (size {size}, PC 0x{_pc():x})"
+        return None
 
-    def invalid_insn_hook(uc, _user):
-        try:
-            next_ip = int(engine.reg_read(ip_reg_id))
-        except Exception:
-            next_ip = 0
-        stop_state["status"] = "unsupported_instruction"
-        stop_state["reason"] = f"unsupported instruction at PC 0x{next_ip:x}"
-        stop_state["stop_pc"] = next_ip
-        uc.emu_stop()
+    def range_guard_hook(_uc, access, address, size, _value, _user):
+        # Deny reads/writes into page padding instead of mapping zero pages.
+        reason = _validity_reason(access, int(address), int(size))
+        if reason is None:
+            return True
+        _stop("unmapped_memory", reason)
+        return False
+
+    def invalid_mem_hook(_uc, access, address, size, _value, _user):
+        fault = int(address)
+        fault_size = max(1, int(size))
+        in_valid = _within(valid, fault, fault_size)
+        if access == unicorn.UC_MEM_READ_UNMAPPED:
+            status, kind = "unmapped_memory", "read from unmapped memory"
+        elif access == unicorn.UC_MEM_WRITE_UNMAPPED:
+            status, kind = "unmapped_memory", "write to unmapped memory"
+        elif access == unicorn.UC_MEM_READ_PROT:
+            # A read-protected fault on a page we mapped read-write is a
+            # padding hole; on a valid range the page simply is not readable.
+            status = "permission_error" if in_valid else "unmapped_memory"
+            kind = "read from unreadable memory" if in_valid else "read into page padding"
+        elif access == unicorn.UC_MEM_WRITE_PROT:
+            status = "permission_error" if in_valid else "unmapped_memory"
+            kind = "write to read-only memory" if in_valid else "write into page padding"
+        elif not _within(allowed, fault, fault_size):
+            # A transfer to code we were never allowed to run.
+            status = "range_exit"
+            kind = "transfer to code outside the allowed ranges"
+        else:
+            # Allowed, but nothing mapped there: the allowlist promised bytes
+            # the snapshot could not back.
+            status = "unmapped_memory"
+            kind = (
+                "fetch from unmapped memory"
+                if access == unicorn.UC_MEM_FETCH_UNMAPPED
+                else "fetch from non-executable memory"
+            )
+        _stop(
+            status,
+            f"{kind} at 0x{fault:x} (PC 0x{_pc():x})",
+            fault if status == "range_exit" else None,
+        )
+
+    def invalid_insn_hook(_uc, _user):
+        _stop("unsupported_instruction", f"unsupported instruction at PC 0x{_pc():x}")
 
     try:
         engine.hook_add(unicorn.UC_HOOK_CODE, code_hook)
         engine.hook_add(unicorn.UC_HOOK_MEM_WRITE, write_hook)
+        engine.hook_add(unicorn.UC_HOOK_MEM_READ, range_guard_hook)
+        engine.hook_add(unicorn.UC_HOOK_MEM_WRITE, range_guard_hook)
         engine.hook_add(
             unicorn.UC_HOOK_MEM_READ_UNMAPPED
             | unicorn.UC_HOOK_MEM_WRITE_UNMAPPED
@@ -875,282 +1153,452 @@ def _run(
         )
         engine.hook_add(unicorn.UC_HOOK_INSN_INVALID, invalid_insn_hook)
     except Exception as e:
-        raise ToolError(f"Failed to register Unicorn hooks: {e}", tool_name="emulate_code") from e
+        raise ToolError(f"Failed to register Unicorn hooks: {e}", tool_name=tool_name) from e
 
-    try:
-        engine.emu_start(start_address, stop_address, timeout=0, count=limit + 1)
-    except Exception as e:
-        # UcError reached here only after our hooks already stopped the
-        # engine, so ``stop_state`` is authoritative. Fall back to a
-        # generic ``emulator_error`` only if state is still ``completed``.
-        if stop_state["status"] == "completed":
-            stop_state["status"] = "emulator_error"
-            stop_state["reason"] = f"Unicorn raised {type(e).__name__}: {e}"
-            try:
-                stop_state["stop_pc"] = int(engine.reg_read(ip_reg_id))
-            except Exception:
-                stop_state["stop_pc"] = start_address
+    timeout_us = 0
+    if deadline is not None:
+        timeout_us = max(1, int((deadline - time.monotonic()) * 1_000_000))
 
-    _update_reg_state()
-
-    # Capture ranges.
-    captures_out: dict[str, bytes] = {}
-    cap_strings: dict[str, dict[str, Any]] = {}
-    for cap in captures:
+    if cancel_event is not None and cancel_event.is_set():
+        _stop("cancelled", "cancelled before emulation started", entry_pc)
+    else:
+        # The engine's own counter is one ahead of our hook: it stops *at*
+        # the ``count``-th instruction, so the budget is enforced in the code
+        # hook and the native counter is only a runaway backstop. Native
+        # arrival at the sentinel never fires the code hook, so the PC check
+        # below is the only way to see it.
         try:
-            payload = bytes(engine.mem_read(cap.address, cap.size))
+            engine.emu_start(entry_pc, stop_pc, timeout=timeout_us, count=limit + 1)
+        except Exception as e:
+            if not state["status"]:
+                state["status"] = "emulator_error"
+                state["reason"] = f"Unicorn raised {type(e).__name__}: {e}"
+                state["stop_pc"] = _pc()
+
+    if not state["status"]:
+        # The engine returned on its own. A PC that really reached the
+        # sentinel is `completed` regardless of a cancel or a late clock;
+        # otherwise ask Unicorn *why* it stopped instead of guessing from
+        # wall-clock noise.
+        final_pc = _pc()
+        try:
+            timed_out = int(engine.query(unicorn.UC_QUERY_TIMEOUT)) != 0
+        except Exception:  # pragma: no cover - depends on SDK build
+            timed_out = deadline is not None and time.monotonic() >= deadline
+        if final_pc == stop_pc:
+            state["status"] = "completed"
+            state["reason"] = (
+                f"function returned to 0x{final_pc:x}"
+                if execution_mode == _MODE_FUNCTION
+                else f"reached stop address 0x{final_pc:x}"
+            )
+            state["stop_pc"] = final_pc
+        elif cancel_event is not None and cancel_event.is_set():
+            state["status"] = "cancelled"
+            state["reason"] = "cancelled during emulation"
+            state["stop_pc"] = final_pc
+        elif timed_out:
+            state["status"] = "timeout"
+            state["reason"] = "wall-clock deadline reached inside the engine"
+            state["stop_pc"] = final_pc
+        else:
+            state["status"] = "emulator_error"
+            state["reason"] = f"engine stopped at 0x{final_pc:x} without reaching 0x{stop_pc:x}"
+            state["stop_pc"] = final_pc
+
+    result.status = str(state["status"])
+    result.reason = str(state["reason"])
+    result.stop_pc = int(state["stop_pc"])
+    result.instruction_count = int(state["count"])
+
+    final_slots: dict[str, int] = {}
+    for base in slot_names:
+        reg_id = reg_ids.get(base)
+        if reg_id is None:
+            continue
+        try:
+            final_slots[base] = int(engine.reg_read(reg_id)) & ptr_mask
+        except Exception:  # pragma: no cover - depends on SDK build
+            continue
+    result.final_registers = _expand_registers(final_slots, arch)
+    result.final_registers[arch.ip_reg] = int(engine.reg_read(ip_reg_id))
+
+    capture_notes: list[str] = []
+    for capture in captures:
+        try:
+            payload = bytes(engine.mem_read(capture.address, capture.size))
         except Exception as exc:
             payload = b""
-            write_log.append(
-                {
-                    "address": int(cap.address),
-                    "size": 0,
-                    "hex_preview": f"capture failed: {exc}",
-                }
-            )
-        captures_out[cap.label] = payload
-        cap_strings[cap.label] = _decode_string_candidates(payload)
+            capture_notes.append(f"{capture.label}: capture failed ({exc})")
+        result.captures[capture.label] = payload
+        result.captured_strings[capture.label] = decode_string_candidates(payload)
+    if capture_notes:
+        result.reason = f"{result.reason}; " + "; ".join(capture_notes)
 
-    mapped = [(s, s + sz, p) for s, sz, p, is_stack in plan.page_aligned_regions if not is_stack]
-    return EmulationResult(
-        status=stop_state["status"],
-        reason=stop_state["reason"],
-        entry_pc=start_address,
-        stop_pc=int(stop_state["stop_pc"]),
-        instruction_count=instruction_count[0],
-        architecture=arch.label,
-        mapped_ranges=mapped,
-        final_registers=final_registers,
-        writes=write_log[:_MAX_WRITE_ENTRIES],
-        captures=captures_out,
-        captured_strings=cap_strings,
+    result.writes = list(state["writes"])
+    result.write_event_count = int(state["write_events"])
+
+    if collect_strings:
+        result.discovered_strings, result.discovery_truncated = _discover_strings(
+            engine=engine,
+            page_initial=page_initial,
+            dirty_pages=state["dirty_pages"],
+            valid=valid,
+        )
+    return result
+
+
+def _expand_registers(slots: Mapping[str, int], arch: ArchMode) -> dict[str, int]:
+    """Project native register values onto every reported alias."""
+
+    out: dict[str, int] = {}
+    for name, width in _UNIFIED_REGISTERS.items():
+        if width == 8 and arch.ptr_size == 4:
+            continue
+        for base, aliases in _REGISTER_SLOTS[arch.label].items():
+            if name in aliases and base in slots:
+                out[name] = int(slots[base]) & ((1 << (8 * width)) - 1)
+                break
+    return out
+
+
+def _candidate_span(candidate: Any) -> int:
+    """Byte length a discovered candidate occupies in emulated memory."""
+
+    if candidate.encoding == "utf16le":
+        return len(candidate.text.encode("utf-16-le"))
+    if candidate.encoding == "utf8":
+        return len(candidate.text.encode("utf-8"))
+    return len(candidate.text)
+
+
+def _changed_runs(before: bytes, after: bytes) -> list[tuple[int, int]]:
+    """Maximal index runs where *after* differs from *before*."""
+
+    runs: list[list[int]] = []
+    for index, (old, new) in enumerate(zip(before, after, strict=True)):
+        if old != new:
+            if runs and runs[-1][1] == index:
+                runs[-1][1] = index + 1
+            else:
+                runs.append([index, index + 1])
+    return [(lo, hi) for lo, hi in runs]
+
+
+def _contiguous_pages(pages: set[int]) -> list[tuple[int, int]]:
+    """Group page-aligned addresses into contiguous page runs."""
+
+    out: list[list[int]] = []
+    for page in sorted(pages):
+        if out and page == out[-1][1]:
+            out[-1][1] = page + _PAGE_SIZE
+        else:
+            out.append([page, page + _PAGE_SIZE])
+    return [(lo, hi) for lo, hi in out]
+
+
+def _discover_strings(
+    *,
+    engine: Any,
+    page_initial: dict[int, bytes],
+    dirty_pages: set[int],
+    valid: Sequence[tuple[int, int]],
+) -> tuple[list[Any], bool]:
+    """Diff dirty pages against their initial bytes and pull strings out.
+
+    Discovery reads the modified pages, not the (capped) write-event log, so
+    a run with thousands of writes still surfaces the string it produced.
+    A candidate survives only if it overlaps a byte the run actually
+    changed — an untouched string sitting between two writes is never
+    reported. Windows are the changed neighbourhoods widened by
+    ``_DISCOVERY_MARGIN`` unchanged bytes so the surrounding string bytes
+    are decoded as one candidate, and the 64-result cap is applied *after*
+    filtering so a pre-existing string cannot push a new one out.
+    """
+
+    found: list[Any] = []
+    seen: set[tuple[int, str, str]] = set()
+    truncated = False
+    scanned = 0
+
+    for group_lo, group_hi in _contiguous_pages(dirty_pages):
+        for valid_lo, valid_hi in valid:
+            lo = max(group_lo, valid_lo)
+            hi = min(group_hi, valid_hi)
+            if hi - lo <= 0:
+                continue
+            base = lo & ~(_PAGE_SIZE - 1)
+            pages = range(base, hi, _PAGE_SIZE)
+            before_parts: list[bytes] = []
+            after_parts: list[bytes] = []
+            complete = True
+            for page in pages:
+                chunk = page_initial.get(page)
+                if chunk is None:
+                    complete = False
+                    break
+                try:
+                    after_parts.append(bytes(engine.mem_read(page, len(chunk))))
+                except Exception:  # pragma: no cover - engine torn down
+                    complete = False
+                    break
+                before_parts.append(chunk)
+            if not complete:
+                continue
+            # The assembled pages start at the page base, while every index
+            # below is relative to `lo` — valid coverage can begin mid-page.
+            offset = lo - base
+            size = hi - lo
+            before = b"".join(before_parts)[offset : offset + size]
+            after = b"".join(after_parts)[offset : offset + size]
+            changed = _changed_runs(before, after)
+            if not changed:
+                continue
+            for start, end in changed:
+                window_lo = max(0, start - _DISCOVERY_MARGIN)
+                window_hi = min(size, end + _DISCOVERY_MARGIN)
+                if window_hi - window_lo > _DISCOVERY_SCAN_CAP - scanned:
+                    truncated = True
+                    return found, truncated
+                scanned += window_hi - window_lo
+                candidates = extract_strings(
+                    lo + window_lo,
+                    after[window_lo:window_hi],
+                    min_length=4,
+                    max_candidates=_DISCOVERY_WINDOW_CANDIDATES,
+                )
+                for candidate in candidates:
+                    span = _candidate_span(candidate)
+                    cand_lo = candidate.address - lo
+                    cand_hi = cand_lo + span
+                    if cand_hi <= window_lo or cand_lo >= window_hi:
+                        continue
+                    if not any(before[i] != after[i] for i in range(max(cand_lo, window_lo), min(cand_hi, window_hi))):
+                        continue  # unchanged bytes only
+                    key = (candidate.address, candidate.encoding, candidate.text)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    if len(found) >= _MAX_DISCOVERY_CANDIDATES:
+                        truncated = True
+                        continue
+                    found.append(candidate)
+    return found, truncated
+
+
+# ---------------------------------------------------------------------------
+# Shared tool front-end: validate -> host snapshot -> CPU run -> format.
+# ---------------------------------------------------------------------------
+
+
+def _run_tool(
+    *,
+    tool_name: str,
+    start: int,
+    stop: int,
+    registers: Mapping[str, Any],
+    memory_ranges: Sequence[Any],
+    code_ranges: Sequence[Any],
+    memory_buffers: Sequence[Any],
+    capture_specs: Sequence[dict[str, Any]],
+    implicit_capture: dict[str, Any] | None,
+    execution_mode: str,
+    calling_convention: str,
+    arguments: Sequence[Any],
+    instruction_limit: Any,
+    timeout_seconds: Any,
+    collect_strings: Any,
+) -> EmulationResult:
+    """Validate arguments, snapshot memory on the host, run the CPU phase.
+
+    Returns the structured result; the public tools only render it.
+    """
+
+    context = get_execution_context()
+    # The budget covers the whole call, not just the CPU phase: a slow
+    # snapshot must not silently extend it.
+    deadline = time.monotonic() + _validate_timeout(timeout_seconds, tool_name=tool_name)
+    if context.deadline is not None:
+        deadline = min(deadline, context.deadline)
+    cancel = context.cancel_event
+
+    if execution_mode not in (_MODE_RANGE, _MODE_FUNCTION):
+        raise ToolError(
+            f"{tool_name}: execution_mode must be 'range' or 'function', got {execution_mode!r}",
+            tool_name=tool_name,
+        )
+    if start >= stop:
+        raise ToolError(
+            f"{tool_name}: start_address (0x{start:x}) must be < stop_address (0x{stop:x})",
+            tool_name=tool_name,
+        )
+    if isinstance(instruction_limit, bool) or not isinstance(instruction_limit, int):
+        raise ToolError(f"{tool_name}: instruction_limit must be an integer", tool_name=tool_name)
+    if instruction_limit <= 0 or instruction_limit > _MAX_INSTRUCTION_LIMIT:
+        raise ToolError(
+            f"{tool_name}: instruction_limit must be in 1..{_MAX_INSTRUCTION_LIMIT}",
+            tool_name=tool_name,
+        )
+    collect = bool(collect_strings)
+
+    arg_values = _normalize_arguments(arguments, tool_name=tool_name)
+    if arg_values and execution_mode != _MODE_FUNCTION:
+        raise ToolError(
+            f"{tool_name}: arguments are only supported in function mode; set "
+            "execution_mode='function' and pass an explicit calling_convention",
+            tool_name=tool_name,
+        )
+    if execution_mode == _MODE_FUNCTION and not calling_convention:
+        raise ToolError(
+            f"{tool_name}: execution_mode='function' requires an explicit calling_convention "
+            "(x86: cdecl/stdcall/fastcall, x64: win64/sysv64)",
+            tool_name=tool_name,
+        )
+
+    extras = _normalize_memory_ranges(memory_ranges, tool_name=tool_name)
+    code = _normalize_code_ranges(code_ranges, tool_name=tool_name)
+    buffers = _normalize_buffers(memory_buffers, tool_name=tool_name)
+    captures_specs = list(capture_specs)
+    if implicit_capture:
+        captures_specs.insert(0, {"label": "output", **implicit_capture})
+
+    # Architecture is an IDA query: run it on the host thread, before any
+    # memory snapshot work.
+    unicorn = _load_unicorn()
+    arch = run_on_host_thread(_resolve_arch, unicorn)
+    resolved_registers = _normalize_registers(registers, arch, tool_name=tool_name)
+    if execution_mode == _MODE_RANGE and not resolved_registers:
+        # Range mode replays code the caller must describe: an empty map
+        # would silently invent a zeroed machine state. Function mode may
+        # pass {} because the arguments carry the state.
+        raise ToolError(
+            f"{tool_name}: registers must name at least one initial register value in range mode",
+            tool_name=tool_name,
+        )
+    if execution_mode == _MODE_RANGE and calling_convention:
+        # Applying an ABI in range mode would realign a supplied SP and
+        # plant a return address the caller never asked for.
+        raise ToolError(
+            f"{tool_name}: calling_convention only applies to execution_mode='function'",
+            tool_name=tool_name,
+        )
+
+    # The ABI layout is resolved *before* the captures so a stack-relative
+    # capture uses the SP the callee will actually see, and *before* the
+    # snapshot so a declared code range is mapped: the entry range is the
+    # only one the memory layer backs implicitly.
+    abi = _build_abi(
+        arch,
+        tool_name=tool_name,
+        convention=calling_convention,
+        arguments=arg_values,
+        registers=resolved_registers,
+        return_address=stop if execution_mode == _MODE_FUNCTION else None,
+    )
+    entry_registers = dict(abi.registers)
+    entry_registers[arch.sp_reg] = abi.stack_pointer
+
+    captures: list[CaptureRequest] = []
+    for spec in captures_specs:
+        if "address" in spec:
+            address = int(spec["address"])
+        else:
+            offset = int(spec["stack_offset"])
+            address = abi.stack_pointer + offset
+            if not (arch.stack_base <= address and address + spec["size"] <= arch.stack_base + _STACK_SIZE):
+                raise ToolError(
+                    f"{tool_name}: stack-relative capture {offset:+d} resolves to 0x{address:x}, "
+                    "outside the 1 MiB synthetic stack",
+                    tool_name=tool_name,
+                )
+        captures.append(CaptureRequest(address=address, size=int(spec["size"]), label=str(spec["label"])))
+
+    try:
+        snapshot = run_on_host_thread(
+            lambda: snapshot_memory(
+                arch=arch,
+                start_address=start,
+                stop_address=stop,
+                extra_ranges=extras,
+                captures=captures,
+                memory_buffers=buffers,
+                code_ranges=code,
+                deadline=deadline,
+                cancel_event=cancel,
+            )
+        )
+    except SnapshotAborted as aborted:
+        # The snapshot never completed, so there is no memory state to
+        # report: invent nothing.
+        return EmulationResult(
+            status=aborted.status,
+            reason=str(aborted),
+            entry_pc=start,
+            stop_pc=start,
+            architecture=arch.label,
+        )
+
+    # The snapshot is complete here, so a late cancel/timeout can report
+    # the real mapping and the prepared register state instead of pretending
+    # a run happened.
+    if (cancel is not None and cancel.is_set()) or time.monotonic() >= deadline:
+        aborted = cancel is not None and cancel.is_set()
+        return EmulationResult(
+            status="cancelled" if aborted else "timeout",
+            reason=(
+                "cancelled before emulation started"
+                if aborted
+                else "wall-clock deadline reached while preparing memory"
+            ),
+            entry_pc=start,
+            stop_pc=start,
+            architecture=arch.label,
+            mapped_ranges=[(r.address, r.address + r.size, r.permissions) for r in snapshot.regions if not r.synthetic],
+            initial_registers=_expand_registers(entry_registers, arch),
+            final_registers=dict(_expand_registers(entry_registers, arch)),
+        )
+
+    return run_emulation(
+        arch=arch,
+        snapshot=snapshot,
+        entry_pc=start,
+        stop_pc=stop,
+        execution_mode=execution_mode,
+        registers=entry_registers,
+        stack_writes=abi.stack_writes,
+        captures=captures,
+        code_ranges=code,
+        max_instructions=instruction_limit,
+        collect_strings=collect,
+        deadline=deadline,
+        cancel_event=cancel,
+        tool_name=tool_name,
     )
 
 
 # ---------------------------------------------------------------------------
-# Result formatting & string decoding helpers (pure, no Unicorn / IDA).
+# Public tools. Both opt out of the registry's outer host dispatch and
+# dispatch their own IDA sections.
 # ---------------------------------------------------------------------------
 
 
-_HEX_CHUNK = 16
-
-
-def _hex_dump(data: bytes, max_bytes: int = _MAX_OUTPUT_BYTES) -> str:
-    if not data:
-        return "(empty)"
-    clipped = data[:max_bytes]
-    lines: list[str] = []
-    for off in range(0, len(clipped), _HEX_CHUNK):
-        row = clipped[off : off + _HEX_CHUNK]
-        hex_part = " ".join(f"{b:02x}" for b in row)
-        ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row)
-        lines.append(f"  0x{off:04x}  {hex_part:<48s} |{ascii_part}|")
-    if len(data) > max_bytes:
-        lines.append(f"  ... (truncated, total {len(data)} bytes)")
-    return "\n".join(lines)
-
-
-def _is_printable_ascii(byte: int) -> bool:
-    return 0x20 <= byte < 0x7F
-
-
-def _decode_string_candidates(data: bytes) -> dict[str, Any]:
-    """Decode ASCII/UTF-8/UTF-16LE candidates from a captured buffer.
-
-    NUL terminators: ``has_nul_terminator`` is ``True`` if the buffer ends
-    with a single byte ``0x00`` *or* a UTF-16LE double-NUL. ASCII / UTF-8
-    candidates are sliced at the first single-byte NUL; the UTF-16LE
-    candidate is sliced at the first double-NUL aligned on an even byte
-    boundary (UTF-16LE data must be two-byte aligned). When the leading
-    byte of the wide candidate is itself ``0x00`` (an empty wide string),
-    we fall back to ``ascii_run`` so the candidate stays useful.
-    """
-
-    nul = data.find(b"\x00")
-    has_nul = nul >= 0
-    wide_nul = data.find(b"\x00\x00")
-    if wide_nul > 0 and wide_nul % 2 == 1:
-        # Realign to the next even boundary so ``decode("utf-16le")`` does
-        # not crash on odd-length payloads.
-        wide_nul += 1
-    has_wide_nul = wide_nul >= 0
-    ascii_run = data[:nul] if has_nul else data
-    utf8_run = ascii_run
-    if 0 <= wide_nul < len(data):
-        wide_payload = data[:wide_nul]
-    else:
-        wide_payload = ascii_run
-    return {
-        "raw_length": len(data),
-        "has_nul_terminator": has_nul or has_wide_nul,
-        "ascii": "".join(chr(b) if _is_printable_ascii(b) else "?" for b in ascii_run),
-        "utf8": _safe_decode(utf8_run, "utf-8"),
-        "utf16le": _safe_decode(wide_payload, "utf-16le"),
-    }
-
-
-def _safe_decode(payload: bytes, encoding: str) -> str:
-    try:
-        return payload.decode(encoding, errors="strict")
-    except UnicodeDecodeError:
-        return ""
-
-
-def _indent(text: str, *, prefix: str) -> str:
-    return "\n".join(prefix + line if line else line for line in text.splitlines())
-
-
-def format_result(result: EmulationResult) -> str:
-    """Render an ``EmulationResult`` into a labelled multi-section string."""
-
-    arch = result.architecture.upper()
-    lines = [
-        f"=== Unicorn emulation ({arch}) ===",
-        f"Status: {result.status}",
-        f"Reason: {result.reason}",
-        f"Entry PC: 0x{result.entry_pc:x}",
-        f"Stop PC:  0x{result.stop_pc:x}",
-        f"Instructions executed: {result.instruction_count}",
-    ]
-
-    if result.mapped_ranges:
-        lines.append("")
-        lines.append("Mapped ranges:")
-        for start, end, perms in result.mapped_ranges:
-            lines.append(f"  0x{start:x}-0x{end:x}  perms={perms}")
-
-    if result.final_registers:
-        lines.append("")
-        lines.append("Final registers:")
-        for name in sorted(result.final_registers):
-            lines.append(f"  {name} = 0x{result.final_registers[name]:x}")
-
-    if result.writes:
-        lines.append("")
-        lines.append(f"Write events ({min(len(result.writes), _MAX_WRITE_ENTRIES)} shown):")
-        for entry in result.writes[:_MAX_WRITE_ENTRIES]:
-            lines.append(f"  0x{entry['address']:x}  size={entry['size']}  preview={entry['hex_preview']}")
-        if len(result.writes) > _MAX_WRITE_ENTRIES:
-            lines.append(f"  ... ({len(result.writes) - _MAX_WRITE_ENTRIES} more)")
-
-    if result.captures:
-        lines.append("")
-        lines.append("Captured output:")
-        for label, data in result.captures.items():
-            lines.append(f"  [{label}] raw bytes ({len(data)}):")
-            lines.append(_indent(_hex_dump(data), prefix="    "))
-            meta = result.captured_strings.get(label) or _decode_string_candidates(data)
-            lines.append(f"    ascii='{meta['ascii']}'")
-            if meta["utf8"] and meta["utf8"] != meta["ascii"]:
-                lines.append(f"    utf8='{meta['utf8']}'")
-            if meta["utf16le"]:
-                lines.append(f"    utf16le='{meta['utf16le']}'")
-            lines.append(f"    terminated={meta['has_nul_terminator']}")
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# Tool-call argument normalisation.
-# ---------------------------------------------------------------------------
-
-
-def _normalize_memory_ranges(
-    memory_ranges: Sequence[Any],
-    *,
-    tool_name: str,
-) -> list[tuple[int, int]]:
-    out: list[tuple[int, int]] = []
-    for idx, item in enumerate(memory_ranges or ()):
-        item = _unwrap_range_item(item)
-        if not isinstance(item, Mapping):
-            raise ToolError(
-                f"{tool_name}: memory_ranges[{idx}] must be an object with 'address' and 'size'",
-                tool_name=tool_name,
-            )
-        addr = _coerce_addr(item.get("address"), ctx=f"{tool_name}: memory_ranges[{idx}].address")
-        size = item.get("size")
-        if not isinstance(size, int) or size <= 0:
-            raise ToolError(
-                f"{tool_name}: memory_ranges[{idx}].size must be a positive integer",
-                tool_name=tool_name,
-            )
-        out.append((addr, int(size)))
-    return out
-
-
-def _normalize_capture_ranges(
-    capture_ranges: Sequence[Any],
-    *,
-    tool_name: str,
-    default_label: str,
-) -> list[CaptureRequest]:
-    out: list[CaptureRequest] = []
-    for idx, item in enumerate(capture_ranges or ()):
-        item = _unwrap_range_item(item)
-        if not isinstance(item, Mapping):
-            raise ToolError(
-                f"{tool_name}: capture_ranges[{idx}] must be an object with 'address' and 'size'",
-                tool_name=tool_name,
-            )
-        addr = _coerce_addr(item.get("address"), ctx=f"{tool_name}: capture_ranges[{idx}].address")
-        size = item.get("size")
-        label = item.get("label") or f"{default_label}_{idx}"
-        if not isinstance(size, int) or size <= 0 or size > _MAX_OUTPUT_BYTES:
-            raise ToolError(
-                f"{tool_name}: capture_ranges[{idx}].size must be in 1..{_MAX_OUTPUT_BYTES}",
-                tool_name=tool_name,
-            )
-        out.append(CaptureRequest(address=addr, size=int(size), label=str(label)))
-    return out
-
-
-def _resolve_register_input(
-    registers: Any,
-    *,
-    tool_name: str,
-    arch: ArchMode,
-) -> dict[str, int]:
-    """Validate the LLM-supplied register object and coerce the values."""
-
-    if not isinstance(registers, Mapping) or not registers:
-        raise ToolError(
-            f"{tool_name}: registers must be a non-empty object of explicit initial register values",
-            tool_name=tool_name,
-        )
-    out: dict[str, Any] = {}
-    for key, value in registers.items():
-        name = str(key).lower()
-        if name not in _UNIFIED_REGISTERS:
-            raise ToolError(
-                f"{tool_name}: unknown register {name!r}",
-                tool_name=tool_name,
-            )
-        if name == arch.ip_reg:
-            # ``eip`` / ``rip`` are controlled by start_address.
-            continue
-        out[name] = coerce_register_value(value, arch.ptr_size)
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Public tools. The Unicorn SDK is loaded lazily inside the runner so the
-# module can be imported in environments without the dependency and the
-# registry can still advertise both tool schemas.
-# ---------------------------------------------------------------------------
-
-
-@tool(category="emulation", timeout=30.0)
+@tool(category="emulation", timeout=30.0, main_thread=False)
 def emulate_code(
     start_address: Annotated[str, "First instruction to execute (inclusive hex address)"],
     stop_address: Annotated[
         str,
-        "Exclusive emulation end — execution stops BEFORE this address",
+        "Exclusive emulation end. In function mode this is the function's end "
+        "address and doubles as the return sentinel a RET must land on.",
     ],
     registers: Annotated[
         dict,
-        "Explicit initial CPU register state. Keys are x86/x64 register names "
-        "(eax/ebx/rax/r8/eflags/etc.), values are integers or '0x'-style hex "
-        "strings. eip/rip are taken from start_address and cannot be overridden.",
+        "Explicit initial CPU register state; at least one value is required "
+        "in range mode, while function mode may pass {} because the arguments "
+        "carry the state. Every register not named starts at 0. Keys are "
+        "x86/x64 register names (eax/ebx/rax/r8/eflags/etc.), values are "
+        "integers or '0x'-style hex strings. "
+        "Aliases of the same register (eax + rax) must agree. "
+        "eip/rip are taken from start_address and cannot be overridden.",
     ],
     memory_ranges: Annotated[
         list[dict],
@@ -1160,73 +1608,106 @@ def emulate_code(
     ] = (),
     capture_ranges: Annotated[
         list[dict],
-        "Optional output buffers to read back at the end of emulation. "
-        "Each entry is {address, size}; maximum 4096 bytes per capture.",
+        "Optional output buffers to read back at the end of emulation. Each "
+        "entry is {address, size, label} or {stack_offset, size, label} — "
+        "exactly one of address / signed stack_offset, at most 4096 bytes and "
+        "16 entries. stack_offset is relative to the entry SP after ABI setup.",
     ] = (),
     instruction_limit: Annotated[
         int,
         "Upper bound on instructions executed (default 100000, hard cap 1000000).",
     ] = _DEFAULT_INSTRUCTION_LIMIT,
+    memory_buffers: Annotated[
+        list[dict],
+        "Optional scratch/input buffers written into the emulated address "
+        "space: {address, size, data_hex, permissions}. permissions is 'r' or "
+        "'rw' (default 'rw'); scratch memory is never executable and must not "
+        "overlap IDB pages.",
+    ] = (),
+    execution_mode: Annotated[
+        str,
+        "'range' (default) for a straight instruction range, 'function' to run "
+        "a function through an explicit calling convention.",
+    ] = _MODE_RANGE,
+    calling_convention: Annotated[
+        str,
+        "Required in function mode. x86: cdecl / stdcall / fastcall. x64: win64 / sysv64.",
+    ] = "",
+    arguments: Annotated[
+        list,
+        "Function-mode argument values (integers or hex strings), passed in "
+        "declaration order through the calling convention. Rejected in range mode.",
+    ] = (),
+    code_ranges: Annotated[
+        list[dict],
+        "Optional explicit executable IDB ranges ({address, size}). Execution "
+        "outside the main range and these allowlist entries stops with range_exit.",
+    ] = (),
+    timeout_seconds: Annotated[
+        float,
+        "Wall-clock budget for the run (default 5.0, hard cap 20.0). A timeout "
+        "returns partial state with status 'timeout'.",
+    ] = _DEFAULT_TIMEOUT_SECONDS,
+    collect_strings: Annotated[
+        bool,
+        "Scan memory the run modified and report the printable strings it produced (useful for stack strings).",
+    ] = False,
 ) -> str:
-    """Run a bounded, read-only Unicorn emulation of a self-contained IDA code range.
+    """Run a bounded, read-only Unicorn emulation of IDA code.
 
     Returns partial state — registers, instruction count, mapped ranges, write
-    events, and bytes from any output buffers — plus a precise stop reason.
-    Never modifies the IDB, follows no external calls, and does not auto-add
-    API stubs or syscall handlers.
+    events, captured bytes and (optionally) discovered strings — plus a precise
+    stop reason. Never modifies the IDB, follows no external calls, and adds no
+    API or syscall stubs. ``registers`` must name at least one value in range
+    mode; function mode may pass ``{}`` because the arguments carry the state.
 
-    Status values: ``completed``, ``range_exit``, ``instruction_limit``,
-    ``unmapped_memory``, ``permission_error``, ``unsupported_instruction``,
-    ``emulator_error``.
+    Status values: ``completed`` (reached the stop sentinel, including a
+    function's ``ret``), ``range_exit``, ``instruction_limit``,
+    ``unmapped_memory``, ``permission_error``,
+    ``unsupported_instruction``, ``timeout``, ``cancelled``, ``emulator_error``.
     """
 
-    unicorn = _load_unicorn()
-    arch = _resolve_arch(unicorn)
-
-    try:
-        start = int(start_address, 0)
-        stop = int(stop_address, 0)
-    except (TypeError, ValueError) as e:
-        raise ToolError(
-            f"emulate_code: start_address/stop_address must be int or hex strings: {e}",
-            tool_name="emulate_code",
-        ) from e
-
-    if instruction_limit <= 0:
-        raise ToolError("emulate_code: instruction_limit must be positive", tool_name="emulate_code")
-    bounded_limit = min(_MAX_INSTRUCTION_LIMIT, int(instruction_limit))
-
-    normalised_regs = _resolve_register_input(registers, tool_name="emulate_code", arch=arch)
-    extras = _normalize_memory_ranges(memory_ranges, tool_name="emulate_code")
-    captures = _normalize_capture_ranges(capture_ranges, tool_name="emulate_code", default_label="output")
-
-    result = _run(
-        arch=arch,
-        start_address=start,
-        stop_address=stop,
-        registers=normalised_regs,
-        extra_ranges=extras,
-        captures=captures,
-        max_instructions=bounded_limit,
+    start = _coerce_addr(start_address, ctx="emulate_code: start_address")
+    stop = _coerce_addr(stop_address, ctx="emulate_code: stop_address")
+    result = _run_tool(
+        tool_name="emulate_code",
+        start=start,
+        stop=stop,
+        registers=registers,
+        memory_ranges=memory_ranges,
+        code_ranges=code_ranges,
+        memory_buffers=memory_buffers,
+        capture_specs=_normalize_capture_specs(capture_ranges, tool_name="emulate_code", default_label="output"),
+        implicit_capture=None,
+        execution_mode=execution_mode,
+        calling_convention=calling_convention,
+        arguments=arguments,
+        instruction_limit=instruction_limit,
+        timeout_seconds=timeout_seconds,
+        collect_strings=collect_strings,
     )
     return format_result(result)
 
 
-@tool(category="emulation", timeout=30.0)
+@tool(category="emulation", timeout=30.0, main_thread=False)
 def resolve_emulated_string(
     start_address: Annotated[str, "First instruction to execute (inclusive hex address)"],
     stop_address: Annotated[
         str,
-        "Exclusive emulation end — execution stops BEFORE this address",
+        "Exclusive emulation end. In function mode this is the function's end "
+        "address and doubles as the return sentinel a RET must land on.",
     ],
     registers: Annotated[
         dict,
-        "Explicit initial CPU register state (see emulate_code). eip/rip are always taken from start_address.",
+        "Explicit initial CPU register state (see emulate_code); at least one "
+        "value is required in range mode, and function mode may pass {} because "
+        "the arguments carry the state. eip/rip are always taken from start_address.",
     ],
     output_address: Annotated[
         str,
-        "Address of the decoded-string output buffer (int or '0x' hex string).",
-    ],
+        "Address of the decoded-string output buffer (int or '0x' hex string). "
+        "Supply exactly one of output_address / output_stack_offset.",
+    ] = "",
     max_output_size: Annotated[
         int,
         "Maximum bytes to scan for NUL terminators (default 4096, hard cap 4096).",
@@ -1239,6 +1720,39 @@ def resolve_emulated_string(
         int,
         "Upper bound on instructions executed (default 100000, hard cap 1000000).",
     ] = _DEFAULT_INSTRUCTION_LIMIT,
+    memory_buffers: Annotated[
+        list[dict],
+        "Optional scratch/input buffers: {address, size, data_hex, permissions}.",
+    ] = (),
+    execution_mode: Annotated[
+        str,
+        "'range' (default) or 'function'.",
+    ] = _MODE_RANGE,
+    calling_convention: Annotated[
+        str,
+        "Required in function mode. x86: cdecl / stdcall / fastcall. x64: win64 / sysv64.",
+    ] = "",
+    arguments: Annotated[
+        list,
+        "Function-mode argument values (integers or hex strings).",
+    ] = (),
+    code_ranges: Annotated[
+        list[dict],
+        "Optional explicit executable IDB ranges ({address, size}).",
+    ] = (),
+    output_stack_offset: Annotated[
+        int | None,
+        "Signed offset from the entry SP to capture instead of output_address "
+        "(e.g. -16 for a local buffer). Supply exactly one of the two.",
+    ] = None,
+    timeout_seconds: Annotated[
+        float,
+        "Wall-clock budget for the run (default 5.0, hard cap 20.0).",
+    ] = _DEFAULT_TIMEOUT_SECONDS,
+    collect_strings: Annotated[
+        bool,
+        "Also report printable strings found in memory the run modified.",
+    ] = False,
 ) -> str:
     """Convenience wrapper around :func:`emulate_code` for decoded-string extraction.
 
@@ -1247,44 +1761,54 @@ def resolve_emulated_string(
     same status block ``emulate_code`` would report.
     """
 
-    unicorn = _load_unicorn()
-    arch = _resolve_arch(unicorn)
-
-    try:
-        start = int(start_address, 0)
-        stop = int(stop_address, 0)
-        out_addr = int(output_address, 0)
-    except (TypeError, ValueError) as e:
+    start = _coerce_addr(start_address, ctx="resolve_emulated_string: start_address")
+    stop = _coerce_addr(stop_address, ctx="resolve_emulated_string: stop_address")
+    has_address = output_address not in (None, "")
+    has_offset = output_stack_offset is not None
+    if has_address == has_offset:
         raise ToolError(
-            f"resolve_emulated_string: start_address/stop_address/output_address must be int or hex strings: {e}",
+            "resolve_emulated_string: supply exactly one of output_address or output_stack_offset",
             tool_name="resolve_emulated_string",
-        ) from e
-
-    if not (1 <= int(max_output_size) <= _MAX_OUTPUT_BYTES):
+        )
+    if (
+        isinstance(max_output_size, bool)
+        or not isinstance(max_output_size, int)
+        or not (1 <= max_output_size <= _MAX_OUTPUT_BYTES)
+    ):
         raise ToolError(
             f"resolve_emulated_string: max_output_size must be in 1..{_MAX_OUTPUT_BYTES}",
             tool_name="resolve_emulated_string",
         )
-    if instruction_limit <= 0:
-        raise ToolError(
-            "resolve_emulated_string: instruction_limit must be positive",
+
+    implicit_capture: dict[str, Any] = {"size": int(max_output_size)}
+    if has_address:
+        implicit_capture["address"] = _coerce_addr(
+            output_address,
+            ctx="resolve_emulated_string: output_address",
+            tool_name="resolve_emulated_string",
+        )
+    else:
+        implicit_capture["stack_offset"] = _coerce_signed_int(
+            output_stack_offset,
+            ctx="resolve_emulated_string: output_stack_offset",
             tool_name="resolve_emulated_string",
         )
 
-    captures = [
-        CaptureRequest(address=out_addr, size=int(max_output_size), label="output"),
-    ]
-
-    normalised_regs = _resolve_register_input(registers, tool_name="resolve_emulated_string", arch=arch)
-    extras = _normalize_memory_ranges(memory_ranges, tool_name="resolve_emulated_string")
-
-    result = _run(
-        arch=arch,
-        start_address=start,
-        stop_address=stop,
-        registers=normalised_regs,
-        extra_ranges=extras,
-        captures=captures,
-        max_instructions=min(_MAX_INSTRUCTION_LIMIT, int(instruction_limit)),
+    result = _run_tool(
+        tool_name="resolve_emulated_string",
+        start=start,
+        stop=stop,
+        registers=registers,
+        memory_ranges=memory_ranges,
+        code_ranges=code_ranges,
+        memory_buffers=memory_buffers,
+        capture_specs=_normalize_capture_specs((), tool_name="resolve_emulated_string", default_label="output"),
+        implicit_capture=implicit_capture,
+        execution_mode=execution_mode,
+        calling_convention=calling_convention,
+        arguments=arguments,
+        instruction_limit=instruction_limit,
+        timeout_seconds=timeout_seconds,
+        collect_strings=collect_strings,
     )
     return format_result(result)

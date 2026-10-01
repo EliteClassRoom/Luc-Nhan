@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
+
+from rikugan.tools.execution import ToolExecutionContext, tool_execution_context
 
 from ..constants import EXECUTE_PYTHON_TOOL_NAME, TOOL_RESULT_TRUNCATE_LEN
 from ..core.errors import ToolError, ToolNotFoundError, ToolValidationError
@@ -21,6 +24,35 @@ _DEFAULT_TOOL_TIMEOUT = 30.0
 
 # Shared executor — single thread is sufficient since IDA tools run on main thread via idasync
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tool-timeout")
+
+
+def _bind_context(
+    handler: Callable,
+    *,
+    dispatch_wrapper: Callable | None,
+    cancel_event: threading.Event | None,
+    deadline: float | None,
+) -> Callable:
+    """Wrap *handler* so it runs under a freshly installed context.
+
+    The context is installed *inside* the executing thread: a
+    ``ContextVar`` set on the submitting thread is invisible in a pool
+    worker, and pool threads are reused, so the token is reset in the
+    ``finally`` to keep one invocation's cancel event from leaking into
+    the next task.
+    """
+
+    def _wrapped(**kwargs: Any) -> Any:
+        with tool_execution_context(
+            ToolExecutionContext(
+                dispatch_wrapper=dispatch_wrapper,
+                cancel_event=cancel_event,
+                deadline=deadline,
+            )
+        ):
+            return handler(**kwargs)
+
+    return _wrapped
 
 
 class ToolRegistry:
@@ -306,7 +338,7 @@ class ToolRegistry:
             self._catalog_cache = format_tools_catalog(available)
             return self._catalog_cache
 
-    def execute(self, name: str, arguments: dict[str, Any]) -> str:
+    def execute(self, name: str, arguments: dict[str, Any], *, cancel_event: threading.Event | None = None) -> str:
         with self._lock:
             defn = self._tools.get(name)
             if defn is None:
@@ -323,6 +355,7 @@ class ToolRegistry:
             timeout = defn.timeout if defn.timeout is not None else _DEFAULT_TOOL_TIMEOUT
             is_mutating = defn.mutating
             dispatch_wrapper = self._dispatch_wrapper
+            needs_host_dispatch = defn.main_thread
 
         arguments = self._coerce_arguments(defn, arguments)
 
@@ -331,8 +364,19 @@ class ToolRegistry:
         if cached is not None:
             return cached
 
-        if dispatch_wrapper is not None:
+        if dispatch_wrapper is not None and needs_host_dispatch:
             handler = dispatch_wrapper(handler)
+
+        # Deadline covers the host dispatch + handler + mutation lock wait,
+        # so handlers that split host and CPU phases can clamp their own
+        # budget against the same clock the registry timeout uses.
+        deadline = time.monotonic() + timeout
+        handler = _bind_context(
+            handler,
+            dispatch_wrapper=dispatch_wrapper,
+            cancel_event=cancel_event,
+            deadline=deadline,
+        )
 
         future = None
         try:
@@ -374,7 +418,9 @@ class ToolRegistry:
 
         return result_str
 
-    def execute_coerced(self, name: str, arguments: dict[str, Any]) -> str:
+    def execute_coerced(
+        self, name: str, arguments: dict[str, Any], *, cancel_event: threading.Event | None = None
+    ) -> str:
         """Like :meth:`execute` but assumes *arguments* are already coerced.
 
         The agent loop calls :meth:`coerce_arguments_for` once for
@@ -409,6 +455,7 @@ class ToolRegistry:
             timeout = defn.timeout if defn.timeout is not None else _DEFAULT_TOOL_TIMEOUT
             is_mutating = defn.mutating
             dispatch_wrapper = self._dispatch_wrapper
+            needs_host_dispatch = defn.main_thread
 
         # Cache check uses coerced args as key — matches :meth:`execute`
         # behavior for repeat calls.
@@ -416,8 +463,15 @@ class ToolRegistry:
         if cached is not None:
             return cached
 
-        if dispatch_wrapper is not None:
+        if dispatch_wrapper is not None and needs_host_dispatch:
             handler = dispatch_wrapper(handler)
+
+        handler = _bind_context(
+            handler,
+            dispatch_wrapper=dispatch_wrapper,
+            cancel_event=cancel_event,
+            deadline=time.monotonic() + timeout,
+        )
 
         future = None
         try:
@@ -448,7 +502,9 @@ class ToolRegistry:
 
         return result_str
 
-    def execute_current_thread(self, name: str, arguments: dict[str, Any]) -> str:
+    def execute_current_thread(
+        self, name: str, arguments: dict[str, Any], *, cancel_event: threading.Event | None = None
+    ) -> str:
         """Execute a tool directly on the current thread (no thread-pool dispatch).
 
         Use this when you are already running on a designated work thread
@@ -458,7 +514,10 @@ class ToolRegistry:
 
         Validates, coerces, caches, and truncates like ``execute()``, but
         does **not** enforce the thread-pool timeout (``tool_timeout``) —
-        the caller is responsible for any deadline.
+        the caller is responsible for any deadline.  A ``ToolExecutionContext``
+        is still installed (with ``deadline=None``, since nothing enforces
+        one here) so handlers can read ``cancel_event`` and dispatch their
+        own host sections exactly as they would under :meth:`execute`.
         """
         with self._lock:
             defn = self._tools.get(name)
@@ -475,6 +534,7 @@ class ToolRegistry:
             handler = defn.handler
             is_mutating = defn.mutating
             dispatch_wrapper = self._dispatch_wrapper
+            needs_host_dispatch = defn.main_thread
 
         arguments = self._coerce_arguments(defn, arguments)
 
@@ -482,8 +542,17 @@ class ToolRegistry:
         if cached is not None:
             return cached
 
-        if dispatch_wrapper is not None:
+        if dispatch_wrapper is not None and needs_host_dispatch:
             handler = dispatch_wrapper(handler)
+
+        # Inline (not via the pool) so no worker is ever left waiting on a
+        # host thread the caller is itself blocking.
+        handler = _bind_context(
+            handler,
+            dispatch_wrapper=dispatch_wrapper,
+            cancel_event=cancel_event,
+            deadline=None,
+        )
 
         try:
             result = handler(**arguments)
