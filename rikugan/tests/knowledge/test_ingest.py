@@ -81,7 +81,8 @@ class TestIngestExplorationFinding(unittest.TestCase):
         mems = self.store.list_memories()
         self.assertEqual(len(mems), 1)
         self.assertEqual(mems[0].type, "function_purpose")
-        self.assertTrue(mems[0].verified)
+        self.assertEqual(mems[0].status, "unverified")
+        self.assertFalse(mems[0].verified)
 
     def test_no_address_creates_concept_entity(self):
         ingest_exploration_finding(

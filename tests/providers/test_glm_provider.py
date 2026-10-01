@@ -34,11 +34,11 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from tests import purge_rikugan_stubs  # noqa: E402
+from tests import purge_rikugan_stubs
 
 purge_rikugan_stubs()
 
-from rikugan.core.types import (  # noqa: E402
+from rikugan.core.types import (
     LLMRequestContext,
     Message,
     Role,
@@ -124,6 +124,60 @@ def test_glm_known_model_includes_tool_stream_and_reasoning_effort():
 
     assert kwargs["extra_body"]["tool_stream"] is True
     assert "reasoning_effort" in kwargs["extra_body"]
+
+
+# ---------------------------------------------------------------------------
+# reasoning_effort gate: driven by the thinking level table
+# ---------------------------------------------------------------------------
+
+
+def test_glm_5_3_sends_its_configured_effort():
+    """A model with a level-table entry carries the user's level on the wire."""
+    from rikugan.providers.glm_provider import GLMProvider
+
+    provider = GLMProvider(
+        api_key="test",
+        model="glm-5.3",
+        extra={"dialect": "glm", "thinking": {"enabled": True, "reasoning_effort": "max"}},
+    )
+
+    kwargs = provider._build_request_kwargs([], None, 0.3, 4096, "")
+
+    assert kwargs["extra_body"]["reasoning_effort"] == "max"
+
+
+def test_unknown_glm_model_omits_effort_even_with_a_saved_level():
+    """The table is the capability source: an unknown ID gets no
+    ``reasoning_effort`` at all, whatever the config says."""
+    from rikugan.providers.glm_provider import GLMProvider
+
+    provider = GLMProvider(
+        api_key="test",
+        model="glm-experimental",
+        extra={"dialect": "glm", "thinking": {"enabled": True, "reasoning_effort": "high"}},
+    )
+
+    kwargs = provider._build_request_kwargs([], None, 0.3, 4096, "")
+
+    assert "reasoning_effort" not in kwargs["extra_body"]
+
+
+def test_disabled_thinking_omits_effort():
+    """Thinking off means ``thinking.type = "disabled"`` and no effort
+    field — GLM's effort enum has no "disabled" member, so sending the
+    stored level alongside a disabled thinking block is wrong."""
+    from rikugan.providers.glm_provider import GLMProvider
+
+    provider = GLMProvider(
+        api_key="test",
+        model="glm-5.2",
+        extra={"dialect": "glm", "thinking": {"enabled": False, "reasoning_effort": "high"}},
+    )
+
+    kwargs = provider._build_request_kwargs([], None, 0.3, 4096, "")
+
+    assert kwargs["extra_body"]["thinking"]["type"] == "disabled"
+    assert "reasoning_effort" not in kwargs["extra_body"]
 
 
 # ---------------------------------------------------------------------------

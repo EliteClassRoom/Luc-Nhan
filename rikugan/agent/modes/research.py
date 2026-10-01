@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ...core.errors import CancellationError
 from ...core.logging import log_error, log_info
 from ...core.types import Message, Role
 from ..exploration_mode import ExplorationState, KnowledgeBase
@@ -224,6 +225,7 @@ def write_and_review_note(
     content: str,
     related_notes: list[str],
     runner_factory: Callable[[], SubagentRunner],
+    loop: AgentLoop | None = None,
 ) -> Generator[TurnEvent, None, ResearchNote]:
     """Write a research note, review it, and rephrase/rewrite as needed.
 
@@ -232,6 +234,10 @@ def write_and_review_note(
     ``genre`` and ``title`` come from the LLM. Path traversal is blocked
     by :func:`_safe_note_path` which raises ``ValueError`` before any
     filesystem I/O if the inputs would escape the notes directory.
+
+    ``loop`` (when supplied) is checked for cancellation between the
+    sequential child runs; a set cancel event raises ``CancellationError``
+    so ``run()`` converts it into a CANCELLED event.
     """
     # Validate path first — fail fast before any I/O
     note_path = _safe_note_path(state.notes_dir, genre, title)
@@ -253,6 +259,15 @@ def write_and_review_note(
         content=content,
         related_notes=related_notes,
     )
+
+    def _abort_if_cancelled() -> None:
+        """Raise CancellationError between child runs when the user cancelled.
+
+        Propagates to ``run()`` which converts it into a CANCELLED event;
+        the note remains on disk as a draft.
+        """
+        if loop is not None and loop._cancelled.is_set():
+            raise CancellationError("Research note pipeline cancelled")
 
     # ── Step 1: REVIEW (silent, zero-context, tool-verified) ──
     # The reviewer has NO prior exploration context — only the note and
@@ -281,6 +296,8 @@ def write_and_review_note(
         passed = review_result.strip().upper().startswith("PASS")
 
         yield TurnEvent.research_note_reviewed(title, passed, review_result[:200])
+
+        _abort_if_cancelled()
 
         # ── Step 2: REWRITE if needed (silent, tool-verified) ──
         current_content = content
@@ -320,6 +337,8 @@ def write_and_review_note(
         # ── Step 3: ORCHESTRATOR DOUBLECHECK (silent, zero-context) ──
         # A final independent verifier with fresh context confirms
         # the rewritten note is accurate before we commit it.
+        _abort_if_cancelled()
+
         orchestrator = runner_factory()
         doublecheck_prompt = (
             f"You are a final quality gate for a research note. You have ZERO "
@@ -341,6 +360,10 @@ def write_and_review_note(
         if not approved:
             log_info(f"Research note '{title}' not approved by orchestrator: {doublecheck_result[:120]}")
 
+    except CancellationError:
+        # Cancellation must propagate unchanged so run() converts it into
+        # a CANCELLED event — never swallow it as a pipeline failure.
+        raise
     except Exception as e:
         log_error(f"Research note review pipeline failed for '{title}': {e}")
         # Note was already written as draft — keep it
@@ -484,9 +507,7 @@ def run_research_mode(
     if tracker.should_run("explore"):
         tracker.enter("explore")
         if not tracker.is_continuing("explore"):
-            yield TurnEvent.exploration_phase_change(
-                "", "explore", f"Starting research: {user_message[:60]}"
-            )
+            yield TurnEvent.exploration_phase_change("", "explore", f"Starting research: {user_message[:60]}")
         from .exploration import run_phase1_inline
 
         yield from run_phase1_inline(loop, explore_state, research_system, explore_tools, explore_only=False)

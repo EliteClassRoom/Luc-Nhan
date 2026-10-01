@@ -82,9 +82,9 @@ except ImportError:
     pass
 
 
-from rikugan import constants  # noqa: E402
-from rikugan.core.types import Message, Role, ToolCall, ToolResult  # noqa: E402
-from rikugan.ui.chat_view import (  # noqa: E402
+from rikugan import constants
+from rikugan.core.types import Message, Role, ToolCall, ToolResult
+from rikugan.ui.chat_view import (
     _RESTORE_CHUNK_SIZE,
     ChatView,
     MessageSpec,
@@ -96,10 +96,15 @@ from rikugan.ui.chat_view import (  # noqa: E402
     _is_hidden_system_user_message,
     _RenderedChunk,
 )
-from rikugan.ui.tool_widgets import (  # noqa: E402
+from rikugan.ui.tool_widgets import (
     ExecutePythonWidget,
     ToolCallWidget,
 )
+from rikugan.ui.message_widgets import (
+    AssistantMessageWidget,
+    UserMessageWidget,
+)
+from tests.qt_real import requires_real_qt
 
 
 def _user_msg(content: str) -> Message:
@@ -308,30 +313,40 @@ class BuildSpecTests(unittest.TestCase):
 
 
 class WorkerRunTests(unittest.TestCase):
-    """Drive the worker synchronously and inspect emitted signals."""
+    """Drive the worker synchronously and inspect the queue it populates.
+
+    Spec § A (Task 8): ``RestoreWorker`` no longer emits Qt signals.
+    Instead, ``run()`` pushes ``("chunk", _RenderedChunk)`` and
+    ``("finished", None)`` tuples onto ``worker.queue``.  These tests
+    call ``run()`` synchronously and then drain the queue, mirroring
+    the production ``ChatView._drain_restore_queue`` loop.
+    """
 
     def _run(self, messages: list[Message]) -> tuple[list[_RenderedChunk], bool]:
-        """Run a worker, collect all chunk_ready emissions and finished_ok flag.
-
-        Since QThread.run is overridden synchronously here, the signals are
-        emitted inline; we connect to MagicMock collectors and just call run().
-        """
         worker = RestoreWorker(messages)
         chunks: list[_RenderedChunk] = []
-        finished: list[bool] = []
-        worker.chunk_ready.connect(lambda c: chunks.append(c))
-        worker.finished_ok.connect(lambda: finished.append(True))
+        finished = False
         worker.run()
-        return chunks, bool(finished)
+        while True:
+            try:
+                kind, payload = worker.queue.get_nowait()
+            except Exception:
+                break
+            if kind == "chunk":
+                assert isinstance(payload, _RenderedChunk)
+                chunks.append(payload)
+            elif kind == "finished":
+                finished = True
+        return chunks, finished
 
     def test_empty_messages(self) -> None:
         chunks, finished = self._run([])
         self.assertEqual(chunks, [])
-        self.assertTrue(finished, "finished_ok should still fire on empty list")
+        self.assertTrue(finished, "finished sentinel must enqueue on empty list")
 
     def test_single_user_message(self) -> None:
         chunks, finished = self._run([_user_msg("hi")])
-        # Remainder flush emits the partial chunk
+        # Remainder flush enqueues the partial chunk
         self.assertEqual(len(chunks), 1)
         self.assertEqual(len(chunks[0].specs), 1)
         self.assertEqual(chunks[0].specs[0].role, "user")
@@ -349,8 +364,8 @@ class WorkerRunTests(unittest.TestCase):
         self.assertEqual(chunks[0].specs[0].content, "real")
 
     def test_chunk_boundary_emits_partial_chunk(self) -> None:
-        # Build _RESTORE_CHUNK_SIZE + 5 messages; the first chunk should be
-        # exactly chunk-size, the remainder should be a single chunk of 5.
+        # _RESTORE_CHUNK_SIZE + 5 messages; the first chunk is full,
+        # the remainder is a single chunk of 5.
         n = _RESTORE_CHUNK_SIZE + 5
         messages = [_user_msg(f"m{i}") for i in range(n)]
         chunks, _ = self._run(messages)
@@ -367,19 +382,26 @@ class WorkerRunTests(unittest.TestCase):
         worker = RestoreWorker(messages)
         # Cancel before starting
         worker.cancel()
-        chunks: list[_RenderedChunk] = []
-        finished: list[bool] = []
-        worker.chunk_ready.connect(lambda c: chunks.append(c))
-        worker.finished_ok.connect(lambda: finished.append(True))
         worker.run()
+        chunks: list[_RenderedChunk] = []
+        finished = False
+        while True:
+            try:
+                kind, payload = worker.queue.get_nowait()
+            except Exception:
+                break
+            if kind == "chunk":
+                chunks.append(payload)
+            elif kind == "finished":
+                finished = True
         # No specs produced because run() returns at the first iteration check
         self.assertEqual(sum(len(c.specs) for c in chunks), 0)
-        # finished_ok should NOT fire when cancelled before any work
+        # finished sentinel must NOT enqueue when cancelled before any work
         self.assertFalse(finished)
 
     def test_exactly_chunk_size_emits_one_chunk(self) -> None:
         # Boundary: exactly _RESTORE_CHUNK_SIZE messages. The boundary check
-        # emits the chunk when len >= CHUNK_SIZE, then the remainder is
+        # enqueues a chunk when len >= CHUNK_SIZE, then the remainder is
         # empty so the flush guard (`if chunk.specs`) skips it.
         messages = [_user_msg(f"m{i}") for i in range(_RESTORE_CHUNK_SIZE)]
         chunks, finished = self._run(messages)
@@ -387,6 +409,164 @@ class WorkerRunTests(unittest.TestCase):
         self.assertEqual(len(chunks[0].specs), _RESTORE_CHUNK_SIZE)
         self.assertTrue(finished)
 
+class WorkerQueueTests(unittest.TestCase):
+    """RestoreWorker pushes (kind, payload) tuples to a queue.Queue.
+
+    Spec § A: Thread UAF — the worker is a QThread but must NEVER emit
+    Qt signals across threads.  ``run()`` instead enqueues
+    ``("chunk", _RenderedChunk)`` / ``("finished", None)`` tuples onto
+    a queue that the main-thread ``QTimer`` callback drains.  This is
+    the same shape panel_core uses for the history executor queue.
+    """
+
+    KIND_CHUNK = "chunk"
+    KIND_FINISHED = "finished"
+
+    def _drain(self, worker: RestoreWorker) -> tuple[list[_RenderedChunk], bool]:
+        """Run a worker and drain its queue on the (mock) main thread.
+
+        Mirrors the production drain loop in ``ChatView._drain_restore_queue``:
+        pull tuples until the queue is empty, dispatch by ``kind``.  We do NOT
+        use any Qt signal connection — the worker thread ``run()`` enqueues
+        only, the main-thread drain is the sole consumer.
+        """
+        chunks: list[_RenderedChunk] = []
+        finished = False
+        while True:
+            try:
+                kind, payload = worker.queue.get_nowait()
+            except Exception:
+                break
+            if kind == "chunk":
+                assert isinstance(payload, _RenderedChunk)
+                chunks.append(payload)
+            elif kind == "finished":
+                finished = True
+            else:  # pragma: no cover - defensive
+                raise AssertionError(f"unknown kind: {kind!r}")
+        return chunks, finished
+
+    def test_worker_has_queue_attribute(self) -> None:
+        worker = RestoreWorker([])
+        import queue as _queue
+        self.assertIsInstance(worker.queue, _queue.Queue)
+
+    def test_worker_run_populates_queue_with_chunks_and_finished(self) -> None:
+        # _RESTORE_CHUNK_SIZE + 5 → two chunks (one full, one remainder)
+        # plus a finished sentinel.
+        n = _RESTORE_CHUNK_SIZE + 5
+        messages = [_user_msg(f"m{i}") for i in range(n)]
+        worker = RestoreWorker(messages)
+        worker.run()  # synchronous in-test, no QThread.start()
+        chunks, finished = self._drain(worker)
+        self.assertTrue(finished, "finished sentinel must be enqueued")
+        self.assertEqual(len(chunks), 2, f"expected 2 chunks, got {len(chunks)}")
+        self.assertEqual(len(chunks[0].specs), _RESTORE_CHUNK_SIZE)
+        self.assertEqual(len(chunks[1].specs), 5)
+        self.assertEqual(sum(len(c.specs) for c in chunks), n)
+    def test_worker_run_no_chunk_ready_or_finished_ok_signal(self) -> None:
+        """The Qt-signal interface must be GONE — clean cutover.
+
+        Importing ``RestoreWorker`` and looking up either attribute
+        must raise ``AttributeError``.  This guards against a future
+        regression that re-introduces the cross-thread signal path.
+        """
+        self.assertFalse(
+            hasattr(RestoreWorker, "chunk_ready"),
+            "RestoreWorker.chunk_ready signal must be removed (Shiboken UAF).",
+        )
+        self.assertFalse(
+            hasattr(RestoreWorker, "finished_ok"),
+            "RestoreWorker.finished_ok signal must be removed (Shiboken UAF).",
+        )
+
+    def test_widget_construction_happens_on_drain_not_on_producer(self) -> None:
+        """The stub widget factory must be invoked from the drain loop,
+        NOT from ``worker.run()``.  This is the central contract for
+        Task 8: widget construction must stay on the Qt main thread.
+        """
+        # Skip __init__ (heavy Qt setup) — we only need the drain entry
+        # point and the restore-generation state.  ``_drain_restore_queue``
+        # delegates to ``_on_chunk_ready`` / ``_on_restore_finished``,
+        # which is the widget-construction seam we are asserting against.
+        view = ChatView.__new__(ChatView)
+        view._restore_generation = 1
+        view._restore_worker = None
+        # ``_stop_restore_poll_timer`` runs at the finished sentinel
+        # even when no timer was ever created — must not AttributeError.
+        view._restore_poll_timer = None
+
+        import threading as _threading
+
+        factory_calls: list[tuple[int, str]] = []
+
+        def _on_chunk_stub(chunk, gen):  # replaces _on_chunk_ready
+            for spec in chunk.specs:
+                factory_calls.append((_threading.get_ident(), spec.msg_id))
+
+        def _on_finished_stub(gen):
+            factory_calls.append((_threading.get_ident(), "FINISHED"))
+
+        view._on_chunk_ready = _on_chunk_stub  # type: ignore[method-assign]
+        view._on_restore_finished = _on_finished_stub  # type: ignore[method-assign]
+
+        # Use explicit ids so the assertion can compare against stable names.
+        a = Message(role=Role.USER, content="a")
+        a.id = "a"
+        b = Message(role=Role.USER, content="b")
+        b.id = "b"
+        c = Message(role=Role.USER, content="c")
+        c.id = "c"
+        worker = RestoreWorker([a, b, c])
+        view._restore_worker = worker
+        producer_tid = _threading.get_ident()
+        worker.run()
+        # Producer: worker.run() must NOT call the factory.
+        self.assertEqual(
+            factory_calls,
+            [],
+            "worker.run() must NOT invoke the factory — widget "
+            "construction must be deferred to the main-thread drain "
+            "(Shiboken UAF risk).",
+        )
+        # Consumer: drain pulls tuples from the queue and dispatches.
+        view._drain_restore_queue()
+        self.assertEqual(len(factory_calls), 4)
+        self.assertEqual(
+            [role for _tid, role in factory_calls],
+            ["a", "b", "c", "FINISHED"],
+            "drain must dispatch every chunk spec in order, then the "
+            "finished sentinel",
+        )
+        drain_tid = factory_calls[0][0]
+        self.assertEqual(
+            drain_tid,
+            producer_tid,
+            "in the synchronous test, drain runs on the same thread as "
+            "producer; the contract we are asserting is that the factory "
+            "call originates from the drain call stack, NOT from "
+            "worker.run() — the empty-call assertion above enforces that",
+        )
+
+    def test_cancel_short_circuits_producer_no_finished(self) -> None:
+        """A cancelled worker puts no ``finished`` sentinel."""
+        messages = [_user_msg(f"m{i}") for i in range(10)]
+        worker = RestoreWorker(messages)
+        worker.cancel()
+        worker.run()
+        chunks, finished = self._drain(worker)
+        # Cancellation runs in run() before the loop body, so neither
+        # chunk nor finished lands.
+        self.assertEqual(chunks, [])
+        self.assertFalse(finished)
+
+    def test_empty_messages_emits_only_finished(self) -> None:
+        """No chunks, but a finished sentinel still arrives."""
+        worker = RestoreWorker([])
+        worker.run()
+        chunks, finished = self._drain(worker)
+        self.assertEqual(chunks, [])
+        self.assertTrue(finished)
 
 class PlaceholderTests(unittest.TestCase):
     """``MessagePlaceholder`` is a tiny ``QFrame`` used during async
@@ -508,6 +688,165 @@ class TestRestoreExecutePython(unittest.TestCase):
         self.assertIsInstance(widgets[0], ExecutePythonWidget)
         self.assertFalse(widgets[0]._result_block.isHidden())
         self.assertTrue(widgets[0]._is_error)
+
+
+@requires_real_qt
+class AsyncRestoreEndToEndTests(unittest.TestCase):
+    """End-to-end regression for Bug 2: a real ``ChatView`` must
+    actually paint real widgets after ``restore_from_messages_async``.
+
+    The pre-fix bug: ``_on_worker_finished`` (``QThread.finished``
+    slot) used to stop the drain timer and ``deleteLater`` every
+    placeholder the moment the worker exited — which for a typical
+    small/short session happens *before* the first 50 ms timer tick,
+    so the drain never ran and zero widgets were built.
+
+    These tests drive a real ``ChatView`` with the offscreen Qt
+    platform, pump ``processEvents`` until the restore finishes, and
+    assert that real ``UserMessageWidget`` / ``AssistantMessageWidget``
+    instances are present in the layout.  They MUST fail against the
+    pre-fix code (the bug produced 0 widgets regardless of pump
+    duration) and pass against the fixed code.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        cls._qapp = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        # Real ``ChatView()`` — we need the actual Qt widget tree so
+        # ``findChildren`` walks real ``UserMessageWidget`` /
+        # ``AssistantMessageWidget`` instances.  ``ChatView`` is a
+        # ``QScrollArea`` subclass; resizing gives it a real
+        # viewport so ``setFixedWidth`` inside the restore is a
+        # no-op rather than zero-width clipping placeholders.
+        self.view = ChatView()
+        self.view.resize(640, 480)
+        self.addCleanup(self.view.deleteLater)
+
+    def _user(self, content: str, msg_id: str) -> Message:
+        m = Message(role=Role.USER, content=content)
+        m.id = msg_id
+        return m
+
+    def _assistant(self, content: str, msg_id: str) -> Message:
+        m = Message(role=Role.ASSISTANT, content=content)
+        m.id = msg_id
+        return m
+
+    def _pump_until_done(self, expected_min_user: int, expected_min_assistant: int, timeout_s: float = 3.0) -> None:
+        """Pump ``processEvents`` until both expected widget counts are
+        present and ``_in_restore`` has cleared, or until ``timeout_s``
+        elapses.  Fail loudly with observed counts on deadline so a
+        regression surfaces the zero-widgets failure mode.
+        """
+        import time
+
+        deadline = time.monotonic() + timeout_s
+        last_user = -1
+        last_assistant = -1
+        self._qapp.processEvents()
+        while time.monotonic() < deadline:
+            last_user = len(self.view.findChildren(UserMessageWidget))
+            last_assistant = len(self.view.findChildren(AssistantMessageWidget))
+            if last_user >= expected_min_user and last_assistant >= expected_min_assistant and not self.view._in_restore:
+                # Spin a few more turns to flush any late queue items.
+                for _ in range(10):
+                    self._qapp.processEvents()
+                return
+            self._qapp.processEvents()
+            time.sleep(0.001)  # yield to scheduler for timer ticks
+        raise AssertionError(
+            f"restore did not paint widgets within {timeout_s}s "
+            f"(observed user={last_user}, assistant={last_assistant}; "
+            f"expected user>={expected_min_user}, "
+            f"assistant>={expected_min_assistant}, _in_restore="
+            f"{self.view._in_restore}). This is the Bug 2 failure mode "
+            f"(\\_on\\_worker\\_finished killed the drain before chunks "
+            f"landed)."
+        )
+
+    def test_two_message_session_paints_user_and_assistant(self) -> None:
+        """The minimal repro: a 2-message session must yield both
+        a ``UserMessageWidget`` and an ``AssistantMessageWidget``."""
+        self.view.restore_from_messages_async(
+            [self._user("hello", "u1"), self._assistant("hi", "a1")]
+        )
+        self._pump_until_done(expected_min_user=1, expected_min_assistant=1)
+        # Clean terminal flags.
+        self.assertFalse(self.view._in_restore)
+        self.assertIsNone(self.view._restore_poll_timer)
+        self.assertEqual(self.view._placeholders, {})
+
+    def test_eighty_message_session_paints_every_widget(self) -> None:
+        """The bug is timing-independent at the operator level. 80
+        messages under the default cap of 100 must paint 40 user +
+        40 assistant widgets with no leftover placeholders.
+        """
+        messages: list[Message] = []
+        for i in range(80):
+            if i % 2 == 0:
+                messages.append(self._user(f"q{i}", f"u{i}"))
+            else:
+                messages.append(self._assistant(f"a{i}", f"a{i}"))
+        self.view.restore_from_messages_async(messages)
+        self._pump_until_done(expected_min_user=40, expected_min_assistant=40)
+        # No leftover placeholders — every chunk's spec was consumed.
+        self.assertEqual(self.view._placeholders, {})
+        self.assertIsNone(self.view._restore_poll_timer)
+
+    def test_load_older_grows_cap_and_re_renders(self) -> None:
+        """The ``max_rendered`` cap path must also produce widgets when
+        the user clicks \"Load older\".  Use a session larger than the
+        default cap so the first restore leaves placeholders, then
+        re-render with a grown cap and confirm more widgets land.
+        """
+        from rikugan.ui.chat_view import _RESTORE_DEFAULT_MAX_RENDERED
+
+        total = _RESTORE_DEFAULT_MAX_RENDERED + 50
+        messages: list[Message] = []
+        for i in range(total):
+            if i % 2 == 0:
+                messages.append(self._user(f"q{i}", f"u{i}"))
+            else:
+                messages.append(self._assistant(f"a{i}", f"a{i}"))
+        self.view.restore_from_messages_async(messages)
+        # First restore: cap = default; at least one chunk worth of
+        # widgets must land.
+        self._pump_until_done(expected_min_user=1, expected_min_assistant=1)
+        # \"Load older\" grows the cap and re-runs the restore.
+        self.view._load_older_clicked()
+        # After the second restore with the grown cap, more widgets
+        # must have landed (the cap doubled to at least 200 here).
+        self._pump_until_done(
+            expected_min_user=_RESTORE_DEFAULT_MAX_RENDERED // 2,
+            expected_min_assistant=_RESTORE_DEFAULT_MAX_RENDERED // 2,
+        )
+        # Cap grew.
+        self.assertGreater(
+            self.view._restore_max_rendered, _RESTORE_DEFAULT_MAX_RENDERED
+        )
+
+    def test_cancel_tears_down_timer_and_clears_state(self) -> None:
+        """``_cancel_restore`` must stop the drain timer and clear
+        ``_in_restore`` — never leave a timer spinning.
+
+        Regression guard for the safety-net branch in the new drain
+        ownership model.  Without it, a Cancel could leak because
+        ``_on_worker_finished`` was no longer doing it.
+        """
+        messages = [self._user(f"q{i}", f"u{i}") for i in range(40)]
+        self.view.restore_from_messages_async(messages)
+        # Give the timer a tick to start, then cancel.
+        self._qapp.processEvents()
+        self.view._cancel_restore()
+        # Pump to flush the timer's stop.
+        for _ in range(20):
+            self._qapp.processEvents()
+        self.assertIsNone(self.view._restore_poll_timer)
+        self.assertFalse(self.view._in_restore)
 
 
 if __name__ == "__main__":

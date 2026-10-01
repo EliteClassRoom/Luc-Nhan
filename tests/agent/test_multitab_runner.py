@@ -21,9 +21,9 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig  # noqa: E402
-from rikugan.ida.ui.session_controller import IdaSessionController  # noqa: E402
-from rikugan.state.history import SessionHistory  # noqa: E402
+from rikugan.core.config import RikuganConfig
+from rikugan.ida.ui.session_controller import IdaSessionController
+from rikugan.state.history import SessionHistory
 
 
 class _StubProvider:

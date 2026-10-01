@@ -27,6 +27,10 @@ class MCPServerConfig:
     enabled: bool = True
     timeout: float = 30.0
 
+    def resolve_timeout(self, fallback: float) -> float:
+        """Return the configured timeout, or *fallback* when unset/invalid (<= 0)."""
+        return self.timeout if self.timeout > 0 else fallback
+
 
 def load_mcp_config(path: str = "") -> list[MCPServerConfig]:
     """Load MCP server configurations from the Rikugan config directory.

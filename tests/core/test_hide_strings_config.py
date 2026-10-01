@@ -16,7 +16,7 @@ from pathlib import Path
 # stub for ``rikugan.core.config`` earlier in the collection order.
 sys.modules.pop("rikugan.core.config", None)
 
-from rikugan.core.config import RikuganConfig  # noqa: E402
+from rikugan.core.config import RikuganConfig
 
 
 def _write_config(path: Path, payload: dict) -> None:

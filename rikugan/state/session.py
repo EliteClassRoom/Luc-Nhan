@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 from ..core.logging import log_debug
 from ..core.sanitize import strip_injection_markers
@@ -73,7 +74,7 @@ class SessionState:
     # Populated by the MemoryWorkspaceManager when central memory is enabled.
     binary_memory_id: str = ""
     active_case_id: str = ""
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     # Subagent message logs, keyed by the spawn_subagent tool_call_id.
     # Stored separately from main messages to avoid burning context tokens.
     subagent_logs: dict[str, list[Message]] = field(default_factory=dict)
@@ -164,10 +165,20 @@ class SessionState:
             if len(self.messages) <= keep_last_n + 1:
                 return 0
 
-            # Keep messages[0] (system prompt / first user message) + tail
+            # Keep messages[0] (system prompt / first user message) + tail.
+            # Advance the tail start past any TOOL message whose assistant
+            # tool_call partner falls outside the tail — otherwise the
+            # provider rejects the orphaned tool result (OpenAI/Anthropic
+            # both 400). The walk never reaches the head: tail_start >= 1.
+            tail_start = max(1, len(self.messages) - keep_last_n)
+            while (
+                tail_start < len(self.messages)
+                and self.messages[tail_start].role == Role.TOOL
+            ):
+                tail_start += 1
             head = self.messages[:1]
-            tail = self.messages[-keep_last_n:]
-            removed_msgs = self.messages[1:-keep_last_n]
+            tail = self.messages[tail_start:]
+            removed_msgs = self.messages[1:tail_start]
             removed = len(removed_msgs)
             for m in removed_msgs:
                 self._token_estimate -= _estimate_tokens(m)

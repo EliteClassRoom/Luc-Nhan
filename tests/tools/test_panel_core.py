@@ -210,16 +210,16 @@ sys.modules.pop("rikugan.ui.panel_core", None)
 # downstream test — which is exactly the kind of test-isolation
 # regression that makes headless / provider tests fail when run
 # after a panel-core test in the same pytest invocation.
-import pytest  # noqa: E402
+import pytest
 
-from rikugan.ui import panel_core as _pc_module  # noqa: E402
-from rikugan.ui.export_formatting import (  # noqa: E402
+from rikugan.ui import panel_core as _pc_module
+from rikugan.ui.export_formatting import (
     _TOOL_RESULT_TRUNCATE_CHARS,
     _export_detect_lang,
     _export_format_tool_args,
     _export_format_tool_result,
 )
-from rikugan.ui.panel_core import (  # noqa: E402
+from rikugan.ui.panel_core import (
     RikuganPanelCore,
 )
 
@@ -1196,47 +1196,82 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Task 7 — fresh-by-default startup and IDB-change behavior
-# (spec §7.1, §7.2).  ``_build_ui`` and ``on_database_changed`` must never
-# restore history or read the saved-session manifest, and IDB switches must
-# always end with exactly one ``New Chat`` tab and an empty pending restore
-# map.  The legacy ``_try_restore_session`` path is removed; these tests
-# pin the no-restore contract going forward.
+# Task 1 follow-up — startup auto-restore behavior.  ``_build_ui`` now
+# arms a one-shot background probe that surfaces the most recent saved
+# session for the current IDB instead of leaving the user on a blank
+# ``New Chat`` draft.  Failure paths stay silent.  The legacy
+# ``_try_restore_session`` / ``restore_sessions`` / ``restore_session``
+# APIs are still removed — startup uses the existing
+# ``_start_history_list_request`` + ``_apply_history_list_result`` /
+# ``_apply_history_loaded`` machinery, scoped by ``_matches_current_idb``.
 # ---------------------------------------------------------------------------
 
 
-class TestStartupNoRestore(unittest.TestCase):
-    """``_build_ui`` must not touch the legacy startup-restore path.
+class TestStartupAutoRestore(unittest.TestCase):
+    """Startup must arm a hidden probe that opens the most recent saved
+    session for the current IDB.
 
-    Source-level assertions cover the contract because the production
-    method depends on real Qt construction (mode bar, mode stack, main
-    splitter, history/chat widgets, context bar, …) that the panel-stub
-    fixture does not model.  Reading the source is enough to detect any
-    reintroduction of ``_try_restore_session()``,
-    ``restore_sessions(...)``, or ``restore_session()``.
+    The new product rule reverses the 1.12.0 "fresh blank New Chat on
+    open" decision: on every fresh panel-open the user lands on the
+    newest saved session instead of a blank draft.  Source-level and
+    behavior-level assertions together pin the contract:
+
+    * ``_build_ui`` schedules the probe via ``QTimer.singleShot(0, ...)``
+      so the request runs AFTER the draft tab is in the tab widget and
+      AFTER the history poll QTimer is safe to spin up — never on
+      IDA's open hot path.
+    * The probe uses ``_arm_startup_restore_if_idle`` which sets
+      ``_startup_restore_pending`` and calls
+      ``_start_history_list_request``; it never reaches into the
+      controller directly (so the IDB filter / scope capture stays
+      single-sourced).
+    * Failure paths (no sessions, manifest corrupt, save-flush timeout,
+      load NOT_FOUND / WRONG_IDB / EMPTY / FAILED) are silent: the
+      ``_apply_history_list_result`` / ``_apply_history_loaded`` startup
+      branches drop the flags and return without surfacing any error
+      copy on the (hidden) History panel.
+    * ``on_database_changed`` deliberately does NOT arm the probe —
+      IDB switches remain fresh-by-default per the brief ("do not
+      auto-restore after the user has explicitly done something").
     """
 
-    def test_build_ui_source_has_no_try_restore_session_call(self) -> None:
+    def _source(self):
         import inspect
 
         from rikugan.ui.panel_core import RikuganPanelCore
 
-        source = inspect.getsource(RikuganPanelCore._build_ui)
+        return inspect.getsource(RikuganPanelCore._build_ui)
+
+    def test_build_ui_arms_probe_via_qtimer_single_shot(self) -> None:
+        """``_build_ui`` must defer the probe via ``QTimer.singleShot(0, ...)``.
+
+        A direct (non-deferred) submit would race against
+        ``_build_ui``'s tail (draft tab + history poll timer setup)
+        and could execute on IDA's open hot path.  The deferred slot
+        runs on the next event-loop turn, after every UI step is
+        safe, on the same main thread that owns the panel.
+        """
+        source = self._source()
+        self.assertIn(
+            "QTimer.singleShot(0, self._arm_startup_restore_if_idle)",
+            source,
+            msg=(
+                "_build_ui() must defer the startup probe via QTimer.singleShot(0, ...) "
+                "so it runs AFTER the draft tab and history poll timer are wired."
+            ),
+        )
+
+    def test_build_ui_does_not_call_legacy_restore_apis(self) -> None:
+        """The legacy ``_try_restore_session`` / ``restore_sessions`` /
+        ``restore_session`` APIs are still gone — startup uses the
+        existing list/load pipeline instead of a special path.
+        """
+        source = self._source()
         self.assertNotIn(
             "_try_restore_session",
             source,
-            msg="_build_ui() must not call _try_restore_session(); startup must be fresh.",
+            msg="_build_ui() must not invoke the legacy _try_restore_session path.",
         )
-
-    def test_build_ui_source_has_no_legacy_restore_api_call(self) -> None:
-        import inspect
-
-        from rikugan.ui.panel_core import RikuganPanelCore
-
-        source = inspect.getsource(RikuganPanelCore._build_ui)
-        # ``restore_sessions`` (bulk) and ``restore_session`` (legacy
-        # single-tab) are removed together in Task 7.  Reject any
-        # reintroduction from a future refactor.
         self.assertNotIn(
             "restore_sessions",
             source,
@@ -1248,22 +1283,346 @@ class TestStartupNoRestore(unittest.TestCase):
             msg="_build_ui() must not invoke the legacy single-session restore path.",
         )
 
-    def test_build_ui_source_does_not_seed_pending_restore_messages(self) -> None:
-        """``_build_ui`` must leave ``_pending_restore_messages`` empty.
+    def test_build_ui_does_not_seed_pending_restore_messages_directly(self) -> None:
+        """``_build_ui`` must not hand-seed ``_pending_restore_messages``.
 
-        The map is only written by explicit ``History attach`` flow
-        after a user selects an entry from the History panel.  A
-        fresh startup must never populate it.
+        The map is only written by the explicit ``_apply_history_loaded``
+        attach path AFTER a load result lands.  A direct write from
+        ``_build_ui`` would bypass IDB-scoping and the result-typing
+        guards in the load apply step.
+        """
+        source = self._source()
+        self.assertNotIn(
+            "_pending_restore_messages[",
+            source,
+            msg="_build_ui() must not seed _pending_restore_messages directly.",
+        )
+
+    def test_arm_helper_sets_flag_and_submits_list(self) -> None:
+        """``_arm_startup_restore_if_idle`` must arm the flag and kick
+        the existing list request through ``_start_history_list_request``.
+
+        Driving the real helper on a stubbed panel proves that the
+        IDB-scoping code path (`capture_history_scope` → worker →
+        ``_matches_current_idb`` filter → ``_apply_history_list_result``
+        startup branch) is the one that runs; an alternate path that
+        talked to ``_ctrl`` directly would bypass the filter.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel._is_shutdown = False
+        panel._history_panel = MagicMock(name="history_panel")
+        panel._history_panel.isVisible.return_value = False
+        panel._history_pending = False
+        panel._startup_restore_pending = False
+        panel._start_history_list_request = MagicMock(name="start_history_list_request")
+
+        panel._arm_startup_restore_if_idle()
+
+        self.assertTrue(panel._startup_restore_pending)
+        panel._start_history_list_request.assert_called_once_with()
+        # History panel stays hidden — the probe never reveals it.
+        panel._history_panel.setVisible.assert_not_called()
+
+    def test_arm_helper_does_not_rearm_if_already_pending(self) -> None:
+        """If another list/load is in flight the helper must not double-submit.
+        The user opening History between the deferred slot firing and the
+        first event-loop turn should not let the probe double-fire on top
+        of their explicit request.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel._is_shutdown = False
+        panel._history_panel = MagicMock(name="history_panel")
+        panel._history_panel.isVisible.return_value = False
+        panel._history_pending = True  # some other request in flight
+        panel._startup_restore_pending = False
+        panel._start_history_list_request = MagicMock(name="start_history_list_request")
+
+        panel._arm_startup_restore_if_idle()
+
+        self.assertFalse(panel._startup_restore_pending)
+        panel._start_history_list_request.assert_not_called()
+
+    def test_arm_helper_does_not_rearm_when_already_armed(self) -> None:
+        """Re-arming the probe would race a second list submit at a
+        different generation.  The helper is idempotent.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel._is_shutdown = False
+        panel._history_panel = MagicMock(name="history_panel")
+        panel._history_panel.isVisible.return_value = False
+        panel._history_pending = False
+        panel._startup_restore_pending = True  # already armed
+        panel._start_history_list_request = MagicMock(name="start_history_list_request")
+
+        panel._arm_startup_restore_if_idle()
+
+        panel._start_history_list_request.assert_not_called()
+
+    def test_arm_helper_does_nothing_on_shutdown(self) -> None:
+        """A ``_is_shutdown`` panel must not submit any request — a stale
+        deferred slot that fires during teardown cannot leak a worker
+        onto the executor that ``_invalidate_history`` already tore down.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel._is_shutdown = True
+        panel._history_panel = MagicMock(name="history_panel")
+        panel._history_pending = False
+        panel._startup_restore_pending = False
+        panel._start_history_list_request = MagicMock(name="start_history_list_request")
+
+        panel._arm_startup_restore_if_idle()
+
+        self.assertFalse(panel._startup_restore_pending)
+        panel._start_history_list_request.assert_not_called()
+
+    def test_arm_helper_does_nothing_without_history_panel(self) -> None:
+        """A test fixture / partial ``_build_ui`` without ``_history_panel``
+        must not submit — there is no UI surface for the worker result.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel._is_shutdown = False
+        panel._history_panel = None
+        panel._history_pending = False
+        panel._startup_restore_pending = False
+        panel._start_history_list_request = MagicMock(name="start_history_list_request")
+
+        panel._arm_startup_restore_if_idle()
+
+        self.assertFalse(panel._startup_restore_pending)
+        panel._start_history_list_request.assert_not_called()
+
+    def test_startup_list_result_falls_through_when_user_showing_history(self) -> None:
+        """User explicitly opens History between probe submit and result
+        land: yield to them and render the list normally instead of
+        silently swapping the draft for a session they did not pick.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel._history_panel = MagicMock(name="history_panel")
+        panel._history_panel.isVisible.return_value = True  # user opened it
+        panel._startup_restore_pending = True
+        panel._startup_restore_load_pending = False
+        panel._start_history_list_request = MagicMock(name="start_history_list_request")
+        panel._history_panel.set_loading = MagicMock(name="set_loading")
+
+        result = MagicMock(name="result")
+        result.status = HistoryRequestStatus.LISTED
+        # Two entries — if we did NOT honor the visibility check, this
+        # would submit a hidden LOAD for the newest.
+        result.entries = [
+            MagicMock(session_id="newer", updated_at=2.0),
+            MagicMock(session_id="older", updated_at=1.0),
+        ]
+
+        panel._apply_history_list_result(result)
+
+        # Flag consumed.
+        self.assertFalse(panel._startup_restore_pending)
+        # No hidden load submitted.
+        panel._start_history_list_request.assert_not_called()
+        self.assertFalse(panel._startup_restore_load_pending)
+        # Normal render path: rows visible to the user.
+        panel._history_panel.set_entries.assert_called_once()
+
+    def test_startup_list_result_silent_on_non_listed(self) -> None:
+        """A save-flush timeout, FAILED, or corrupt manifest during the
+        startup probe must leave the blank draft tab intact with no
+        error copy surfaced.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        for status in (
+            HistoryRequestStatus.SAVE_FLUSH_TIMEOUT,
+            HistoryRequestStatus.FAILED,
+        ):
+            panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+            panel._history_panel = MagicMock(name="history_panel")
+            panel._history_panel.isVisible.return_value = False
+            panel._startup_restore_pending = True
+            panel._startup_restore_load_pending = False
+            panel._start_history_list_request = MagicMock(name="start_history_list_request")
+
+            result = MagicMock(name="result")
+            result.status = status
+            result.entries = ()
+
+            panel._apply_history_list_result(result)
+
+            self.assertFalse(panel._startup_restore_pending)
+            panel._start_history_list_request.assert_not_called()
+            panel._history_panel.set_entries.assert_not_called()
+            panel._history_panel.set_error.assert_not_called()
+
+    def test_startup_list_result_silent_on_empty_listed(self) -> None:
+        """A successful LISTED with zero entries must leave the blank
+        draft tab intact — nothing to restore for this IDB.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel._history_panel = MagicMock(name="history_panel")
+        panel._history_panel.isVisible.return_value = False
+        panel._startup_restore_pending = True
+        panel._startup_restore_load_pending = False
+        panel._start_history_list_request = MagicMock(name="start_history_list_request")
+
+        result = MagicMock(name="result")
+        result.status = HistoryRequestStatus.LISTED
+        result.entries = ()
+
+        panel._apply_history_list_result(result)
+
+        self.assertFalse(panel._startup_restore_pending)
+        panel._start_history_list_request.assert_not_called()
+        panel._history_panel.set_entries.assert_not_called()
+
+    def test_startup_list_result_submits_load_for_newest(self) -> None:
+        """LISTED with entries must submit a hidden LOAD for the
+        newest-by-updated_at session and set the load-pending flag so
+        ``_apply_history_loaded`` can suppress non-LOADED copy.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel._history_panel = MagicMock(name="history_panel")
+        panel._history_panel.isVisible.return_value = False
+        panel._startup_restore_pending = True
+        panel._startup_restore_load_pending = False
+        panel._is_shutdown = False
+        panel._history_generation = 0
+        panel._history_executor = None
+        import threading as _threading
+
+        panel._history_closing = _threading.Event()
+        panel._history_pending = False
+        panel._ctrl = MagicMock(name="ctrl")
+        panel._ctrl.find_tab_for_session = MagicMock(return_value=None)
+        panel._ctrl.capture_history_scope = MagicMock(
+            return_value=MagicMock(name="scope")
+        )
+        # Patch the real load-submit entry point so the test stays in
+        # process and we can assert against it without an executor.
+        panel._start_history_load = MagicMock(name="start_history_load")
+
+        result = MagicMock(name="result")
+        result.status = HistoryRequestStatus.LISTED
+        result.entries = [
+            MagicMock(session_id="older", updated_at=1.0),
+            MagicMock(session_id="newer", updated_at=2.0),
+            MagicMock(session_id="middle", updated_at=1.5),
+        ]
+
+        panel._apply_history_list_result(result)
+
+        self.assertFalse(panel._startup_restore_pending)
+        self.assertTrue(panel._startup_restore_load_pending)
+        panel._start_history_load.assert_called_once_with("newer")
+        panel._history_panel.set_entries.assert_not_called()
+        panel._history_panel.set_error.assert_not_called()
+
+    def test_startup_load_silent_on_failure(self) -> None:
+        """A startup LOAD that lands NOT_FOUND / WRONG_IDB / EMPTY / FAILED
+        must leave the blank draft tab intact with no error copy.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        for status in (
+            HistoryRequestStatus.NOT_FOUND,
+            HistoryRequestStatus.WRONG_IDB,
+            HistoryRequestStatus.EMPTY,
+            HistoryRequestStatus.FAILED,
+        ):
+            panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+            panel._history_panel = MagicMock(name="history_panel")
+            panel._history_panel.isVisible.return_value = False
+            panel._startup_restore_pending = False
+            panel._startup_restore_load_pending = True
+            panel._start_history_list_request = MagicMock(name="start_history_list_request")
+            panel._ctrl = MagicMock(name="ctrl")
+            panel._on_knowledge_event_refresh = MagicMock(name="on_knowledge_event_refresh")
+
+            result = MagicMock(name="result")
+            result.status = status
+            result.session = None
+
+            panel._apply_history_loaded(result)
+
+            self.assertFalse(panel._startup_restore_load_pending)
+            # Startup failures are completely silent: no panel error copy,
+            # no list-refresh submit (the user is not interacting with
+            # History and the draft tab is the visible default — there
+            # is nothing to refresh from).
+            panel._start_history_list_request.assert_not_called()
+            panel._history_panel.set_error.assert_not_called()
+            # No attach attempted.
+            panel._ctrl.attach_history_session.assert_not_called()
+
+    def test_startup_load_visible_history_yields_to_user(self) -> None:
+        """If the user opened History during the startup LOAD, drop the
+        session silently and re-submit a list so the user sees rows
+        instead of an empty spinner forever.
+        """
+        import rikugan.ui.panel_core as _pc_module
+
+        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel._history_panel = MagicMock(name="history_panel")
+        panel._history_panel.isVisible.return_value = True  # user opened it
+        panel._startup_restore_pending = False
+        panel._startup_restore_load_pending = True
+        panel._start_history_list_request = MagicMock(name="start_history_list_request")
+        panel._ctrl = MagicMock(name="ctrl")
+        panel._on_knowledge_event_refresh = MagicMock(name="on_knowledge_event_refresh")
+
+        result = MagicMock(name="result")
+        result.status = HistoryRequestStatus.LOADED
+        result.session = MagicMock(name="session", id="hidden-session")
+
+        panel._apply_history_loaded(result)
+
+        # Session dropped — no silent tab attach.
+        panel._ctrl.attach_history_session.assert_not_called()
+        # Fresh list submitted so the panel actually populates.
+        panel._start_history_list_request.assert_called_once_with()
+        # Flag consumed.
+        self.assertFalse(panel._startup_restore_load_pending)
+
+    def test_on_database_changed_does_not_arm_startup_restore(self) -> None:
+        """``on_database_changed`` must NOT arm the startup probe.
+
+        The brief pins "do not auto-restore after the user has
+        explicitly done something" — opening a different binary is
+        an explicit user action, and the IDB-switch path keeps a
+        fresh ``New Chat`` draft per the existing spec §7.2
+        contract.  Only the panel-open path auto-restores.
         """
         import inspect
 
         from rikugan.ui.panel_core import RikuganPanelCore
 
-        source = inspect.getsource(RikuganPanelCore._build_ui)
+        source = inspect.getsource(RikuganPanelCore.on_database_changed)
         self.assertNotIn(
-            "_pending_restore_messages[",
+            "_arm_startup_restore_if_idle",
             source,
-            msg="_build_ui() must not seed _pending_restore_messages on startup.",
+            msg=(
+                    "on_database_changed() must not arm the startup probe — "
+                    "IDB switches stay fresh-by-default."
+                ),
+        )
+        self.assertNotIn(
+            "_startup_restore_pending = True",
+            source,
+            msg="on_database_changed() must not set _startup_restore_pending.",
         )
 
 
@@ -1290,25 +1649,18 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
         self.assertIn(
             "self._chat_splitter = QSplitter(Qt.Orientation.Vertical)",
             source,
-            msg=(
-                "_build_ui() must create a vertical QSplitter so the "
-                "user has a real resize handle for the input."
-            ),
+            msg=("_build_ui() must create a vertical QSplitter so the user has a real resize handle for the input."),
         )
         self.assertIn(
             "self._chat_splitter.addWidget(self._main_splitter)",
             source,
-            msg=(
-                "_build_ui() must place the main conversation area in "
-                "the top pane of the chat splitter."
-            ),
+            msg=("_build_ui() must place the main conversation area in the top pane of the chat splitter."),
         )
         self.assertIn(
             "self._chat_splitter.addWidget(input_container)",
             source,
             msg=(
-                "_build_ui() must place the input section in the "
-                "bottom pane of the chat splitter so the user can drag."
+                "_build_ui() must place the input section in the bottom pane of the chat splitter so the user can drag."
             ),
         )
         # The old bare addWidget path would lose the resize handle.
@@ -1354,10 +1706,7 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
         self.assertIn(
             "self.setMinimumHeight(60)",
             source,
-            msg=(
-                "InputArea must default to a 2-3 line minimum height "
-                "(60px at 18px line-height with 6px padding)."
-            ),
+            msg=("InputArea must default to a 2-3 line minimum height (60px at 18px line-height with 6px padding)."),
         )
         # ``setMaximumHeight`` must not be called on the editor — the
         # vertical QSplitter in the panel owns the upper bound.
@@ -1365,8 +1714,7 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
             "setMaximumHeight",
             source,
             msg=(
-                "InputArea must not cap its maximum height; the "
-                "vertical QSplitter in the panel owns the upper bound."
+                "InputArea must not cap its maximum height; the vertical QSplitter in the panel owns the upper bound."
             ),
         )
 
@@ -3216,7 +3564,7 @@ class TestLoadRetryPath(unittest.TestCase):
 # the Task 8 implementation leaves open.
 # ---------------------------------------------------------------------------
 
-import queue as _queue_module  # noqa: E402
+import queue as _queue_module
 
 
 class TestTask10InvalidateHistorySignature(unittest.TestCase):
@@ -3779,7 +4127,7 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
 # the pre-confirm / post-confirm / watchdog / retry / invalidation
 # phases cannot land silently.
 # ---------------------------------------------------------------------------
-from rikugan.state.history_types import (  # noqa: E402
+from rikugan.state.history_types import (
     HistoryDeleteResult,
     HistoryDeleteStatus,
     HistoryRequestStatus,

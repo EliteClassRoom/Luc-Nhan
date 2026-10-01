@@ -40,6 +40,11 @@ class TestCoerceArguments(unittest.TestCase):
         result = ToolRegistry._coerce_arguments(defn, {"count": "30.0"})
         self.assertEqual(result["count"], 30)
 
+    def test_hex_string_to_int(self):
+        defn = _make_defn([ParameterSchema(name="count", type="integer")])
+        result = ToolRegistry._coerce_arguments(defn, {"count": "0x47"})
+        self.assertEqual(result["count"], 71)
+
     def test_bool_true_to_int(self):
         """bool is a subclass of int — should be coerced to plain int."""
         defn = _make_defn([ParameterSchema(name="count", type="integer")])

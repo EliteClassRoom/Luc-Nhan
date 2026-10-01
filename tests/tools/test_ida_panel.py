@@ -32,7 +32,7 @@ _actions_mod = types.ModuleType("rikugan.ida.ui.actions")
 _actions_mod.RikuganUIHooks = MagicMock()
 sys.modules["rikugan.ida.ui.actions"] = _actions_mod
 
-from rikugan.ida.ui.panel import RikuganPanel  # noqa: E402
+from rikugan.ida.ui.panel import RikuganPanel
 
 # ---------------------------------------------------------------------------
 # Helper

@@ -370,12 +370,3 @@ Follow the Smart Patch workflow:
 Include the original hex bytes and new hex bytes in your exploration_report \
 so the save gate can track what changed.
 """
-
-SAVE_PROMPT = """\
-All patches have been applied and verified in-memory.
-
-{patch_summary}
-
-The user will now be asked whether to save these changes to the file. \
-Do not take any further actions until the user decides.
-"""

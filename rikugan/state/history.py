@@ -26,8 +26,10 @@ from ..core.logging import log_debug, log_warning
 from ..core.types import (
     Message,
     Role,
+    TokenUsage,
     _safe_persisted_identifier,
     _safe_persisted_text,
+    coerce_token_count,
 )
 from .session import SessionState
 
@@ -35,6 +37,39 @@ from .session import SessionState
 # from ``core.types`` (single source of truth). The lenient helper
 # preserves ``<`` / ``>`` for content fields; the strict helper scrubs
 # them for identifiers and metadata values.
+
+
+def _sanitize_metadata_value(value: Any) -> Any:
+    """Recursively sanitize a persisted metadata value.
+
+    ``SessionState.metadata`` may hold nested dicts/lists (e.g. the
+    ``last_knowledge_retrieval`` pack recorded by the retrieved-knowledge
+    indicator). The previous code path ran every value through
+    :func:`_safe_persisted_identifier`, which coerces non-strings via
+    ``str(value)`` — turning ``{"counts": {...}}`` into the literal
+    string ``"{'counts': {...}}"`` and silently corrupting the structure
+    on every save/load round-trip.
+
+    This helper preserves JSON-safe containers (``dict``/``list``) by
+    recursing into them, while still running scalar values through the
+    strict identifier sanitizer so injected markers/angle brackets are
+    stripped from leaf strings.
+    """
+    if isinstance(value, dict):
+        return {
+            _safe_persisted_identifier(k): _sanitize_metadata_value(v) for k, v in value.items() if isinstance(k, str)
+        }
+    if isinstance(value, list):
+        return [_sanitize_metadata_value(item) for item in value]
+    if isinstance(value, str | int | float | bool) or value is None:
+        # bool is a subclass of int — keep ordering so we don't coerce
+        # ``True`` to the string ``"True"`` and break JSON round-trips.
+        if isinstance(value, str):
+            return _safe_persisted_identifier(value)
+        return value
+    # Anything else (e.g. tuple, set, custom object) — coerce to a
+    # sanitized string so we never smuggle unsanitized bytes into a leaf.
+    return _safe_persisted_identifier(str(value))
 
 
 MANIFEST_FILE = "_session_manifest.json"
@@ -554,6 +589,27 @@ class SessionHistory:
             "current_turn": session.current_turn,
             "metadata": session.metadata,
             "messages": [m.to_dict() for m in session.messages],
+            # Persisted so the context bar / cumulative-spend accounting
+            # survives save → reopen. Both fields are written
+            # unconditionally (matching ``current_turn`` above) because
+            # every in-memory ``SessionState`` carries them after the
+            # first turn. ``last_prompt_tokens`` is a plain int;
+            # ``total_usage`` is flattened to its five non-negative int
+            # fields so it round-trips through plain JSON and so hostile
+            # edits on disk can be normalized by ``TokenUsage.__post_init__``
+            # at load time (see :meth:`load_session`). ``TokenUsage``
+            # itself has no stable on-disk contract, so we do NOT call
+            # ``dataclasses.asdict`` — that would also leak any future
+            # runtime-only fields added to the dataclass into the wire
+            # format and break forward compatibility.
+            "last_prompt_tokens": coerce_token_count(session.last_prompt_tokens),
+            "total_usage": {
+                "prompt_tokens": coerce_token_count(session.total_usage.prompt_tokens),
+                "completion_tokens": coerce_token_count(session.total_usage.completion_tokens),
+                "total_tokens": coerce_token_count(session.total_usage.total_tokens),
+                "cache_read_tokens": coerce_token_count(session.total_usage.cache_read_tokens),
+                "cache_creation_tokens": coerce_token_count(session.total_usage.cache_creation_tokens),
+            },
         }
         if session.subagent_logs:
             data["subagent_logs"] = {key: [m.to_dict() for m in msgs] for key, msgs in session.subagent_logs.items()}
@@ -658,11 +714,52 @@ class SessionHistory:
         raw_metadata = data.get("metadata") or {}
         if not isinstance(raw_metadata, dict):
             raw_metadata = {}
-        safe_metadata: dict[str, str] = {}
-        for k, v in raw_metadata.items():
-            if not isinstance(k, str):
-                continue
-            safe_metadata[_safe_persisted_identifier(k)] = _safe_persisted_identifier(v)
+        # ``metadata`` may hold nested containers (e.g. the retrieved-
+        # knowledge pack); use the recursive helper so dicts/lists keep
+        # their shape across save/load round-trips instead of being
+        # flattened to ``str(dict)`` by ``_safe_persisted_identifier``.
+        safe_metadata: dict[str, Any] = {
+            _safe_persisted_identifier(k): _sanitize_metadata_value(v)
+            for k, v in raw_metadata.items()
+            if isinstance(k, str)
+        }
+
+        # Token counters — restored from disk so the context bar and
+        # cumulative-spend accounting don't reset to zero on reopen.
+        # Both are OPTIONAL on disk: any pre-fix session JSON (saved
+        # before these keys were added) lacks them entirely, and the
+        # values can be hostile (hand-edited, derived from binary
+        # content, or replaced by a buggy upstream tool). Each field is
+        # routed through the existing normalizer rather than trusting
+        # the raw JSON:
+        #   * ``last_prompt_tokens`` is a plain ``int`` field on
+        #     ``SessionState`` (no ``__post_init__``), so we apply
+        #     :func:`coerce_token_count` directly. Missing key → ``0``;
+        #     non-int / negative / absurdly large → ``0`` (negative) or
+        #     the value as a non-negative int (everything else).
+        #   * ``total_usage`` is a nested dict written by ``save_session``
+        #     using the five ``TokenUsage`` int fields. We defensively
+        #     reject anything that isn't a ``dict`` (string, list, ``None``,
+        #     etc.) and pass each field through ``TokenUsage(...)`` so its
+        #     ``__post_init__`` re-runs the same coercion as live code.
+        #     Missing key → a zeroed ``TokenUsage``. Hostile dict → safe
+        #     zeroed ints via the same normalizer.
+        raw_last_prompt_tokens = data.get("last_prompt_tokens", 0)
+        last_prompt_tokens = coerce_token_count(raw_last_prompt_tokens)
+        raw_total_usage = data.get("total_usage")
+        if not isinstance(raw_total_usage, dict):
+            # Missing key (``None``), or a string / list / number / ``None`` /
+            # object — fall back to a zeroed record so the context bar
+            # at least renders the correct shape instead of crashing.
+            total_usage = TokenUsage()
+        else:
+            total_usage = TokenUsage(
+                prompt_tokens=raw_total_usage.get("prompt_tokens", 0),
+                completion_tokens=raw_total_usage.get("completion_tokens", 0),
+                total_tokens=raw_total_usage.get("total_tokens", 0),
+                cache_read_tokens=raw_total_usage.get("cache_read_tokens", 0),
+                cache_creation_tokens=raw_total_usage.get("cache_creation_tokens", 0),
+            )
 
         session = SessionState(
             id=_safe_persisted_identifier(data.get("id")) or session_id,
@@ -675,6 +772,8 @@ class SessionHistory:
             active_case_id=_safe_persisted_identifier(data.get("active_case_id", "")),
             current_turn=data.get("current_turn", 0),
             metadata=safe_metadata,
+            last_prompt_tokens=last_prompt_tokens,
+            total_usage=total_usage,
         )
 
         # Skip corrupt messages one at a time — a single bad entry must

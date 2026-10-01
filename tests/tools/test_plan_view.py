@@ -10,7 +10,7 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui.plan_view import PlanStepWidget, PlanView  # noqa: E402
+from rikugan.ui.plan_view import PlanStepWidget, PlanView
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,6 +71,23 @@ class TestPlanStepSetStatus(unittest.TestCase):
         step = _make_step()
         step.set_status("unknown_status")
         step._status_label.setText.assert_called_with("○")
+
+    def test_turn_limit_sets_clock_glyph(self):
+        """``turn_limit`` step gets a distinct clock-like glyph."""
+        step = _make_step()
+        step.set_status("turn_limit")
+        step._status_label.setText.assert_called_with("⏱")
+
+    def test_turn_limit_sets_object_name(self):
+        """``turn_limit`` step gets its own objectName for QSS hooks."""
+        step = _make_step()
+        step.set_status("turn_limit")
+        step.setObjectName.assert_called_with("plan_step_turn_limit")
+
+    def test_turn_limit_stored(self):
+        step = _make_step()
+        step.set_status("turn_limit")
+        self.assertEqual(step._status, "turn_limit")
 
     def test_status_stored(self):
         step = _make_step()

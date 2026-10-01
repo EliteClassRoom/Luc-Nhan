@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import os
@@ -163,12 +164,58 @@ def _format_openai_messages(
     return formatted
 
 
+def _parse_thinking_level(extra: dict[str, Any] | None) -> str:
+    """Extract the user's thinking level from a ``provider.extra`` dict.
+
+    Returns ``""`` when the user has not opted into thinking (absent /
+    empty extra, ``enabled`` false, or the ``"none"`` level) — that is the
+    pre-setting wire shape, where no ``reasoning_effort`` parameter is
+    sent at all.  Any other level string is passed through verbatim; the
+    model-list level table in :mod:`rikugan.core.thinking` drives which
+    levels Settings offers, and the endpoint is the final authority on
+    what it accepts.
+    """
+    if not extra:
+        return ""
+    thinking = extra.get("thinking")
+    if not isinstance(thinking, dict) or not thinking.get("enabled"):
+        return ""
+    level = thinking.get("reasoning_effort")
+    if not isinstance(level, str) or not level or level == "none":
+        return ""
+    return level
+
+
 class OpenAIProvider(LLMProvider):
     """Adapter for the OpenAI Chat Completions API."""
 
-    def __init__(self, api_key: str = "", api_base: str = "", model: str = "gpt-4o", **kwargs: Any) -> None:
-        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+    #: Whether ``__init__`` may fall back to the ``OPENAI_API_KEY``
+    #: environment variable when no explicit key is given.  Only the direct
+    #: api.openai.com adapter opts in; adapters that reuse the OpenAI
+    #: protocol against third-party endpoints (custom base URLs, Z.AI)
+    #: override this to ``False`` so the user's real OpenAI key is never
+    #: sent to a different host as a bearer credential.
+    _ALLOW_OPENAI_ENV_KEY: bool = True
+
+    def __init__(
+        self,
+        api_key: str = "",
+        api_base: str = "",
+        model: str = "gpt-4o",
+        extra: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if not api_key and self._ALLOW_OPENAI_ENV_KEY:
+            api_key = os.environ.get("OPENAI_API_KEY", "")
         super().__init__(api_key=api_key, api_base=api_base, model=model)
+        # Snapshot the raw extra dict so ProviderRegistry.get_or_create can
+        # deep-compare it and force a refresh when the thinking level
+        # changes without a credential change.
+        self._provider_extra_raw: dict[str, Any] | None = copy.deepcopy(extra) if extra else None
+        # ``reasoning_effort`` is only sent when the user explicitly opted
+        # into a thinking level; an absent/empty extra leaves the wire
+        # exactly as it was before the setting existed.
+        self._thinking_level: str = _parse_thinking_level(extra)
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -202,26 +249,43 @@ class OpenAIProvider(LLMProvider):
             supports_system_prompt=True,
         )
 
+    # Chat-family prefixes accepted by ``_fetch_models_live``. Subclasses
+    # (e.g. ``GLMProvider``) override this tuple so their live fetch keeps
+    # provider-specific model ids instead of being filtered down to OpenAI
+    # families.
+    _MODEL_ID_PREFIXES: tuple[str, ...] = (
+        "gpt-",
+        "o1-",
+        "o3-",
+        "o4-",
+        "chatgpt-",
+    )
+    _MODEL_ID_SKIP_SUBSTRINGS: tuple[str, ...] = (
+        "-instruct",
+        "embedding",
+        "tts",
+        "whisper",
+        "dall-e",
+        "audio",
+        "realtime",
+        "transcribe",
+    )
+
     def _fetch_models_live(self) -> list[ModelInfo]:
-        """Fetch chat-capable models from the OpenAI API."""
+        """Fetch chat-capable models from the API.
+
+        Subclasses can override ``_MODEL_ID_PREFIXES`` to keep their own
+        chat families (``GLMProvider`` keeps ``glm-``).
+        """
         client = self._get_client()
         response = client.models.list()
-        models = []
-        chat_prefixes = ("gpt-", "o1-", "o3-", "o4-", "chatgpt-")
-        skip_words = (
-            "-instruct",
-            "embedding",
-            "tts",
-            "whisper",
-            "dall-e",
-            "audio",
-            "realtime",
-            "transcribe",
-        )
+        models: list[ModelInfo] = []
+        prefixes = self._MODEL_ID_PREFIXES
+        skip = self._MODEL_ID_SKIP_SUBSTRINGS
         for m in response.data:
-            if not any(m.id.startswith(p) for p in chat_prefixes):
+            if not any(m.id.startswith(p) for p in prefixes):
                 continue
-            if any(s in m.id for s in skip_words):
+            if any(s in m.id for s in skip):
                 continue
             models.append(
                 ModelInfo(
@@ -380,6 +444,11 @@ class OpenAIProvider(LLMProvider):
         }
         if tools:
             kwargs["tools"] = tools
+        if self._thinking_level:
+            # Top-level Chat Completions parameter (not ``extra_body``):
+            # this is the spelling OpenAI, o-series, Ollama's OpenAI
+            # shim, and every OpenAI-compatible endpoint expect.
+            kwargs["reasoning_effort"] = self._thinking_level
         return kwargs
 
     def _call_api(self, client: Any, kwargs: dict[str, Any]) -> Any:
@@ -447,25 +516,13 @@ class OpenAIProvider(LLMProvider):
             return
 
         # Cancel watchdog — closes the stream if cancel_event fires so the
-        # consumer's per-chunk cancellation check is reached promptly.
+        # consumer's per-chunk cancellation check is reached promptly.  The
+        # returned ``done`` event is per-request: set in the finally below so
+        # the watchdog exits when the stream finishes instead of parking
+        # forever on the long-lived loop cancel event.
         stream_ref: list = []
         stream_ready = threading.Event()
-
-        def _watchdog() -> None:
-            if cancel_event is None:
-                return
-            cancel_event.wait()
-            if not stream_ready.wait(timeout=2.0):
-                return
-            s = stream_ref[0] if stream_ref else None
-            if s is not None:
-                try:
-                    s.close()
-                except Exception:
-                    pass
-
-        if cancel_event is not None:
-            threading.Thread(target=_watchdog, daemon=True).start()
+        done = self._spawn_cancel_watchdog(cancel_event, stream_ref, stream_ready)
 
         stream_ref.append(stream)
         stream_ready.set()
@@ -477,6 +534,8 @@ class OpenAIProvider(LLMProvider):
                 log_debug(f"OpenAIProvider stream closed by cancel: {e}")
                 return
             raise
+        finally:
+            done.set()
 
     def _iter_stream_chunks(
         self,

@@ -29,7 +29,7 @@ _idaapi_mock.PLUGIN_FIX = 2
 
 # Force re-import so IDA mocks are active for this module's import
 sys.modules.pop("rikugan_plugin", None)
-import rikugan_plugin as rp  # noqa: E402
+import rikugan_plugin as rp
 
 # ---------------------------------------------------------------------------
 # _guarded_import — re-entrancy guard

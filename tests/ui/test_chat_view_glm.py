@@ -51,9 +51,9 @@ try:
 except ImportError:
     pass
 
-from rikugan.agent.turn import TurnEvent  # noqa: E402
-from rikugan.core.types import Message, Role  # noqa: E402
-from rikugan.ui.chat_view import ChatView, MessageSpec, RestoreWorker  # noqa: E402
+from rikugan.agent.turn import TurnEvent, TurnEventType
+from rikugan.core.types import Message, Role
+from rikugan.ui.chat_view import ChatView, MessageSpec, RestoreWorker
 
 
 class _ChatViewHarness:
@@ -357,6 +357,131 @@ class TestReasoningAwareRestore(unittest.TestCase):
         assert spec is not None
         assert "secret reasoning" not in spec.content_html
         assert "visible only" in spec.content_html or spec.content_html == ""
+
+
+class TestReasoningResetBetweenTurns(unittest.TestCase):
+    """After TEXT_DONE, reasoning state must reset so the next turn's
+    REASONING_DELTA creates a fresh _ThinkingBlock instead of appending
+    to the previous turn's finalised block."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        cls._qapp = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        self._view = _ChatViewHarness.make()
+
+    def test_text_done_clears_message_thinking(self):
+        """_message_thinking must be None after TEXT_DONE so the next
+        REASONING_DELTA starts a fresh block."""
+        self._view.handle_event(TurnEvent.reasoning_event("first reasoning"))
+        assert self._view._message_thinking is not None
+
+        self._view.handle_event(TurnEvent.text_delta("visible answer"))
+        self._view.handle_event(TurnEvent.text_done("visible answer"))
+
+        assert self._view._message_thinking is None
+
+    def test_second_turn_reasoning_creates_new_block(self):
+        """Full two-turn cycle: turn1 reasoning + text + TEXT_DONE +
+        TURN_END, then turn2 REASONING_DELTA must create a NEW block."""
+        # Turn 1
+        self._view.handle_event(TurnEvent.reasoning_event("reasoning A"))
+        block_a = self._view._message_thinking
+        assert block_a is not None
+        self._view.handle_event(TurnEvent.text_delta("answer A"))
+        self._view.handle_event(TurnEvent.text_done("answer A"))
+        self._view.handle_event(TurnEvent.turn_end(1))
+
+        # Turn 2
+        self._view.handle_event(TurnEvent.reasoning_event("reasoning B"))
+        block_b = self._view._message_thinking
+        assert block_b is not None
+        # Must be a different widget instance, not the stale one from turn 1
+        assert block_b is not block_a, "second-turn reasoning reused the first turn's _ThinkingBlock"
+        assert block_b._source_text == "reasoning B"
+
+    def test_text_done_clears_think_buffer(self):
+        """_think_buffer and _waiting_think_close must reset after TEXT_DONE."""
+        self._view._think_buffer = "stale"
+        self._view._waiting_think_close = True
+
+        self._view.handle_event(TurnEvent.text_done("done"))
+
+        assert self._view._think_buffer == ""
+        assert self._view._waiting_think_close is False
+
+class TestPlanStepDoneStatus(unittest.TestCase):
+    """``PLAN_STEP_DONE`` carries outcome text
+    (``completed``/``turn_limit``/``error``) that the UI must map to
+    the matching ``PlanStepWidget`` status — collapsing it to
+    ``done`` always would hide the distinction between a normally
+    completed step and one that exhausted its per-step turn budget.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        cls._qapp = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        self._view = _ChatViewHarness.make()
+
+        # Stub plan_view so handle_event can record the calls without
+        # needing a real PlanView (the harness already sets _plan_view
+        # to None).
+        from rikugan.ui import plan_view as _pv
+
+        self._pv = _pv
+        recorded = []
+
+        class _StubPlanView:
+            def set_step_status(self, idx, status):
+                recorded.append((idx, status))
+
+        self._recorded = recorded
+        self._view._plan_view = _StubPlanView()
+
+    def _dispatch_plan_done(self, outcome: str, index: int = 0) -> None:
+        self._view.handle_event(
+            TurnEvent(
+                type=TurnEventType.PLAN_STEP_DONE,
+                plan_step_index=index,
+                text=outcome,
+            )
+        )
+
+    def test_completed_maps_to_done(self) -> None:
+        self._dispatch_plan_done("completed")
+        assert self._recorded == [(0, "done")]
+
+    def test_turn_limit_maps_to_turn_limit(self) -> None:
+        """A ``turn_limit`` outcome must reach PlanView as
+        ``turn_limit``, not ``done`` — that's the whole point of the
+        fix."""
+        self._dispatch_plan_done("turn_limit")
+        assert self._recorded == [(0, "turn_limit")]
+
+    def test_error_maps_to_error(self) -> None:
+        self._dispatch_plan_done("error")
+        assert self._recorded == [(0, "error")]
+
+    def test_unknown_outcome_maps_to_done(self) -> None:
+        """Unknown outcomes fall back to ``done`` for forward-compat."""
+        self._dispatch_plan_done("weird_outcome")
+        assert self._recorded == [(0, "done")]
+
+    def test_helper_direct(self) -> None:
+        """Pin the mapping helper itself."""
+        from rikugan.ui.chat_view import _plan_step_done_status
+
+        assert _plan_step_done_status("completed") == "done"
+        assert _plan_step_done_status("turn_limit") == "turn_limit"
+        assert _plan_step_done_status("error") == "error"
+        assert _plan_step_done_status("") == "done"
 
 
 if __name__ == "__main__":

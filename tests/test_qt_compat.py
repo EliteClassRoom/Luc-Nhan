@@ -7,7 +7,7 @@ import unittest
 from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
-import rikugan.ui.qt_compat as qt_compat  # noqa: E402
+import rikugan.ui.qt_compat as qt_compat
 
 
 class TestQtCompat(unittest.TestCase):

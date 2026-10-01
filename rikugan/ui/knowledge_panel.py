@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .qt_compat import (
     QAbstractItemView,
@@ -52,8 +52,23 @@ class _Row:
     secondary: str  # tags / predicate / genre
     confidence: float
     updated: str
-    raw: dict  # for the detail pane
+    status: str = ""  # hypothesis verdict label, "" for non-hypotheses
+    raw: dict = field(default_factory=dict)  # for the detail pane
 
+
+_STATUS_LABELS = {
+    "verified": "✓ verified",
+    "wrong": "✗ wrong",
+    "unverified": "? unverified",
+}
+
+
+def _hypothesis_status_label(memory) -> str:
+    """Return the status label for a hypothesis memory; empty otherwise."""
+    if str(_getattr(memory, "type", "")) != "hypothesis":
+        return ""
+    status = str(_getattr(memory, "status", "unverified") or "unverified")
+    return _STATUS_LABELS.get(status, f"? {status}")
 
 class KnowledgePanel(QWidget):
     """Browser widget for the raw knowledge store.
@@ -112,8 +127,10 @@ class KnowledgePanel(QWidget):
         main_layout.addWidget(self._counts_label)
 
         # Main table
-        self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["Type", "ID/Title", "Tags/Predicate", "Confidence", "Updated"])
+        self._table = QTableWidget(0, 6)
+        self._table.setHorizontalHeaderLabels(
+            ["Type", "ID/Title", "Tags/Predicate", "Status", "Confidence", "Updated"]
+        )
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -125,6 +142,7 @@ class KnowledgePanel(QWidget):
         h.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         self._table.itemSelectionChanged.connect(self._on_row_selected)
         main_layout.addWidget(self._table, 3)
 
@@ -251,6 +269,7 @@ class KnowledgePanel(QWidget):
                     secondary=", ".join(_getattr(m, "tags", []) or []),
                     confidence=float(_getattr(m, "confidence", 0.0) or 0.0),
                     updated=_getattr(m, "updated_at", "") or _getattr(m, "created_at", ""),
+                    status=_hypothesis_status_label(m),
                     raw=_to_dict(m),
                 )
             )
@@ -264,6 +283,7 @@ class KnowledgePanel(QWidget):
                     secondary=", ".join(_getattr(e, "tags", []) or []),
                     confidence=1.0,
                     updated="",
+                    status="",
                     raw=_to_dict(e),
                 )
             )
@@ -276,6 +296,7 @@ class KnowledgePanel(QWidget):
                     secondary=_getattr(r, "predicate", ""),
                     confidence=float(_getattr(r, "confidence", 0.0) or 0.0),
                     updated="",
+                    status="",
                     raw=_to_dict(r),
                 )
             )
@@ -289,6 +310,7 @@ class KnowledgePanel(QWidget):
                         secondary="note excerpt",
                         confidence=1.0,
                         updated="",
+                        status="",
                         raw={"body": n},
                     )
                 )
@@ -303,7 +325,6 @@ class KnowledgePanel(QWidget):
             self._initial_refreshed = True
             self.refresh_requested.emit()
 
-    # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
@@ -332,16 +353,18 @@ class KnowledgePanel(QWidget):
             id_cell = QTableWidgetItem(f"{item.id}\n{item.title}")
             id_cell.setToolTip(item.id)
             secondary_cell = QTableWidgetItem(item.secondary)
+            status_cell = QTableWidgetItem(item.status)
+            if item.status:
+                status_cell.setToolTip(item.status)
             conf_cell = QTableWidgetItem(f"{item.confidence:.2f}" if item.confidence else "")
             updated_cell = QTableWidgetItem(item.updated)
             self._table.setItem(row, 0, kind_cell)
             self._table.setItem(row, 1, id_cell)
             self._table.setItem(row, 2, secondary_cell)
-            self._table.setItem(row, 3, conf_cell)
-            self._table.setItem(row, 4, updated_cell)
-            # Stash the raw record on the first cell so the selection
-            # handler can read it without re-searching.
-            kind_cell.setData(0x0100, item.raw)  # UserRole
+            self._table.setItem(row, 3, status_cell)
+            self._table.setItem(row, 4, conf_cell)
+            self._table.setItem(row, 5, updated_cell)
+            kind_cell.setData(0x0100, item.raw)
 
     def _on_row_selected(self) -> None:
         rows = self._table.selectionModel().selectedRows()

@@ -208,14 +208,14 @@ def get_address_name(
 
 __all__ = [
     "RIKUGAN_EVIDENCE_TAG",
-    "rename_function",
-    "rename_variable",
-    "rename_address",
-    "set_comment",
-    "set_function_comment",
-    "merge_evidence_line",
-    "set_type",
+    "get_address_name",
     "get_comment",
     "get_function_comment",
-    "get_address_name",
+    "merge_evidence_line",
+    "rename_address",
+    "rename_function",
+    "rename_variable",
+    "set_comment",
+    "set_function_comment",
+    "set_type",
 ]

@@ -20,7 +20,10 @@ else:
 
 # Soft timeout: log a warning if startup takes longer than this.
 _SOFT_TIMEOUT = 5.0
-# Hard timeout: abort startup entirely after this many seconds.
+# Hard timeout fallback: abort startup after this many seconds when the
+# per-server "timeout" is unset or invalid (<= 0). Configured timeouts are
+# honored as-is — cold-starting stdio servers (npx/uvx-based) can
+# legitimately need far more than 15s to answer "initialize".
 _HARD_TIMEOUT = 15.0
 
 
@@ -128,8 +131,9 @@ class MCPManager:
     ) -> None:
         """Start a single MCP server (runs in background thread).
 
-        Uses a soft timeout (_SOFT_TIMEOUT) to emit a warning and a hard
-        timeout (_HARD_TIMEOUT) to abort, preventing indefinite UI freezes.
+        Uses a soft timeout (_SOFT_TIMEOUT) to emit a warning and the
+        per-server "timeout" as the hard bound (falling back to
+        _HARD_TIMEOUT when unset/invalid), preventing indefinite waits.
         The *generation* token guards against late registrations after a
         reload or shutdown has superseded this start cycle.
 
@@ -140,7 +144,7 @@ class MCPManager:
         try block so that missing-SDK or client-init failures are logged
         at error level instead of raising unhandled exceptions.
         """
-        hard = min(config.timeout, _HARD_TIMEOUT)
+        hard = config.resolve_timeout(_HARD_TIMEOUT)
         client = None
         safe_name = config.name.replace("-", "_").replace(".", "_")
         prefix = f"{MCP_TOOL_PREFIX}{safe_name}_"

@@ -17,7 +17,7 @@ ensure_pyside6_stubs()
 # Ensure the real module is loaded even if another test stubbed it.
 sys.modules.pop("rikugan.ui.tool_widgets", None)
 
-from rikugan.ui.tool_widgets import (  # noqa: E402
+from rikugan.ui.tool_widgets import (
     _DEFAULT_TOOL_COLOR,
     _build_approval_header,
     _format_tool_group_label,

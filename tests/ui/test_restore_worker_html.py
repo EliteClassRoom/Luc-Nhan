@@ -29,8 +29,8 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.core.types import Message, Role  # noqa: E402
-from rikugan.ui.chat_view import MessageSpec, RestoreWorker  # noqa: E402
+from rikugan.core.types import Message, Role
+from rikugan.ui.chat_view import MessageSpec, RestoreWorker
 
 
 class TestWorkerPreRendersAssistantHtml(unittest.TestCase):

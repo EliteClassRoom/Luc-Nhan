@@ -26,6 +26,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .thinking import ALL_THINKING_LEVELS, default_thinking_level, get_thinking_levels, has_model_thinking_levels
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -64,11 +66,11 @@ KNOWN_GLM_5_2_CONTEXT_WINDOW = 1_000_000
 #: upstream endpoint's actual limit.
 KNOWN_GLM_CONTEXT_WINDOW = 200_000
 
-#: ``reasoning_effort`` enum accepted for GLM-5.2 (spec §7.1).  Other GLM
-#: model families omit ``reasoning_effort`` entirely; the parser therefore
-#: only validates effort strings when ``GLMModelMetadata.reasoning_effort``
-#: is True for the selected model.
-REASONING_EFFORT_VALUES: frozenset[str] = frozenset({"max", "xhigh", "high", "medium", "low", "minimal", "none"})
+#: Legacy flat enum of ``reasoning_effort`` values.  The authoritative
+#: per-model lists now live in :mod:`rikugan.core.thinking`; this set is
+#: kept as the union of those lists for callers that only need a coarse
+#: membership test.
+REASONING_EFFORT_VALUES: frozenset[str] = frozenset(ALL_THINKING_LEVELS)
 
 #: Z.AI endpoint types.  The "standard" endpoint serves the general-purpose
 #: PaaS API (per-token billing); the "coding_plan" endpoint serves Z.AI's
@@ -169,8 +171,17 @@ class GLMConfig:
 #: Known GLM model entries.  Capabilities follow the Z.AI contract:
 #: ``reasoning_content`` starts with the GLM-4.5-series-and-newer models,
 #: ``streaming_tool_calls`` starts with GLM-4.6-and-newer, and
-#: ``reasoning_effort`` is sent only for GLM-5.2 (spec §12.4).
+#: ``reasoning_effort`` is sent for the models that advertise it
+#: (spec §12.4).  Per-model effort *levels* live in
+#: :mod:`rikugan.core.thinking`.
 _KNOWN_GLM_MODELS: dict[str, GLMModelMetadata] = {
+    "glm-5.3": GLMModelMetadata(
+        context_window=KNOWN_GLM_CONTEXT_WINDOW,
+        max_output_tokens=KNOWN_GLM_MAX_OUTPUT_TOKENS,
+        reasoning_content=True,
+        streaming_tool_calls=True,
+        reasoning_effort=True,
+    ),
     "glm-5.2": GLMModelMetadata(
         context_window=KNOWN_GLM_5_2_CONTEXT_WINDOW,
         max_output_tokens=KNOWN_GLM_MAX_OUTPUT_TOKENS,
@@ -200,6 +211,12 @@ _KNOWN_GLM_MODELS: dict[str, GLMModelMetadata] = {
         reasoning_effort=False,
     ),
 }
+# Unknown ``glm-5.x`` IDs inherit the GLM-5.2 contract (effort control,
+# streamed tool args, 1M window): Z.AI ships new coding-plan models faster
+# than this dict can track, and 5.x family members share the API contract.
+def _glm5_family_metadata() -> GLMModelMetadata:
+    return _KNOWN_GLM_MODELS["glm-5.2"]
+
 
 #: Conservative defaults for unknown GLM model IDs — reasoning content is
 #: assumed (the user picked GLM), but streamed tool arguments and
@@ -220,6 +237,8 @@ def get_glm_model_metadata(model_id: str) -> GLMModelMetadata:
     still build a safe request without silently adding fields the upstream
     endpoint may reject.
     """
+    if model_id.startswith("glm-5."):
+        return _KNOWN_GLM_MODELS.get(model_id) or _glm5_family_metadata()
     return _KNOWN_GLM_MODELS.get(model_id, _UNKNOWN_GLM_METADATA)
 
 
@@ -253,7 +272,23 @@ def _require_bool(extra: Mapping[str, Any], field_path: str) -> bool:
     return value
 
 
-def _parse_thinking(extra: Mapping[str, Any], model_metadata: GLMModelMetadata) -> GLMThinkingConfig:
+def _parse_thinking(extra: Mapping[str, Any], model_id: str) -> GLMThinkingConfig:
+    """Parse the ``provider.extra.thinking`` sub-dict.
+
+    Effort validation is provider-neutral and driven by
+    :mod:`rikugan.core.thinking`:
+
+    * a non-string or wholly unknown level string is a hand-edit error
+      and raises with the exact field path;
+    * a level that exists but is not in the selected model's list (e.g.
+      a saved ``ultra`` after switching to GLM-5.3) is *normalized* to
+      that model's default rather than raised — a stale saved level must
+      never brick ``GLMProvider.__init__``.
+
+    Unknown model IDs have no authoritative list, so any known level is
+    accepted and passed through; ``GLMProvider`` omits the wire field for
+    them entirely.
+    """
     _validate_field_path(extra, "thinking", _THINKING_KEYS)
     thinking = extra.get("thinking") or {}
     enabled = _require_bool(thinking, "provider.extra.thinking.enabled") if "enabled" in thinking else True
@@ -261,17 +296,12 @@ def _parse_thinking(extra: Mapping[str, Any], model_metadata: GLMModelMetadata) 
     effort = thinking.get("reasoning_effort", "max")
     if not isinstance(effort, str):
         raise ValueError(f"provider.extra.thinking.reasoning_effort must be a string, got {type(effort).__name__}")
-    if model_metadata.reasoning_effort and effort not in REASONING_EFFORT_VALUES:
+    if effort not in ALL_THINKING_LEVELS:
         raise ValueError(
-            f"provider.extra.thinking.reasoning_effort must be one of {sorted(REASONING_EFFORT_VALUES)}, got {effort!r}"
+            f"provider.extra.thinking.reasoning_effort must be one of {sorted(ALL_THINKING_LEVELS)}, got {effort!r}"
         )
-    if not model_metadata.reasoning_effort and effort != "max":
-        # Accept the GLM-5.2 default but reject any non-default value on
-        # models that do not advertise reasoning-effort support.
-        raise ValueError(
-            f"provider.extra.thinking.reasoning_effort={effort!r} is not supported "
-            f"by the selected model (use the default 'max')"
-        )
+    if has_model_thinking_levels(model_id) and effort not in get_thinking_levels(model_id):
+        effort = default_thinking_level(get_thinking_levels(model_id))
     return GLMThinkingConfig(enabled=enabled, reasoning_effort=effort, preserve=preserve)
 
 
@@ -329,8 +359,8 @@ def parse_glm_extra(extra: Mapping[str, Any], model_id: str) -> GLMConfig:
     of truth when the active model changes.
 
     Raises ``ValueError`` with an exact field path on any unknown nested
-    key, non-boolean boolean field, out-of-range numeric, or unsupported
-    ``reasoning_effort`` value.
+    key, non-boolean boolean field, out-of-range numeric, or unknown
+    ``reasoning_effort`` level.
     """
     if not isinstance(extra, Mapping):
         raise ValueError(f"provider.extra must be a dict, got {type(extra).__name__}")
@@ -341,9 +371,7 @@ def parse_glm_extra(extra: Mapping[str, Any], model_id: str) -> GLMConfig:
     if dialect != GLM_DIALECT:
         raise ValueError(f"provider.extra.dialect must be {GLM_DIALECT!r}, got {dialect!r}")
 
-    model_metadata = get_glm_model_metadata(model_id)
-
-    thinking = _parse_thinking(extra, model_metadata)
+    thinking = _parse_thinking(extra, model_id)
     guard = _parse_guard(extra)
 
     endpoint_type = extra.get("endpoint_type", GLM_ENDPOINT_STANDARD)

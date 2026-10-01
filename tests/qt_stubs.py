@@ -360,7 +360,6 @@ def _qt_class(name: str) -> type:
         "layout": _layout_getter,
         "showEvent": _noop,
         "hideEvent": _noop,
-
         "setToolButtonStyle": _noop,
         "setArrowType": _noop,
         "setPopupMode": _noop,
@@ -1071,31 +1070,42 @@ def ensure_pyside6_stubs() -> None:
     # syntax highlighter; the stub just returns a sentinel object — the
     # highlighter doesn't introspect it during construction.
     _widget_stubs["QPlainTextEdit"].document = lambda self: object()
-    _widget_stubs["QDialogButtonBox"].StandardButton = type(
-        "_DialogBoxStandardButton",
-        (),
-        {
-            "NoButton": 0,
-            "Ok": 1024,
-            "Open": 8192,
-            "Save": 2048,
-            "Cancel": 4194304,
-            "Close": 2097152,
-            "Discard": 8388608,
-            "Apply": 33554432,
-            "Reset": 67108864,
-            "RestoreDefaults": 134217728,
-            "Help": 16777216,
-            "SaveAll": 268435456,
-            "Yes": 16384,
-            "YesToAll": 32768,
-            "No": 65536,
-            "NoToAll": 131072,
-            "Abort": 262144,
-            "Retry": 524288,
-            "Ignore": 1048576,
-        },
-    )()
+
+    # qt_compat.py accesses ``.value`` on each flag member to OR them
+    # as plain ints (avoids the PyQt5-shim bitwise-OR warning in IDA 9.x),
+    # then calls ``StandardButton(combined_int)`` to rebuild the flag.
+    # Stub must therefore expose class-level members with ``.value`` and
+    # itself be callable accepting an int.
+    class _DialogStandardButton:
+        def __init__(self, v: int = 0) -> None:
+            self.value = v
+
+        def __or__(self, other: _DialogStandardButton) -> int:
+            return self.value | other.value
+
+    _DialogStandardButton.NoButton = _DialogStandardButton(0)
+    _DialogStandardButton.Ok = _DialogStandardButton(1024)
+    _DialogStandardButton.Open = _DialogStandardButton(8192)
+    _DialogStandardButton.Save = _DialogStandardButton(2048)
+    _DialogStandardButton.Cancel = _DialogStandardButton(4194304)
+    _DialogStandardButton.Close = _DialogStandardButton(2097152)
+    _DialogStandardButton.Discard = _DialogStandardButton(8388608)
+    _DialogStandardButton.Apply = _DialogStandardButton(33554432)
+    _DialogStandardButton.Reset = _DialogStandardButton(67108864)
+    _DialogStandardButton.RestoreDefaults = _DialogStandardButton(134217728)
+    _DialogStandardButton.Help = _DialogStandardButton(16777216)
+    _DialogStandardButton.SaveAll = _DialogStandardButton(268435456)
+    _DialogStandardButton.Yes = _DialogStandardButton(16384)
+    _DialogStandardButton.YesToAll = _DialogStandardButton(32768)
+    _DialogStandardButton.No = _DialogStandardButton(65536)
+    _DialogStandardButton.NoToAll = _DialogStandardButton(131072)
+    _DialogStandardButton.Abort = _DialogStandardButton(262144)
+    _DialogStandardButton.Retry = _DialogStandardButton(524288)
+    _DialogStandardButton.Ignore = _DialogStandardButton(1048576)
+    _widget_stubs["QDialogButtonBox"].StandardButton = _DialogStandardButton
+    # qt_compat also references QMessageBox.StandardButton with the same
+    # ``.value`` + callable pattern. Reuse the same stub class.
+    _widget_stubs["QMessageBox"].StandardButton = _DialogStandardButton
     # QDialogButtonBox needs accepted/rejected/clicked signals for the
     # Ok/Cancel wiring in SettingsDialog.
     _widget_stubs["QDialogButtonBox"].accepted = _Signal()

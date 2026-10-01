@@ -39,6 +39,8 @@ class SubAgentFactory:
             max_turns=spec.max_steps,
             category="orchestra",
             mode=spec.mode,
+            tools=spec.tools,
+            model=spec.model,
         )
 
     def spawn_with_context(
@@ -61,6 +63,8 @@ class SubAgentFactory:
             perks=[],
             max_turns=spec.max_steps,
             category="orchestra",
+            tools=spec.tools,
+            model=spec.model,
         )
 
     def register_external(self, spec: SubAgentSpec) -> str:

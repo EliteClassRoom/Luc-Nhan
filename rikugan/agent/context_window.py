@@ -49,11 +49,17 @@ class ContextWindowManager:
         if len(messages) <= 6:
             return messages
 
-        # Keep first message and last 4 messages
+        # Keep first message and last 4 messages.
         keep_tail = 4
+        # Advance the tail start past any TOOL message whose assistant
+        # tool_call partner falls outside the tail — otherwise the provider
+        # rejects the orphaned tool result (OpenAI/Anthropic both 400).
+        tail_start = max(1, len(messages) - keep_tail)
+        while tail_start < len(messages) and messages[tail_start].role == Role.TOOL:
+            tail_start += 1
         head = messages[:1]  # system/first message
-        tail = messages[-keep_tail:]
-        middle = messages[1:-keep_tail]
+        tail = messages[tail_start:]
+        middle = messages[1:tail_start]
 
         if not middle:
             return messages

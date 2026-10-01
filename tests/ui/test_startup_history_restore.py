@@ -24,11 +24,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)
 
-from tests.qt_stubs import ensure_pyside6_stubs  # noqa: E402
+from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.state.history_types import (  # noqa: E402
+from rikugan.state.history_types import (
     HistoryListResult,
     HistoryLoadResult,
     HistoryRequestStatus,
@@ -42,6 +42,12 @@ def _build_panel():
 
     panel = RikuganPanelCore.__new__(RikuganPanelCore)
     panel._history_panel = MagicMock()
+    # History panel is hidden on the startup path — the probe runs
+    # against the current IDB's saved sessions before the user opens
+    # the panel.  Pin ``isVisible`` to ``False`` so the
+    # ``_apply_history_list_result`` startup branch treats this as a
+    # silent auto-restore rather than a user-initiated list render.
+    panel._history_panel.isVisible.return_value = False
     panel._history_generation = 1
     panel._history_pending = False
     panel._history_delete_intents = set()
@@ -139,6 +145,10 @@ class TestStartupLoadFailureClearsFlag(unittest.TestCase):
         panel = RikuganPanelCore.__new__(RikuganPanelCore)
         panel._is_shutdown = False
         panel._history_panel = MagicMock()
+        # Hidden History panel on the startup path so the visibility
+        # guard inside ``_apply_history_loaded`` does not yield to a
+        # (non-existent) user-initiated open.
+        panel._history_panel.isVisible.return_value = False
         panel._history_delete_intents = set()
         panel._history_retry_load_session_id = None
         panel._history_last_load_session_id = None

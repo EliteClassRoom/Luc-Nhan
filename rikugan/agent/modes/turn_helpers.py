@@ -376,7 +376,11 @@ def _build_recovery_context(
 
         is_glm = loop.config.provider.extra.get("dialect") == "glm" or loop.provider.name == "glm"
         if is_glm:
-            parsed = parse_glm_extra(loop.config.provider.extra, loop.config.provider.model)
+            # Prefer the provider's already-validated ``GLMConfig``
+            # snapshot so we don't re-validate on every recovery attempt.
+            parsed = getattr(loop.provider, "glm_config", None)
+            if parsed is None:
+                parsed = parse_glm_extra(loop.config.provider.extra, loop.config.provider.model)
             recovery_max = parsed.guard.recovery_max_tokens
             metadata = get_glm_model_metadata(loop.config.provider.model)
             model_max = metadata.max_output_tokens

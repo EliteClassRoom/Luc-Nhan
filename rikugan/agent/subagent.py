@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Generator
 from typing import Any
 
@@ -34,6 +35,13 @@ class SubagentRunner:
 
     After the subagent finishes, the parent receives only a compact
     summary rather than the full exploration trace.
+
+    ``cancel_event`` is forwarded to the inner AgentLoop so that
+    ``SubagentManager.cancel(agent_id)`` (or any caller-supplied event)
+    interrupts the provider stream and the loop's cancellation checks.
+    ``model_override`` (when non-empty) is applied only to the child
+    run via a shallow copy of the provider and config; the parent
+    provider/config objects are never mutated.
     """
 
     def __init__(
@@ -45,7 +53,28 @@ class SubagentRunner:
         skill_registry: SkillRegistry | None = None,
         parent_loop: Any | None = None,
         cancel_event: Any | None = None,
-    ):
+        model_override: str = "",
+        unattended: bool | None = None,
+        max_turns: int | None = None,
+    ) -> None:
+
+        # Hard ceiling for the child run. ``None`` means each caller
+        # (SubagentManager, /spawn_subagent pseudo-tool) supplies its own
+        # max_turns at the call site; SubagentManager's per-agent-type
+        # overrides then forward the resolved number here. The value
+        # MUST be ``None`` or a positive integer — ``max_turns=0`` is
+        # rejected because "immediate stop" is not a supported mode
+        # (it would silently promote to the legacy 100 via Python
+        # truthiness before the fix landed here).
+        if max_turns is None:
+            self._max_turns: int | None = None
+        elif isinstance(max_turns, int) and max_turns >= 1:
+            self._max_turns = max_turns
+        else:
+            raise ValueError(
+                f"SubagentRunner(max_turns={max_turns!r}) is invalid: max_turns must be None or a positive int >= 1."
+            )
+
         self.provider = provider
         self.tools = tool_registry
         self.config = config
@@ -53,12 +82,133 @@ class SubagentRunner:
         self.skills = skill_registry
         self._parent_loop = parent_loop
         self._cancel_event = cancel_event
+        self._model_override = model_override or ""
         self._last_session: SessionState | None = None
+        # Unattended children have no parent UI attached: interactive gates
+        # (execute_python, requires_approval tools, ask_user, external
+        # delegation) would block forever in _wait_for_queue because nobody
+        # answers their queues. Default: unattended exactly when there is no
+        # parent loop to inherit working queues from; an explicit
+        # ``unattended`` overrides the default (used to propagate the flag
+        # down the subagent tree from an already-unattended parent).
+        self._unattended = (parent_loop is None) if unattended is None else unattended
+        # ``unattended=False`` claims someone answers the child's queues —
+        # only ever true when the queues are inherited via parent_loop. A
+        # parentless child owns fresh queues, so this combination would
+        # silently recreate the approval deadlock; fail fast instead.
+        if not self._unattended and parent_loop is None:
+            raise ValueError(
+                "SubagentRunner(unattended=False, parent_loop=None) is invalid: a "
+                "parentless child owns private approval/question queues nobody "
+                "answers, so attended gates would deadlock. Pass parent_loop, or "
+                "omit unattended to default to unattended."
+            )
+
+    def _resolve_child_provider_and_config(
+        self,
+    ) -> tuple[LLMProvider, RikuganConfig]:
+        """Return (provider, config) for the child run, honoring ``_model_override``.
+
+        When no override is configured, the original provider and config
+        are returned unchanged so existing callers see the same object
+        identity they had before this feature.
+
+        When an override is configured, the provider is shallow-copied,
+        the config is shallow-copied, and both `.model` attributes are
+        set to the override model. The SDK client / base URL / credentials
+        on the provider copy remain shared with the parent because the
+        provider modules do not require a state reset per model. The
+        config copy isolates the agent loop's effective ``provider.model``
+        without leaking back to the parent config.
+        """
+        if not self._model_override:
+            return self.provider, self.config
+        child_provider = copy.copy(self.provider)
+        child_provider.model = self._model_override
+        child_config = copy.copy(self.config)
+        child_provider_config = copy.copy(self.config.provider)
+        child_provider_config.model = self._model_override
+        child_config.provider = child_provider_config
+        # Providers with model-dependent cached state (e.g. GLM) must
+        # refresh their internal lookup for the override model. Keep this
+        # generic by attempting the standard helpers when present; absent
+        # helpers mean no per-model state exists and the provider copy is
+        # already correct.
+        if hasattr(child_provider, "_glm_metadata") and hasattr(child_provider, "_glm_config"):
+            from ..core.glm_config import get_glm_model_metadata, parse_glm_extra
+
+            extra = getattr(child_provider, "_provider_extra_raw", None) or {
+                "dialect": getattr(child_provider, "_provider_name", "") or "glm"
+            }
+            child_provider._glm_metadata = get_glm_model_metadata(self._model_override)
+            try:
+                child_provider._glm_config = parse_glm_extra(extra, self._model_override)
+            except ValueError:
+                # The override model does not support a user-saved setting
+                # (typically ``reasoning_effort != "max"`` on a model
+                # that does not advertise reasoning-effort support). Strip
+                # the unsupported sub-field and re-parse with the model's
+                # own default. The user's saved value is preserved on the
+                # parent provider so they can switch back without losing it.
+                safe_extra = dict(extra)
+                thinking = safe_extra.get("thinking")
+                if isinstance(thinking, dict):
+                    thinking.pop("reasoning_effort", None)
+                child_provider._glm_config = parse_glm_extra(safe_extra, self._model_override)
+        return child_provider, child_config
+
+    def _build_loop(self, session: SessionState, max_turns: int | None = None) -> Any:
+        """Construct an AgentLoop for the child run with cancel/model wiring.
+
+        Centralizes the three call sites in ``run_task`` / ``run_exploration``
+        / ``run_mode`` so cancel and model overrides stay consistent.
+        ``AgentLoop`` prefers the explicit ``cancel_event`` over
+        ``parent_loop`` inheritance, which is the desired precedence for
+        SubagentManager-owned cancellation tokens.
+        """
+        from .loop import AgentLoop  # deferred to avoid circular import
+
+        child_provider, child_config = self._resolve_child_provider_and_config()
+        # Unattended children get a registry view without approval-gated
+        # tools (execute_python, requires_approval) so neither the provider
+        # schema, the tools catalog, nor a direct call can reach a gate
+        # nobody answers.
+        registry = self.tools
+        if self._unattended and registry is not None:
+            registry = registry.without_approval_gated_tools()
+        return AgentLoop(
+            provider=child_provider,
+            tool_registry=registry,
+            config=child_config,
+            session=session,
+            skill_registry=self.skills,
+            host_name=self.host_name,
+            parent_loop=self._parent_loop,
+            cancel_event=self._cancel_event,
+            unattended=self._unattended,
+            max_turns=max_turns if max_turns is not None else self._max_turns,
+        )
 
     @property
     def last_session(self) -> SessionState | None:
         """The session from the most recent subagent run."""
         return self._last_session
+
+    def _sync_to_parent(self, loop: Any) -> None:
+        """Propagate a finished child run's side effects to the parent loop.
+
+        Mutations the child recorded (renames, comments, ...) are copied
+        into the parent's mutation log so ``/undo`` reverses subagent
+        changes too; the "always allow scripts" flag syncs back as before.
+        No-op when there is no parent loop (unattended workers) — their
+        records die with the child loop, which is the pre-existing
+        behaviour for manager/bulk-rename agents.
+        """
+        if self._parent_loop is None:
+            return
+        self._parent_loop.record_mutations(loop.drain_mutations())
+        if loop._always_allow_scripts:
+            self._parent_loop._always_allow_scripts = True
 
     # Event types that must always be forwarded even in silent mode
     # (approval gates and user questions require UI interaction).
@@ -88,19 +238,9 @@ class SubagentRunner:
         The subagent gets a clean session and runs the task as a normal
         agent loop (not exploration mode, not plan mode).
         """
-        from .loop import AgentLoop  # deferred to avoid circular import
-
         session = SessionState()
         self._last_session = session
-        loop = AgentLoop(
-            provider=self.provider,
-            tool_registry=self.tools,
-            config=self.config,
-            session=session,
-            skill_registry=self.skills,
-            host_name=self.host_name,
-            parent_loop=self._parent_loop,
-        )
+        loop = self._build_loop(session, max_turns=max_turns)
 
         log_info(f"Subagent started: task={task[:80]!r}, max_turns={max_turns}, silent={silent}")
 
@@ -115,21 +255,24 @@ class SubagentRunner:
             augmented_task = f"{system_addendum}\n\n{augmented_task}"
 
         final_text = ""
-        for event in loop.run(augmented_task):
-            # In silent mode, only forward interactive events
-            if silent:
-                if event.type in self._INTERACTIVE_EVENTS:
+        try:
+            for event in loop.run(augmented_task):
+                # In silent mode, only forward interactive events
+                if silent:
+                    if event.type in self._INTERACTIVE_EVENTS:
+                        yield event
+                else:
                     yield event
-            else:
-                yield event
 
-            # Capture the last text_done as the final output
-            if event.type.value == "text_done" and event.text:
-                final_text = event.text
-
-        # Sync "always allow" flag back to parent
-        if self._parent_loop and loop._always_allow_scripts:
-            self._parent_loop._always_allow_scripts = True
+                # Capture the last text_done as the final output
+                if event.type.value == "text_done" and event.text:
+                    final_text = event.text
+        finally:
+            # Propagate child-run side effects to the parent on success AND
+            # failure (exception, cancellation, generator close): mutations
+            # performed before a mid-run failure must still reach the
+            # parent's /undo log; the "always allow scripts" flag syncs back.
+            self._sync_to_parent(loop)
 
         log_info(f"Subagent finished: {len(final_text)} chars output")
         return final_text
@@ -151,26 +294,20 @@ class SubagentRunner:
         Yields TurnEvents so the UI can track progress.
         Returns the populated KnowledgeBase.
         """
-        from .loop import AgentLoop  # deferred to avoid circular import
-
         session = SessionState()
         session.idb_path = idb_path
         self._last_session = session
-
-        loop = AgentLoop(
-            provider=self.provider,
-            tool_registry=self.tools,
-            config=self.config,
-            session=session,
-            skill_registry=self.skills,
-            host_name=self.host_name,
-            parent_loop=self._parent_loop,
-        )
+        loop = self._build_loop(session, max_turns=max_turns)
 
         log_info(f"Subagent exploration started: goal={user_goal[:80]!r}, max_turns={max_turns}")
 
-        # Run in explore-only mode via the /explore prefix
-        yield from loop.run(f"/explore {user_goal}")
+        # Run in explore-only mode via the /explore prefix. Sync mutations to
+        # the parent in a finally so a cancelled/failed exploration still
+        # leaves its recorded mutations in the parent's /undo log.
+        try:
+            yield from loop.run(f"/explore {user_goal}")
+        finally:
+            self._sync_to_parent(loop)
 
         # Extract the knowledge base.  _run_exploration_mode stores
         # it in _last_knowledge_base before clearing _exploration_state.
@@ -178,10 +315,6 @@ class SubagentRunner:
         if kb is None:
             kb = KnowledgeBase(user_goal=user_goal)
             log_debug("Subagent exploration: no knowledge base returned, using empty")
-
-        # Sync "always allow" flag back to parent
-        if self._parent_loop and loop._always_allow_scripts:
-            self._parent_loop._always_allow_scripts = True
 
         log_info(
             f"Subagent exploration finished: "
@@ -213,19 +346,9 @@ class SubagentRunner:
         When *silent* is True, only interactive events (tool approval,
         user questions) are forwarded to the parent UI.
         """
-        from .loop import AgentLoop  # deferred to avoid circular import
-
         session = SessionState()
         self._last_session = session
-        loop = AgentLoop(
-            provider=self.provider,
-            tool_registry=self.tools,
-            config=self.config,
-            session=session,
-            skill_registry=self.skills,
-            host_name=self.host_name,
-            parent_loop=self._parent_loop,
-        )
+        loop = self._build_loop(session, max_turns=max_turns)
 
         mode_prefix = _MODE_PREFIXES.get(mode.lower(), "")
         augmented_task = f"{mode_prefix}{task}" if mode_prefix else task
@@ -242,18 +365,22 @@ class SubagentRunner:
             augmented_task = f"{system_addendum}\n\n{augmented_task}"
 
         final_text = ""
-        for event in loop.run(augmented_task):
-            if silent:
-                if event.type in self._INTERACTIVE_EVENTS:
+        try:
+            for event in loop.run(augmented_task):
+                if silent:
+                    if event.type in self._INTERACTIVE_EVENTS:
+                        yield event
+                else:
                     yield event
-            else:
-                yield event
 
-            if event.type.value == "text_done" and event.text:
-                final_text = event.text
-
-        if self._parent_loop and loop._always_allow_scripts:
-            self._parent_loop._always_allow_scripts = True
+                if event.type.value == "text_done" and event.text:
+                    final_text = event.text
+        finally:
+            # Propagate child-run side effects to the parent on success AND
+            # failure (exception, cancellation, generator close): mutations
+            # performed before a mid-run failure must still reach the
+            # parent's /undo log; the "always allow scripts" flag syncs back.
+            self._sync_to_parent(loop)
 
         log_info(f"Subagent mode finished: mode={mode}, {len(final_text)} chars output")
         return final_text

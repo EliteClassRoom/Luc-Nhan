@@ -9,7 +9,7 @@ A reverse-engineering agent for **IDA Pro** that integrates a multi-provider LLM
 
 ![Luc Nhan in IDA Pro](assets/ida_showcase.png)
 
-[Documentation](https://rikugan.reversing.codes/docs.html) | [Architecture](https://rikugan.reversing.codes/ARCHITECTURE.html) | [Changelog](CHANGELOG.md) | [Issues](https://github.com/buzzer-re/Rikugan/issues)
+[Documentation](https://rikugan.reversing.codes/docs.html) | [Architecture](https://rikugan.reversing.codes/ARCHITECTURE.html) | [Changelog](CHANGELOG.md) | [Issues](https://github.com/EliteClassRoom/rikugan/issues)
 
 ## Install
 
@@ -18,16 +18,16 @@ Auto-detects IDA Pro.
 **Linux / macOS:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.ps1 | iex
 ```
 
-> The installer targets the upstream `main` branch. This fork uses `master` as its primary branch — clone manually or install from a tagged release if you are using the fork.
+> The installer targets the `master` branch.
 
 Pre-built release ZIPs (HCLI flat layout) are published on the GitHub Releases page and can be installed with:
 

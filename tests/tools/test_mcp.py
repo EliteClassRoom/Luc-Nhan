@@ -262,5 +262,48 @@ class TestMCPManager(unittest.TestCase):
         mgr.stop_all()  # Should not raise
 
 
+class TestMCPStartTimeout(unittest.TestCase):
+    """Regression: the manager must honor a per-server ``timeout`` above the
+    hard-cap fallback. ``min(config.timeout, _HARD_TIMEOUT)`` used to clamp
+    every configured timeout to 15s, so slow cold-starting stdio servers
+    (needing >15s to answer "initialize") could never start even with
+    ``"timeout": 60`` in mcp.json — the field was dead above 15.
+    """
+
+    def test_resolve_timeout_boundaries(self):
+        default_cfg = MCPServerConfig(name="a", command="x")
+        self.assertEqual(default_cfg.resolve_timeout(15.0), 30.0)  # schema default
+        self.assertEqual(MCPServerConfig(name="a", command="x", timeout=60.0).resolve_timeout(15.0), 60.0)
+        self.assertEqual(MCPServerConfig(name="a", command="x", timeout=0.0).resolve_timeout(15.0), 15.0)
+        self.assertEqual(MCPServerConfig(name="a", command="x", timeout=-1.0).resolve_timeout(15.0), 15.0)
+
+    def test_start_one_honors_configured_timeout(self):
+        from unittest.mock import patch
+
+        mgr = MCPManager()
+        config = MCPServerConfig(name="slow", command="whatever", timeout=60.0)
+        seen: dict = {}
+
+        class FakeClient:
+            def __init__(self, cfg):
+                seen["cfg"] = cfg
+
+            def start(self, timeout):
+                seen["timeout"] = timeout
+
+            def stop(self):
+                pass
+
+        try:
+            with (
+                patch("rikugan.mcp.client.MCPClient", FakeClient),
+                patch("rikugan.mcp.bridge.register_mcp_tools", lambda client, registry, prefix="": 0),
+            ):
+                mgr._start_one(config, ToolRegistry(), None, generation=mgr._generation)
+            self.assertEqual(seen.get("timeout"), 60.0)
+        finally:
+            mgr.stop_all()
+
+
 if __name__ == "__main__":
     unittest.main()

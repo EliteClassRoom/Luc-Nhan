@@ -1,6 +1,6 @@
 ---
 name: Emulator
-description: Bounded CPU emulation for self-contained IDA code ranges — decode stubs, custom crypto, opaque predicates. Wraps emulate_code and resolve_emulated_string with the right register, memory-range, and stop-address discipline.
+description: Use when a self-contained x86/x64 decoder, crypto helper, opaque predicate, or stack-string routine needs bounded execution from the IDB.
 tags:
   - emulation
   - unicorn
@@ -32,16 +32,16 @@ triggers:
 Bounded, read-only CPU emulation for self-contained IDA code ranges.
 **Never modifies the IDB. Never runs the target binary. Never spawns processes.**
 
-The engine is a per-call Unicorn instance. Memory is mapped from real IDA
-segments; source virtual addresses are preserved. The only always-writable
-region is the synthetic stack — IDB read-only pages stay read-only.
+The engine is a per-call Unicorn instance. IDB pages retain their source
+addresses, bytes and permissions. The 1 MiB synthetic stack and explicitly
+declared `rw` scratch buffers are writable; read-only IDB pages stay read-only.
 
 ## When to Use This Skill
 
 Activate this skill when the user asks to:
 
-- **Decode a string** whose decoder stub is self-contained (no API calls,
-  no syscalls, no branches leaving the stub).
+- **Decode a string** whose decoder is self-contained (no external APIs or
+  syscalls; internal helpers can be declared in `code_ranges`).
 - **Trace a custom crypto routine** to recover a key, IV, or output buffer.
 - **Reconstruct a control-flow-flattened path** by emulating a single
   dispatcher iteration with known state.
@@ -55,10 +55,10 @@ Skip emulation (and tell the user why) when the target routine:
 
 - Calls external APIs (Win32, libc, custom imports) — no API stubs are
   provided; execution will stop with `range_exit` or `unmapped_memory`.
-- Issues syscalls (`syscall`, `sysenter`, `int 0x2e`, `int 0x80`) — these
-  are detected up front and reported as `unsupported_instruction`.
-- Branches outside the proposed range mid-decode — execution stops at the
-  range boundary with status `range_exit` and a partial result.
+- Issues syscalls or software interrupts — each instruction is checked before
+  execution and reports `unsupported_instruction`, even mid-range.
+- Branches outside the main range and explicit `code_ranges` — execution stops
+  with `range_exit` and partial state.
 - Depends on captured/unmodeled state (heap pointers, TLS, global
   mutexes) that cannot be reconstructed from the IDB alone.
 
@@ -74,32 +74,52 @@ control-flow-flattening reconstruction, opaque-predicate resolution.
 
 Key parameters:
 - `start_address` (inclusive hex) — first instruction to execute.
-- `stop_address` (**exclusive** hex) — execution stops BEFORE this address.
-  A successful run reaches `stop_address` and reports `status=completed`.
-- `registers` (non-empty object) — explicit initial CPU state. Keys are
-  x86/x64 register names (`eax`, `ebx`, `rax`, `r8`, `eflags`, etc.).
-  `eip`/`rip` are always taken from `start_address` and cannot be set here.
-- `memory_ranges` — extra IDB address ranges to map beyond the code range.
-  Use this for encrypted input buffers, key material, lookup tables that
-  live in other segments. Each entry is `{"address": "0x...", "size": N}`.
-- `capture_ranges` — output buffers to read back at the end. Each entry is
-  `{"address": "0x...", "size": N}` (size capped at 4096).
+- `stop_address` (**exclusive** hex) — bounds the main code range. In range mode,
+  execution stops before it. In function mode it also serves as the synthetic
+  return address, so a `ret` reaching it reports `completed`.
+- `registers` — explicit initial CPU state. Required and non-empty in range
+  mode; `{}` is allowed in function mode. Register aliases must agree.
+  `eip`/`rip` always come from `start_address`; `eflags`/`rflags` may be supplied.
+- `memory_ranges` — extra IDB input/key/table ranges:
+  `{"address": "0x...", "size": N}`. No permissions override is available.
+- `memory_buffers` — scratch/input bytes not present in the IDB:
+  `{"address": "0x...", "size": N, "data_hex": "...", "permissions": "rw"}`.
+  Permissions are `r` or `rw` (default `rw`), never executable. Buffers cannot
+  overlap IDB pages or each other; undeclared padding is not valid input.
+- `capture_ranges` — up to 16 labeled output windows, each 1..4096 bytes:
+  `{"address": "0x...", "size": N, "label": "decoded"}` or
+  `{"stack_offset": -32, "size": N, "label": "local"}`. Supply exactly one
+  address form; stack offsets are relative to the initial, ABI-adjusted SP.
+- `execution_mode` — `range` by default; `function` sets up a real call frame
+  with a return sentinel. Function mode requires `calling_convention`:
+  x86 `cdecl`/`stdcall`/`fastcall`, x64 `win64`/`sysv64`.
+- `arguments` — function-mode argument word values in declaration order.
+  Use integers or hex bit patterns; do not infer the calling convention.
+  Win64 reserves shadow space; both x64 ABIs align entry RSP to 8 modulo 16.
+- `code_ranges` — explicit executable IDB helper ranges (`address`, `size`).
+  Mapping data via `memory_ranges` does not authorize executing it.
 - `instruction_limit` — default 100_000, hard cap 1_000_000.
+- `timeout_seconds` — finite positive wall-clock budget, default 5 seconds,
+  clamped to 20; includes snapshot/setup. Cancellation and timeout stop the run.
+- `collect_strings=True` — discover printable ASCII/UTF-8/UTF-16LE candidates
+  overlapping changed bytes, including stack strings with unknown offsets.
+  Results are bounded and omissions are reported; candidates are not proof of
+  the intended encoding or meaning.
 
 ### `resolve_emulated_string` — String-Extraction Shortcut
 
 Same engine, optimised for the common "decode one string" case. Use when
 you know the output buffer address and just want the decoded bytes.
 
-Key parameters:
-- `start_address`, `stop_address`, `registers`, `memory_ranges`,
-  `instruction_limit` — same semantics as `emulate_code`.
-- `output_address` — address of the decoded-string output buffer.
-- `max_output_size` — bytes to scan for NUL terminators (default 4096,
-  hard cap 4096).
+Shared execution, buffer, ABI, allowlist and budget parameters have the same
+semantics as `emulate_code`.
+- Supply exactly one of `output_address` or signed `output_stack_offset`.
+- `max_output_size` — capture size, 1..4096 bytes (default 4096). The whole
+  requested window must be backed by IDB, declared scratch, or the stack.
 
-Returns raw bytes plus ASCII / UTF-8 / UTF-16LE candidate strings with a
-`terminated=` flag.
+Returns bounded capture summaries with independent per-encoding termination
+flags and a short hex preview. Captures are limited to 4096 bytes each;
+the text response is capped at 7500 characters and does not dump full buffers.
 
 ## Workflow
 
@@ -107,15 +127,13 @@ Returns raw bytes plus ASCII / UTF-8 / UTF-16LE candidate strings with a
 
 Before invoking either tool, gather context:
 
-1. `decompile_function` the target — confirm it is self-contained
-   (no calls to imports, no syscalls, no branches to addresses outside
-   the function body).
-2. `read_function_disassembly` to identify the exact `start_address` and
-   the address immediately AFTER the last instruction to execute. That
-   next address is your **exclusive** `stop_address`.
-3. `list_segments` to confirm which segments hold the code, encrypted
-   input, key material, and output buffer — you will need their address
-   ranges for `memory_ranges` and `capture_ranges`.
+1. `decompile_function` the target — confirm no external API/syscall dependency;
+   identify internal helpers that need `code_ranges`.
+2. `read_function_disassembly` to identify entry and exclusive end. A range
+   slice normally stops before `ret`; a whole-function call uses `function`
+   mode and includes `ret` inside the bounds.
+3. `list_segments` to locate code, IDB inputs and output. Use `memory_ranges`
+   for IDB bytes and `memory_buffers` for known runtime/scratch bytes.
 4. `xrefs_to` the routine if you need to recover call-site arguments
    (encrypted data pointer, key pointer, output pointer).
 
@@ -128,22 +146,18 @@ For each input the routine reads, determine:
 - Whether it lives inside the code range (auto-mapped) or in another
   segment (must be added to `memory_ranges`).
 
-If an input is not yet present in the IDB (e.g., a runtime-allocated
-buffer), emulation cannot proceed — tell the user and propose
-`execute_python` instead.
+If runtime bytes are known but absent from the IDB, provide `memory_buffers`;
+do not patch the IDB or pretend an unmodeled API/TLS/heap dependency is known.
 
-### Step 3 — Build the Register State
+### Step 3 — Build the Entry State
 
-From the decompiled signature and calling convention, set:
-
-- Argument registers (`rcx`/`rdx`/`r8`/`r9` on x64 MSVC; `ecx`/`edx` on
-  x86 cdecl/fastcall) to the input addresses you identified.
-- `rsp`/`esp` is auto-set to a synthetic stack top — you do not need to
-  pass it unless the routine reads a specific stack offset.
-- `eip`/`rip` MUST be omitted — it is taken from `start_address`.
-
-The `registers` object must be non-empty; the tool rejects an empty
-object with a `ToolError`.
+- Range mode: provide the registers initialized outside the slice. Unnamed
+  registers start at zero; a synthetic SP is supplied if omitted.
+- Whole function: choose the verified calling convention and pass `arguments`
+  in declaration order. Use `registers={}` unless extra initial state is needed.
+- Never override `eip`/`rip`; avoid conflicting aliases or argument registers.
+- Capture known locals by signed `stack_offset`; use `collect_strings=True`
+  when their output location is unknown.
 
 ### Step 4 — Run the Emulation
 
@@ -152,13 +166,14 @@ case). Inspect the `status` field in the result:
 
 | Status | Meaning | Next action |
 |---|---|---|
-| `completed` | Reached `stop_address` | Read captures — done |
-| `range_exit` | PC left `[start, stop)` before reaching `stop` | Widen the range or fall back to `execute_python` |
-| `instruction_limit` | Exceeded `instruction_limit` | Raise the limit (up to 1_000_000) or check for an infinite loop |
-| `unmapped_memory` | Read/write/fetch to an unmapped address | Add the missing range to `memory_ranges` |
-| `permission_error` | Wrote to a read-only IDB page | Map the buffer in `memory_ranges` with explicit write intent — but note the tools refuse to silently remap IDB pages, so this usually means a wrong output address |
-| `unsupported_instruction` | Hit `syscall`/`sysenter`/`int 0x2e`/`int 0x80` or an instruction Unicorn cannot decode | Fall back to `execute_python`; the routine is not self-contained |
-| `emulator_error` | Unicorn raised an unexpected error | Report the `reason` field; this is a bug or a corner case |
+| `completed` | Reached the stop/return sentinel | Read captures and check the result |
+| `range_exit` | PC left the executable allowlist | Identify the missing internal helper or unmodeled call; do not widen blindly |
+| `instruction_limit` | Consumed the instruction budget | Check loop inputs before raising the bounded limit |
+| `unmapped_memory` | Accessed absent bytes or page padding | Supply the actual missing IDB/input bytes |
+| `permission_error` | Access violated mapped permissions | Correct the output address or use separate `rw` scratch; `memory_ranges` never widens permissions |
+| `unsupported_instruction` | Syscall/software interrupt/unsupported opcode | Use an approved reimplementation or a different analysis technique |
+| `timeout` / `cancelled` | Deadline or cancellation stopped setup/execution | CPU-started runs retain partial state; aborted snapshots have no fabricated captures |
+| `emulator_error` | Unexpected native engine error | Inspect `reason` and the static code |
 
 ### Step 5 — Capture and Annotate
 
@@ -182,16 +197,15 @@ the output buffer is at `0x403000` (32 bytes).
 ```
 emulate_code(
   start_address="0x401000",
-  stop_address="0x401080",      # address of the ret + 1
-  registers={
-    "rcx": "0x402000",
-    "rdx": "0x402040",
-    "r8":  "0x403000",
-  },
+  stop_address="0x401080",      # function end; return sentinel
+  registers={},
+  execution_mode="function",
+  calling_convention="win64",
+  arguments=["0x402000", "0x402040", "0x403000"],
   memory_ranges=[
     {"address": "0x402000", "size": 32},   # encrypted input
     {"address": "0x402040", "size": 4},    # key
-    {"address": "0x403000", "size": 32},   # output buffer
+    {"address": "0x403000", "size": 32},   # writable IDB output
   ],
   capture_ranges=[
     {"address": "0x403000", "size": 32, "label": "decoded"},
@@ -206,7 +220,10 @@ Or, equivalently, with the string-extraction shortcut:
 resolve_emulated_string(
   start_address="0x401000",
   stop_address="0x401080",
-  registers={"rcx": "0x402000", "rdx": "0x402040", "r8": "0x403000"},
+  registers={},
+  execution_mode="function",
+  calling_convention="win64",
+  arguments=["0x402000", "0x402040", "0x403000"],
   output_address="0x403000",
   max_output_size=32,
   memory_ranges=[
@@ -221,19 +238,17 @@ decoded ASCII string.
 
 ## Critical Rules
 
-- **`stop_address` is exclusive.** A common mistake is to pass the address
-  of the last instruction; the run will report `range_exit` because
-  execution falls off the end before "reaching" that address.
-- **`registers` must be non-empty and must not contain `eip`/`rip`.** The
-  tool raises `ToolError` otherwise.
-- **Map every input region.** Any address the routine reads that is not
-  in the code range and not in `memory_ranges` will trigger
-  `unmapped_memory`.
-- **Read-only IDB pages stay read-only.** The tools never silently remap
-  a segment as writable — if the routine writes to a read-only page,
-  you'll see `permission_error`. This is intentional (defensive default).
-- **Aggregate mapped bytes are capped at 16 MiB.** Plan `memory_ranges`
-  accordingly; map only the bytes the routine actually touches.
+- **`stop_address` is exclusive.** Passing the last instruction's address
+  skips that instruction. Range mode does not plant a return address; use
+  function mode when the routine must execute its `ret`.
+- **Require explicit entry state.** Non-empty registers in range mode;
+  an explicit verified calling convention in function mode.
+- **Map actual inputs.** IDB ranges preserve their real bytes; scratch bytes
+  must be declared. Gaps and page padding never become valid zero-filled input.
+- **Read-only IDB pages stay read-only.** Permission conflicts sharing a page
+  fail explicitly. Do not try to change them through `memory_ranges`.
+- **Aggregate mapped memory is capped at 16 MiB including the 1 MiB stack.**
+  Map only needed pages. A collision with the fixed synthetic stack is rejected.
 - **Always redecompile/verify after analysis.** Emulation gives you a
   snapshot; cross-check the result against the static decompilation
   before annotating the IDB.

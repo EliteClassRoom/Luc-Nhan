@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 BADADDR = 0xFFFFFFFFFFFFFFFF
 
 
-def _create_mock_module(name: str, attrs: dict = None) -> ModuleType:
+def _create_mock_module(name: str, attrs: dict | None = None) -> ModuleType:
     mod = ModuleType(name)
     mod.__dict__.update(attrs or {})
     return mod
@@ -187,6 +187,9 @@ def install_ida_mocks() -> None:
     sys.modules["ida_ida"].inf_get_procname.return_value = "ARM"
     sys.modules["ida_ida"].inf_is_64bit.return_value = True
     sys.modules["ida_ida"].inf_is_32bit.return_value = False
+    # inf_get_app_bitness() is the canonical bitness accessor (IDA >=7.6);
+    # it returns 16/32/64 directly. Default mock DB is ARM64.
+    sys.modules["ida_ida"].inf_get_app_bitness.return_value = 64
     sys.modules["ida_ida"].inf_get_start_ea.return_value = 0x1000
     sys.modules["ida_ida"].inf_get_min_ea.return_value = 0x1000
     sys.modules["ida_ida"].inf_get_max_ea.return_value = 0x10000

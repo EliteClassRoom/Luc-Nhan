@@ -8,7 +8,7 @@
 
 This reference describes standalone Python + IDAPython workflows. In Luc Nhan:
 
-- **Hash extraction** (extract the hash function bytes, emulate to compute hashes) → use `emulate_code` with the hash function as the code range and register args set per calling convention. `resolve_emulated_string` does not apply here (output is a 32-bit integer in `eax`, not a string buffer) — use `emulate_code` with `capture_ranges=[]` and read `final_registers["eax"]` from the result.
+- **Hash extraction** → use `emulate_code` with explicit entry state. Whole functions require `execution_mode="function"`, a verified `calling_convention` and `arguments`; custom-frame slices use range mode and stop before `ret`. Supply known name/frame bytes with `memory_buffers` if absent from the IDB. The output is an integer register, not a string; read EAX/RAX in the register summary (unchanged registers retain their supplied entry value).
 - **Building the `{hash: name}` dictionary** → `execute_python` (requires `pefile` to enumerate DLL exports — not a built-in Luc Nhan capability). Build once, save as JSON.
 - **Annotation variant (Part B)** — `idc.add_enum` / `idc.add_enum_member` / `idc.op_enum` were **removed in IDA 9.x** (the enum API was migrated to the UDT system). On IDA 9.x, the modern equivalent is `ida_typeinf.tinfo_t.create_udt()` + `add_udm()` for the enum members, then `apply_tinfo()` to annotate operands. The simpler workaround that still works on all IDA versions: **use `set_comment` at each call site** with the resolved API name as the comment text — no enum, no operand rewrite, just a persistent comment that survives redecompilation. The full IDA 9.x enum migration is out of scope for this reference; use `set_comment` for annotation-only workflows.
 - **Binary-rewriting variant (Part C)** — `idc.PatchDword` still works on IDA 9.x. The bigger constraint is `Appcall.proto`, which requires a **live debug session** — not available in headless mode and not something an agent can set up autonomously. Treat the LummaC2 pipeline as a **manual workflow** the user runs after starting a debug session; do not attempt to fully automate it.
@@ -58,27 +58,21 @@ Save `hash_code` to disk if you want to use it from standalone (no IDA).
 
 ## Step 2: emulate the hash function
 
-**In Luc Nhan, prefer `emulate_code`**:
+**In Luc Nhan, prefer `emulate_code`** after reconstructing the actual entry:
 
-```
-emulate_code(
-  start_address = "0x1007030D",            # hash function start
-  stop_address  = "0x1007051E",            # exclusive end (address of the ret + 1)
-  registers     = {
-    "ebp": "<scratch_ebp_ea>",
-    "edi": <string_length>,                # the function reads EDI / ESI as length
-    "esi": <string_length>,
-  },
-  memory_ranges = [
-    {"address": "<string_ea>", "size": <string_length>},     # the API name bytes
-    {"address": "<ebp+offset>", "size": 4},                   # EBP+0x0C: length
-    {"address": "<ebp+offset>", "size": 4},                   # EBP+0x10: seed
-  ],
-  capture_ranges = [],
-  instruction_limit = 100000,
-)
-# Result: final_registers["eax"] contains the 32-bit hash.
-```
+- Standard calling convention: choose `execution_mode="function"`, verify
+  `calling_convention`, pass argument words in `arguments` and use
+  `registers={}` unless extra CPU state is required. The exclusive function
+  end is planted as the return sentinel.
+- Custom EBP/EDI/ESI-based state, as in the IIJ example below: emulate a
+  range starting after the frame setup and ending before `ret`, with the
+  reconstructed registers. Do not assume function mode knows this custom ABI.
+- IDB name/key bytes belong in `memory_ranges`; reconstructed name bytes
+  and frame words belong in `memory_buffers` (`r` or `rw`, never executable).
+  Mapping an arbitrary address does not manufacture the required input words.
+- Read the final EAX/RAX register value; `capture_ranges` may remain empty.
+  If it is unchanged, its value is the supplied entry value. Check `status`
+  before accepting the hash, and respect the bounded runtime/output limits.
 
 The hash function in the IIJ example expects its arguments at fixed `EBP`-relative offsets:
 

@@ -98,7 +98,7 @@ class TestRunTaskUnknownAgent(unittest.TestCase):
 
 class TestSubprocessRunTask(unittest.TestCase):
     def test_subprocess_yields_text_delta_for_stdout(self) -> None:
-        d = A2ADispatcher()
+        A2ADispatcher()
 
         # Replace the bridge's run_task with a generator that yields
         # two events. We use a real function (not a MagicMock) so the
@@ -339,7 +339,7 @@ class TestA2APath(unittest.TestCase):
 
         with patch.object(SubprocessBridge, "discover", return_value=[_make_agent("remote", "a2a")]), \
              patch.object(A2ADispatcher, "_get_a2a_client", return_value=fake_client), \
-             patch("threading.Event.wait", side_effect=[False, True]) as mock_wait:
+             patch("threading.Event.wait", side_effect=[False, True]):
             # Schedule the cancel to fire during the second wait.
             def fire_cancel():
                 cancel.set()

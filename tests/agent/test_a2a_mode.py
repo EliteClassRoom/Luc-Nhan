@@ -250,6 +250,105 @@ class TestModeRunnerDispatch(unittest.TestCase):
         self.assertEqual(kwargs.get("a2a_agents"), [{"name": "x", "endpoint": "https://x"}])
         self.assertTrue(kwargs.get("auto_discover"))
 
+class TestModeRunnerCancellation(unittest.TestCase):
+    """``run_a2a_mode`` must surface user cancellation as CANCELLED.
+
+    The dispatcher's cancel paths emit an ``ERROR`` event with a
+    "cancelled by user" message instead of raising. The mode runner
+    must detect the underlying ``loop._cancelled`` signal and
+    re-raise ``CancellationError`` so the outer ``AgentLoop.run``
+    converts it into a ``CANCELLED`` event for the UI.
+    """
+
+    def _fake_loop(self) -> MagicMock:
+        loop = MagicMock()
+        loop.config = MagicMock()
+        loop.config.a2a_auto_discover = True
+        loop.config.a2a_agents = []
+        return loop
+
+    def test_cancelled_during_subprocess_run_raises_cancellation(self) -> None:
+        """Subprocess bridge cancellation ERROR + set cancel event
+        → ``run_a2a_mode`` raises CancellationError."""
+        import threading
+
+        from rikugan.core.errors import CancellationError
+
+        loop = self._fake_loop()
+        cancel_event = threading.Event()
+        cancel_event.set()  # user has cancelled before the runner runs
+        loop._cancelled = cancel_event
+
+        from rikugan.agent.modes import a2a as a2a_mode
+
+        def fake_dispatch(*args, **kwargs):
+            # Mirror what SubprocessBridge._run_subprocess emits when
+            # the cancel_event is set: a TurnEvent.error_event with
+            # the cancel message.
+            yield a2a_mode.TurnEvent.error_event("Task cancelled by user")
+
+        with patch.object(a2a_mode, "A2ADispatcher") as mock_dispatcher_cls:
+            mock_dispatcher_cls.return_value.discover.return_value = []
+            mock_dispatcher_cls.return_value.run_task.return_value = iter([])
+            mock_dispatcher_cls.return_value.run_task.side_effect = fake_dispatch
+
+            events: list = []
+            with self.assertRaises(CancellationError):
+                for event in run_a2a_mode(loop, "claude do thing", "", []):
+                    events.append(event)
+
+        # No ERROR event should have been yielded (the cancel error
+        # was suppressed in favour of raising).
+        error_events = [e for e in events if e.type == TurnEventType.ERROR]
+        self.assertEqual(error_events, [])
+
+    def test_cancelled_during_a2a_http_run_raises_cancellation(self) -> None:
+        """A2A HTTP-cancel ERROR ("A2A task ... cancelled by user")
+        with the cancel event set also re-raises."""
+        import threading
+
+        from rikugan.core.errors import CancellationError
+
+        loop = self._fake_loop()
+        cancel_event = threading.Event()
+        cancel_event.set()
+        loop._cancelled = cancel_event
+
+        from rikugan.agent.modes import a2a as a2a_mode
+
+        def fake_dispatch(*args, **kwargs):
+            yield a2a_mode.TurnEvent.error_event("A2A task abc123 cancelled by user")
+
+        with patch.object(a2a_mode, "A2ADispatcher") as mock_dispatcher_cls:
+            mock_dispatcher_cls.return_value.discover.return_value = []
+            mock_dispatcher_cls.return_value.run_task.side_effect = fake_dispatch
+
+            with self.assertRaises(CancellationError):
+                list(run_a2a_mode(loop, "claude do thing", "", []))
+
+    def test_non_cancel_error_passes_through(self) -> None:
+        """Plain dispatcher errors are NOT misclassified as cancel."""
+        import threading
+
+        loop = self._fake_loop()
+        cancel_event = threading.Event()  # NOT set
+        loop._cancelled = cancel_event
+
+        from rikugan.agent.modes import a2a as a2a_mode
+
+        def fake_dispatch(*args, **kwargs):
+            yield a2a_mode.TurnEvent.error_event("agent unreachable: connection refused")
+
+        with patch.object(a2a_mode, "A2ADispatcher") as mock_dispatcher_cls:
+            mock_dispatcher_cls.return_value.discover.return_value = []
+            mock_dispatcher_cls.return_value.run_task.side_effect = fake_dispatch
+
+            events, _ = _drain(run_a2a_mode(loop, "claude do thing", "", []))
+
+        error_events = [e for e in events if e.type == TurnEventType.ERROR]
+        self.assertEqual(len(error_events), 1)
+        self.assertIn("connection refused", error_events[0].error)
+
 
 if __name__ == "__main__":
     unittest.main()
