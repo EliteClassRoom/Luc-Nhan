@@ -251,8 +251,19 @@ def _require_covered(span: tuple[int, int], covered: Sequence[tuple[int, int]], 
         if cursor >= end:
             return
     if cursor < end:
+        below = max((c_end for c_start, c_end in covered if c_end <= cursor), default=None)
+        above = min((c_start for c_start, _c_end in covered if c_start >= cursor), default=None)
+        gap = (
+            f"; backed memory ends at 0x{below - 1:x} and resumes at 0x{above:x}"
+            if below is not None and above is not None
+            else f"; nearest backed memory starts at 0x{above:x}"
+            if above is not None
+            else f"; nearest backed memory ends at 0x{below - 1:x}"
+            if below is not None
+            else ""
+        )
         raise ToolError(
-            f"no backing bytes at 0x{cursor:x} for {what} 0x{start:x}..0x{end:x} "
+            f"no backing bytes at 0x{cursor:x} for {what} 0x{start:x}..0x{end:x}{gap} "
             "(missing IDB bytes, a gap between segments, or a loader read failure)",
             tool_name=_TOOL,
         )
