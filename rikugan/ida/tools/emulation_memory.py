@@ -615,6 +615,16 @@ def snapshot_memory(
                 "with the synthetic stack",
                 tool_name=_TOOL,
             )
+    # "Exec what was asked": the entry range and the explicit code allowlist
+    # run even when IDA flags the segment R|W (packed binaries mark .text
+    # R|W). Those pages — and only those — gain X on top of the segment's
+    # real permissions; every other page keeps faithful permissions, and W is
+    # never added, so stray writes still fail with permission_error.
+    exec_pages: set[int] = set()
+    for span in (entry_span, *code_spans):
+        for page in range(page_align_down(span[0]), page_align_up(span[1]), PAGE_SIZE):
+            exec_pages.add(page)
+
     page_perms: dict[int, int] = {}
     page_chunks: dict[int, list[tuple[int, bytes]]] = {}
     valid_idb: list[tuple[int, int, int]] = []
@@ -629,7 +639,7 @@ def snapshot_memory(
                 continue
             perms_seen.add(perms)
             page_chunks.setdefault(page, []).append((lo - page, _read_page_bytes(lo, hi - lo, is_bss)))
-            valid_idb.append((lo, hi, perms))
+            valid_idb.append((lo, hi, perms | (_X if page in exec_pages else 0)))
         if len(perms_seen) > 1:
             raise ToolError(
                 f"page 0x{page:x} is covered by IDA segments with conflicting permissions "
@@ -637,7 +647,7 @@ def snapshot_memory(
                 tool_name=_TOOL,
             )
         if perms_seen:
-            page_perms[page] = perms_seen.pop()
+            page_perms[page] = perms_seen.pop() | (_X if page in exec_pages else 0)
 
     # -- Scratch buffers.  A page already backed by IDB bytes was rejected
     #    above, so any shared page here is scratch-only and must agree on

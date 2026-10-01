@@ -73,7 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interrupt gates are honored. Cross-page write discovery tracks exact changed
   bytes independently of the bounded write log. Output prioritizes bounded
   capture/discovery summaries and preserves independent encoding candidates.
-  Win64 shadow space is reserved without overwriting caller-initialized bytes.
+  The requested code range (entry span and `code_ranges` allowlist) executes
+  even when the segment is R|W — packed binaries — gaining X without ever
+  gaining W, so stray writes still fail; all other pages keep faithful
+  segment permissions.
 
 - **Address tools accept a function/symbol name, not just `0x…`** — the model
   routinely passes a name where a tool documents an address

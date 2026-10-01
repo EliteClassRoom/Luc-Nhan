@@ -153,6 +153,24 @@ class TestCpuOutcomes(unittest.TestCase):
         self.assertEqual(out["final_registers"]["rax"], 42)
         self.assertEqual(out["final_registers"]["rip"], 0x401003)
 
+    def test_requested_code_range_executes_despite_rw_segment(self) -> None:
+        # Packed binaries mark .text R|W; the explicitly requested code range
+        # still executes ("exec what was asked") while data pages keep their
+        # faithful permissions.
+        code = bytes.fromhex("b839050000")  # mov eax,0x539
+        out = _run(
+            tool="emulate_code",
+            payload={
+                "start_address": "0x401000",
+                "stop_address": "0x401005",
+                "registers": {"eax": 0},
+            },
+            segments=[_code_page(code, perm=3)],  # R|W, no X
+            bits=32,
+        )
+        self.assertEqual(out["status"], "completed")
+        self.assertEqual(out["final_registers"]["eax"], 0x539)
+
     def test_explicit_flags_survive_register_defaults(self) -> None:
         code = bytes.fromhex("83c001")  # add eax, 1
         out = _run(

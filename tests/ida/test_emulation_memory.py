@@ -524,11 +524,14 @@ class TestBounds(MemoryTestCase):
 
 
 class TestCodeRanges(MemoryTestCase):
-    def test_non_executable_code_range_is_rejected(self) -> None:
+    def test_rw_code_range_gains_executable(self) -> None:
+        # "Exec what was asked": an explicitly requested code range runs even
+        # when the segment is R|W (packed binaries). X is granted on top of
+        # the real permissions; W is never added anywhere.
         self.idb.add_segment(0x404000, 0x405000, PERM_R | PERM_W)
-        with self.assertRaises(ToolError) as ctx:
-            self.snap(code_ranges=[(0x404000, 0x10)])
-        self.assertIn("executable code range", str(ctx.exception))
+        snapshot = self.snap(code_ranges=[(0x404000, 0x10)])
+        perms = next(p for s, e, p in snapshot.valid_ranges if s <= 0x404000 < e)
+        self.assertEqual(perms, PERM_R | PERM_W | PERM_X)
 
     def test_executable_code_range_is_accepted(self) -> None:
         snapshot = self.snap(code_ranges=[(0x401000, 0x10)])
@@ -786,11 +789,13 @@ class TestStackBoundaryMapping(MemoryTestCase):
             self.snap(memory_buffers=[MemoryBuffer(0x501000, 0x10, b"", 2)])
         self.assertIn("permissions", str(ctx.exception))
 
-    def test_non_executable_entry_range_is_rejected(self) -> None:
+    def test_rw_entry_range_gains_executable(self) -> None:
+        # The entry is explicitly requested code: it executes even when the
+        # segment is R|W, gaining X without ever gaining W.
         self.idb.add_segment(0x404000, 0x405000, PERM_R | PERM_W)
-        with self.assertRaises(ToolError) as ctx:
-            self.snap(start_address=0x404010, stop_address=0x404020)
-        self.assertIn("executable entry range", str(ctx.exception))
+        snapshot = self.snap(start_address=0x404010, stop_address=0x404020)
+        perms = next(p for s, e, p in snapshot.valid_ranges if s <= 0x404010 < e)
+        self.assertEqual(perms, PERM_R | PERM_W | PERM_X)
 
     def test_entry_in_the_synthetic_stack_is_rejected(self) -> None:
         # The entry is code; the stack is data, so it cannot host it.
