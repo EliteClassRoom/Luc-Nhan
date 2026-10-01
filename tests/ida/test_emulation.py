@@ -350,6 +350,218 @@ class TestArchitectureValidation(unittest.TestCase):
                 max_output_size=8192,
             )
 
+
+class _ArchBoundTestCase(unittest.TestCase):
+    """Base that pins ``emu.ida_ida`` to a known arch for the duration of a test.
+
+    ``emu.ida_ida`` and ``sys.modules["ida_ida"]`` can be different objects
+    once another module re-installs the mocks, so the arch is swapped on the
+    module's own reference and restored afterwards.
+    """
+
+    def _use_arch(self, bitness: int) -> None:
+        self._saved_ida = getattr(self, "_saved_ida", emu.ida_ida)
+        self.addCleanup(self._restore_arch)
+        emu.ida_ida = _make_ida_mock(app_bitness=bitness)
+
+    def _restore_arch(self) -> None:
+        emu.ida_ida = self._saved_ida
+
+
+class TestArgumentCoercion(_ArchBoundTestCase):
+    """JSON int / integral-float / hex-string arguments are all accepted.
+
+    The runner is stubbed out, so these cases exercise argument parsing only —
+    every assertion is about the coerced values that reach ``_run``.
+    """
+
+    def setUp(self) -> None:
+        self._use_arch(32)
+        self.captured: dict = {}
+        self._patcher = unittest.mock.patch.object(
+            emu, "_run", side_effect=self._fake_run
+        )
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+
+    def _fake_run(self, **kwargs):
+        self.captured = kwargs
+        return emu.EmulationResult(status="completed", architecture=kwargs["arch"].label)
+
+    def test_addresses_accept_int_and_integral_float(self) -> None:
+        emu.emulate_code(start_address=0x401000, stop_address=4198400.0, registers={"eax": 0})
+        self.assertEqual(self.captured["start_address"], 0x401000)
+        self.assertEqual(self.captured["stop_address"], 4198400)
+
+    def test_output_address_accepts_float(self) -> None:
+        emu.resolve_emulated_string(
+            start_address="0x401000",
+            stop_address="0x401010",
+            registers={"eax": 0},
+            output_address=4198400.0,
+        )
+        self.assertEqual(self.captured["captures"][0].address, 4198400)
+
+    def test_memory_range_size_accepts_float_and_hex_string(self) -> None:
+        emu.emulate_code(
+            start_address="0x401000",
+            stop_address="0x401010",
+            registers={"eax": 0},
+            memory_ranges=[
+                {"address": "0x402000", "size": 45056.0},
+                {"address": "0x403000", "size": "0x1000"},
+            ],
+        )
+        self.assertEqual(self.captured["extra_ranges"], [(0x402000, 45056), (0x403000, 0x1000)])
+
+    def test_capture_size_accepts_hex_string(self) -> None:
+        emu.emulate_code(
+            start_address="0x401000",
+            stop_address="0x401010",
+            registers={"eax": 0},
+            capture_ranges=[{"address": "0x401100", "size": "0x20"}],
+        )
+        self.assertEqual(self.captured["captures"][0].size, 0x20)
+
+    def test_instruction_limit_accepts_numeric_string(self) -> None:
+        emu.emulate_code(
+            start_address="0x401000",
+            stop_address="0x401010",
+            registers={"eax": 0},
+            instruction_limit="64",
+        )
+        self.assertEqual(self.captured["max_instructions"], 64)
+
+    def test_instruction_limit_clamped_to_hard_cap(self) -> None:
+        emu.emulate_code(
+            start_address="0x401000",
+            stop_address="0x401010",
+            registers={"eax": 0},
+            instruction_limit=10_000_000,
+        )
+        self.assertEqual(self.captured["max_instructions"], emu._MAX_INSTRUCTION_LIMIT)
+
+    def test_zero_and_negative_sizes_rejected(self) -> None:
+        for bad in (0, -1, "0x0", 1.5, None, True, "abc"):
+            with self.subTest(bad=bad), self.assertRaises(ToolError):
+                emu.emulate_code(
+                    start_address="0x401000",
+                    stop_address="0x401010",
+                    registers={"eax": 0},
+                    memory_ranges=[{"address": "0x402000", "size": bad}],
+                )
+
+    def test_max_output_size_beyond_cap_rejected_as_tool_error(self) -> None:
+        with self.assertRaises(ToolError):
+            emu.resolve_emulated_string(
+                start_address="0x401000",
+                stop_address="0x401010",
+                registers={"eax": 0},
+                output_address="0x401020",
+                max_output_size="8192",
+            )
+
+
+class TestRegisterAliasRules(_ArchBoundTestCase):
+    """Alias resolution, mode availability, and IP-register rejection."""
+
+    def setUp(self) -> None:
+        self._use_arch(32)
+        self.captured: dict = {}
+        self._patcher = unittest.mock.patch.object(emu, "_run", side_effect=self._fake_run)
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+
+    def _fake_run(self, **kwargs):
+        self.captured = kwargs
+        return emu.EmulationResult(status="completed", architecture=kwargs["arch"].label)
+
+    def test_x86_eip_rejected(self) -> None:
+        with self.assertRaises(ToolError) as ctx:
+            emu.emulate_code(
+                start_address="0x401000",
+                stop_address="0x401010",
+                registers={"eip": 0x500000},
+            )
+        self.assertIn("eip/rip", str(ctx.exception))
+
+    def test_x64_rip_rejected(self) -> None:
+        self._use_arch(64)
+        with self.assertRaises(ToolError) as ctx:
+            emu.emulate_code(
+                start_address="0x401000",
+                stop_address="0x401010",
+                registers={"rip": 0x500000},
+            )
+        self.assertIn("eip/rip", str(ctx.exception))
+
+    def test_x64_eip_rejected_too(self) -> None:
+        # The schema promises rejection on every arch; the old code silently
+        # ignored eip on x64.
+        self._use_arch(64)
+        with self.assertRaises(ToolError) as ctx:
+            emu.emulate_code(
+                start_address="0x401000",
+                stop_address="0x401010",
+                registers={"eip": 0x500000},
+            )
+        self.assertIn("eip/rip", str(ctx.exception))
+
+    def test_x86_rejects_64bit_only_registers(self) -> None:
+        with self.assertRaises(ToolError) as ctx:
+            emu.emulate_code(
+                start_address="0x401000",
+                stop_address="0x401010",
+                registers={"r8": 1},
+            )
+        self.assertIn("32-bit mode", str(ctx.exception))
+
+    def test_x64_accepts_64bit_only_registers(self) -> None:
+        self._use_arch(64)
+        emu.emulate_code(
+            start_address="0x401000",
+            stop_address="0x401010",
+            registers={"r8": 1},
+        )
+        self.assertEqual(self.captured["registers"], {"r8": 1})
+
+    def test_conflicting_alias_values_rejected_on_x64(self) -> None:
+        self._use_arch(64)
+        with self.assertRaises(ToolError) as ctx:
+            emu.emulate_code(
+                start_address="0x401000",
+                stop_address="0x401010",
+                registers={"eax": 1, "rax": 2},
+            )
+        self.assertIn("conflicting", str(ctx.exception))
+
+    def test_matching_alias_values_accepted_on_x64(self) -> None:
+        self._use_arch(64)
+        emu.emulate_code(
+            start_address="0x401000",
+            stop_address="0x401010",
+            registers={"eax": 7, "rax": 7},
+        )
+        self.assertEqual(self.captured["registers"], {"rax": 7})
+
+    def test_x86_alias_maps_to_32bit_canonical(self) -> None:
+        emu.emulate_code(
+            start_address="0x401000",
+            stop_address="0x401010",
+            registers={"rax": "0x40"},
+        )
+        self.assertEqual(self.captured["registers"], {"eax": 0x40})
+
+    def test_x64_alias_maps_to_64bit_canonical(self) -> None:
+        self._use_arch(64)
+        emu.emulate_code(
+            start_address="0x401000",
+            stop_address="0x401010",
+            registers={"ecx": 5, "eflags": 0x202},
+        )
+        self.assertEqual(self.captured["registers"], {"rcx": 5, "rflags": 0x202})
+
+
 class TestIdaBitnessArchResolution(unittest.TestCase):
     """Arch resolution via ``ida_ida.inf_get_app_bitness()`` (IDA >= 7.6)."""
 
@@ -424,13 +636,26 @@ class TestIdaBitnessArchResolution(unittest.TestCase):
 # serialised ``EmulationResult``-shaped dict (or raises).
 
 
-def _run_in_subprocess(tool: str, payload: dict, *, setup_pages: list[tuple[int, int, bytes]]):
+def _run_in_subprocess(
+    tool: str,
+    payload: dict,
+    *,
+    setup_pages: list[tuple[int, int, bytes]],
+    perm: int | None = None,
+):
+    """Run *tool* in a fresh interpreter against a simulated IDB.
+
+    ``perm`` overrides the simulated segment permission mask (the worker
+    defaults to RWX so decode tests can write); omit it to keep the default.
+    """
 
     plan = {
         "tool": tool,
         "payload": payload,
         "setup_pages": [[s, e, list(d)] for s, e, d in setup_pages],
     }
+    if perm is not None:
+        plan["perm"] = perm
     return run_in_subprocess(
         "tests.test_emulation_subprocess",
         json.dumps(plan),
@@ -448,16 +673,23 @@ class TestRealUnicornIntegration(unittest.TestCase):
     def test_x86_xor_decoder_completes_via_exclusive_stop(self) -> None:
         decoder = (
             b"\xb9\x05\x00\x00\x00"  # mov ecx, 5
-            b"\xbf\x20\x10\x40\x00"  # mov edi, 0x401020
+            b"\xbf\x60\x89\x40\x00"  # mov edi, 0x408960
             b"\x80\x37\x47"  # xor byte [edi], bl
             b"\x47"  # inc edi
-            b"\xe2\xfb"  # loop -5
+            b"\xe2\xfa"  # loop back to the xor (rel8 = -6 from the next IP)
         )
-        start = 0x401000
+        # Entry point sits deep inside a page-aligned segment, and the
+        # encrypted blob lives in a capture range outside the code page —
+        # the offset math must be segment-relative, not page-relative.
+        start = 0x408345
+        seg_start = 0x401000
         encrypted = bytes(b ^ 0x47 for b in b"hello")
-        raw = bytearray(b"\x90" * 0x2000)
-        raw[: len(decoder)] = decoder
-        raw[0x401020 - start : 0x401020 - start + len(encrypted)] = encrypted
+        raw = bytearray(b"\x90" * 0x9000)
+        raw[start - seg_start : start - seg_start + len(decoder)] = decoder
+        raw[0x408960 - seg_start : 0x408960 - seg_start + len(encrypted)] = encrypted
+        # Buffer is NUL-terminated after the blob so the ASCII candidate is
+        # exactly the decoded string, not the decoded string plus filler.
+        raw[0x408965 - seg_start : 0x408968 - seg_start] = b"\x00\x00\x00"
 
         out = _run_in_subprocess(
             "emulate_code",
@@ -465,11 +697,100 @@ class TestRealUnicornIntegration(unittest.TestCase):
                 "start_address": hex(start),
                 "stop_address": hex(start + len(decoder)),
                 "registers": {"eax": 0, "ebx": 0x47},
+                "capture_ranges": [{"address": "0x408960", "size": 8}],
             },
-            setup_pages=[(start, start + len(raw), bytes(raw))],
+            setup_pages=[(seg_start, seg_start + len(raw), bytes(raw))],
         )
         self.assertEqual(out["status"], "completed")
         self.assertIn("Instructions executed:", out["text"])
+        self.assertIn("ascii='hello'", out["text"])
+
+    def _run_mov_eax_ecx(self, registers: dict, *, perm: int | None = None) -> dict:
+        """Run ``mov eax, ecx`` (89 c8) and return the worker result."""
+
+        start = 0x401000
+        raw = b"\x89\xc8" + b"\x90" * (0x1000 - 2)
+        return _run_in_subprocess(
+            "emulate_code",
+            {
+                "start_address": hex(start),
+                "stop_address": hex(start + 2),
+                "registers": registers,
+            },
+            setup_pages=[(start, start + len(raw), raw)],
+            perm=perm,
+        )
+
+    def test_x86_user_registers_not_clobbered(self) -> None:
+        # Regression: the init loop used to write every unified name as 0,
+        # so the trailing ``rax=0`` alias zeroed the user-supplied ``ecx``.
+        out = self._run_mov_eax_ecx({"ecx": 0x1234})
+        self.assertEqual(out["status"], "completed")
+        self.assertIn("eax = 0x1234", out["text"])
+
+    def test_x64_32bit_register_name_zero_extends(self) -> None:
+        # ``r8`` marks the worker heuristic as 64-bit; a value supplied under
+        # the 32-bit name must zero-extend into ``rax`` instead of being wiped
+        # by the later ``rax=0`` alias write the old init loop performed.
+        start = 0x401000
+        # 66 90 = two-byte x86-64 NOP (a lone 0x43 is REX.B, which takes the
+        # following bytes as ModRM and reads address 0x1).
+        raw = b"\x66\x90" + b"\x90" * (0x1000 - 2)
+        out = _run_in_subprocess(
+            "emulate_code",
+            {
+                "start_address": hex(start),
+                "stop_address": hex(start + 2),
+                "registers": {"eax": 0x11223344, "ecx": 1, "r8": 1},
+            },
+            setup_pages=[(start, start + len(raw), raw)],
+        )
+        self.assertEqual(out["status"], "completed")
+        self.assertIn("rax = 0x11223344", out["text"])
+
+    def test_user_eflags_preserved(self) -> None:
+        # ``mov eax, ecx`` does not touch flags, so a supplied value must
+        # come back verbatim (the old code unconditionally wrote flags=0).
+        out = self._run_mov_eax_ecx({"ecx": 1, "eflags": 0x202})
+        self.assertEqual(out["status"], "completed")
+        self.assertIn("eflags = 0x202", out["text"])
+
+    def test_code_range_in_rw_segment_executes(self) -> None:
+        # Packed binaries keep code in R|W segments; the requested code
+        # range must be mapped executable regardless of segment perms.
+        out = self._run_mov_eax_ecx({"ecx": 0x77}, perm=3)
+        self.assertEqual(out["status"], "completed")
+        self.assertIn("eax = 0x77", out["text"])
+
+    def test_payload_spans_adjacent_segments(self) -> None:
+        # Code in segment A reads a byte from segment B: the payload walk
+        # must fill each segment from its own start, not assume one.
+        code = b"\x8a\x05\x05\x20\x40\x00" b"\x93"  # mov al,[0x402005]; xchg eax, ebx
+        seg_a = bytearray(b"\x90" * 0x1000)
+        seg_a[0x401ff0 - 0x401000 : 0x401ff0 - 0x401000 + len(code)] = code
+        seg_b = bytearray(b"\x00" * 0x1000)
+        seg_b[5] = 0x5A
+        out = _run_in_subprocess(
+            "emulate_code",
+            {
+                "start_address": hex(0x401ff0),
+                "stop_address": hex(0x401ff0 + len(code)),
+                "registers": {"ebx": 0xBB, "ecx": 0},
+                "memory_ranges": [{"address": "0x402000", "size": 0x1000}],
+            },
+            setup_pages=[
+                (0x401000, 0x402000, bytes(seg_a)),
+                (0x402000, 0x403000, bytes(seg_b)),
+            ],
+        )
+        self.assertEqual(out["status"], "completed")
+        # ``xchg eax, ebx`` leaves the loaded byte in ebx, eax holds the seed.
+        self.assertIn("ebx = 0x5a", out["text"])
+
+    def test_completed_stop_pc_reports_stop_address(self) -> None:
+        out = self._run_mov_eax_ecx({"ecx": 1})
+        self.assertEqual(out["status"], "completed")
+        self.assertIn("Stop PC:  0x401002", out["text"])
 
     def test_branch_loop_hits_instruction_limit(self) -> None:
         start = 0x401000
@@ -506,10 +827,14 @@ class TestRealUnicornIntegration(unittest.TestCase):
 
     def test_unsupported_arch_yields_clear_error(self) -> None:
         """Ensure the unsupported-architecture path is reachable from a real worker."""
-        _set_unsupported_arch()  # ARM architecture in the mock
+        # Bound to the module reference, not the shared ``sys.modules`` mock,
+        # so the ARM setting cannot leak into other test modules.
+        saved = emu.ida_ida
+        emu.ida_ida = _make_ida_mock(procname="ARM", app_bitness=64)
+        self.addCleanup(setattr, emu, "ida_ida", saved)
 
-        # Run worker manually rather than paying subprocess cost: the
-        # validation path runs before Unicorn is loaded.
+        # Run the validation path rather than paying subprocess cost: it
+        # runs before Unicorn is loaded.
         with self.assertRaises(ToolError) as ctx:
             emu.emulate_code(
                 start_address="0x401000",

@@ -25,9 +25,11 @@ Design constraints (see plan: ``.kilo/plans/1784279972842-...``):
   naturally through the ``range_exit`` rule.
 * Memory is mapped from real IDA segments that contain the requested
   addresses. Source virtual addresses are preserved; aggregate mapped
-  bytes are capped at 16 MiB. The synthetic stack is the only memory
-  that is always writable. Writes to read-only IDB mappings produce a
-  ``permission_error`` stop with the offending address.
+  bytes are capped at 16 MiB. The requested code range is always mapped
+  executable (packed binaries mark ``.text`` R|W); the synthetic stack is
+  the only memory that is always writable and IDB read-only data pages
+  stay read-only, so a write to one produces a ``permission_error`` stop
+  with the offending address.
 * Instruction limit defaults to 100_000 with a 1_000_000 hard cap.
 
 The module exposes pure helpers (``page_align_down``, ``merge_contiguous``,
@@ -230,6 +232,35 @@ def _coerce_addr(value: Any, *, ctx: str) -> int:
     raise ToolError(f"{ctx} must be an integer or hex string", tool_name="emulate_code")
 
 
+def _coerce_positive_int(value: Any, *, ctx: str, maximum: int | None = None) -> int:
+    """Coerce a positive integer the LLM supplied as int, float, or hex/decimal string.
+
+    Sizes and limits arrive as JSON ints, integral floats, or ``"0x1000"``
+    strings depending on the provider — all three are accepted. Anything
+    else (bool, ``None``, garbage, negative, non-integral float) is a
+    ``ToolError`` naming the offending argument.
+    """
+
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        if isinstance(value, int):
+            coerced = value
+        elif isinstance(value, float) and value.is_integer():
+            coerced = int(value)
+        elif isinstance(value, str):
+            coerced = int(value, 0)
+        else:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ToolError(f"{ctx} must be a positive integer or hex string", tool_name="emulate_code") from None
+    if coerced <= 0:
+        raise ToolError(f"{ctx} must be positive (got {coerced})", tool_name="emulate_code")
+    if maximum is not None and coerced > maximum:
+        raise ToolError(f"{ctx} must be in 1..{maximum} (got {coerced})", tool_name="emulate_code")
+    return coerced
+
+
 def _unwrap_range_item(item: Any) -> Any:
     """Unwrap a ``{"$text": "<json>"}`` wrapper.
 
@@ -325,6 +356,59 @@ _UNIFIED_REGISTERS: dict[str, int] = {
     "r14": 8,
     "r15": 8,
 }
+
+# 32- and 64-bit names alias the same physical register. The runner only
+# ever writes canonical-width names, so a user-supplied ``eax`` and ``rax``
+# can never clobber each other through Unicorn's alias table. ``r8``-``r15``
+# are 64-bit-only and therefore absent from the 32-bit map.
+_ALIAS_TO_CANONICAL_64: dict[str, str] = {
+    "eax": "rax",
+    "ebx": "rbx",
+    "ecx": "rcx",
+    "edx": "rdx",
+    "esi": "rsi",
+    "edi": "rdi",
+    "ebp": "rbp",
+    "esp": "rsp",
+    "eflags": "rflags",
+}
+_ALIAS_TO_CANONICAL_32: dict[str, str] = {
+    "rax": "eax",
+    "rbx": "ebx",
+    "rcx": "ecx",
+    "rdx": "edx",
+    "rsi": "esi",
+    "rdi": "edi",
+    "rbp": "ebp",
+    "rsp": "esp",
+    "rflags": "eflags",
+}
+
+
+def _canonical_registers(ptr_size: int) -> tuple[str, ...]:
+    """Physical register names for *ptr_size*, in ``_UNIFIED_REGISTERS`` order.
+
+    4 → ``eax``…``esp``/``eflags``; 8 → ``rax``…``rsp``/``rflags``/``r8``-``r15``.
+    """
+
+    return tuple(name for name, width in _UNIFIED_REGISTERS.items() if width == ptr_size)
+
+
+def _canonical_register_name(name: str, ptr_size: int) -> str:
+    """Return the width-*ptr_size* name for *name* (identity when already canonical)."""
+
+    if _UNIFIED_REGISTERS.get(name) == ptr_size:
+        return name
+    alias_map = _ALIAS_TO_CANONICAL_64 if ptr_size == 8 else _ALIAS_TO_CANONICAL_32
+    return alias_map.get(name, name)
+
+
+def _is_mode_register(name: str, ptr_size: int) -> bool:
+    """True if *name* only exists in the other mode (e.g. ``r8`` on x86)."""
+
+    return _UNIFIED_REGISTERS.get(name, 0) != ptr_size and name not in (
+        _ALIAS_TO_CANONICAL_64 if ptr_size == 8 else _ALIAS_TO_CANONICAL_32
+    )
 
 
 def _load_unicorn() -> Any:
@@ -553,6 +637,8 @@ def _build_mapping_plan(
     # Page-align each input range first, then merge so adjacent ranges that
     # only touched on page boundaries collapse into a single mapping.
     aligned_pairs = [(page_align_down(start), page_align_up(end)) for start, end in merged]
+    code_lo = page_align_down(start_address)
+    code_hi = page_align_up(stop_address)
     for aligned_start, aligned_end in merge_contiguous(aligned_pairs):
         size = aligned_end - aligned_start
         if size <= 0 or size > _MAX_MAPPED_IDB_BYTES:
@@ -567,6 +653,12 @@ def _build_mapping_plan(
                 tool_name="emulate_code",
             )
         perms = _pick_permission_for_range(aligned_start, aligned_end)
+        if aligned_start < code_hi and aligned_start + size > code_lo:
+            # The caller explicitly asked to execute this range, so it is
+            # mapped executable even when IDA flags the segment R|W (packed
+            # binaries) or unreadable. Data-only ranges keep faithful segment
+            # permissions so stray writes still surface as permission_error.
+            perms |= 4
         page_regions.append((aligned_start, size, perms, False))
 
     page_regions.append((arch.stack_base, _STACK_SIZE, 3, True))  # R|W synthetic stack
@@ -607,29 +699,48 @@ def _write_segment_payloads(
     start_address: int,
     stop_address: int,
     extra_ranges: Sequence[tuple[int, int]],
+    captures: Sequence[CaptureRequest] = (),
 ) -> None:
-    """Copy the IDB bytes covered by the requested ranges into *engine*."""
+    """Copy the IDB bytes covered by the requested ranges into *engine*.
 
-    regions = [(start_address, stop_address)]
-    regions.extend(extra_ranges)
-    for start, end in merge_contiguous(regions):
-        seg = _resolve_segment(start)
-        if seg is None:
-            continue
-        payload = _read_segment_bytes(seg)
-        if payload is None:
-            continue
-        va_start = page_align_down(start)
-        offset = start - va_start
-        length = end - start
-        if offset + length > len(payload):
-            length = len(payload) - offset
-        if length <= 0:
-            continue
-        try:
-            engine.mem_write(start, payload[offset : offset + length])
-        except Exception as e:
-            log_debug(f"_write_segment_payloads: write to 0x{start:x} failed: {e}")
+    Offsets are **segment-relative**: payloads are read from
+    ``seg.start_ea``, so a range that begins mid-segment (a function at
+    ``0x408345`` inside a ``0x401000``-based segment) gets the bytes that
+    actually live at that address. Each merged region is walked segment by
+    segment, so a range spanning adjacent segments is filled from each in
+    turn. Capture ranges are filled too — they are frequently the *input*
+    buffer (encrypted blob, verifying bytes) the routine reads before
+    writing, and leaving them zero-filled returns bogus captures.
+    """
+
+    regions: list[tuple[int, int]] = [(start_address, stop_address)]
+    regions.extend((int(addr), int(addr) + int(size)) for addr, size in extra_ranges)
+    regions.extend((cap.address, cap.address + cap.size) for cap in captures)
+
+    for region_start, region_end in merge_contiguous(regions):
+        cur = region_start
+        while cur < region_end:
+            seg = _resolve_segment(cur)
+            if seg is None:
+                # No IDB segment covers this address — leave the page as
+                # Unicorn mapped it (zero-filled) and resync on a boundary.
+                cur = page_align_up(cur + 1)
+                continue
+            seg_end = int(seg.end_ea)
+            if seg_end <= cur:
+                cur = page_align_up(cur + 1)  # defensive: never spin
+                continue
+            chunk_end = min(region_end, seg_end)
+            payload = _read_segment_bytes(seg)
+            if payload is not None:
+                offset = cur - int(seg.start_ea)
+                chunk = payload[offset : offset + (chunk_end - cur)]
+                if chunk:
+                    try:
+                        engine.mem_write(cur, chunk)
+                    except Exception as e:
+                        log_debug(f"_write_segment_payloads: write to 0x{cur:x} failed: {e}")
+            cur = chunk_end
 
 
 # ---------------------------------------------------------------------------
@@ -695,60 +806,44 @@ def _run(
                     tool_name="emulate_code",
                 ) from e
 
-    _write_segment_payloads(engine, arch, start_address, stop_address, extra_ranges)
+    _write_segment_payloads(engine, arch, start_address, stop_address, extra_ranges, captures=captures)
 
-    # Initial registers.
+    # Initial registers. ``_resolve_register_input`` already resolved every
+    # supplied name to the canonical width for this arch, so writing only
+    # those names is safe: a fresh ``Uc`` starts zero-filled, and alias
+    # writes (eax/rax) can no longer clobber user values with zeros.
     final_registers: dict[str, int] = {}
-    for unified, width in _UNIFIED_REGISTERS.items():
+    for unified in _canonical_registers(arch.ptr_size):
         value = registers.get(unified)
         if value is None:
-            coerced = 0
-        else:
-            coerced = coerce_register_value(value, arch.ptr_size)
-        # On x86, the 64-bit-only registers don't exist — skip them.
-        if (
-            arch.ptr_size == 4
-            and width == 8
-            and unified
-            in {
-                "r8",
-                "r9",
-                "r10",
-                "r11",
-                "r12",
-                "r13",
-                "r14",
-                "r15",
-                "rflags",
-            }
-        ):
             continue
-        final_registers[unified] = coerced
+        final_registers[unified] = value
         reg_id = reg_ids.get(unified)
         if reg_id is None:
             continue
         try:
-            engine.reg_write(reg_id, coerced)
+            engine.reg_write(reg_id, value)
         except Exception:
             pass  # ignored — Unicorn will not run if a required register is invalid.
 
     # SP defaults to ``stack_top`` when the caller didn't supply ``esp``/``rsp``.
-    sp_value = final_registers.get(arch.sp_reg)
-    if sp_value is None or sp_value == 0:
-        sp_value = plan.stack_top
-        final_registers[arch.sp_reg] = sp_value
-    sp_reg_id = reg_ids[arch.sp_reg]
-    try:
-        engine.reg_write(sp_reg_id, sp_value)
-    except Exception:
-        pass
-
     ip_reg_id = reg_ids[arch.ip_reg]
-    flags_reg_id = reg_ids[arch.flags_reg]
+    sp_reg_id = reg_ids[arch.sp_reg]
+    if final_registers.get(arch.sp_reg) is None:
+        final_registers[arch.sp_reg] = plan.stack_top
     try:
-        engine.reg_write(flags_reg_id, 0)
+        engine.reg_write(sp_reg_id, final_registers[arch.sp_reg])
     except Exception:
         pass
+    flags_reg_id = reg_ids[arch.flags_reg]
+    if final_registers.get(arch.flags_reg) is None:
+        # Unicorn refuses to run with undefined flags; only default when the
+        # caller did not supply one (its value must survive verbatim).
+        final_registers[arch.flags_reg] = 0
+        try:
+            engine.reg_write(flags_reg_id, 0)
+        except Exception:
+            pass
 
     # Detect forbidden opcodes up front.
     try:
@@ -782,21 +877,11 @@ def _run(
     instruction_count = [0]
 
     def _update_reg_state() -> None:
-        for unified in _UNIFIED_REGISTERS:
+        # Read back only canonical names: aliases would report the same
+        # physical register twice (``eax`` and ``rax`` on x64).
+        for unified in _canonical_registers(arch.ptr_size):
             reg_id = reg_ids.get(unified)
             if reg_id is None:
-                continue
-            if arch.ptr_size == 4 and unified in {
-                "r8",
-                "r9",
-                "r10",
-                "r11",
-                "r12",
-                "r13",
-                "r14",
-                "r15",
-                "rflags",
-            }:
                 continue
             try:
                 final_registers[unified] = int(engine.reg_read(reg_id)) & ((1 << (8 * arch.ptr_size)) - 1)
@@ -891,6 +976,14 @@ def _run(
             except Exception:
                 stop_state["stop_pc"] = start_address
 
+    if stop_state["status"] == "completed" and stop_state["stop_pc"] == start_address:
+        # A completed run finished at ``stop_address``; report the PC the
+        # engine actually holds rather than leaving the entry address.
+        try:
+            stop_state["stop_pc"] = int(engine.reg_read(ip_reg_id))
+        except Exception:
+            stop_state["stop_pc"] = stop_address
+
     _update_reg_state()
 
     # Capture ranges.
@@ -961,9 +1054,8 @@ def _decode_string_candidates(data: bytes) -> dict[str, Any]:
     with a single byte ``0x00`` *or* a UTF-16LE double-NUL. ASCII / UTF-8
     candidates are sliced at the first single-byte NUL; the UTF-16LE
     candidate is sliced at the first double-NUL aligned on an even byte
-    boundary (UTF-16LE data must be two-byte aligned). When the leading
-    byte of the wide candidate is itself ``0x00`` (an empty wide string),
-    we fall back to ``ascii_run`` so the candidate stays useful.
+    boundary (UTF-16LE data must be two-byte aligned), or falls back to the
+    ASCII run when the buffer holds no double-NUL.
     """
 
     nul = data.find(b"\x00")
@@ -1068,13 +1160,8 @@ def _normalize_memory_ranges(
                 tool_name=tool_name,
             )
         addr = _coerce_addr(item.get("address"), ctx=f"{tool_name}: memory_ranges[{idx}].address")
-        size = item.get("size")
-        if not isinstance(size, int) or size <= 0:
-            raise ToolError(
-                f"{tool_name}: memory_ranges[{idx}].size must be a positive integer",
-                tool_name=tool_name,
-            )
-        out.append((addr, int(size)))
+        size = _coerce_positive_int(item.get("size"), ctx=f"{tool_name}: memory_ranges[{idx}].size")
+        out.append((addr, size))
     return out
 
 
@@ -1093,14 +1180,13 @@ def _normalize_capture_ranges(
                 tool_name=tool_name,
             )
         addr = _coerce_addr(item.get("address"), ctx=f"{tool_name}: capture_ranges[{idx}].address")
-        size = item.get("size")
         label = item.get("label") or f"{default_label}_{idx}"
-        if not isinstance(size, int) or size <= 0 or size > _MAX_OUTPUT_BYTES:
-            raise ToolError(
-                f"{tool_name}: capture_ranges[{idx}].size must be in 1..{_MAX_OUTPUT_BYTES}",
-                tool_name=tool_name,
-            )
-        out.append(CaptureRequest(address=addr, size=int(size), label=str(label)))
+        size = _coerce_positive_int(
+            item.get("size"),
+            ctx=f"{tool_name}: capture_ranges[{idx}].size",
+            maximum=_MAX_OUTPUT_BYTES,
+        )
+        out.append(CaptureRequest(address=addr, size=size, label=str(label)))
     return out
 
 
@@ -1110,25 +1196,53 @@ def _resolve_register_input(
     tool_name: str,
     arch: ArchMode,
 ) -> dict[str, int]:
-    """Validate the LLM-supplied register object and coerce the values."""
+    """Validate the LLM-supplied register object and coerce the values.
+
+    Supplied names are resolved to the canonical (pointer-width) register of
+    the current arch, so ``eax`` and ``rax`` both land on the same physical
+    register instead of alias-clobbering each other. Supplying both names
+    with different values is rejected as a conflict rather than silently
+    picking one.
+    """
 
     if not isinstance(registers, Mapping) or not registers:
         raise ToolError(
             f"{tool_name}: registers must be a non-empty object of explicit initial register values",
             tool_name=tool_name,
         )
-    out: dict[str, Any] = {}
+    ptr_size = arch.ptr_size
+    out: dict[str, int] = {}
+    origin: dict[str, str] = {}
     for key, value in registers.items():
         name = str(key).lower()
+        if name in ("eip", "rip"):
+            # Controlled by start_address on every mode — reject rather than
+            # silently ignore, otherwise the caller thinks it took effect.
+            # Checked before the whitelist because neither name is a
+            # "unified" register we expose.
+            raise ToolError(
+                f"{tool_name}: eip/rip are taken from start_address and cannot be set",
+                tool_name=tool_name,
+            )
         if name not in _UNIFIED_REGISTERS:
             raise ToolError(
                 f"{tool_name}: unknown register {name!r}",
                 tool_name=tool_name,
             )
-        if name == arch.ip_reg:
-            # ``eip`` / ``rip`` are controlled by start_address.
-            continue
-        out[name] = coerce_register_value(value, arch.ptr_size)
+        if _is_mode_register(name, ptr_size):
+            raise ToolError(
+                f"{tool_name}: register {name!r} is not available in 32-bit mode",
+                tool_name=tool_name,
+            )
+        canonical = _canonical_register_name(name, ptr_size)
+        coerced = coerce_register_value(value, ptr_size)
+        if canonical in out and out[canonical] != coerced:
+            raise ToolError(
+                f"{tool_name}: conflicting values for {canonical!r} via {origin[canonical]!r} and {name!r}",
+                tool_name=tool_name,
+            )
+        out[canonical] = coerced
+        origin.setdefault(canonical, name)
     return out
 
 
@@ -1183,18 +1297,12 @@ def emulate_code(
     unicorn = _load_unicorn()
     arch = _resolve_arch(unicorn)
 
-    try:
-        start = int(start_address, 0)
-        stop = int(stop_address, 0)
-    except (TypeError, ValueError) as e:
-        raise ToolError(
-            f"emulate_code: start_address/stop_address must be int or hex strings: {e}",
-            tool_name="emulate_code",
-        ) from e
-
-    if instruction_limit <= 0:
-        raise ToolError("emulate_code: instruction_limit must be positive", tool_name="emulate_code")
-    bounded_limit = min(_MAX_INSTRUCTION_LIMIT, int(instruction_limit))
+    start = _coerce_addr(start_address, ctx="emulate_code: start_address")
+    stop = _coerce_addr(stop_address, ctx="emulate_code: stop_address")
+    bounded_limit = min(
+        _MAX_INSTRUCTION_LIMIT,
+        _coerce_positive_int(instruction_limit, ctx="emulate_code: instruction_limit"),
+    )
 
     normalised_regs = _resolve_register_input(registers, tool_name="emulate_code", arch=arch)
     extras = _normalize_memory_ranges(memory_ranges, tool_name="emulate_code")
@@ -1250,29 +1358,21 @@ def resolve_emulated_string(
     unicorn = _load_unicorn()
     arch = _resolve_arch(unicorn)
 
-    try:
-        start = int(start_address, 0)
-        stop = int(stop_address, 0)
-        out_addr = int(output_address, 0)
-    except (TypeError, ValueError) as e:
-        raise ToolError(
-            f"resolve_emulated_string: start_address/stop_address/output_address must be int or hex strings: {e}",
-            tool_name="resolve_emulated_string",
-        ) from e
-
-    if not (1 <= int(max_output_size) <= _MAX_OUTPUT_BYTES):
-        raise ToolError(
-            f"resolve_emulated_string: max_output_size must be in 1..{_MAX_OUTPUT_BYTES}",
-            tool_name="resolve_emulated_string",
-        )
-    if instruction_limit <= 0:
-        raise ToolError(
-            "resolve_emulated_string: instruction_limit must be positive",
-            tool_name="resolve_emulated_string",
-        )
+    start = _coerce_addr(start_address, ctx="resolve_emulated_string: start_address")
+    stop = _coerce_addr(stop_address, ctx="resolve_emulated_string: stop_address")
+    out_addr = _coerce_addr(output_address, ctx="resolve_emulated_string: output_address")
+    out_size = _coerce_positive_int(
+        max_output_size,
+        ctx="resolve_emulated_string: max_output_size",
+        maximum=_MAX_OUTPUT_BYTES,
+    )
+    bounded_limit = min(
+        _MAX_INSTRUCTION_LIMIT,
+        _coerce_positive_int(instruction_limit, ctx="resolve_emulated_string: instruction_limit"),
+    )
 
     captures = [
-        CaptureRequest(address=out_addr, size=int(max_output_size), label="output"),
+        CaptureRequest(address=out_addr, size=out_size, label="output"),
     ]
 
     normalised_regs = _resolve_register_input(registers, tool_name="resolve_emulated_string", arch=arch)
@@ -1285,6 +1385,6 @@ def resolve_emulated_string(
         registers=normalised_regs,
         extra_ranges=extras,
         captures=captures,
-        max_instructions=min(_MAX_INSTRUCTION_LIMIT, int(instruction_limit)),
+        max_instructions=bounded_limit,
     )
     return format_result(result)

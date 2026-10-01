@@ -28,14 +28,17 @@
   truncation notice when the buffer has no NUL within `max_output_size`.
 - Both tools require:
   - An explicit `registers` object (non-empty). `eip` / `rip` are
-    always taken from `start_address` and cannot be overridden.
+    always taken from `start_address` and cannot be overridden — both
+    names are rejected on x86 and x64. 32- and 64-bit names alias the
+    same physical register, and `r8`–`r15` / `rflags` are rejected on x86.
   - `stop_address` is exclusive.
   - `memory_ranges` for any encrypted input, keys, or lookup tables
     that live outside the decoder function itself.
   - Aggregate mapped IDB bytes are capped at 16 MiB; the synthetic
     stack is the only always-writable memory.
-  - Read-only key/input regions stay read-only — the tools never
-    silently remap IDB pages.
+  - The requested code range is always mapped executable (packed
+    binaries often mark `.text` R|W); read-only key/input regions keep
+    IDA's permissions, so a stray write to one still fails.
   - The tools never write to the IDB, never run the target binary,
     never spawn processes, and never touch the filesystem.
 - Use this when the decoder is provably self-contained and the output

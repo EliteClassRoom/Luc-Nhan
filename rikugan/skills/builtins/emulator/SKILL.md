@@ -33,8 +33,10 @@ Bounded, read-only CPU emulation for self-contained IDA code ranges.
 **Never modifies the IDB. Never runs the target binary. Never spawns processes.**
 
 The engine is a per-call Unicorn instance. Memory is mapped from real IDA
-segments; source virtual addresses are preserved. The only always-writable
-region is the synthetic stack — IDB read-only pages stay read-only.
+segments; source virtual addresses are preserved. The requested code range
+is always mapped executable; everywhere else, the synthetic stack is the
+only memory that is always writable and IDB read-only pages stay
+read-only.
 
 ## When to Use This Skill
 
@@ -225,13 +227,20 @@ decoded ASCII string.
   of the last instruction; the run will report `range_exit` because
   execution falls off the end before "reaching" that address.
 - **`registers` must be non-empty and must not contain `eip`/`rip`.** The
-  tool raises `ToolError` otherwise.
+  tool raises `ToolError` otherwise — both names are rejected on x86 and
+  x64. 32- and 64-bit names alias the same physical register (`eax`↔`rax`,
+  `eflags`↔`rflags`, …), so either spelling works; supplying both with
+  *different* values is a conflict error. `r8`–`r15` and `rflags` are
+  rejected on x86. `esp`/`rsp` defaults to the synthetic stack top.
 - **Map every input region.** Any address the routine reads that is not
   in the code range and not in `memory_ranges` will trigger
   `unmapped_memory`.
-- **Read-only IDB pages stay read-only.** The tools never silently remap
-  a segment as writable — if the routine writes to a read-only page,
-  you'll see `permission_error`. This is intentional (defensive default).
+- **The requested code range is always mapped executable; data ranges keep
+  IDA's permissions.** Packed binaries often mark `.text` as R|W, so the
+  `[start_address, stop_address)` pages get execute even when the segment
+  says otherwise. Everything else (key tables, read-only input) keeps the
+  IDB's own permissions — a stray write to one of those pages still
+  surfaces as `permission_error`. This is intentional (defensive default).
 - **Aggregate mapped bytes are capped at 16 MiB.** Plan `memory_ranges`
   accordingly; map only the bytes the routine actually touches.
 - **Always redecompile/verify after analysis.** Emulation gives you a
