@@ -26,15 +26,14 @@ derive -> ``_log_auto_derive_once`` must NOT raise AttributeError.
 from __future__ import annotations
 
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.core import host as host_module  # noqa: E402
-from rikugan.ui.theme import manager as theme_manager_module  # noqa: E402
-from rikugan.ui.theme.manager import DARK_TOKENS, ThemeManager, ThemeMode  # noqa: E402
+from rikugan.ui.theme.manager import DARK_TOKENS, ThemeManager
 
 
 class TestThemeManagerInitOrder(unittest.TestCase):

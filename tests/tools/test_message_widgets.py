@@ -8,7 +8,7 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui.message_widgets import _split_thinking  # noqa: E402
+from rikugan.ui.message_widgets import _split_thinking
 
 # ---------------------------------------------------------------------------
 # _split_thinking
@@ -26,7 +26,7 @@ class TestSplitThinking(unittest.TestCase):
         self.assertEqual(visible, "Before  After".strip())
 
     def test_visible_part_stripped(self):
-        thinking, visible = _split_thinking("<think>A</think>   result   ")
+        _thinking, visible = _split_thinking("<think>A</think>   result   ")
         self.assertEqual(visible, "result")
 
     def test_multiple_think_blocks(self):
@@ -53,7 +53,7 @@ class TestSplitThinking(unittest.TestCase):
         self.assertEqual(visible, "result")
 
     def test_think_whitespace_stripped(self):
-        thinking, visible = _split_thinking("<think>  trimmed  </think> x")
+        thinking, _visible = _split_thinking("<think>  trimmed  </think> x")
         self.assertEqual(thinking, "trimmed")
 
     def test_multiline_think_block(self):

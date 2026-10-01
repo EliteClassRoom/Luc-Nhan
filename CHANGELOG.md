@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Read-only emulation inputs and function setup** — `memory_buffers` supplies
+  known non-executable scratch bytes, `code_ranges` authorizes IDB helpers,
+  and function mode builds x86 cdecl/stdcall/fastcall or x64 win64/sysv64 frames.
+  Captures support signed initial-stack offsets; optional discovery reports
+  string candidates overlapping changed bytes, including unknown-offset stack
+  output. Existing range mode keeps explicit register and stack state.
+
+- **Provider-neutral Thinking level in Settings** — a single **Thinking**
+  combo in the Generation group replaces GLM's separate Thinking /
+  Reasoning-effort controls and works for every provider. The combo lists
+  the levels the selected model actually accepts, looked up in a new local
+  table (`rikugan/core/thinking.py`); no provider API advertises thinking
+  capability, so the table *is* the query. Models with no entry fall back
+  to the full `none → ultra` range and the chosen level is sent as-is.
+  - `'none'` is the storage spelling of "thinking off" — no separate toggle.
+  - Wired for the OpenAI family (`openai`, `openai_compat`, `ollama`,
+    custom OpenAI-compatible connections) as the top-level
+    `reasoning_effort` Chat Completions parameter, and for GLM via its
+    per-model level list. Anthropic / Gemini / MiniMax / Codex store and
+    display the setting but do not yet change their wire payloads.
+  - Unknown models default to `'none'` (opt-in) so existing OpenAI-family
+    configs keep sending exactly what they sent before; known models
+    default to `'high'`. A saved level a model does not support normalizes
+    to that model's default rather than failing config validation.
+  - GLM-5.3 is now a known model (200K context / 131,072 output), accepting
+    only the `high` and `max` levels.
 - **Multi-tab parallel agents** — multiple chat tabs can now run their agents
   concurrently instead of one-at-a-time. Switching tabs no longer cancels a
   running agent; each tab streams to its own view even while you read another.
@@ -25,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Emulation runs outside the IDA main thread** after a host-thread snapshot.
+  Cancellation and a bounded wall deadline cover setup and CPU execution;
+  CPU-started interruptions preserve partial state. Tool execution context is
+  isolated per worker; other tools retain their existing main-thread behavior.
+
 - **Mutating tools now serialize** (`ToolRegistry._mutate_lock`) so concurrent
   agents don't interleave IDB writes. This keeps the undo stack coherent
   across tabs. `/undo` remains global (reverses the most recent mutation
@@ -34,10 +65,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Emulation fidelity and limits** — snapshots use exact segment/page
+  intersections, original permissions and IDA's packed initialized-byte mask;
+  only genuine BSS undefined bytes are zero-filled. Padding, permission
+  conflicts, IDB/scratch page overlap and stack collisions fail explicitly.
+  Register aliases, flags, instruction budgets and per-instruction syscall/
+  interrupt gates are honored. Cross-page write discovery tracks exact changed
+  bytes independently of the bounded write log. Output prioritizes bounded
+  capture/discovery summaries and preserves independent encoding candidates.
+  The requested code range (entry span and `code_ranges` allowlist) executes
+  even when the segment is R|W — packed binaries — gaining X without ever
+  gaining W, so stray writes still fail; all other pages keep faithful
+  segment permissions.
+
+- **Address tools accept a function/symbol name, not just `0x…`** — the model
+  routinely passes a name where a tool documents an address
+  (`get_function_info("init_config_and_beacon")`). `parse_addr` did
+  `int(value, 0)`, which raised `ValueError: invalid literal for int() with
+  base 0` and failed the whole call. It now falls back to the host seam
+  `core.host.resolve_symbol` (`ida_name.get_name_ea`), so all ~40
+  address-taking tools, the mutation pre-state capture, and microcode target
+  parsing accept a name through one fix. A bare decimal string (`"4096"`) also
+  resolves now. Unresolvable input still raises `ValueError: Unknown address
+  or name: …`, which the tool wrapper turns into an actionable `ToolError`.
+  The duplicate addr-or-name resolver in `ida/tools/database.py` is gone.
+- **Slow MCP servers no longer die at the 15s startup clamp** — `MCPManager`
+  computed the startup wait as `min(timeout, 15s)`, silently overriding the
+  per-server `timeout` field in `mcp.json` (schema default 30s). Cold-starting
+  stdio servers that need >15s to answer `initialize` (npx/uvx-based ones on
+  Windows routinely do) failed with "initialize timed out after 15.0s"
+  regardless of what you configured. The configured timeout is now honored
+  as-is; 15s remains only the fallback for unset/invalid (`<= 0`) values.
+- **`mcp` SDK banner traceback no longer floods the IDA console** — servers
+  that print startup text to stdout (an MCP spec violation, e.g. MiniMax's
+  "Starting Minimax MCP server") made the SDK's stdio reader dump a full
+  pydantic `ValidationError` traceback per launch. The SDK recovers from
+  these lines by design, so the `mcp.client.stdio` logger is now suppressed
+  at CRITICAL; genuine startup failures still surface as Rikugan's own
+  "initialize timed out" / "handshake failed" errors.
+- GLM requests no longer send `reasoning_effort` while thinking is disabled —
+  `thinking.type = "disabled"` already expresses that, and the effort enum
+  has no "disabled" member. The gate is now driven by the thinking level
+  table instead of the coarse `reasoning_effort` metadata flag.
 - Headless/control API stays backward-compatible: `get_runner`,
   `get_event`, `cancel`, and `on_agent_finished` keep zero-argument defaults
   that target the active tab, so `headless/runner.py` and `control/server.py`
   are unaffected by the multi-runner refactor.
+- **Restored chat history now actually renders.** Opening a saved chat from
+  History could attach the session without rendering a single message,
+  leaving a blank chat. Root cause: `RestoreWorker` (a `QThread` in
+  `rikugan/ui/chat_view.py`) pushed its built-message chunks onto a
+  main-thread `queue.Queue` drained by a 50 ms `QTimer`. `QThread.finished`
+  is delivered through the event loop, so whenever the worker finished
+  before the next tick — a typical session does, well under one tick of
+  work — `_on_worker_finished` ran first, stopped the drain timer, and
+  `deleteLater()`d every remaining `MessagePlaceholder`, discarding every
+  queued chunk. Size was irrelevant: 2, 10, 40, and 80-message sessions
+  with 2000-character bodies all produced zero rendered widgets — every
+  restored session was affected, not just long ones. The worker now
+  guarantees its chunks reach the UI before `finished` is emitted,
+  regardless of how fast it runs.
+- **Rikugan now opens into your most recent chat.** On startup it loads
+  the newest saved session for the currently open binary instead of
+  starting from a blank `New Chat` draft. This reverses the 1.12.0
+  "start fresh" decision: the startup-restore branch in
+  `_apply_history_list_result` was already complete (newest-first sort
+  on `updated_at`, IDB scope via `db_instance_id` with path fallback) but
+  no production code ever set the flag that enables it, so the whole
+  startup branch was unreachable. The flag is now set when the panel
+  finishes wiring up the UI and a history list request is kicked off;
+  `_apply_history_loaded` already has a matching startup-load branch that
+  suppresses error copy on failure. Sessions remain scoped to the
+  currently open binary, and if there is nothing to restore the load
+  silently falls back to a blank draft. Switching to a *different*
+  binary still starts from a blank draft — a file switch is an explicit
+  user action, so it keeps the 1.12.0 behaviour.
+- **Reopening a saved chat no longer loses its token counts.** The
+  context bar dropped back to 0% and cumulative usage reset to zero
+  every time a past conversation was reopened, because
+  `SessionHistory.save_session` never wrote the session's
+  `last_prompt_tokens` / `total_usage` counters to disk and
+  `load_session` never restored them — the fields existed in memory
+  (and were being updated on every turn) but were simply omitted from
+  the persisted payload, an oversight rather than a deliberate
+  exclusion: `current_turn` round-trips correctly, so the omission was
+  visible against the surrounding code. `SessionState` already declared
+  both fields and `TokenUsage.__post_init__` already coerces hostile
+  values (None / floats / strings / negatives) through
+  `coerce_token_count`, so no new normalization path was needed —
+  `save_session` now writes them with the rest of the state and
+  `load_session` passes them back into the `SessionState` constructor.
+  Sessions saved by earlier versions still load cleanly with zeroed
+  counters instead of failing: the missing keys coerce to defaults via
+  `TokenUsage()` and `int`, and `last_prompt_tokens` falls back to
+  `0` rather than rejecting the session.
+- **`ask_user` choice buttons now appear for every question.** Some
+  models send `options` shaped in ways the agent loop did not handle,
+  so the question rendered with no usable buttons. When a model sent
+  `options` as a bare string the loop iterated it character by
+  character — a question meant to offer "Yes" rendered three
+  meaningless buttons labelled `Y`, `e` and `s` and the intended
+  choice was unrecoverable. When a model sent options as objects
+  (`{"label": "Yes"}`) the `isinstance(o, str)` filter discarded
+  every entry, so the question rendered with **no buttons at all**
+  and the user had nothing to click — the literal "doesn't display
+  the option" symptom. Normalization now happens at the LLM-argument
+  boundary in `_handle_ask_user_tool` (`rikugan/agent/loop.py`)
+  before the list reaches `UserQuestionWidget`: a lone string becomes
+  a single choice, dicts contribute their `label` (falling back to
+  their string form), whitespace-only and duplicate entries are
+  dropped, and non-`list` containers are flattened into one. LLM
+  tool-call arguments are untrusted input derived from model output
+  over hostile binary content, so malformed shapes must never raise;
+  a question whose options all normalize away still falls back to
+  free-text answering (text input stays unlocked) instead of leaving
+  the user stuck.
 
 ## [1.13.2] - 2026-07-20
 

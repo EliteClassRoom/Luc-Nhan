@@ -73,7 +73,7 @@ from unittest.mock import MagicMock, patch
 _TESTS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _TESTS_ROOT)
 
-from tests.mocks.ida_mock import install_ida_mocks  # noqa: E402
+from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
@@ -84,12 +84,12 @@ install_ida_mocks()
 # ``rikugan.core.types.Message`` etc. when collected after a panel-core
 # test in the same pytest invocation. Same pattern as
 # ``tests/providers/test_providers.py``.
-from tests import purge_rikugan_stubs  # noqa: E402
+from tests import purge_rikugan_stubs
 
 purge_rikugan_stubs()
 
 # Install PySide6 stubs before importing panel_core (which imports Qt).
-from tests.qt_stubs import ensure_pyside6_stubs  # noqa: E402
+from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
@@ -217,13 +217,13 @@ if _tm_stub is not None:
 # Force-remove any prior stub for panel_core so we import cleanly here.
 sys.modules.pop("rikugan.ui.panel_core", None)
 
-import pytest  # noqa: E402
+import pytest
 
-from rikugan.core.config import RikuganConfig  # noqa: E402
-from rikugan.core.types import Message, Role  # noqa: E402
-from rikugan.ida.ui.session_controller import IdaSessionController  # noqa: E402
-from rikugan.state.history import SessionHistory  # noqa: E402
-from rikugan.ui.panel_core import RikuganPanelCore  # noqa: E402
+from rikugan.core.config import RikuganConfig
+from rikugan.core.types import Message, Role
+from rikugan.ida.ui.session_controller import IdaSessionController
+from rikugan.state.history import SessionHistory
+from rikugan.ui.panel_core import RikuganPanelCore
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -288,9 +288,9 @@ def _stable_instance_for(idb_path: str) -> str:
 # own namespace. So patching only ``rikugan.core.host.X`` has no effect:
 # the controller keeps the original reference. We must rebind BOTH the
 # host module attributes AND the controller module's bound imports.
-import rikugan.core.host as _host  # noqa: E402
-import rikugan.ida.ui.session_controller as _ida_sc  # noqa: E402
-import rikugan.ui.session_controller_base as _scb  # noqa: E402
+import rikugan.core.host as _host
+import rikugan.ida.ui.session_controller as _ida_sc
+import rikugan.ui.session_controller_base as _scb
 
 _CURRENT_IDB_PATH = {"path": ""}
 

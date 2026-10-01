@@ -17,11 +17,11 @@ from tests import purge_rikugan_stubs
 
 purge_rikugan_stubs()
 
-from tests.qt_stubs import ensure_pyside6_stubs  # noqa: E402
+from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui.input_area import InputArea, _SkillPopup  # noqa: E402
+from rikugan.ui.input_area import InputArea, _SkillPopup
 
 # ---------------------------------------------------------------------------
 # _SkillPopup — pure list logic
@@ -176,6 +176,20 @@ class TestInputAreaCheckAutocomplete(unittest.TestCase):
         area.toPlainText = MagicMock(return_value="/pl")
         area._check_autocomplete()
         area._show_popup.assert_called_once_with(["plan"])
+    def test_slash_after_setting_slugs_shows_suggestions(self):
+        """Typing ``/`` after normal setup must open the full command list."""
+        area = _make_input()
+        area.set_skill_slugs(["decompile"])
+        area._show_popup = MagicMock()
+        area._dismiss_popup = MagicMock()
+        area.toPlainText = MagicMock(return_value="/")
+
+        area._check_autocomplete()
+
+        matches = area._show_popup.call_args.args[0]
+        self.assertIn("decompile", matches)
+        self.assertIn("plan", matches)
+        self.assertIn("verify", matches)
 
     def test_no_match_dismisses_popup(self):
         area = _make_input()

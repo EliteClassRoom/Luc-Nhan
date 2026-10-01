@@ -16,7 +16,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.logging import (  # noqa: E402
+from rikugan.core.logging import (
     IDAHandler,
     _FlushFileHandler,
     get_logger,
@@ -188,12 +188,12 @@ class TestSilenceSDKDebugLoggers(unittest.TestCase):
     """Regression: ``silence_sdk_debug_loggers`` must raise the level on
     chat-halting SDK loggers so an OpenAI request that contains non-ASCII
     content does not crash the logging thread with UnicodeEncodeError on
-    Windows cp1252 streams. The test snapshots only the four SDK logger
-    levels so it does not interfere with the rikugan.core.logging
+    Windows cp1252 streams. The test snapshots only the SDK logger
+    levels it touches so it does not interfere with the rikugan.core.logging
     singleton, the Rikugan logger's handler set, or any sibling tests.
     """
 
-    _SDK_LOGGERS = ("openai", "openai._base_client", "httpx", "httpcore")
+    _SDK_LOGGERS = ("openai", "openai._base_client", "httpx", "httpcore", "mcp.client.stdio")
 
     def setUp(self):
         self._prior_levels = {
@@ -217,6 +217,15 @@ class TestSilenceSDKDebugLoggers(unittest.TestCase):
 
         silence_sdk_debug_loggers()
         self.assertEqual(logging.getLogger("httpx").level, logging.WARNING)
+
+    def test_mcp_stdio_logger_level_is_critical(self):
+        """The mcp SDK tolerates non-JSON stdout lines (server startup
+        banners) by design but logs them with a full traceback — suppressed
+        at CRITICAL; real failures surface via Rikugan's own errors."""
+        from rikugan.core.logging import silence_sdk_debug_loggers
+
+        silence_sdk_debug_loggers()
+        self.assertEqual(logging.getLogger("mcp.client.stdio").level, logging.CRITICAL)
 
     def test_helper_is_idempotent(self):
         from rikugan.core.logging import silence_sdk_debug_loggers
@@ -402,8 +411,8 @@ class TestProviderBoundarySilencesSDKLoggers(unittest.TestCase):
 # Structured attempt logging (telemetry allowlist)
 # ---------------------------------------------------------------------------
 
-from rikugan.core.log_sinks import _JSONFormatter  # noqa: E402
-from rikugan.core.logging import log_structured  # noqa: E402
+from rikugan.core.log_sinks import _JSONFormatter
+from rikugan.core.logging import log_structured
 
 
 def test_json_formatter_includes_allowlisted_attempt_event():
@@ -444,8 +453,8 @@ def test_structured_strings_strip_role_markers_and_surrogates():
 # Telemetry integration: one allowlisted record per logical attempt
 # ---------------------------------------------------------------------------
 
-from rikugan.agent.modes.turn_helpers import execute_single_turn  # noqa: E402
-from rikugan.core.types import (  # noqa: E402
+from rikugan.agent.modes.turn_helpers import execute_single_turn
+from rikugan.core.types import (
     LLMRequestContext,
     Message,
     ModelInfo,
@@ -455,10 +464,10 @@ from rikugan.core.types import (  # noqa: E402
     TokenUsage,
     TurnDisposition,
 )
-from rikugan.providers.base import LLMProvider  # noqa: E402
-from rikugan.state.session import SessionState  # noqa: E402
-from rikugan.tools.base import ParameterSchema, ToolDefinition  # noqa: E402
-from rikugan.tools.registry import ToolRegistry  # noqa: E402
+from rikugan.providers.base import LLMProvider
+from rikugan.state.session import SessionState
+from rikugan.tools.base import ParameterSchema, ToolDefinition
+from rikugan.tools.registry import ToolRegistry
 
 # Reasoning payload large enough to trip the hard ceiling.
 _DEGENERATED_REASONING = "outputting read_bytes tool now\n" * 3500
@@ -641,7 +650,7 @@ def test_normal_turn_logs_single_content_free_record():
 # Telemetry for error/cancellation paths (one record per started attempt)
 # ---------------------------------------------------------------------------
 
-from rikugan.core.errors import CancellationError, ProviderError  # noqa: E402
+from rikugan.core.errors import CancellationError, ProviderError
 
 
 class _ErroringGLMProvider(_ScriptedGLMProvider):

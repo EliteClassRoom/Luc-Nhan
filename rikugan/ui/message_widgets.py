@@ -535,6 +535,14 @@ def _split_thinking(text: str):
 class _ThinkingBlock(QFrame):
     """Collapsible block for model reasoning / chain-of-thought."""
 
+    # Render-gate constants — mirror AssistantMessageWidget so reasoning
+    # deltas are batched the same way visible deltas are.  Without this,
+    # each REASONING_DELTA event (50+ /s from GLM) triggers a full
+    # md_to_html(accumulated_text) on the main thread.
+    _RENDER_INTERVAL_S: float = 0.10
+    _RENDER_BATCH_MIN: int = 30
+    _RENDER_BATCH_MAX: int = 500
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("thinking_block")
@@ -583,6 +591,10 @@ class _ThinkingBlock(QFrame):
         self._in_progress: bool = False
         self._tokens = None  # set by _apply_styles on each call
 
+        # Streaming render-gate state (mirrors AssistantMessageWidget).
+        self._pending_delta: int = 0
+        self._last_render_time: float = 0.0
+
         self._apply_styles()
         ThemeManager.instance().themeChanged.connect(self._apply_styles)
 
@@ -630,22 +642,52 @@ class _ThinkingBlock(QFrame):
         # backticks, tables, and tool calls inside the thinking content
         # all match the active theme.
         if self._source_text:
-            self._content.setText(md_to_html(self._source_text, self))
-            self._content.pin_height()
+            self._render_content()
 
     def _on_toggle(self) -> None:
         self._expanded = not self._expanded
         self._content.setVisible(self._expanded)
         self._toggle.setText("\u25bc" if self._expanded else "\u25b6")
 
+    def _render_content(self) -> None:
+        """Render ``_source_text`` to HTML and update the label."""
+        self._content.setText(md_to_html(self._source_text, self))
+        self._content.pin_height()
+        self._pending_delta = 0
+        self._last_render_time = _time.monotonic()
+
     def set_thinking(self, text: str, in_progress: bool = False) -> None:
+        """Set the full thinking text and render immediately.
+
+        Use for final renders (TEXT_DONE, TURN_END, theme change).
+        For streaming deltas, prefer :meth:`append_reasoning` which
+        batches renders via a time gate.
+        """
         self._source_text = text
         self._in_progress = in_progress
-        self._content.setText(md_to_html(text, self))
-        self._content.pin_height()
+        self._render_content()
         label = "Thinking\u2026" if in_progress else "Thinking"
         self._header_label.setText(label)
         self.show()
+
+    def append_reasoning(self, delta: str) -> None:
+        """Append a streaming reasoning delta with render gating.
+
+        Mirrors ``AssistantMessageWidget.append_text``: small deltas
+        are batched until ``_RENDER_BATCH_MIN`` chars accumulate and
+        ``_RENDER_INTERVAL_S`` has elapsed.  A single delta exceeding
+        ``_RENDER_BATCH_MAX`` triggers an immediate flush.
+        """
+        self._source_text += delta
+        self._pending_delta += len(delta)
+        if self._pending_delta >= self._RENDER_BATCH_MAX:
+            self._render_content()
+            return
+        if (
+            self._pending_delta >= self._RENDER_BATCH_MIN
+            and _time.monotonic() - self._last_render_time >= self._RENDER_INTERVAL_S
+        ):
+            self._render_content()
 
 
 # ---------------------------------------------------------------------------

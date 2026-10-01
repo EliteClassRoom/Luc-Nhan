@@ -5,19 +5,18 @@ from __future__ import annotations
 import pytest
 
 from rikugan.core.sanitize import (
-    strip_injection_markers,
-    strip_lone_surrogates,
-    sanitize_messages_for_provider,
-    sanitize_mcp_result,
-    sanitize_tool_result,
-    sanitize_binary_context,
-    sanitize_memory,
-    sanitize_skill_body,
     quote_untrusted,
+    sanitize_binary_context,
+    sanitize_mcp_result,
+    sanitize_memory,
+    sanitize_messages_for_provider,
+    sanitize_skill_body,
+    sanitize_tool_result,
+    strip_injection_markers,
     strip_iocs,
+    strip_lone_surrogates,
 )
 from rikugan.core.types import Message, Role, ToolResult
-
 
 # -----------------------------------------------------------------------
 # ANTHROPIC_MAGIC_STRING — the primary anti-LLM DoS vector

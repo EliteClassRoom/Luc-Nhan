@@ -162,10 +162,11 @@ with Database.open(hooks=[hook]) as db:
 2. search_functions for small frequently-called functions → decode stub candidates
 3. xrefs_to(decode_func) → all call sites
 4. decompile_function(caller) → trace arguments to find encrypted data + key
-5. If the stub is self-contained (no API calls, no branches leaving the
-   proposed range) → emulate_code / resolve_emulated_string over the
-   stub with explicit registers and memory_ranges
-6. Otherwise → execute_python → reimplement decode logic, compute plaintext
+5. Without external API dependencies → emulate_code / resolve_emulated_string
+   with an initialized range or a verified whole-function ABI; declare helper
+   code_ranges and provide known runtime bytes through memory_buffers
+6. Otherwise → approved execute_python reimplementation for unavailable state
+   or API models, not merely an internal helper or unknown output offset
 7. set_comment at each call site → "decrypted: <plaintext>"
 8. rename_function(decode_func, "decrypt_string")
 ```
@@ -193,6 +194,17 @@ resolve_emulated_string(
   memory_ranges=[{"address": 0x401300, "size": 32}, {"address": 0x402100, "size": 64}],
 )
 ```
+
+Range mode requires non-empty registers and preserves a supplied SP; stop
+before `ret` unless the slice already has a valid return frame. Whole-function
+mode requires `execution_mode="function"` and a verified `calling_convention`;
+pass arguments in declaration order and `registers={}` when no extra state is
+needed. The exclusive stop address becomes the synthetic return sentinel.
+
+For stack output, capture with a signed `stack_offset` relative to initial SP
+(or use `output_stack_offset` in the string shortcut). If the output location
+is unknown, `collect_strings=True` searches changed bytes; it does not guess
+unavailable runtime state or guarantee that a candidate is plaintext.
 
 ## Troubleshooting
 

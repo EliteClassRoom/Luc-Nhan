@@ -134,6 +134,32 @@ def get_current_address() -> int | None:
     return None
 
 
+def resolve_symbol(name: str) -> int | None:
+    """Return the address of a symbol name, or None when it is unknown.
+
+    Resolution is lazy so host-agnostic callers (e.g. ``parse_addr``) can
+    accept a symbol name for an address parameter without importing any
+    ``ida_*`` module outside an IDA host.
+    """
+    if is_ida():
+        try:
+            ida_name = importlib.import_module("ida_name")
+            idc = importlib.import_module("idc")
+            bad = 0xFFFFFFFFFFFFFFFF
+            try:
+                bad = int(idc.BADADDR)
+            except (AttributeError, TypeError, ValueError):
+                pass
+            ea = ida_name.get_name_ea(bad, name)
+        except Exception:
+            return None
+        if ea is not None and int(ea) != bad:
+            return int(ea)
+        return None
+
+    return None
+
+
 def navigate_to(address: int) -> bool:
     """Navigate UI to an address when the host supports it.
 

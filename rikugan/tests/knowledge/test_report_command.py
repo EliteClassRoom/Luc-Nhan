@@ -13,17 +13,15 @@ No Qt UI, no real LLM, no filesystem writer.
 from __future__ import annotations
 
 import queue
+import re as _re
 import tempfile
 import unittest
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
-import re as _re
-
 
 from rikugan.agent.loop_commands import _handle_report_command
 from rikugan.agent.turn import TurnEvent, TurnEventType
 from rikugan.core.config import RikuganConfig
-from rikugan.memory.ingest import ingest_save_memory
 from rikugan.memory.report import ReportSaveResult, build_report_context
 from rikugan.memory.schema import KnowledgeMemory
 from rikugan.state.session import SessionState
@@ -44,18 +42,26 @@ class _FakeLoop:
 
 
 def _seed_verified_memory(store, paths) -> KnowledgeMemory:
-    """Insert one verified memory so ``build_report_context`` is non-empty."""
-    ingest_save_memory(
-        store,
-        paths,
-        fact="Uses RC4 keystream at 0x401000 for beacon encryption",
-        category="crypto",
-    )
-    mem = store.list_memories()[0]
-    verified = KnowledgeMemory(**{**mem.__dict__, "verified": True})
-    store.upsert_memory(verified)
-    return verified
+    """Insert one verified hypothesis so ``build_report_context`` is non-empty.
 
+    The verified-only report filter requires the seeded memory to be a
+    verified hypothesis; earlier revisions of this helper produced a
+    verified fact which the new filter rejects.
+    """
+    mem = KnowledgeMemory(
+        id="mem:explore:hypothesis:0x401000:abcd",
+        binary_id=paths.binary_id,
+        type="hypothesis",
+        title="RC4 keystream",
+        content="Uses RC4 keystream at 0x401000 for beacon encryption",
+        tags=["crypto", "exploration"],
+        status="verified",
+        verdict_claim="Confirmed via decompile and xref walk.",
+        verification_citations=["function:rc4_ksa", "address:0x401000"],
+        verified=True,
+    )
+    store.upsert_memory(mem)
+    return mem
 
 class TestReportCommandEventSequence(unittest.TestCase):
     def setUp(self) -> None:
@@ -171,7 +177,7 @@ class TestReportCommandEventSequence(unittest.TestCase):
         self.assertEqual(types[2], TurnEventType.TEXT_DONE)
         self.assertIn("Report saved", events[2].text)
         save_mock.assert_called_once()
-        args, kwargs = save_mock.call_args
+        _args, kwargs = save_mock.call_args
         self.assertEqual(kwargs.get("scope"), "full")
 
     def test_no_findings_emits_skip_message_no_draft(self) -> None:
@@ -253,6 +259,79 @@ class TestReportCommandEventSequence(unittest.TestCase):
             [m.role for m in seen_context],
             [Role.USER, Role.ASSISTANT],
         )
+
+    def test_synthesize_receives_empty_evidence_without_tools(self) -> None:
+        """A loop without a tool registry yields empty evidence + binary_info.
+
+        ``_FakeLoop`` has no ``.tools`` attribute; the handler must
+        tolerate that (``getattr(loop, "tools", None)``) and still
+        generate the report with ``evidence=[]`` / ``binary_info=""``.
+        The ``full`` scope enters the evidence-collection branch, so
+        the missing-registry path is genuinely exercised (an
+        ``executive`` scope would short-circuit before the tools path).
+        """
+        from rikugan.memory.report import ReportSaveResult
+
+        # The shared seed (crypto tag) does not populate the executive
+        # template, so add an ioc-tagged verified hypothesis to make
+        # the full scope non-empty and reach synthesize_report.
+        self.store.upsert_memory(
+            KnowledgeMemory(
+                id="mem:explore:hypothesis:ioc:ef01",
+                binary_id=self.paths.binary_id,
+                type="hypothesis",
+                title="C2 domain",
+                content="Beacons to c2.example.com",
+                tags=["ioc"],
+                status="verified",
+                verdict_claim="Confirmed via pcap.",
+                verification_citations=["address:0x402000"],
+                verified=True,
+            )
+        )
+        loop = self._build_loop()
+        seen: dict = {}
+
+        def fake_synth(*_args, **kwargs):
+            seen.update(kwargs)
+            return (self._context_for("full"), "# Draft\n\nverified body")
+
+        def fake_save(*_args, **_kwargs):
+            return ReportSaveResult(
+                file_path="/tmp/saved-report.md",
+                ingested=True,
+                ingest_error="",
+            )
+
+        patches = [
+            patch(
+                "rikugan.agent.loop_commands._open_knowledge_store",
+                return_value=(self.store, self.paths, None),
+            ),
+            patch(
+                "rikugan.memory.report.build_report_context",
+                side_effect=self._context_for,
+            ),
+            patch(
+                "rikugan.memory.report.synthesize_report",
+                side_effect=fake_synth,
+            ),
+            patch(
+                "rikugan.memory.report.save_report",
+                side_effect=fake_save,
+            ),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            gen = _handle_report_command(loop, "full")
+            self._drive(gen, loop, "Write report")
+        finally:
+            for p in patches:
+                p.stop()
+
+        self.assertEqual(seen.get("evidence"), [])
+        self.assertEqual(seen.get("binary_info"), "")
 
 
 if __name__ == "__main__":
@@ -340,12 +419,12 @@ class TestReportDraftFencing(unittest.TestCase):
         distinct UserQuestionWidget beneath the draft.
         """
         try:
-            from rikugan.ui.qt_compat import QApplication
             from rikugan.ui.chat_view import ChatView
             from rikugan.ui.message_widgets import (
                 AssistantMessageWidget,
                 UserQuestionWidget,
             )
+            from rikugan.ui.qt_compat import QApplication
         except ImportError:
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])
@@ -450,9 +529,9 @@ class TestReportDraftFencing(unittest.TestCase):
         fails before the user notices.
         """
         try:
-            from rikugan.ui.qt_compat import QApplication
             from rikugan.ui.chat_view import ChatView
             from rikugan.ui.message_widgets import AssistantMessageWidget
+            from rikugan.ui.qt_compat import QApplication
         except ImportError:
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])
@@ -583,9 +662,9 @@ class TestReportDraftFencing(unittest.TestCase):
         the visible body to a heading + raw source-dump blob.
         """
         try:
-            from rikugan.ui.qt_compat import QApplication
             from rikugan.ui.chat_view import ChatView
             from rikugan.ui.message_widgets import AssistantMessageWidget
+            from rikugan.ui.qt_compat import QApplication
         except ImportError:
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])
@@ -643,7 +722,7 @@ class TestReportDraftFencing(unittest.TestCase):
         # never gets a closing fence in the visible window.
         import re as _re
         pre_opens = len(_re.findall(r"white-space:pre-wrap", html))
-        pre_closes = len(_re.findall(r"</div>", html))
+        len(_re.findall(r"</div>", html))
         # Sanity: there IS a pre block OR there isn't one (we may have
         # dropped the spanning fence entirely). Either is acceptable,
         # but a NESTED one without a sibling trailing <div> is not.

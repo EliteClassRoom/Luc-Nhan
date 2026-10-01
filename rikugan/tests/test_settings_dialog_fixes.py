@@ -2188,5 +2188,54 @@ class TestAnthropicRawPartsPreservation(unittest.TestCase):
         self.assertEqual(formatted[0]["content"][0], {"type": "text", "text": "hello"})
 
 
+class TestRefreshKeepsUnlistedModel(unittest.TestCase):
+    """Clicking Refresh must not rewrite the configured model.
+
+    ``/models`` listings lag behind what an account can actually run (new
+    previews, Token-Plan-only ids, account-scoped rollouts), so a model that
+    works today is routinely absent from the fetched list.  The Refresh
+    handler used to jump to index 0 in that case, silently switching the user
+    to a different model.
+    """
+
+    def _make_dialog(self, model: str):
+        from rikugan.core.config import RikuganConfig
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        _ensure_qapplication()
+        config = RikuganConfig()
+        config.provider.name = "minimax-token-plan"
+        config.provider.model = model
+        return SettingsDialog(config), config
+
+    def _refresh_with(self, dlg, advertised_ids: list[str]) -> str:
+        from rikugan.core.types import ModelInfo
+
+        dlg._set_manual_model_text(dlg._config.provider.model)
+        dlg._on_models_ready([ModelInfo(id=i, name=i, provider="minimax-token-plan") for i in advertised_ids])
+        return dlg._get_selected_model_id()
+
+    def test_refresh_keeps_model_missing_from_server_list(self) -> None:
+        dlg, _cfg = self._make_dialog("MiniMax-M3.1-Flash-Preview")
+        try:
+            selected = self._refresh_with(
+                dlg,
+                ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2"],
+            )
+            self.assertEqual(selected, "MiniMax-M3.1-Flash-Preview")
+        finally:
+            dlg.done(0)
+
+    def test_refresh_still_selects_advertised_model(self) -> None:
+        """The fix must not break the normal case: a model present in the
+        fetched list is still matched and selected by id."""
+        dlg, _cfg = self._make_dialog("MiniMax-M2.7")
+        try:
+            selected = self._refresh_with(dlg, ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5"])
+            self.assertEqual(selected, "MiniMax-M2.7")
+        finally:
+            dlg.done(0)
+
+
 if __name__ == "__main__":
     unittest.main()

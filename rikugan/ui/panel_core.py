@@ -327,6 +327,15 @@ class RikuganPanelCore(QWidget):
         self._pending_token_display: int | None = None
         self._token_display_timer: QTimer | None = None
         self._last_token_display_value: int = -1
+        # Startup auto-restore flags (Task 1 follow-up — see
+        # ``_arm_startup_restore_if_idle``).  ``_startup_restore_pending``
+        # is set by the deferred QTimer slot at the end of ``_build_ui``
+        # and consumed by ``_apply_history_list_result``; the chained
+        # load sets ``_startup_restore_load_pending`` and is consumed by
+        # ``_apply_history_loaded``.  Both are cleared by
+        # ``_invalidate_history`` on IDB change / shutdown.
+        self._startup_restore_pending: bool = False
+        self._startup_restore_load_pending: bool = False
         _early_log("panel_core:post_controller_fields:done")
 
         _early_log("panel_core:oauth_consent:entry")
@@ -672,10 +681,31 @@ class RikuganPanelCore(QWidget):
                 log_debug(f"UI hook setup failed: {e}")
                 self._ui_hooks = None
         _early_log("panel_core:build_ui:ui_hooks:done")
-        # No auto-restore — the user opens History explicitly when
-        # they want a previous chat.  (Re-introducing auto-restore here
-        # was a merge regression from commit 90f6d4d; see
-        # TestStartupNoRestore.)
+        # Startup auto-restore: on every fresh panel-open the user lands
+        # on the most recent saved session for the current IDB instead
+        # of a blank ``New Chat`` draft.  The probe is deferred one
+        # event-loop turn via ``QTimer.singleShot(0, ...)`` so the
+        # UI is fully built (draft tab exists, poll timer can run,
+        # history poll QTimer is safe to spin up) before we submit a
+        # background worker.  All UI work stays off IDA's startup path.
+        #
+        # IDB-scoping is inherited from the existing list worker
+        # (``_ctrl.list_history_sessions`` filters through
+        # ``_matches_current_idb``); a session belonging to a different
+        # binary can never be opened by this probe.  Failure paths
+        # (no sessions, manifest corrupt, save-flush timeout, load
+        # failure) are silent: the existing ``startup_load`` /
+        # ``_startup_restore_pending`` branches in
+        # ``_apply_history_list_result`` / ``_apply_history_loaded``
+        # drop the flags and leave the blank draft tab intact without
+        # surfacing any error copy on the (hidden) History panel.
+        #
+        # User-initiated History opens during the in-flight probe are
+        # detected via ``_history_panel.isVisible()`` in both the list
+        # and load apply paths and yield to the user's intent instead
+        # of silently swapping the draft for a session they did not
+        # pick.
+        QTimer.singleShot(0, self._arm_startup_restore_if_idle)
         self._install_shortcuts()
         # Pre-warm markdown-it renderer on a background thread so the
         # first user-facing ``_render()`` is a warm-cache hit, not a
@@ -1049,6 +1079,7 @@ class RikuganPanelCore(QWidget):
         # renders it on the deferred restore path.
         messages = list(session.messages) if session and session.messages else []
         self._pending_restore_messages[tab_id] = messages
+        log_debug(f"HIST-TRACE rebuild: tab={tab_id} msgs={len(messages)}")  # TEMP-DIAG
         # Tear down the old (empty) ChatView if it exists.  ``shutdown``
         # bumps its restore generation so any late restore signal drops.
         if old_view is not None:
@@ -1298,6 +1329,8 @@ class RikuganPanelCore(QWidget):
         self._ctrl.switch_tab(tab_id)
         self._restore_messages_if_needed(tab_id)
         self._update_token_display()
+        # Rebind the Knowledge tab to the switched-to session's binary.
+        self._on_knowledge_event_refresh("tab_changed")
 
     def _tab_id_at_index(self, index: int) -> str | None:
         """Find the tab_id for a given tab index via the stored property (O(1))."""
@@ -1616,6 +1649,8 @@ class RikuganPanelCore(QWidget):
         # switch.  No auto-restore — the user opens History
         # explicitly when they want a previous chat.
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
+        # Rebind the Knowledge tab to the newly opened binary's store.
+        self._on_knowledge_event_refresh("database_changed")
 
     def _on_submit(self, text: str) -> None:
         if not text or self._is_shutdown:
@@ -1823,6 +1858,7 @@ class RikuganPanelCore(QWidget):
             TurnEventType.RESEARCH_NOTE_SAVED,
             TurnEventType.EXPLORATION_FINDING,
             TurnEventType.MEMORY_SAVED,
+            TurnEventType.HYPOTHESIS_VERDICT,
         ):
             self._on_knowledge_event_refresh(event.type.value)
         if event.usage:
@@ -1975,6 +2011,7 @@ class RikuganPanelCore(QWidget):
         if self._history_panel is None:
             return
         visible = not self._history_panel.isVisible()
+        log_debug(f"HIST-TRACE toggle: panel_visible={not visible}")  # TEMP-DIAG
         self._show_right_panel("history" if visible else None)
 
     def _show_right_panel(self, name: Literal["history", "mutation"] | None) -> None:
@@ -2081,6 +2118,7 @@ class RikuganPanelCore(QWidget):
             return
         # Single-flight: at most one history request in flight at a time.
         if self._history_pending:
+            log_debug("HIST-TRACE load: dropped — pending already True")  # TEMP-DIAG
             return
         # Stash the in-flight load's target session id so a FAILED
         # result (which does NOT carry the id back) can copy it into
@@ -2158,6 +2196,7 @@ class RikuganPanelCore(QWidget):
         if existing_tab_id is not None:
             self._focus_tab(existing_tab_id)
             return
+        log_debug(f"HIST-TRACE open-request: sid={session_id}")  # TEMP-DIAG
         self._start_history_load(session_id)
 
     def _history_load_worker(
@@ -2242,6 +2281,7 @@ class RikuganPanelCore(QWidget):
             # A list/load is already queued or running.  Dropping the
             # second submit keeps the executor serialized and prevents
             # a burst of retry clicks from queueing redundant scans.
+            log_debug("HIST-TRACE list: dropped — pending already True")  # TEMP-DIAG
             return
         # A new request reopens the worker path.  ``_invalidate_history``
         # already installed a fresh, unset ``_history_closing`` Event for
@@ -2254,6 +2294,7 @@ class RikuganPanelCore(QWidget):
         # in-flight result from a prior generation is discarded by
         # ``_drain_history_results``.
         self._history_generation += 1
+        log_debug(f"HIST-TRACE list: submit gen={self._history_generation}")  # TEMP-DIAG
         scope = self._ctrl.capture_history_scope(self._history_generation)
         # Lazy executor: created on first open, dropped on
         # ``_invalidate_history``.  Never reuse ``_SAVE_EXECUTOR``.
@@ -2308,6 +2349,7 @@ class RikuganPanelCore(QWidget):
         try:
             SessionHistory(self._ctrl.config).flush_saves(timeout=10.0)
             entries = self._ctrl.list_history_sessions(scope)
+            log_debug(f"HIST-TRACE list-worker: gen={scope.generation} entries={len(entries)}")  # TEMP-DIAG
             result = HistoryListResult(
                 HistoryRequestStatus.LISTED,
                 scope,
@@ -2349,6 +2391,74 @@ class RikuganPanelCore(QWidget):
         # Event's cleared state.
         if not closing_event.is_set():
             self._history_result_queue.put(result)
+
+    def _arm_startup_restore_if_idle(self) -> None:
+        """Arm the startup auto-restore probe on the Qt main thread.
+
+        Called via ``QTimer.singleShot(0, ...)`` at the end of
+        ``_build_ui`` so the request runs one event-loop turn AFTER
+        the UI is fully constructed.  At that point:
+
+        * the draft tab exists (``_create_tab`` already populated
+          ``_chat_views``),
+        * the ``HistoryPanel`` widget exists (so ``set_loading`` /
+          ``isVisible`` calls are safe — the panel stays hidden
+          until the user opens History),
+        * ``_history_executor`` is None (no prior request), so the
+          submit creates it lazily, and
+        * ``_history_pending`` is False, so the single-flight guard
+          inside ``_start_history_list_request`` is the only barrier.
+
+        IDB-scoping is inherited from the existing list worker: the
+        ``HistoryScope`` captured through ``self._ctrl.capture_history_scope``
+        carries the live ``_idb_path`` / ``_db_instance_id``, and
+        ``_ctrl.list_history_sessions`` filters its result through
+        ``_matches_current_idb`` before returning.  A session belonging
+        to a different binary therefore cannot survive the filter and
+        is never a candidate for the auto-load that ``_apply_history_list_result``
+        triggers.
+
+        Failure paths (no sessions, corrupt manifest, save-flush timeout,
+        load NOT_FOUND / WRONG_IDB / EMPTY / FAILED) are silent: the
+        ``_startup_restore_pending`` / ``_startup_restore_load_pending``
+        branches in ``_apply_history_list_result`` and
+        ``_apply_history_loaded`` consume the flags and return without
+        ever calling ``set_entries`` / ``set_error``, so the user just
+        sees the blank draft tab they would have seen without this
+        probe.
+
+        Invariants preserved:
+        * ``_history_pending`` single-flight: if some other path has
+          already queued a request, the ``_start_history_list_request``
+          call below is a no-op.
+        * Generation counter: the existing
+          ``_start_history_list_request`` bumps ``_history_generation``
+          before submitting, so a later user-initiated History open is
+          on a fresh generation and cannot be confused with this probe.
+        * The History panel stays hidden: this method never calls
+          ``_show_right_panel`` / ``_history_panel.setVisible(True)``.
+        """
+        if self._is_shutdown:
+            return
+        if self._history_panel is None:
+            # ``_build_ui`` did not finish (or a test bypassed it).
+            # Nothing to arm against — the draft tab is also missing
+            # so an auto-load would have nowhere to attach.
+            return
+        if self._history_pending:
+            # Another list/load is in flight (e.g. a user-initiated
+            # History open raced us).  ``_start_history_list_request``
+            # would no-op anyway, but we can also skip the flag set so
+            # a future result is not mis-routed through the startup
+            # branch.
+            return
+        if getattr(self, "_startup_restore_pending", False):
+            # Already armed (e.g. the deferred slot ran twice because
+            # of an early test harness, or an upstream caller wired a
+            # second probe).  Idempotent.
+            return
+        self._startup_restore_pending = True
+        self._start_history_list_request()
 
     def _ensure_history_poll_timer(self) -> None:
         """Create + start the history poll timer if it is not already running.
@@ -2486,11 +2596,26 @@ class RikuganPanelCore(QWidget):
         startup_load = bool(getattr(self, "_startup_restore_load_pending", False))
         if startup_load:
             self._startup_restore_load_pending = False
+            # If the user explicitly opened History between the startup
+            # list request and the load result, defer to them: drop
+            # the loaded session silently (they want to browse rows,
+            # not auto-open one) and submit a fresh list request so
+            # the panel actually shows rows.  ``_history_pending`` was
+            # cleared by the drain before this apply runs, so the
+            # refresh submit is accepted by the single-flight guard.
+            user_showing_history = (
+                self._history_panel is not None and self._history_panel.isVisible()
+            )
+            if user_showing_history:
+                self._start_history_list_request()
+                return
             if result.status is not HistoryRequestStatus.LOADED:
                 return
         status = result.status
+        log_debug(f"HIST-TRACE load-apply: status={status.name}")  # TEMP-DIAG
         if status is HistoryRequestStatus.LOADED:
             attach = self._ctrl.attach_history_session(result)
+            log_debug(f"HIST-TRACE attach: {attach.status.name} tab={attach.tab_id}")  # TEMP-DIAG
             if attach.status is HistoryAttachStatus.OPENED:
                 tab_id = attach.tab_id
                 session = attach.session
@@ -2513,6 +2638,9 @@ class RikuganPanelCore(QWidget):
                 self._rebuild_history_tab(attach.tab_id, attach.session)
             elif attach.status is HistoryAttachStatus.ALREADY_OPEN:
                 self._focus_tab(attach.tab_id)
+            # Rebind the Knowledge tab to the loaded session's binary
+            # (per-binary store model — no per-history snapshot).
+            self._on_knowledge_event_refresh("history_loaded")
             # Any successful attach resolution clears a retained
             # retry-load id (reviewer MEDIUM #2): the user's goal — open
             # the session — is satisfied, so a stale retry-load id
@@ -2577,22 +2705,34 @@ class RikuganPanelCore(QWidget):
         worker.
         """
         status = result.status
+        log_debug(f"HIST-TRACE list-apply: status={status.name} entries={len(result.entries)}")  # TEMP-DIAG
         # Startup auto-restore: a single hidden list request followed by
         # a hidden load for the newest entry. Non-LISTED or empty outcomes
         # clear the flag and suppress the History panel render so the
         # blank draft tab remains the visible default with no error.
         if getattr(self, "_startup_restore_pending", False):
             self._startup_restore_pending = False
-            if status is HistoryRequestStatus.LISTED and result.entries:
-                sorted_entries = sorted(
-                    result.entries,
-                    key=lambda e: e.updated_at,
-                    reverse=True,
-                )
-                self._startup_restore_load_pending = True
-                self._start_history_load(sorted_entries[0].session_id)
+            # If the user explicitly opened History while the startup
+            # probe was in flight, defer to them: render the rows
+            # normally instead of silently swapping the draft tab for
+            # the newest saved session.  The History panel's
+            # ``set_loading`` spinner (set by ``_start_history_list_request``)
+            # is replaced by the real entry list as soon as we reach
+            # ``set_entries`` further down.
+            user_showing_history = (
+                self._history_panel is not None and self._history_panel.isVisible()
+            )
+            if not user_showing_history:
+                if status is HistoryRequestStatus.LISTED and result.entries:
+                    sorted_entries = sorted(
+                        result.entries,
+                        key=lambda e: e.updated_at,
+                        reverse=True,
+                    )
+                    self._startup_restore_load_pending = True
+                    self._start_history_load(sorted_entries[0].session_id)
+                    return
                 return
-            return
         if self._history_panel is None:
             return
         if status == HistoryRequestStatus.LISTED:

@@ -277,7 +277,7 @@ def read_bytes(
 
     _MAX_READ_BYTES = 1024
     ea = parse_addr(address)
-    size = int(size)
+    size = parse_addr(str(size))
     if size > _MAX_READ_BYTES:
         size = _MAX_READ_BYTES
 
@@ -304,17 +304,8 @@ def read_bytes(
 # Helpers + read_global_value ported from the fork; format_global_value /
 # bytes_needed_for_type live in tools.value_format so the formatting logic
 # is shared and tested in one place rather than re-implemented per host.
-
-
-def _resolve_addr_or_name(value: str) -> int:
-    """Resolve *value* as a hex address, falling back to a symbol name."""
-    try:
-        return parse_addr(value)
-    except (TypeError, ValueError):
-        ea = ida_name.get_name_ea(idc.BADADDR, value)
-        if ea == idc.BADADDR:
-            raise ValueError(f"Unknown address or name: {value}") from None
-        return ea
+# ``parse_addr`` itself resolves symbol names (see tools.base), so no local
+# addr-or-name resolver is needed here.
 
 
 def _pointer_size() -> int:
@@ -360,7 +351,7 @@ def read_global_value(
     raw byte ranges without interpretation, use read_bytes instead.
     """
 
-    ea = _resolve_addr_or_name(address)
+    ea = parse_addr(address)
     pointer_size = _pointer_size()
     read_size = bytes_needed_for_type(type_hint, pointer_size, requested_size=size)
     data = _read_raw_bytes(ea, read_size)

@@ -198,7 +198,7 @@ class TestToolsCatalogCache(unittest.TestCase):
     """Phase 2.1 — the tools catalog is cached and invalidated correctly."""
 
     def setUp(self):
-        from rikugan.tools.base import tool, ToolDefinition
+        from rikugan.tools.base import tool
 
         @tool(category="test")
         def example_tool(name: str = "x") -> str:

@@ -1376,9 +1376,9 @@ requires-dist = [
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "mcp", specifier = ">=1.28.0" },
     { name = "openai", specifier = ">=2.0.0" },
-    { name = "portalocker", specifier = ">=3.0.0,<4" },
-    { name = "requests", specifier = ">=2.31.0" },
-    { name = "tomli", specifier = ">=2.4.0" },
+    { name = "portalocker", specifier = ">=3.2.0,<4" },
+    { name = "requests", specifier = ">=2.34.2" },
+    { name = "tomli", specifier = ">=2.4.1" },
     { name = "unicorn", specifier = ">=2.1.0,<3" },
 ]
 
@@ -1389,7 +1389,7 @@ dev = [
     { name = "pyside6", specifier = ">=6.11.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=5.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff", specifier = ">=0.6" },
 ]
 

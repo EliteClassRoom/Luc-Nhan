@@ -22,13 +22,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)
 
-from tests.mocks.ida_mock import install_ida_mocks  # noqa: E402
+from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig  # noqa: E402
-from rikugan.core.types import Message, Role, ToolCall, ToolResult  # noqa: E402
-
+from rikugan.core.config import RikuganConfig
+from rikugan.core.types import ToolCall
 
 HIDDEN_TOOLS = ("list_strings", "search_strings")
 
@@ -52,6 +51,7 @@ def _make_loop(tools: list[dict[str, Any]], hide_strings: bool):
     tools_obj = MagicMock()
     tools_obj.to_provider_format = MagicMock(return_value=list(tools))
     loop.tools = tools_obj
+    loop._unattended = False  # read surface of _build_tools_schema
     return loop
 
 
@@ -116,6 +116,7 @@ class TestHideStringsDirectCallGuard(unittest.TestCase):
         cfg = RikuganConfig()
         cfg.hide_strings = hide_strings
         loop.config = cfg
+        loop._unattended = False  # read surface of _execute_single_tool
         return loop
 
     def _drain(self, loop, tc: ToolCall):
@@ -126,6 +127,8 @@ class TestHideStringsDirectCallGuard(unittest.TestCase):
                 events.append(next(gen))
         except StopIteration as stop:
             return events, stop.value
+
+
 class TestOrchestraSchemaFilter(unittest.TestCase):
     def test_orchestra_filters_hidden_string_tools(self) -> None:
         from rikugan.agent.orchestra.main_agent import OrchestraMainAgent

@@ -165,10 +165,20 @@ class SessionState:
             if len(self.messages) <= keep_last_n + 1:
                 return 0
 
-            # Keep messages[0] (system prompt / first user message) + tail
+            # Keep messages[0] (system prompt / first user message) + tail.
+            # Advance the tail start past any TOOL message whose assistant
+            # tool_call partner falls outside the tail — otherwise the
+            # provider rejects the orphaned tool result (OpenAI/Anthropic
+            # both 400). The walk never reaches the head: tail_start >= 1.
+            tail_start = max(1, len(self.messages) - keep_last_n)
+            while (
+                tail_start < len(self.messages)
+                and self.messages[tail_start].role == Role.TOOL
+            ):
+                tail_start += 1
             head = self.messages[:1]
-            tail = self.messages[-keep_last_n:]
-            removed_msgs = self.messages[1:-keep_last_n]
+            tail = self.messages[tail_start:]
+            removed_msgs = self.messages[1:tail_start]
             removed = len(removed_msgs)
             for m in removed_msgs:
                 self._token_estimate -= _estimate_tokens(m)

@@ -5,21 +5,45 @@ from __future__ import annotations
 import functools
 import inspect
 import traceback
+import types
 import typing
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, get_type_hints
 
-from ..core.errors import ToolError
+from ..core.errors import ToolError, ToolValidationError
+from ..core.host import resolve_symbol
 from ..core.logging import log_error as _log_error
 from ..core.logging import log_trace
 
 
 def parse_addr(value: Any) -> int:
-    """Parse an address that may arrive as hex string or int from the LLM."""
+    """Parse an address that may arrive as int, hex string, or symbol name.
+
+    The model frequently passes a function name (e.g. ``init_config_and_beacon``)
+    where a tool documents an address, so a bare ``int(value, 0)`` failed the
+    whole call. Resolution is delegated to the host seam
+    (``core.host.resolve_symbol``), which keeps every ``parse_addr`` caller —
+    the ~40 address-taking tools, the mutation pre-state capture and the
+    microcode target parsing — working without touching each call site.
+    """
     if isinstance(value, int):
         return value
-    return int(value, 0)
+
+    text = value if isinstance(value, str) else str(value)
+    try:
+        return int(text, 0)
+    except ValueError:
+        pass
+
+    # Decimal without a base prefix: ``int(text, 0)`` rejects "1234".
+    if text.isdigit():
+        return int(text)
+
+    ea = resolve_symbol(text)
+    if ea is not None:
+        return ea
+    raise ValueError(f"Unknown address or name: {value}")
 
 
 # Python type -> JSON Schema type
@@ -52,9 +76,15 @@ class ToolDefinition:
     category: str = "general"
     requires_decompiler: bool = False
     mutating: bool = False
+    requires_approval: bool = False
     timeout: float | None = None  # per-tool timeout in seconds (None = use default)
     handler: Callable | None = field(default=None, repr=False)
     requires: list[str] = field(default_factory=list)
+    # True  -> the registry wraps the handler in the host dispatcher.
+    # False -> the handler runs unwrapped and dispatches its own host
+    #          sections via ``rikugan.tools.execution.run_on_host_thread``
+    #          (used by emulation, whose CPU phase must stay on the worker).
+    main_thread: bool = True
 
     def to_json_schema(self) -> dict[str, Any]:
         properties: dict[str, Any] = {}
@@ -115,9 +145,11 @@ def _resolve_type(annotation: Any) -> tuple:
         base = real_args[0] if real_args else str
         return _resolve_type(base)
 
-    # Handle Optional
-    if origin is typing.Union and len(args) == 2 and type(None) in args:
-        inner = args[0] if args[1] is type(None) else args[1]  # type: ignore[misc]
+    # Handle Optional — typing.Optional[X] and the PEP 604 ``X | None``
+    # spelling alike (the latter has no ``__origin__``; typing.get_origin
+    # reports types.UnionType).
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType) and type(None) in args:
+        inner = next(a for a in args if a is not type(None))  # type: ignore[misc]
         json_type, extra, _ = _resolve_type(inner)
         return json_type, extra, inner
 
@@ -161,7 +193,7 @@ def _build_parameters(func: Callable) -> list[ParameterSchema]:
 
         # Determine required and default
         has_default = param.default is not inspect.Parameter.empty
-        is_optional = getattr(annotation, "__origin__", None) is typing.Union and type(None) in getattr(
+        is_optional = typing.get_origin(annotation) in (typing.Union, types.UnionType) and type(None) in getattr(
             annotation, "__args__", ()
         )
 
@@ -185,8 +217,10 @@ def tool(
     category: str = "general",
     requires_decompiler: bool = False,
     mutating: bool = False,
+    requires_approval: bool = False,
     timeout: float | None = None,
     requires: list[str] | None = None,
+    main_thread: bool = True,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator to register a function as an agent tool.
 
@@ -231,6 +265,15 @@ def tool(
         if requires_decompiler and "hexrays" not in effective_requires:
             effective_requires.append("hexrays")
 
+        # Capture the signature once so the wrapper can reject
+        # hallucinated/extra arguments (e.g. the model passing ``count`` to
+        # ``read_function_disassembly``, which only takes ``address``) with an
+        # actionable message naming the valid parameters — instead of a bare
+        # TypeError that the model retries unchanged in a loop.
+        func_sig = inspect.signature(func)
+        valid_params = [p for p in func_sig.parameters if p not in ("self", "cls")]
+        accepts_str = ", ".join(valid_params) or "(no parameters)"
+
         defn = ToolDefinition(
             name=tool_name,
             description=tool_desc,
@@ -238,14 +281,26 @@ def tool(
             category=category,
             requires_decompiler=requires_decompiler,
             mutating=mutating,
+            requires_approval=requires_approval,
             timeout=timeout,
             handler=func,
             requires=effective_requires,
+            main_thread=main_thread,
         )
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             log_trace(f"tool:{tool_name} CALL args={kwargs}")
+            # Validate arguments against the signature before calling func.
+            # Signature.bind() raises TypeError only for argument-count / name
+            # mismatches — never for TypeErrors raised inside the body — so this
+            # cleanly separates "model sent bad args" from "tool raised".
+            try:
+                func_sig.bind(*args, **kwargs)
+            except TypeError as e:
+                msg = f"Invalid arguments for {tool_name}: {e} This tool accepts: {accepts_str}."
+                _log_error(f"tool:{tool_name} EXCEPTION: {msg}")
+                raise ToolValidationError(msg, tool_name=tool_name) from e
             try:
                 result = func(*args, **kwargs)
                 log_trace(f"tool:{tool_name} OK result_len={len(str(result))}")

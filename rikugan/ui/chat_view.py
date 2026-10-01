@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import time
 from dataclasses import dataclass, field
 
@@ -67,11 +68,25 @@ _RESTORE_CHUNK_SIZE = 20
 # ``RestoreWorker(max_rendered=...)``; ``None`` disables the cap (legacy).
 _RESTORE_DEFAULT_MAX_RENDERED = 100
 
+# RestoreWorker payload kinds (strings, kept short to avoid queue overhead).
+# The drain callback in ``ChatView._drain_restore_queue`` dispatches on these.
+_RESTORE_KIND_CHUNK = "chunk"
+_RESTORE_KIND_FINISHED = "finished"
+
+# Drain cadence for ``ChatView._drain_restore_queue``.  Mirrors the
+# agent-event poll (50ms) and the history executor poll — small enough to
+# keep first-paint latency tight, large enough that the timer is not a
+# busy-loop on an idle session.
+_RESTORE_POLL_INTERVAL_MS = 50
+
+# How many queue items the drain processes per tick.  Bounds the per-tick
+# main-thread cost so a flood of late chunks cannot freeze the UI.
+_RESTORE_DRAIN_BATCH = 30
+
 # Collapse consecutive tool runs once they reach this many calls.
 # A single tool call is shown inline with its name visible;
 # only 2+ consecutive calls get grouped into a collapsible widget.
 _TOOL_GROUP_MIN_CALLS = 2
-
 
 def _is_hidden_system_user_message(content: str) -> bool:
     """Internal system hints are persisted as user messages but not shown in UI."""
@@ -184,6 +199,23 @@ def _estimate_user_height(text: str) -> int:
     # ~16px per wrapped line
     return max(40, min(600, 32 + lines * 16))
 
+def _plan_step_done_status(outcome: str) -> str:
+    """Map ``plan_step_done`` outcome text to the ``PlanStepWidget`` status.
+
+    ``plan_mode._execute_step`` emits ``plan_step_done`` with ``text`` set
+    to one of ``"completed"``, ``"turn_limit"``, or ``"error"``. The
+    widget renderer needs the matching PlanStepWidget status names so
+    a step that exhausted its per-step turn budget gets a distinct
+    icon/colour instead of collapsing into the "done" state.
+    """
+    if outcome == "turn_limit":
+        return "turn_limit"
+    if outcome == "error":
+        return "error"
+    # ``completed`` (default) and any unknown outcome render as the
+    # regular "done" state.
+    return "done"
+
 
 class MessagePlaceholder(QFrame):
     """Lightweight sized spacer used during async restore.
@@ -209,23 +241,36 @@ class MessagePlaceholder(QFrame):
 
 
 class RestoreWorker(QThread):
-    """Background thread that builds MessageSpec objects.
+    """Background thread that builds ``MessageSpec`` objects off the UI thread.
 
-    Walks the input ``list[Message]`` and emits a single
-    ``chunk_ready(_RenderedChunk)`` signal per :data:`_RESTORE_CHUNK_SIZE`
-    messages.  When the loop is exhausted, ``finished_ok`` is emitted
-    so the main thread can finalise the restore (apply viewport
-    detection, scrollbar geometry, etc.).
+    ``run()`` walks the input ``list[Message]`` and pushes
+    ``(kind, payload)`` tuples onto ``self.queue``:
 
-    Cancellation: :func:`cancel`` sets a stop flag the worker checks at
-    the top of each iteration.  Late signals from a cancelled worker
-    are ignored by the main thread via a generation counter.
+      * ``("chunk", _RenderedChunk)`` — every :data:`_RESTORE_CHUNK_SIZE`
+        messages, and again for any remainder at the end of the loop.
+      * ``("finished", None)`` — emitted exactly once when ``run()``
+        returns normally, so the main-thread drain can finalise the
+        restore (reapply viewport, scroll to bottom, etc.).
+
+    The :class:`ChatView` polls ``self.queue`` from a ``QTimer`` and
+    dispatches each tuple on the main thread.  **No Qt signals** cross
+    the thread boundary — see ``AGENTS.md`` §1 (Shiboken UAF on
+    Python ≥ 3.11).  The queue + QTimer shape mirrors the
+    ``RikuganPanelCore._drain_history_results`` history executor.
+
+    Cancellation: :meth:`cancel` sets a stop flag the worker checks
+    at the top of each iteration.  A cancelled worker does NOT
+    enqueue ``"finished"`` — the main thread's safety-net cleanup
+    in ``_on_worker_finished`` handles the in-flight restore state
+    in that case (mirroring the legacy ``finished_ok`` semantics).
     """
 
-    chunk_ready = Signal(object)  # _RenderedChunk
-    finished_ok = Signal()
-
-    def __init__(self, messages: list[Message], parent=None, max_rendered: int | None = _RESTORE_DEFAULT_MAX_RENDERED):
+    def __init__(
+        self,
+        messages: list[Message],
+        parent=None,
+        max_rendered: int | None = _RESTORE_DEFAULT_MAX_RENDERED,
+    ):
         super().__init__(parent)
         self._messages = messages
         self._stop_requested = False
@@ -235,6 +280,12 @@ class RestoreWorker(QThread):
         # scrollbar still spans the full conversation height. ``None``
         # disables the cap (legacy / opt-in callers).
         self._max_rendered = max_rendered
+        # Thread-safe handoff to the main-thread drain.  Unbounded
+        # (``maxsize=0``) — the worker is rate-limited by the
+        # chunk-size boundary and the main-thread drain is rate-limited
+        # by the QTimer poll interval.  A bounded queue would block
+        # ``put`` and stall the worker for no real benefit.
+        self.queue: queue.Queue = queue.Queue()
 
     def cancel(self) -> None:
         """Request the worker to stop at the next safe point."""
@@ -256,42 +307,52 @@ class RestoreWorker(QThread):
         cutoff = 0
         if self._max_rendered is not None and self._max_rendered >= 0:
             cutoff = max(0, n - self._max_rendered)
-        while i < n:
-            if self._stop_requested:
-                return
-            if i < cutoff:
-                # Skip: advance past this message and any TOOL it would
-                # consume. Pairing rule mirrors _build_spec so the cutoff
-                # stays aligned with render units.
-                consumed = 0
+        try:
+            while i < n:
+                if self._stop_requested:
+                    return
+                if i < cutoff:
+                    # Skip: advance past this message and any TOOL it would
+                    # consume. Pairing rule mirrors _build_spec so the cutoff
+                    # stays aligned with render units.
+                    consumed = 0
+                    msg = self._messages[i]
+                    if (
+                        msg.role == Role.ASSISTANT
+                        and msg.tool_calls
+                        and i + 1 < n
+                        and self._messages[i + 1].role == Role.TOOL
+                    ):
+                        consumed = 1
+                    i += 1 + consumed
+                    continue
                 msg = self._messages[i]
-                if (
-                    msg.role == Role.ASSISTANT
-                    and msg.tool_calls
-                    and i + 1 < n
-                    and self._messages[i + 1].role == Role.TOOL
-                ):
-                    consumed = 1
+                next_msg = self._messages[i + 1] if i + 1 < n else None
+                spec, consumed = self._build_spec(msg, i, next_msg)
+                if spec is not None:
+                    chunk.specs.append(spec)
+                    if len(chunk.specs) >= _RESTORE_CHUNK_SIZE:
+                        self.queue.put((_RESTORE_KIND_CHUNK, chunk))
+                        chunk = _RenderedChunk()
+                # Advance past any consumed follow-up message.  For
+                # ASSISTANT+TOOL pairs the TOOL is consumed so its
+                # placeholder (which ``restore_from_messages_async`` also
+                # skips) is never expected by the main thread.
                 i += 1 + consumed
-                continue
-            msg = self._messages[i]
-            next_msg = self._messages[i + 1] if i + 1 < n else None
-            spec, consumed = self._build_spec(msg, i, next_msg)
-            if spec is not None:
-                chunk.specs.append(spec)
-                if len(chunk.specs) >= _RESTORE_CHUNK_SIZE:
-                    self.chunk_ready.emit(chunk)
-                    chunk = _RenderedChunk()
-            # Advance past any consumed follow-up message.  For
-            # ASSISTANT+TOOL pairs the TOOL is consumed so its
-            # placeholder (which ``restore_from_messages_async`` also
-            # skips) is never expected by the main thread.
-            i += 1 + consumed
-        # Flush remainder
-        if chunk.specs and not self._stop_requested:
-            self.chunk_ready.emit(chunk)
-        if not self._stop_requested:
-            self.finished_ok.emit()
+            # Flush remainder (only if not cancelled — otherwise we don't
+            # want a half-built chunk racing the cancel signal into the
+            # main-thread drain).
+            if chunk.specs and not self._stop_requested:
+                self.queue.put((_RESTORE_KIND_CHUNK, chunk))
+        finally:
+            # Always push the finished sentinel on normal completion so
+            # the main-thread drain can finalise.  A cancelled worker
+            # reaches ``return`` above before this point and skips the
+            # sentinel — ``_on_worker_finished`` is the cleanup path.
+            if not self._stop_requested:
+                self.queue.put((_RESTORE_KIND_FINISHED, None))
+
+
 
     @staticmethod
     def _build_spec(
@@ -541,9 +602,23 @@ class ChatView(QScrollArea):
         self._restore_generation: int = 0
         self._restore_worker: RestoreWorker | None = None
         self._placeholders: dict[str, MessagePlaceholder] = {}
+        # Drain timer for the active ``RestoreWorker`` queue — replaces
+        # the cross-thread ``chunk_ready`` / ``finished_ok`` Qt signals
+        # that triggered the Shiboken UAF (see ``AGENTS.md`` §1).  Mirrors
+        # ``RikuganPanelCore._history_poll_timer`` for the history executor.
+        self._restore_poll_timer: QTimer | None = None
+        # Set by ``_on_worker_finished`` (the ``QThread.finished`` slot)
+        # to record that the worker thread exited.  Does NOT trigger
+        # teardown on its own — the main-thread drain
+        # (``_drain_restore_queue``) is the sole owner of teardown.
+        # It observes this flag to distinguish a clean completion
+        # (drain consumed the ``"finished"`` sentinel — normal path)
+        # from a hard crash / cancel (drain found no sentinel but the
+        # worker thread is gone — safety-net cleanup path).
+        self._restore_worker_finished: bool = False
 
-        # Member timer for scroll-to-bottom ΓÇö coalesce at 80ms to reduce
-        # layout thrashing during rapid streaming
+        # Member timer for scroll-to-bottom — coalesce at 80ms to reduce
+        # layout thrashing during rapid streaming.
         self._scroll_timer = QTimer(self)
         self._scroll_timer.setSingleShot(True)
         self._scroll_timer.setInterval(80)
@@ -1122,8 +1197,17 @@ class ChatView(QScrollArea):
         if self._message_thinking is None:
             self._message_thinking = _ThinkingBlock()
             self._insert_widget(self._message_thinking)
-        existing = self._message_thinking._source_text
-        self._message_thinking.set_thinking(existing + delta, in_progress=True)
+            # First delta — render immediately so the block shows up.
+            self._message_thinking.set_thinking(delta, in_progress=True)
+        else:
+            # Subsequent deltas — use the gated path so md_to_html is
+            # not called on every single delta (50+ /s from GLM).
+            self._message_thinking.append_reasoning(delta)
+            # Ensure the "Thinking…" header is set (append_reasoning
+            # does not touch the label to stay focused on rendering).
+            if not self._message_thinking._in_progress:
+                self._message_thinking._in_progress = True
+                self._message_thinking._header_label.setText("Thinking…")
         self._scroll_to_bottom()
 
     def _handle_recovery_start(self, event: TurnEvent) -> None:
@@ -1219,7 +1303,14 @@ class ChatView(QScrollArea):
             self._scroll_to_bottom()
         elif etype == TurnEventType.PLAN_STEP_DONE:
             if self._plan_view:
-                self._plan_view.set_step_status(event.plan_step_index, "done")
+                # ``plan_step_done`` carries the outcome in ``text``
+                # (``completed`` / ``turn_limit`` / ``error``). Map it
+                # to the matching ``PlanStepWidget`` status so the step
+                # reads as "stopped at limit" rather than "done" when
+                # the per-step turn budget was exhausted.
+                self._plan_view.set_step_status(
+                    event.plan_step_index, _plan_step_done_status(event.text)
+                )
             self._scroll_to_bottom()
 
     def _handle_exploration_event(self, event: TurnEvent) -> None:
@@ -1941,7 +2032,6 @@ class ChatView(QScrollArea):
         # Bump generation so any late signals from the prior worker
         # are ignored.  Captured in closures for chunk/finished slots.
         self._restore_generation += 1
-        generation = self._restore_generation
 
         # Insert one placeholder per *visible* message so the layout
         # is full from the start.  We mirror the worker's pairing
@@ -1978,15 +2068,20 @@ class ChatView(QScrollArea):
         if self._container is not None:
             self._container.setFixedWidth(self.viewport().width())
 
-        # Start the worker.  Slots capture ``generation`` so they can
-        # bail out if a newer restore has superseded us.
+        # Start the worker.  No Qt signals cross the thread boundary —
+        # see ``AGENTS.md`` §1 (Shiboken UAF on Python ≥ 3.11).  The
+        # worker enqueues ``(kind, payload)`` tuples onto ``worker.queue``;
+        # ``_drain_restore_queue`` (driven by ``_ensure_restore_poll_timer``)
+        # is the sole consumer on the main thread.
+        log_debug(f"HIST-TRACE restore-start: msgs={len(messages)}")  # TEMP-DIAG
         worker = RestoreWorker(messages, parent=self, max_rendered=self._restore_max_rendered)
-        worker.chunk_ready.connect(lambda chunk, gen=generation: self._on_chunk_ready(chunk, gen))
-        worker.finished_ok.connect(lambda gen=generation: self._on_restore_finished(gen))
         # ``finished`` is emitted by QThread when ``run`` returns; use
-        # it as a hard cleanup point regardless of ``finished_ok``.
+        # it as a hard cleanup point regardless of the queue's
+        # ``"finished"`` sentinel (cancelled workers do not enqueue
+        # one, and a hard crash never reaches the finally block).
         worker.finished.connect(lambda w=worker: self._on_worker_finished(w))
         self._restore_worker = worker
+        self._ensure_restore_poll_timer()
         worker.start()
 
     @staticmethod
@@ -2031,13 +2126,30 @@ class ChatView(QScrollArea):
                 worker.cancel()
             except RuntimeError:
                 pass  # already deleted
+        # Bump generation BEFORE stopping the timer so any in-flight
+        # drain callback that fires after the stop sees the new
+        # generation and bails out via ``_on_chunk_ready`` /
+        # ``_on_restore_finished``.
         self._restore_generation += 1
         self._restore_worker = None
+        # ``_on_worker_finished`` may still fire later (the
+        # ``QThread.finished`` signal is queued on the main thread
+        # regardless of ``cancel()``).  Reset the flag here so a
+        # late-arriving ``_on_worker_finished`` for the cancelled
+        # worker is treated as a no-op, and so the drain — if it
+        # runs once more before the timer stops — does not see a
+        # stale "worker exited without sentinel" signal and run
+        # the safety-net cleanup against the wrong generation.
+        self._restore_worker_finished = False
         # Without this, cancelling an async restore permanently
         # suppresses resizeEvent layout.  The flag is normally managed
         # by restore_from_messages' try/finally, but cancel can be
         # invoked out-of-band (clear_chat, new restore, etc.).
         self._in_restore = False
+        # Stop the drain timer; the worker thread may still be alive
+        # briefly after ``cancel()`` returns, but its remaining queue
+        # items belong to the bumped generation and would be no-ops.
+        self._stop_restore_poll_timer()
 
     def _on_chunk_ready(self, chunk: _RenderedChunk, generation: int) -> None:
         """Replace placeholders with real widgets for one chunk.
@@ -2090,6 +2202,12 @@ class ChatView(QScrollArea):
         # already cleaned up in ``_on_chunk_ready`` (height 0 + deleteLater),
         # so any leftover here is a skip, not a leak.
         self._in_restore = False
+        log_debug(f"HIST-TRACE restore-finished: gen={generation} leftover_placeholders={len(self._placeholders)}")  # TEMP-DIAG
+        # The worker is done — stop the drain timer.  ``_drain_restore_queue``
+        # also stops on the sentinel path, but stopping here covers the
+        # case where the drain is mid-batch and the safety-net
+        # ``_on_worker_finished`` already ran first.
+        self._stop_restore_poll_timer()
         # Reapply width and scroll-to-bottom now that the real widgets
         # are in place.
         if self._container is not None:
@@ -2160,46 +2278,203 @@ class ChatView(QScrollArea):
         self._restore_max_rendered = new_cap
         self.restore_from_messages_async(self._restore_messages)
 
-    def _on_worker_finished(self, worker: RestoreWorker) -> None:
-        """Cleanup hook for the worker's QThread.finished signal.
+    def _ensure_restore_poll_timer(self) -> None:
+        """Create + start the restore drain timer if not already running.
 
-        Decouples the worker from the view so it can be GC'd.  Also
-        acts as a safety net: if the worker exits without emitting
-        ``finished_ok`` (e.g. a hard crash, an unhandled exception,
-        or an early cancel before any chunks), ``_in_restore`` would
-        otherwise remain True forever and suppress the resizeEvent
-        cascade on every subsequent live message.  We clear
-        ``_in_restore`` here for the *current* generation only ΓÇö a
-        newer restore's generation does not match and is left alone.
+        Mirrors ``RikuganPanelCore._ensure_history_poll_timer``:
+        a dedicated ``QTimer`` drains the active ``RestoreWorker`` queue
+        at :data:`_RESTORE_POLL_INTERVAL_MS` cadence.  The timer is
+        stopped by ``_on_restore_finished`` on the normal completion
+        path, and by ``_on_worker_finished`` (safety net) for
+        cancelled/crashed workers.
         """
+        if self._restore_poll_timer is not None:
+            return
+        timer = QTimer(self)
+        timer.timeout.connect(self._drain_restore_queue)
+        timer.start(_RESTORE_POLL_INTERVAL_MS)
+        self._restore_poll_timer = timer
+
+    def _stop_restore_poll_timer(self) -> None:
+        """Stop + tear down the restore drain timer.
+
+        Mirrors ``RikuganPanelCore._stop_history_poll_timer``: stop,
+        disconnect, deleteLater, null the reference.  Swallows
+        ``RuntimeError`` / ``TypeError`` so partial-init fixtures
+        and post-teardown calls stay safe.
+        """
+        timer = self._restore_poll_timer
+        if timer is None:
+            return
         try:
-            worker.chunk_ready.disconnect()
-            worker.finished_ok.disconnect()
-        except (TypeError, RuntimeError):
+            timer.stop()
+        except RuntimeError:
             pass
-        # Safety-net cleanup: if the worker exited without a clean
-        # ``finished_ok`` (the normal completion path is
-        # ``_on_restore_finished`` which already cleared
-        # ``_in_restore``), make sure the flag does not leak.
-        # ``self._restore_worker`` is the worker the view still
-        # considers "current" ΓÇö if it matches, we own the cleanup.
+        try:
+            timer.timeout.disconnect(self._drain_restore_queue)
+        except (RuntimeError, TypeError):
+            pass
+        timer.deleteLater()
+        self._restore_poll_timer = None
+
+    def _drain_restore_queue(self) -> None:
+        """Main-thread slot: drain ``RestoreWorker.queue`` and dispatch.
+
+        ``RestoreWorker.run()`` runs on a Qt thread but emits NO Qt
+        signals (Shiboken UAF on Python ≥ 3.11 — see ``AGENTS.md`` §1).
+        Instead it pushes ``(kind, payload)`` tuples onto a
+        ``queue.Queue``.  This slot is the sole consumer: it runs on
+        the main thread (timer-driven) and dispatches chunks to
+        ``_on_chunk_ready`` and the ``"finished"`` sentinel to
+        ``_on_restore_finished``.  Widget construction lives entirely
+        on the main thread as a result.
+
+        Teardown ownership: this method is the **only** code that
+        finishes the restore.  ``_on_worker_finished`` (the
+        ``QThread.finished`` slot) merely records that the worker
+        thread has exited via ``_restore_worker_finished``; the
+        actual ``_in_restore`` clear, placeholder cleanup, timer
+        stop, and "Load older" button update all live here.
+
+        Why: for a fast/small worker the ``QThread.finished`` event
+        is dispatched on the main thread *before* the first
+        :data:`_RESTORE_POLL_INTERVAL_MS` timer tick.  Letting the
+        ``QThread.finished`` slot drive teardown therefore races
+        the drain — if the slot wins, the timer is stopped before
+        any chunk ever lands and the view stays empty.  Owning
+        teardown here makes the result independent of which Qt
+        event the main thread happens to process first.
+
+        Two completion cases are handled here:
+
+        * **Sentinel path** — the drain consumed the worker's
+          ``"finished"`` tuple.  Run the normal finish routine
+          (``_on_restore_finished``) and stop the timer.
+        * **Safety-net path** — the queue is empty AND
+          ``_restore_worker_finished`` is True (the worker thread
+          exited without enqueueing a sentinel, e.g. a hard crash
+          or an early cancel).  Clear ``_in_restore``, delete any
+          leftover placeholders, stop the timer.
+
+        Each tick processes up to :data:`_RESTORE_DRAIN_BATCH` items
+        to bound per-tick cost.  The timer continues firing until
+        one of the two completion paths above runs and stops it.
+        """
+        worker = self._restore_worker
+        if worker is None:
+            return
+        # Capture the live generation so late items from a superseded
+        # worker (the same way ``_on_chunk_ready`` already gates by
+        # ``generation``) can no-op via the per-call early return.
+        generation = self._restore_generation
+        for _ in range(_RESTORE_DRAIN_BATCH):
+            try:
+                kind, payload = worker.queue.get_nowait()
+            except queue.Empty:
+                # Queue is empty for now.  Decide whether to keep
+                # polling or tear down.  We tear down ONLY if the
+                # worker thread has exited AND no sentinel was
+                # enqueued (cancelled / crashed worker).  A
+                # long-running worker that just hasn't enqueued
+                # anything yet keeps the timer alive.
+                if getattr(self, "_restore_worker_finished", False):
+                    self._finalize_restore_without_sentinel()
+                return
+            if kind == _RESTORE_KIND_CHUNK:
+                assert isinstance(payload, _RenderedChunk)
+                self._on_chunk_ready(payload, generation)
+            elif kind == _RESTORE_KIND_FINISHED:
+                self._on_restore_finished(generation)
+                # Stop polling: the worker is done.  _on_restore_finished
+                # also calls ``_stop_restore_poll_timer`` so this is
+                # belt-and-braces for partial-init paths.
+                self._stop_restore_poll_timer()
+                return
+            # Unknown kind: skip and keep draining (defensive — a future
+            # protocol addition should not crash the existing drain).
+
+        # Batch budget exhausted.  If the worker thread has exited
+        # but the sentinel has not yet been reached (very large
+        # chunk flood), do not tear down — the next tick will
+        # continue draining.  Only tear down when the queue is
+        # empty AND the worker is gone.
+
+    def _on_worker_finished(self, worker: RestoreWorker) -> None:
+        """Minimal ``QThread.finished`` slot.
+
+        ``RestoreWorker`` does not emit ``chunk_ready`` / ``finished_ok``
+        (those were cross-thread Qt signals — Shiboken UAF risk).  The
+        main-thread ``QTimer`` drains ``worker.queue`` and owns
+        teardown; this slot is now only a notification that the
+        worker thread has exited.  The actual ``_in_restore`` clear,
+        placeholder cleanup, and timer stop happen in
+        ``_drain_restore_queue`` (the safety-net branch driven by
+        ``_restore_worker_finished``) so a fast worker that finishes
+        before the first 50 ms timer tick still has its chunks
+        drained normally.
+
+        Why this is safe to do almost nothing: the drain and this
+        slot both run on the main-thread event loop — there is no
+        cross-thread race.  The drain observes this flag the next
+        time it ticks (or, for the cancelled case, never observes
+        it because ``_cancel_restore`` resets the flag back to
+        ``False`` before the slot can fire).
+        """
+        # Only act if the worker is still the one this view owns.
+        # A superseded restore has already cleared ``_restore_worker``
+        # and reset ``_restore_worker_finished`` via
+        # ``_cancel_restore``; a late ``QThread.finished`` for the
+        # old worker must be a no-op.
         if getattr(self, "_restore_worker", None) is worker:
-            # We do not know which generation this worker was
-            # started under, but the per-generation guards in
-            # ``_on_chunk_ready`` / ``_on_restore_finished`` already
-            # ensure no later restore has been disturbed.  The only
-            # remaining leak is the ``_in_restore`` flag itself and
-            # any leftover placeholders that may not have been
-            # consumed (e.g. a worker that crashed mid-loop).
-            self._in_restore = False
-            leftovers = list(self._placeholders.values())
-            self._placeholders.clear()
-            for ph in leftovers:
-                try:
-                    ph.deleteLater()
-                except RuntimeError:
-                    pass
+            self._restore_worker_finished = True
+        # Always release the OS thread handle when the Qt thread
+        # reports done.  ``deleteLater`` is safe to call from any
+        # main-thread context and the cancel path already-nulled
+        # ``_restore_worker``, so this is the last owner.
         worker.deleteLater()
+
+    def _finalize_restore_without_sentinel(self) -> None:
+        """Safety-net teardown when the worker exited without a sentinel.
+
+        Invoked from :meth:`_drain_restore_queue` when the queue has
+        been drained to empty AND ``_restore_worker_finished`` is
+        True.  This is the *only* path that runs when the worker
+        thread exited without enqueueing the ``"finished"`` sentinel
+        (a hard crash, an unhandled exception, or an early cancel
+        that beat the worker to its first iteration).
+
+        Splits the responsibilities that the old
+        ``_on_worker_finished`` used to own: it never touches the
+        timer or ``_placeholders`` from the signal handler itself —
+        everything flows through the drain so we do not race the
+        sentinel-bearing completion path.
+        """
+        # If the cancel path already cleared state (cancel bumps
+        # generation, clears ``_restore_worker``, and resets
+        # ``_restore_worker_finished``), there is nothing to do.
+        if getattr(self, "_restore_worker", None) is None:
+            return
+        # Clear the restore flag so subsequent live messages get a
+        # resizeEvent cascade again.  This is the same effect the
+        # old ``_on_worker_finished`` had.
+        self._in_restore = False
+        # Drain leftover placeholders.  A worker that crashed
+        # mid-loop may have left messages unconsumed — the
+        # placeholder geometry no longer matches any widget that
+        # will arrive, so removing them keeps the layout honest.
+        leftovers = list(self._placeholders.values())
+        self._placeholders.clear()
+        for ph in leftovers:
+            try:
+                ph.deleteLater()
+            except RuntimeError:
+                pass
+        # Stop the drain timer — the sentinel will never come.
+        self._stop_restore_poll_timer()
+        # Reset the trigger so a hypothetical re-drain (it cannot
+        # happen — the timer is stopped — but the assertion is cheap)
+        # does not try to clean up a second time.
+        self._restore_worker_finished = False
 
     def _replace_placeholder_with_widgets(self, placeholder: MessagePlaceholder, widgets: list[QWidget]) -> None:
         """Replace *placeholder* with *widgets* in render order.

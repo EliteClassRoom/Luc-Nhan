@@ -11,6 +11,7 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from rikugan.memory.paths import KnowledgePaths, knowledge_paths
 from rikugan.memory.raw_store import KnowledgeRawStore
@@ -190,6 +191,64 @@ class TestThreadSafety(unittest.TestCase):
             # 4 workers * 10 records = 40 unique ids, all retained.
             mems = store.list_memories()
             self.assertEqual(len(mems), 40)
+
+
+class TestCommitHypothesisVerdicts(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.paths = make_paths(self.tmp)
+        self.store = KnowledgeRawStore(self.paths)
+
+    def _updated(self, mem_id: str = "mem:hyp:1") -> KnowledgeMemory:
+        return KnowledgeMemory(
+            id=mem_id,
+            binary_id="fake-123",
+            type="hypothesis",
+            title="t",
+            content="c",
+            status="verified",
+            verdict_claim="Confirmed.",
+            verification_citations=["address:0x401000"],
+            verified=True,
+        )
+
+    def _obs(self, obs_id: str) -> KnowledgeObservation:
+        return KnowledgeObservation(
+            id=obs_id,
+            binary_id="fake-123",
+            ts="2026-08-17T00:00:00Z",
+            kind="hypothesis_verified",
+            payload={"memory_id": "mem:hyp:1"},
+        )
+
+    def test_commit_hypothesis_verdicts_upserts_and_appends(self):
+        self.store.upsert_memory(make_mem(mem_id="mem:hyp:1"))
+        self.store.commit_hypothesis_verdicts(
+            {"mem:hyp:1": self._updated()}, [self._obs("obs:test1")]
+        )
+        stored = next(m for m in self.store.list_memories() if m.id == "mem:hyp:1")
+        self.assertEqual(stored.status, "verified")
+        self.assertEqual(stored.verdict_claim, "Confirmed.")
+        self.assertEqual(list(stored.verification_citations), ["address:0x401000"])
+        self.assertTrue(any(o.id == "obs:test1" for o in self.store.list_observations()))
+
+    def test_commit_hypothesis_verdicts_rolls_back_both_files_on_failure(self):
+        self.store.upsert_memory(make_mem(mem_id="mem:hyp:1"))
+        real_write = self.store._write_jsonl_atomic
+
+        def flaky(path, records):
+            if path == str(self.store.paths.observations_path):
+                raise OSError("disk full")
+            return real_write(path, records)
+
+        with patch.object(type(self.store), "_write_jsonl_atomic", staticmethod(flaky)):
+            with self.assertRaises(OSError):
+                self.store.commit_hypothesis_verdicts(
+                    {"mem:hyp:1": self._updated()}, [self._obs("obs:test2")]
+                )
+        stored = next(m for m in self.store.list_memories() if m.id == "mem:hyp:1")
+        self.assertEqual(stored.status, "unverified")  # snapshot restored
+        self.assertEqual(self.store.list_observations(), [])
 
 
 if __name__ == "__main__":

@@ -23,7 +23,13 @@ Report structure:
 6. IOCs (Indicators of Compromise)
 7. Recommendations
 
-Use markdown formatting. Be precise and cite function addresses."""
+Use markdown formatting. Be precise and cite function addresses.
+
+Evidence requirements:
+- Under each Key Finding and each Technical Details item, add an `### Evidence` subsection with a fenced code block copied verbatim from the prompt's `## Binary Evidence` section, prefixed by its address.
+- Never invent pseudocode or disassembly. If no evidence block exists for a finding, write `_No static evidence captured._`.
+- If the prompt contains no `## Binary Evidence` section, omit all Evidence subsections.
+- Prefer `## File Metadata (tool-verified)` values over guesses in the File Metadata section."""
 
 REPORT_WRITER_MAX_TURNS: int = 5
 

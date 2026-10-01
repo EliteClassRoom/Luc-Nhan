@@ -9,7 +9,7 @@
 This reference describes standalone / IDAPython workflows. In Luc Nhan:
 
 - **Static pattern matching** (OBB/DBB heuristics, jump-table parsing) → use `decompile_function`, `read_function_disassembly`, or `get_microcode` at `MMAT_PREOPTIMIZED` to identify the state variable and dispatcher blocks. The `NN_cmp` / `NN_jump` IDA-internal constants referenced in the snippets below are for `execute_python` only.
-- **BB-level emulation trace** → `emulate_code` does **not** expose a custom `UC_HOOK_BLOCK` callback and does not return a per-BB trace. It returns `instruction_count`, `final_registers`, `writes`, `captures`, and a `status` field (`completed` / `range_exit` / `instruction_limit` / ...). Use it for end-to-end "does this function range reach `stop_address` with these args" questions. For per-BB coverage traces (the emulation approach in the VB2023 paper), fall back to `execute_python` with a manual Unicorn instance and `UC_HOOK_BLOCK`.
+- **BB-level emulation trace** → `emulate_code` does **not** expose a custom `UC_HOOK_BLOCK` callback or a per-BB trace. It returns a bounded text summary of status, stop PC, instruction count, changed registers, writes and captures, not a raw result object. Use it to check whether one initialized range or ABI-framed function reaches its stop/return sentinel. For per-BB coverage (the VB2023 approach), use an approved `execute_python` script with a manual Unicorn instance and `UC_HOOK_BLOCK`.
 - **IDA 9.x caveat**: `idaapi.NN_cmp` / `NN_jump` / `NN_j*` constants were **removed** in IDA 9.x (the `ida_allins` instruction-type namespace was reorganized). Prefer `idc.print_insn_mnem(ea) == "cmp"` / `"jmp"` / `startswith("j")` rather than the numeric `itype` values when writing new `execute_python` snippets — string comparisons are stable across versions.
 
 ---
@@ -115,15 +115,20 @@ The core technique for the *emulation* approach: record which basic blocks were 
 
 ### Via `emulate_code` (built-in tool, preferred for end-to-end runs)
 
-`emulate_code` does **not** expose per-BB tracing, but it tells you whether the function range reached `stop_address` with given arguments — the first question to ask before investing in a richer trace. Run it with:
+`emulate_code` does **not** expose per-BB tracing. For a bounded end-to-end
+function call, provide:
 
-- `start_address` = function entry
-- `stop_address` = function end (exclusive)
-- `registers` = reconstructed function arguments (from calling convention)
-- `memory_ranges` = any globals / lookup tables the function reads
-- `capture_ranges` = any output buffers you want to read back
+- `start_address` = entry; `stop_address` = exclusive function end/return sentinel.
+- `execution_mode="function"` and an explicitly verified `calling_convention`.
+- `arguments` in declaration order; `registers={}` or additional entry state.
+- `memory_ranges` for IDB globals/tables; `memory_buffers` for known runtime bytes.
+- `code_ranges` for executable internal helpers outside the main bounds.
+- `capture_ranges` for outputs; `collect_strings=True` if output offsets are unknown.
 
-Inspect `result.status` (was `stop_address` reached?), `result.instruction_count` (how deep did it go?), and `result.final_registers` / `result.captures`. If the run completes successfully, you know the function's main path; if it exits with `range_exit`, the function branches outside the range and you need the richer trace below. This is the simplest first probe — no custom hook code, no `execute_python` approval round-trip.
+Inspect status, stop PC, instruction count and the register/capture summaries.
+Completion proves one bounded run for the chosen inputs, not per-BB coverage.
+For `range_exit`, first identify a missing declared helper or an unmodeled call;
+use the richer trace below only when per-BB callbacks are actually required.
 
 ### Via `execute_python` + `UC_HOOK_BLOCK` (richer tracing)
 

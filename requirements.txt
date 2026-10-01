@@ -1,4 +1,4 @@
-anthropic>=0.112.0
+anthropic>=0.120.2
 openai>=2.0.0
 google-genai>=2.0.0
 mcp>=1.28.0
@@ -9,5 +9,5 @@ requests>=2.34.2
 html2text>=2025.4.15
 markdown-it-py>=3.0.0
 portalocker>=4.1.0,<5
-unicorn>=2.1.0,<3
+unicorn>=2.1.4,<3
 pyyaml>=6.0.3

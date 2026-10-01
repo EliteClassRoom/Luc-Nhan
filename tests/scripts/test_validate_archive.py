@@ -47,7 +47,7 @@ def test_validate_rejects_missing_ida_plugin_json(tmp_path: Path) -> None:
     p.write_bytes(data)
 
     # Act + Assert
-    with pytest.raises(ArchiveValidationError, match="ida-plugin.json"):
+    with pytest.raises(ArchiveValidationError, match=r"ida-plugin\.json"):
         validate_archive(p)
 
 

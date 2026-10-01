@@ -14,32 +14,41 @@
 
 ## Emulation (Read-Only, No IDB Writes)
 
-- `emulate_code` — Run a self-contained instruction range through a
-  per-call Unicorn engine. Strict half-open range
-  `[start_address, stop_address)`; reaching `stop_address` is the only
-  successful completion condition. Leaving the range, hitting
-  unmapped/protected memory, or exhausting the instruction limit
-  produces a partial result with the precise stop reason. No syscall or
-  API stubs — `syscall` / `sysenter` / `int 0x2e` / `int 0x80` return
-  `unsupported_instruction` immediately.
-- `resolve_emulated_string` — Same engine, optimised for extracting a
-  decoded string from a known output buffer. Returns raw bytes plus
-  ASCII, UTF-8, and UTF-16LE candidates, with a `terminated=` flag and
-  truncation notice when the buffer has no NUL within `max_output_size`.
-- Both tools require:
-  - An explicit `registers` object (non-empty). `eip` / `rip` are
-    always taken from `start_address` and cannot be overridden.
-  - `stop_address` is exclusive.
-  - `memory_ranges` for any encrypted input, keys, or lookup tables
-    that live outside the decoder function itself.
-  - Aggregate mapped IDB bytes are capped at 16 MiB; the synthetic
-    stack is the only always-writable memory.
-  - Read-only key/input regions stay read-only — the tools never
-    silently remap IDB pages.
-  - The tools never write to the IDB, never run the target binary,
-    never spawn processes, and never touch the filesystem.
-- Use this when the decoder is provably self-contained and the output
-  buffer, input tables, and key locations are all known.
+- `emulate_code` — Per-call Unicorn execution, read-only with respect to the
+  IDB. Default `execution_mode="range"` runs `[start_address, stop_address)`
+  with explicit non-empty registers; omit `eip`/`rip` and stop before an
+  unframed `ret`. Whole functions use `execution_mode="function"`, a verified
+  calling convention (x86 cdecl/stdcall/fastcall, x64 win64/sysv64),
+  `arguments` in declaration order and `registers={}` if no extra state is
+  needed. The exclusive end also serves as the synthetic return sentinel.
+- `resolve_emulated_string` — Same execution contract. Supply exactly one
+  `output_address` or signed `output_stack_offset`, and a backed output
+  window of 1..4096 bytes. Encoding candidates have independent termination
+  flags; raw/decoded previews and omissions are bounded explicitly.
+- Shared inputs and limits:
+  - `memory_ranges=[{"address": "0x...", "size": N}]` snapshots actual IDB
+    bytes for input, keys and tables.
+  - `memory_buffers=[{"address": "0x...", "size": N, "data_hex": "...",
+    "permissions": "rw"}]` supplies known scratch bytes without patching IDA.
+    Permissions are `r` or `rw`, never executable; IDB overlap is rejected.
+  - `code_ranges` authorizes additional executable IDB helpers. Data mapping
+    alone does not widen the executable allowlist or permissions.
+  - `capture_ranges` selects addresses or signed `stack_offset` values from
+    the initial ABI-adjusted SP; at most 16 uniquely labeled windows.
+  - `collect_strings=True` reports candidates overlapping changed bytes,
+    including unknown-offset stack strings. Cross-check encoding and meaning.
+  - 100_000 instructions by default, hard cap 1_000_000; wall time defaults to
+    5 seconds and is clamped to 20, including snapshot/setup and cancellation.
+  - Aggregate mapped memory is capped at 16 MiB including the 1 MiB stack.
+    Missing IDB bytes, padding, permission conflicts and stack collisions
+    fail explicitly; real BSS missing bytes are the only IDB zero-fill case.
+  - `completed` means reaching the stop/return sentinel. Range exits, memory
+    faults, unsupported instructions, budget expiry and cancellation report
+    their exact reason. CPU-started runs retain partial state; aborted setup
+    never invents a snapshot or captures.
+  - No OS/API stubs or custom callbacks. Syscalls and software interrupts
+    are rejected before execution at any instruction, not just entry.
+  - The tools never modify the IDB, run the target process or spawn processes.
 
 ## Writing (Microcode Level)
 
@@ -60,7 +69,7 @@
 ## Scripting (Last Resort)
 
 - `execute_python` — Run arbitrary IDAPython code. Use ONLY when built-in tools are insufficient:
-  - Decoders that touch external APIs, depend on captured/unmodeled state, or branch outside the proposed range (so `emulate_code` cannot safely run them)
+  - Decoders that touch external APIs, depend on unmodeled state, or require custom callbacks (not merely an internal helper in `code_ranges`)
   - Bulk operations across hundreds of functions
   - Complex computations (z3 solver, MBA reimplementation)
   - `ida-domain` Database/DecompilerHooks for hook-based deobfuscation that needs locopt/glbopt/preoptimized callbacks

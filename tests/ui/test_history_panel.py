@@ -27,12 +27,12 @@ ensure_pyside6_stubs()
 # Ensure the real module is loaded even if a sibling test stubbed it.
 sys.modules.pop("rikugan.ui.history_panel", None)
 
-from rikugan.ui.history_panel import (  # noqa: E402
+from rikugan.ui.history_panel import (
     HISTORY_PANEL_CONTENT_MAX_WIDTH,
     HistoryPanel,
     HistoryRowWidget,
 )
-from rikugan.ui.qt_compat import Qt  # noqa: E402
+from rikugan.ui.qt_compat import Qt
 
 
 @dataclass(frozen=True)
