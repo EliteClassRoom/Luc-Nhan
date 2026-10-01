@@ -45,7 +45,9 @@ def test_v1_workspace_migrates_without_changing_existing_records(tmp_path) -> No
     assert record is not None
     assert record.semantic_hash == semantic_fact_hash("Function  Purpose", "Uses RC4\\r\\n")
     assert record.revision == 1
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    # v3 ran; later additive migrations may take the schema further, so do
+    # not pin the head version here.
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] >= 3
     assert store._conn.execute("PRAGMA foreign_key_check").fetchall() == []
     store.close()
 

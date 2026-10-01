@@ -54,6 +54,15 @@ except ImportError:
 from rikugan.agent.turn import TurnEvent, TurnEventType
 from rikugan.core.types import Message, Role
 from rikugan.ui.chat_view import ChatView, MessageSpec, RestoreWorker
+from tests.qt_real import live_class
+
+
+def _chat_view_cls() -> type:
+    """Live ``ChatView`` class — a sibling test module's purge can
+    leave the module-level import above pointing at a dead module
+    object, so the harness must build the view from the class the
+    live ``rikugan.ui.tool_widgets`` / layout tree actually uses."""
+    return live_class("rikugan.ui.chat_view.ChatView")
 
 
 class _ChatViewHarness:
@@ -68,7 +77,17 @@ class _ChatViewHarness:
     def make() -> ChatView:
         from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-        view = ChatView.__new__(ChatView)
+        chat_view_cls = _chat_view_cls()
+        # ``handle_event`` dispatches on the ``TurnEventType`` names in
+        # its own module globals.  A sibling test module installs
+        # MagicMock stubs for ``rikugan.agent.turn`` and then purges it,
+        # so the live ``chat_view`` can end up re-imported against the
+        # mock — every event then silently matches no branch.  Rebind
+        # the real classes these tests construct their events with.
+        globals_ = chat_view_cls.handle_event.__globals__
+        globals_["TurnEvent"] = TurnEvent
+        globals_["TurnEventType"] = TurnEventType
+        view = chat_view_cls.__new__(chat_view_cls)
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.addStretch()
@@ -256,11 +275,15 @@ class TestToolCallDiscarded(unittest.TestCase):
     def test_execute_python_mark_discarded_stops_lifecycle(self):
         """ExecutePythonWidget.mark_discarded sets a neutral terminal glyph."""
         from rikugan import constants
-        from rikugan.ui.tool_widgets import ExecutePythonWidget
+
+        # Live class: the widget above was built by the live
+        # ``chat_view`` module, which imports ``tool_widgets`` — a
+        # module-level import here can name a different object.
+        execute_python_widget_cls = live_class("rikugan.ui.tool_widgets.ExecutePythonWidget")
 
         self._view.handle_event(TurnEvent.tool_call_start("ep_call", constants.EXECUTE_PYTHON_TOOL_NAME))
         tw = self._view._tool_widgets.get("ep_call")
-        assert isinstance(tw, ExecutePythonWidget)
+        assert isinstance(tw, execute_python_widget_cls)
         self._view.handle_event(
             TurnEvent.tool_call_discarded("ep_call", constants.EXECUTE_PYTHON_TOOL_NAME, "truncated_args")
         )
@@ -412,6 +435,7 @@ class TestReasoningResetBetweenTurns(unittest.TestCase):
 
         assert self._view._think_buffer == ""
         assert self._view._waiting_think_close is False
+
 
 class TestPlanStepDoneStatus(unittest.TestCase):
     """``PLAN_STEP_DONE`` carries outcome text

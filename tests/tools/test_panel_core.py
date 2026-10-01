@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import types
 import unittest
@@ -212,7 +213,6 @@ sys.modules.pop("rikugan.ui.panel_core", None)
 # after a panel-core test in the same pytest invocation.
 import pytest
 
-from rikugan.ui import panel_core as _pc_module
 from rikugan.ui.export_formatting import (
     _TOOL_RESULT_TRUNCATE_CHARS,
     _export_detect_lang,
@@ -222,6 +222,7 @@ from rikugan.ui.export_formatting import (
 from rikugan.ui.panel_core import (
     RikuganPanelCore,
 )
+from tests.qt_real import live_class
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -1508,9 +1509,7 @@ class TestStartupAutoRestore(unittest.TestCase):
         panel._history_pending = False
         panel._ctrl = MagicMock(name="ctrl")
         panel._ctrl.find_tab_for_session = MagicMock(return_value=None)
-        panel._ctrl.capture_history_scope = MagicMock(
-            return_value=MagicMock(name="scope")
-        )
+        panel._ctrl.capture_history_scope = MagicMock(return_value=MagicMock(name="scope"))
         # Patch the real load-submit entry point so the test stays in
         # process and we can assert against it without an executor.
         panel._start_history_load = MagicMock(name="start_history_load")
@@ -1614,10 +1613,7 @@ class TestStartupAutoRestore(unittest.TestCase):
         self.assertNotIn(
             "_arm_startup_restore_if_idle",
             source,
-            msg=(
-                    "on_database_changed() must not arm the startup probe — "
-                    "IDB switches stay fresh-by-default."
-                ),
+            msg=("on_database_changed() must not arm the startup probe — IDB switches stay fresh-by-default."),
         )
         self.assertNotIn(
             "_startup_restore_pending = True",
@@ -1844,7 +1840,14 @@ def _make_history_panel():
     import queue
     import threading
 
-    panel = RikuganPanelCore.__new__(RikuganPanelCore)
+    # Resolve at call time: ``tests.conftest.purge_rikugan_stubs`` drops
+    # ``rikugan.ui.panel_core`` from :data:`sys.modules` between tests, so
+    # the import-time binding above can name a dead module object.  The
+    # live class's ``_history_list_worker`` resolves ``SessionHistory``
+    # through its OWN module globals, so only the live class makes
+    # ``_patch_session_history`` reach production code.
+    panel_core_cls = live_class("rikugan.ui.panel_core.RikuganPanelCore")
+    panel = panel_core_cls.__new__(panel_core_cls)
     panel._is_shutdown = False
     panel._polling = False
     panel._pending_answer = False
@@ -1890,6 +1893,33 @@ def _make_history_panel():
     panel._history_delete_intents: set[str] = set()
     panel._history_delete_watchdog: object | None = None
     return panel
+
+
+def _live_panel_core_globals() -> dict:
+    """Namespace holding the ``RikuganPanelCore`` the live tree uses.
+
+    ``tests.conftest.purge_rikugan_stubs`` drops ``rikugan.ui.panel_core``
+    from :data:`sys.modules` between tests, so the module object bound
+    at import time here can be a dead one — patching its attributes
+    would never reach the function the panel actually calls.
+    Resolving per call and reading ``__globals__`` off the live class
+    yields the namespace production code looks ``SessionHistory`` up in.
+    """
+    return live_class("rikugan.ui.panel_core.RikuganPanelCore")._history_list_worker.__globals__
+
+
+@contextlib.contextmanager
+def _patch_session_history():
+    """Swap ``SessionHistory`` inside the live panel-core namespace.
+
+    Yields the stand-in class whose ``.return_value`` is the instance the
+    worker calls ``flush_saves`` on — the same shape the previous
+    ``patch.object(_pc_module, "SessionHistory")`` produced, except it
+    patches the namespace production code actually reads.
+    """
+    hist_cls = MagicMock()
+    with patch.dict(_live_panel_core_globals(), {"SessionHistory": hist_cls}):
+        yield hist_cls
 
 
 class TestShowRightPanelMutuallyExclusive(unittest.TestCase):
@@ -2080,7 +2110,7 @@ class TestHistoryListWorker(unittest.TestCase):
         # ``SessionHistory(self._ctrl.config).flush_saves(...)`` — patch
         # the return_value (the constructed instance) so the call goes
         # through the mock the production code actually makes.
-        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+        with _patch_session_history() as hist_cls:
             hist_instance = hist_cls.return_value
             hist_instance.flush_saves = MagicMock()
             # Task 10: pass a captured, unset closing_event so the worker
@@ -2099,7 +2129,7 @@ class TestHistoryListWorker(unittest.TestCase):
 
         panel = self._make_panel_for_worker()
         scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
-        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+        with _patch_session_history() as hist_cls:
             hist_instance = hist_cls.return_value
             hist_instance.flush_saves.side_effect = TimeoutError()
             panel._history_list_worker(scope, panel._history_closing)
@@ -2117,7 +2147,7 @@ class TestHistoryListWorker(unittest.TestCase):
 
         panel = self._make_panel_for_worker()
         scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
-        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+        with _patch_session_history() as hist_cls:
             hist_instance = hist_cls.return_value
             hist_instance.flush_saves.side_effect = RuntimeError("disk on fire")
             panel._history_list_worker(scope, panel._history_closing)
@@ -2147,7 +2177,7 @@ class TestHistoryListWorker(unittest.TestCase):
         closing_event = threading.Event()
         closing_event.set()
         scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
-        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+        with _patch_session_history() as hist_cls:
             hist_instance = hist_cls.return_value
             hist_instance.flush_saves = MagicMock()
             panel._history_list_worker(scope, closing_event)
@@ -2623,7 +2653,7 @@ class TestHistoryExecutorDistinctFromSaveExecutor(unittest.TestCase):
         panel._start_history_list_request()
         executor: ThreadPoolExecutor = panel._history_executor
         # Wait for the submitted worker to produce a result.
-        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+        with _patch_session_history() as hist_cls:
             hist_instance = hist_cls.return_value
             hist_instance.flush_saves = MagicMock()
             # Re-submit through the dedicated executor to be certain
@@ -4059,7 +4089,7 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
                     generation=1,
                 ),
             )
-            with patch.object(_pc_module, "SessionHistory") as hist_cls:
+            with _patch_session_history() as hist_cls:
                 hist_cls.return_value.flush_saves = MagicMock()
                 panel._start_history_list_request()
             self.assertEqual(len(captured_submits), 1)
@@ -4091,7 +4121,7 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
                     generation=2,
                 ),
             )
-            with patch.object(_pc_module, "SessionHistory") as hist_cls2:
+            with _patch_session_history() as hist_cls2:
                 hist_cls2.return_value.flush_saves = MagicMock()
                 panel._start_history_list_request()
             self.assertEqual(len(captured_submits), 2)
@@ -4108,7 +4138,7 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
             )
             captured_event_arg_1 = args_1[-1]
             self.assertIs(captured_event_arg_1, event_old)
-            with patch.object(_pc_module, "SessionHistory") as hist_cls3:
+            with _patch_session_history() as hist_cls3:
                 hist_cls3.return_value.flush_saves = MagicMock()
                 panel._history_list_worker(scope_1, captured_event_arg_1)
             self.assertTrue(panel._history_result_queue.empty())

@@ -40,14 +40,14 @@ from PySide6.QtWidgets import (
 _app = QApplication.instance() or QApplication(sys.argv)
 
 from rikugan.ui.input_area import InputArea
+from tests.qt_real import requires_real_qt
 
 
+@requires_real_qt
 class TestInputGeometrySmoke(unittest.TestCase):
     """Real-PySide6 offscreen geometry checks for the chat input."""
 
-    def _build_chat(
-        self, *, total_height: int = 400
-    ) -> tuple[QSplitter, InputArea]:
+    def _build_chat(self, *, total_height: int = 400) -> tuple[QSplitter, InputArea]:
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setObjectName("chat_splitter")
         splitter.setHandleWidth(4)

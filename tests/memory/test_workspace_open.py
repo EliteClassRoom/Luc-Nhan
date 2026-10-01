@@ -28,7 +28,8 @@ def test_writable_v1_open_creates_verified_backup_before_migration(tmp_path) -> 
     with sqlite3.connect(backups[0]) as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == 1
         assert backup.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    # Migrated past v3; head version not pinned (later migrations may follow).
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] >= 3
     store.close()
 
 

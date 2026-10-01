@@ -46,14 +46,29 @@ _RIKUGAN_STUB_NAMES = (
     "rikugan.providers.anthropic_provider",
     "rikugan.providers.ollama_provider",
     "rikugan.providers.registry",
+    # Sibling tests (tests/tools/test_ida_panel.py,
+    # tests/ida_ui/test_panel_onside_widget.py) also install plain
+    # ``types.ModuleType`` stand-ins for these modules — no ``__file__`` —
+    # whose attributes are MagicMocks. They must not outlive their test
+    # file either; real modules always carry a ``__file__``.
+    "rikugan.ida.ui.session_controller",
+    "rikugan.ui.panel_core",
+    "rikugan.ida.ui.actions",
 )
 
 
 def purge_rikugan_stubs() -> None:
-    """Remove ``_StubModule`` entries from :data:`sys.modules`."""
+    """Remove stub entries from :data:`sys.modules`.
+
+    ``_StubModule`` entries under the ``rikugan.*`` namespace are dropped
+    by class name; the module names listed above are additionally dropped
+    when they are file-less (a stand-in installed by a sibling test file,
+    never the real module).
+    """
+
     for name in _RIKUGAN_STUB_NAMES:
         mod = sys.modules.get(name)
         if mod is None:
             continue
-        if mod.__class__.__name__ == "_StubModule":
+        if mod.__class__.__name__ == "_StubModule" or getattr(mod, "__file__", None) is None:
             del sys.modules[name]

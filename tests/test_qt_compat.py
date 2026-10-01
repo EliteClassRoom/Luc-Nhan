@@ -61,6 +61,7 @@ class TestQtCompat(unittest.TestCase):
         by inspecting the source file directly. This check works identically
         under stubs and real PySide6.
         """
+        import ast
         import inspect
 
         source_path = inspect.getsourcefile(qt_compat)
@@ -68,10 +69,25 @@ class TestQtCompat(unittest.TestCase):
         with open(source_path, encoding="utf-8") as fh:
             source = fh.read()
 
-        self.assertIn("PySide6", source, "qt_compat must import from PySide6")
-        self.assertNotIn(
-            "PyQt5",
-            source,
+        # Assert on parsed imports, not raw substrings: a comment mentioning
+        # the legacy PyQt5 shim is fine, an actual import is not.
+        tree = ast.parse(source)
+        imported_modules: set[str] = set()
+        imported_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_modules.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imported_modules.add(node.module)
+                imported_names.update(alias.name for alias in node.names)
+
+        self.assertTrue(
+            any(mod == "PySide6" or mod.startswith("PySide6.") for mod in imported_modules),
+            "qt_compat must import from PySide6",
+        )
+        self.assertFalse(
+            any("PyQt5" in mod for mod in imported_modules | imported_names),
             "qt_compat must not import from PyQt5 (PySide6-only)",
         )
 

@@ -47,7 +47,14 @@ def _purge_rikugan_theme_modules() -> None:
     ``PySide6.QtCore.Signal`` / QObject presence.
     """
     for name in list(sys.modules):
-        if name == "rikugan.ui.theme" or name.startswith("rikugan.ui.theme."):
+        if (
+            name == "rikugan.ui.theme"
+            or name.startswith("rikugan.ui.theme.")
+            # qt_compat holds the QTimer binding it imported at first load;
+            # if that was the qt_stubs substitute, the debounce fires
+            # synchronously and set_mode applies twice in these tests.
+            or name == "rikugan.ui.qt_compat"
+        ):
             del sys.modules[name]
 
 
@@ -70,6 +77,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
             or name.startswith("PySide6.")
             or name == "rikugan.ui.theme"
             or name.startswith("rikugan.ui.theme.")
+            or name == "rikugan.ui.qt_compat"
         }
         sys.modules.pop("PySide6", None)
         sys.modules.pop("PySide6.QtCore", None)

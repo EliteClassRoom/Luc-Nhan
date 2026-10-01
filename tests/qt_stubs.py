@@ -114,7 +114,12 @@ def _qt_class(name: str) -> type:
     def _set_text_format(self, fmt) -> None:
         # Track the format so tests can verify ``PlainText`` was forced
         # on user-facing titles. Real Qt exposes this via QLabel.textFormat().
-        self._textFormat = int(fmt)
+        # A real PySide6 ``TextFormat`` enum is not int()-able — keep the
+        # enum object itself so equality against ``Qt.TextFormat.*`` holds.
+        try:
+            self._textFormat = int(fmt)
+        except TypeError:
+            self._textFormat = fmt
 
     def _text_format_getter(self):
         # Default mirrors real Qt's ``AutoText`` (2). The setter is
@@ -154,6 +159,12 @@ def _qt_class(name: str) -> type:
 
     def _placeholder_text_getter(self):
         return getattr(self, "_placeholderText", "")
+
+    def _set_object_name(self, name) -> None:
+        self._objectName = "" if name is None else str(name)
+
+    def _object_name_getter(self) -> str:
+        return getattr(self, "_objectName", "")
 
     def _set_stylesheet(self, qss: str) -> None:
         self._styleSheet = str(qss)
@@ -262,6 +273,21 @@ def _qt_class(name: str) -> type:
         # fails on the stub otherwise.
         return self._layout_add_widget(w, *a, **k)
 
+    def _layout_insert_widget(self, index, w, *a, **k):
+        # ``insertWidget(index, widget, stretch, alignment)`` — record the
+        # widget in the same ``_items`` list addWidget uses so ``count()``
+        # and ``itemAt()`` see it. Out-of-range indices (negative or past
+        # the end, which chat_view hits via ``count() - 1`` on an empty
+        # layout) append, matching QBoxLayout's clamp.
+        items = getattr(self, "_items", None)
+        if items is None:
+            items = []
+            self._items = items
+        if 0 <= index <= len(items):
+            items.insert(index, w)
+        else:
+            items.append(w)
+
     def _layout_add_layout(self, layout, *a, **k):
         items = getattr(self, "_items", None)
         if items is None:
@@ -306,7 +332,8 @@ def _qt_class(name: str) -> type:
     attrs = {
         "__init__": _noop,
         # QWidget common
-        "setObjectName": _noop,
+        "setObjectName": _set_object_name,
+        "objectName": _object_name_getter,
         "setStyleSheet": _set_stylesheet,
         "styleSheet": _stylesheet_getter,
         "setMinimumWidth": _noop,
@@ -523,6 +550,7 @@ def _qt_class(name: str) -> type:
         "pressed": _PerInstanceSignal(),
         "released": _PerInstanceSignal(),
         "currentChanged": _PerInstanceSignal(),
+        "itemSelectionChanged": _PerInstanceSignal(),
         "currentIndexChanged": _PerInstanceSignal(),
         "currentTextChanged": _PerInstanceSignal(),
         "stateChanged": _PerInstanceSignal(),
@@ -556,7 +584,7 @@ def _qt_class(name: str) -> type:
         "text": _text_getter,
         # Layout helpers (used by QVBoxLayout / QHBoxLayout / QFormLayout)
         "addRow": _noop,
-        "insertWidget": _noop,
+        "insertWidget": _layout_insert_widget,
         "insertLayout": _noop,
     }
     return type(name, (), attrs)
@@ -1047,6 +1075,19 @@ def ensure_pyside6_stubs() -> None:
         (),
         {"NoDragDrop": 0, "DragOnly": 1, "DropOnly": 2, "DragDrop": 3, "InternalMove": 4},
     )()
+    # Real PySide6 also exposes these enums flat on QAbstractItemView (Qt 5
+    # style), and knowledge_panel uses that form:
+    # ``QAbstractItemView.SelectRows/SingleSelection/NoEditTriggers``.
+    _aiv = _widget_stubs["QAbstractItemView"]
+    _aiv.NoSelection = _aiv.SelectionMode.NoSelection
+    _aiv.SingleSelection = _aiv.SelectionMode.SingleSelection
+    _aiv.MultiSelection = _aiv.SelectionMode.MultiSelection
+    _aiv.ExtendedSelection = _aiv.SelectionMode.ExtendedSelection
+    _aiv.SelectItems = _aiv.SelectionBehavior.SelectItems
+    _aiv.SelectRows = _aiv.SelectionBehavior.SelectRows
+    _aiv.SelectColumns = _aiv.SelectionBehavior.SelectColumns
+    _aiv.NoEditTriggers = _aiv.EditTrigger.NoEditTriggers
+    _aiv.AllEditTriggers = _aiv.EditTrigger.AllEditTriggers
     _widget_stubs["QDialog"].DialogCode = type(
         "_DialogCode",
         (),
@@ -1116,6 +1157,16 @@ def ensure_pyside6_stubs() -> None:
         (),
         {"NoFrame": 0, "Box": 1, "Panel": 2, "StyledPanel": 6, "HLine": 4, "VLine": 5, "WinPanel": 3},
     )()
+    _widget_stubs["QHeaderView"].ResizeMode = type(
+        "_HeaderResizeMode",
+        (),
+        {"Interactive": 0, "Fixed": 1, "ResizeToContents": 3, "Stretch": 4},
+    )()
+    # Flat alias — knowledge_panel uses the Qt 5 style
+    # ``QHeaderView.ResizeToContents`` / ``QHeaderView.Stretch``.
+    _widget_stubs["QHeaderView"].ResizeToContents = 3
+    _widget_stubs["QHeaderView"].Stretch = 4
+
     _widget_stubs["QFrame"].Shadow = type(
         "_FrameShadow",
         (),
@@ -1132,6 +1183,40 @@ def ensure_pyside6_stubs() -> None:
         ),
     )
     sys.modules["PySide6.QtGui"].QFont = _qfont
+
+    # QPalette lives under QtGui; input_area.apply_palette sets Base/Text/
+    # PlaceholderText, theme/watcher reads Window/WindowText and
+    # theme/palette_ida maps 12 roles. Values mirror Qt6's
+    # QPalette::ColorRole so role keys stay stable across calls.
+    _qpalette = type(
+        "_ColorRole",
+        (),
+        {
+            "Window": 0,
+            "WindowText": 1,
+            "Base": 2,
+            "AlternateBase": 3,
+            "ToolTipBase": 4,
+            "ToolTipText": 5,
+            "Text": 6,
+            "BrightText": 7,
+            "Button": 8,
+            "ButtonText": 9,
+            "Light": 11,
+            "Midlight": 12,
+            "Dark": 13,
+            "Mid": 14,
+            "Shadow": 15,
+            "Link": 16,
+            "LinkVisited": 17,
+            "Alternate": 18,
+            "NoRole": 19,
+            "Highlight": 20,
+            "HighlightedText": 21,
+            "PlaceholderText": 22,
+        },
+    )()
+    sys.modules["PySide6.QtGui"].QPalette.ColorRole = _qpalette
 
     # QAccessibleAnnouncementEvent is the canonical PySide6 class for
     # notifying screen readers about a transient message. The stub

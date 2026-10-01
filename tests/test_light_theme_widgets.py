@@ -159,6 +159,7 @@ class TestBuildInputAreaStylesheetLight(unittest.TestCase):
             qss.startswith("QPlainTextEdit#input_area"),
             f"QSS must be scoped to #input_area; got: {qss[:80]!r}",
         )
+
     def test_light_input_qss_uses_light_token_colors(self) -> None:
         """The light-mode QSS must use ``LIGHT_TOKENS`` for the editor
         background, border, and selection colors so the input
@@ -168,6 +169,7 @@ class TestBuildInputAreaStylesheetLight(unittest.TestCase):
         self.assertIn(self.LIGHT_TOKENS.mid, qss)
         self.assertIn(self.LIGHT_TOKENS.highlight, qss)
         self.assertIn(self.LIGHT_TOKENS.highlight_text, qss)
+
 
 class TestBuildSkillPopupStylesheetLight(unittest.TestCase):
     """The skill-autocomplete popup QSS must also be light-theme aware."""
@@ -247,26 +249,22 @@ class TestHostThemeReturnsEmptyStylesheet(unittest.TestCase):
             qss.startswith("QPlainTextEdit#input_area"),
             f"input QSS must be scoped to #input_area in host mode; got: {qss[:80]!r}",
         )
+
     def test_skill_popup_returns_empty_in_host_mode(self) -> None:
         from rikugan.ui.styles import build_skill_popup_stylesheet
 
         self.assertEqual(build_skill_popup_stylesheet(self.LIGHT_TOKENS), "")
 
 
-@unittest.expectedFailure
 class TestSettingsDialogAppliesThemeOnShow(unittest.TestCase):
     """The settings dialog must call ``_apply_theme_styles`` on
     construction (or first show) so the light-mode QSS is applied
     before the user sees the dialog.  A pre-existing dark QSS must
     be replaced when the dialog is shown with light mode active.
 
-    Marked expectedFailure: these tests need a clean
-    ThemeManager singleton (no pending signal connections from
-    earlier test files) and a clean ``rikugan.ui.styles`` module
-    state. In the full suite, ``test_panel_core`` and
-    ``test_chat_view`` install stub modules that bleed theme
-    state across the test boundary. Tracked in
-    PROJECT_MODIFICATION_PLAN.md as D.3 remaining work.
+    (Earlier versions marked this class expectedFailure because stub
+    modules bled theme state across the test boundary; the per-test
+    purge in tests/conftest.py since made that obsolete.)
     """
 
     def setUp(self) -> None:

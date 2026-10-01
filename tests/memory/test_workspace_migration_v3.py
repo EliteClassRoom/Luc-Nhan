@@ -43,7 +43,9 @@ def test_v2_workspace_migrates_to_v3_with_default_empty_columns(tmp_path) -> Non
     fact_id = _create_v2_database(paths.database, owner)
 
     store = WorkspaceStore.open(paths, owner_memory_id=owner)
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    # v3 ran (columns checked below); the head version is not pinned because
+    # later additive migrations may follow.
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] >= 3
 
     columns = {row[1] for row in store._conn.execute("PRAGMA table_info(facts)")}
     assert {"entity_refs", "tags"}.issubset(columns)

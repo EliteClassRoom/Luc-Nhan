@@ -55,6 +55,7 @@ sys.modules.pop("rikugan.core.config", None)
 from rikugan.ui.styles import build_input_area_stylesheet
 from rikugan.ui.theme.palette_dark import DARK_TOKENS
 from rikugan.ui.theme.palette_light import LIGHT_TOKENS
+from tests.qt_real import live_class
 
 
 class _FakeColor:
@@ -166,15 +167,21 @@ class TestInputPalette(unittest.TestCase):
     ``PlaceholderText`` on the editor's ``QPalette`` from the live
     tokens so typed text is visible in every theme.
 
-    The test patches a tiny ``QPalette`` / ``QColor`` onto
-    ``rikugan.ui.input_area`` so the unbound ``apply_palette``
-    resolves to the fakes.  A ``ColorRole`` enum-like is attached
-    to the fake palette so ``QPalette.ColorRole.Base/Text/...
+    The test patches a tiny ``QPalette`` / ``QColor`` into the module
+    that OWNS the ``InputArea`` class under test, so the unbound
+    ``apply_palette`` resolves to the fakes.  A ``ColorRole`` enum-like
+    is attached to the fake palette so ``QPalette.ColorRole.Base/Text/...
     `` resolves inside the production code.
     """
 
     def test_palette_roles_match_tokens(self) -> None:
-        from rikugan.ui import input_area as input_area_mod
+        # Resolve the class first and patch through ITS module: a
+        # sibling test can leave ``rikugan.ui.input_area`` swapped for a
+        # stub (importable as an attribute of the ``rikugan.ui``
+        # package), so patching one module object while calling a class
+        # from another silently patches nothing.
+        input_area_cls = live_class("rikugan.ui.input_area.InputArea")
+        input_area_module = sys.modules[input_area_cls.__module__]
 
         # Attach ``ColorRole`` to the fake palette class so the
         # production code's ``QPalette.ColorRole.Base/Text/...``
@@ -190,12 +197,11 @@ class TestInputPalette(unittest.TestCase):
         )
 
         receiver = _FakeReceiver()
-        with patch.object(
-            input_area_mod, "QPalette", _FakePalette, create=True
-        ), patch.object(input_area_mod, "QColor", _FakeColor, create=True):
-            from rikugan.ui.input_area import InputArea
-
-            InputArea.apply_palette(receiver, LIGHT_TOKENS)
+        with patch.dict(
+            vars(input_area_module),
+            {"QPalette": _FakePalette, "QColor": _FakeColor},
+        ):
+            input_area_cls.apply_palette(receiver, LIGHT_TOKENS)
 
         self.assertEqual(
             receiver._palette._roles["Base"]._name,
@@ -231,10 +237,7 @@ class TestInputSizing(unittest.TestCase):
         self.assertIn(
             "self.setMinimumHeight(60)",
             source,
-            msg=(
-                "InputArea must default to a 2-3 line minimum height "
-                "(60px at 18px line-height with 6px padding)."
-            ),
+            msg=("InputArea must default to a 2-3 line minimum height (60px at 18px line-height with 6px padding)."),
         )
         # ``setMaximumHeight`` must not be called on the editor — the
         # vertical QSplitter in the panel owns the upper bound.
@@ -242,8 +245,7 @@ class TestInputSizing(unittest.TestCase):
             "setMaximumHeight",
             source,
             msg=(
-                "InputArea must not cap its maximum height; the "
-                "vertical QSplitter in the panel owns the upper bound."
+                "InputArea must not cap its maximum height; the vertical QSplitter in the panel owns the upper bound."
             ),
         )
         # Vertical policy must be ``Expanding`` so the editor fills

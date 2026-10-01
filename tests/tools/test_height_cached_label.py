@@ -20,6 +20,13 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
+# A sibling file collected first (tests/tools/test_panel_core.py) installs
+# _StubModule fakes for rikugan.ui.*; without this purge the imports below
+# bind MagicMocks and every assertion becomes mock arithmetic.
+from tests import purge_rikugan_stubs
+
+purge_rikugan_stubs()
+
 from rikugan.ui import message_widgets as _mw
 from rikugan.ui.message_widgets import (
     AssistantMessageWidget,
