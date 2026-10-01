@@ -47,6 +47,10 @@ def test_memory_dir_is_central(tmp_path: Path) -> None:
     assert Path(config.memory_dir) == tmp_path / "memory"
 
 
+def test_anthropic_runtime_dependency_is_in_all_manifests() -> None:
+    _assert_dependency_consistent("anthropic")
+
+
 def test_portalocker_runtime_dependency_is_in_all_manifests() -> None:
     _assert_dependency_consistent("portalocker")
 
