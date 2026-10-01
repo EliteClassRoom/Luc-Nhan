@@ -18,7 +18,7 @@
     ],
     "idaVersions": [">=9.0"],
     "pythonDependencies": [
-      "anthropic>=0.112.0",
+      "anthropic>=0.120.2",
       "openai>=2.0.0",
       "google-genai>=2.0.0",
       "mcp>=1.28.0",
@@ -28,8 +28,8 @@
       "requests>=2.31.0",
       "html2text>=2025.4.15",
       "markdown-it-py>=3.0.0",
-      "portalocker>=3.0.0,<4",
-      "unicorn>=2.1.0,<3"
+      "portalocker>=4.1.0,<5",
+      "unicorn>=2.1.4,<3"
     ],
     "keywords": [
       "ai",
