@@ -28,9 +28,12 @@ Design constraints:
   and run normally). A blocked instruction is not counted as executed.
 * Memory comes from the IDA snapshot
   (:func:`rikugan.ida.tools.emulation_memory.snapshot_memory`): exact
-  segment-intersection bytes, IDB permissions never widened, a writable
-  synthetic stack, and explicitly declared non-executable scratch buffers.
-  Reads/writes into page padding are denied instead of silently zero-filled.
+  segment-intersection bytes, segment permissions kept faithful except that
+  the requested code pages (entry range + ``code_ranges``) gain X (and R) so
+  packed-binary ``.text`` marked R|W still runs — W is never added; plus a
+  writable synthetic stack and explicitly declared non-executable scratch
+  buffers. Reads/writes into page padding are denied instead of silently
+  zero-filled.
 * Runtime is bounded by an instruction budget and a real wall-clock
   deadline that starts before the host-side memory snapshot. A timeout or a
   cancellation never claims completion: when the CPU phase was initialised it

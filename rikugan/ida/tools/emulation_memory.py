@@ -10,9 +10,12 @@ Fidelity rules (P0 memory fidelity):
 * Initial bytes come from segment/page *intersections* read with
   ``ida_bytes.get_bytes(intersection_start, intersection_size)`` — never a
   whole-segment read, never a page-relative re-offset of segment bytes.
-* Page permissions come from the IDA segment that owns those bytes and are
-  never widened. Two segments with different permissions sharing one page
-  fail explicitly instead of being OR-ed into RWX; pages with different
+* Page permissions come from the IDA segment that owns those bytes. The one
+  deliberate widening: pages of the explicitly requested entry range and
+  ``code_ranges`` allowlist gain X (and R) on top of the segment's real
+  permissions — packed binaries mark ``.text`` R|W — while W is never added.
+  Two segments with different permissions sharing one page still fail
+  explicitly instead of being OR-ed into RWX; pages with different
   permissions stay separate mappings even when adjacent.
 * Synthetic scratch buffers may share a page only with other scratch, never
   with IDB-backed bytes, and only with identical permissions. Scratch is
@@ -617,9 +620,11 @@ def snapshot_memory(
             )
     # "Exec what was asked": the entry range and the explicit code allowlist
     # run even when IDA flags the segment R|W (packed binaries mark .text
-    # R|W). Those pages — and only those — gain X on top of the segment's
-    # real permissions; every other page keeps faithful permissions, and W is
-    # never added, so stray writes still fail with permission_error.
+    # R|W). Those pages — and only those — gain R|X on top of the segment's
+    # real permissions (R because the engine must read what it executes; a
+    # write-only page would otherwise fail as an opaque read-prot error);
+    # every other page keeps faithful permissions and W is never added, so
+    # stray writes still fail with permission_error.
     exec_pages: set[int] = set()
     for span in (entry_span, *code_spans):
         for page in range(page_align_down(span[0]), page_align_up(span[1]), PAGE_SIZE):
@@ -639,7 +644,7 @@ def snapshot_memory(
                 continue
             perms_seen.add(perms)
             page_chunks.setdefault(page, []).append((lo - page, _read_page_bytes(lo, hi - lo, is_bss)))
-            valid_idb.append((lo, hi, perms | (_X if page in exec_pages else 0)))
+            valid_idb.append((lo, hi, perms | ((_R | _X) if page in exec_pages else 0)))
         if len(perms_seen) > 1:
             raise ToolError(
                 f"page 0x{page:x} is covered by IDA segments with conflicting permissions "
@@ -647,7 +652,7 @@ def snapshot_memory(
                 tool_name=_TOOL,
             )
         if perms_seen:
-            page_perms[page] = perms_seen.pop() | (_X if page in exec_pages else 0)
+            page_perms[page] = perms_seen.pop() | ((_R | _X) if page in exec_pages else 0)
 
     # -- Scratch buffers.  A page already backed by IDB bytes was rejected
     #    above, so any shared page here is scratch-only and must agree on
