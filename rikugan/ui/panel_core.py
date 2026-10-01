@@ -1079,6 +1079,7 @@ class RikuganPanelCore(QWidget):
         # renders it on the deferred restore path.
         messages = list(session.messages) if session and session.messages else []
         self._pending_restore_messages[tab_id] = messages
+        log_debug(f"HIST-TRACE rebuild: tab={tab_id} msgs={len(messages)}")  # TEMP-DIAG
         # Tear down the old (empty) ChatView if it exists.  ``shutdown``
         # bumps its restore generation so any late restore signal drops.
         if old_view is not None:
@@ -2010,6 +2011,7 @@ class RikuganPanelCore(QWidget):
         if self._history_panel is None:
             return
         visible = not self._history_panel.isVisible()
+        log_debug(f"HIST-TRACE toggle: panel_visible={not visible}")  # TEMP-DIAG
         self._show_right_panel("history" if visible else None)
 
     def _show_right_panel(self, name: Literal["history", "mutation"] | None) -> None:
@@ -2116,6 +2118,7 @@ class RikuganPanelCore(QWidget):
             return
         # Single-flight: at most one history request in flight at a time.
         if self._history_pending:
+            log_debug("HIST-TRACE load: dropped — pending already True")  # TEMP-DIAG
             return
         # Stash the in-flight load's target session id so a FAILED
         # result (which does NOT carry the id back) can copy it into
@@ -2193,6 +2196,7 @@ class RikuganPanelCore(QWidget):
         if existing_tab_id is not None:
             self._focus_tab(existing_tab_id)
             return
+        log_debug(f"HIST-TRACE open-request: sid={session_id}")  # TEMP-DIAG
         self._start_history_load(session_id)
 
     def _history_load_worker(
@@ -2277,6 +2281,7 @@ class RikuganPanelCore(QWidget):
             # A list/load is already queued or running.  Dropping the
             # second submit keeps the executor serialized and prevents
             # a burst of retry clicks from queueing redundant scans.
+            log_debug("HIST-TRACE list: dropped — pending already True")  # TEMP-DIAG
             return
         # A new request reopens the worker path.  ``_invalidate_history``
         # already installed a fresh, unset ``_history_closing`` Event for
@@ -2289,6 +2294,7 @@ class RikuganPanelCore(QWidget):
         # in-flight result from a prior generation is discarded by
         # ``_drain_history_results``.
         self._history_generation += 1
+        log_debug(f"HIST-TRACE list: submit gen={self._history_generation}")  # TEMP-DIAG
         scope = self._ctrl.capture_history_scope(self._history_generation)
         # Lazy executor: created on first open, dropped on
         # ``_invalidate_history``.  Never reuse ``_SAVE_EXECUTOR``.
@@ -2343,6 +2349,7 @@ class RikuganPanelCore(QWidget):
         try:
             SessionHistory(self._ctrl.config).flush_saves(timeout=10.0)
             entries = self._ctrl.list_history_sessions(scope)
+            log_debug(f"HIST-TRACE list-worker: gen={scope.generation} entries={len(entries)}")  # TEMP-DIAG
             result = HistoryListResult(
                 HistoryRequestStatus.LISTED,
                 scope,
@@ -2605,8 +2612,10 @@ class RikuganPanelCore(QWidget):
             if result.status is not HistoryRequestStatus.LOADED:
                 return
         status = result.status
+        log_debug(f"HIST-TRACE load-apply: status={status.name}")  # TEMP-DIAG
         if status is HistoryRequestStatus.LOADED:
             attach = self._ctrl.attach_history_session(result)
+            log_debug(f"HIST-TRACE attach: {attach.status.name} tab={attach.tab_id}")  # TEMP-DIAG
             if attach.status is HistoryAttachStatus.OPENED:
                 tab_id = attach.tab_id
                 session = attach.session
@@ -2696,6 +2705,7 @@ class RikuganPanelCore(QWidget):
         worker.
         """
         status = result.status
+        log_debug(f"HIST-TRACE list-apply: status={status.name} entries={len(result.entries)}")  # TEMP-DIAG
         # Startup auto-restore: a single hidden list request followed by
         # a hidden load for the newest entry. Non-LISTED or empty outcomes
         # clear the flag and suppress the History panel render so the

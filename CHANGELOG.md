@@ -53,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Address tools accept a function/symbol name, not just `0x…`** — the model
+  routinely passes a name where a tool documents an address
+  (`get_function_info("init_config_and_beacon")`). `parse_addr` did
+  `int(value, 0)`, which raised `ValueError: invalid literal for int() with
+  base 0` and failed the whole call. It now falls back to the host seam
+  `core.host.resolve_symbol` (`ida_name.get_name_ea`), so all ~40
+  address-taking tools, the mutation pre-state capture, and microcode target
+  parsing accept a name through one fix. A bare decimal string (`"4096"`) also
+  resolves now. Unresolvable input still raises `ValueError: Unknown address
+  or name: …`, which the tool wrapper turns into an actionable `ToolError`.
+  The duplicate addr-or-name resolver in `ida/tools/database.py` is gone.
 - **Slow MCP servers no longer die at the 15s startup clamp** — `MCPManager`
   computed the startup wait as `min(timeout, 15s)`, silently overriding the
   per-server `timeout` field in `mcp.json` (schema default 30s). Cold-starting

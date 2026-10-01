@@ -2073,6 +2073,7 @@ class ChatView(QScrollArea):
         # worker enqueues ``(kind, payload)`` tuples onto ``worker.queue``;
         # ``_drain_restore_queue`` (driven by ``_ensure_restore_poll_timer``)
         # is the sole consumer on the main thread.
+        log_debug(f"HIST-TRACE restore-start: msgs={len(messages)}")  # TEMP-DIAG
         worker = RestoreWorker(messages, parent=self, max_rendered=self._restore_max_rendered)
         # ``finished`` is emitted by QThread when ``run`` returns; use
         # it as a hard cleanup point regardless of the queue's
@@ -2201,6 +2202,7 @@ class ChatView(QScrollArea):
         # already cleaned up in ``_on_chunk_ready`` (height 0 + deleteLater),
         # so any leftover here is a skip, not a leak.
         self._in_restore = False
+        log_debug(f"HIST-TRACE restore-finished: gen={generation} leftover_placeholders={len(self._placeholders)}")  # TEMP-DIAG
         # The worker is done — stop the drain timer.  ``_drain_restore_queue``
         # also stops on the sentinel path, but stopping here covers the
         # case where the drain is mid-batch and the safety-net

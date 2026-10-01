@@ -11,15 +11,38 @@ from dataclasses import dataclass, field
 from typing import Any, get_type_hints
 
 from ..core.errors import ToolError, ToolValidationError
+from ..core.host import resolve_symbol
 from ..core.logging import log_error as _log_error
 from ..core.logging import log_trace
 
 
 def parse_addr(value: Any) -> int:
-    """Parse an address that may arrive as hex string or int from the LLM."""
+    """Parse an address that may arrive as int, hex string, or symbol name.
+
+    The model frequently passes a function name (e.g. ``init_config_and_beacon``)
+    where a tool documents an address, so a bare ``int(value, 0)`` failed the
+    whole call. Resolution is delegated to the host seam
+    (``core.host.resolve_symbol``), which keeps every ``parse_addr`` caller —
+    the ~40 address-taking tools, the mutation pre-state capture and the
+    microcode target parsing — working without touching each call site.
+    """
     if isinstance(value, int):
         return value
-    return int(value, 0)
+
+    text = value if isinstance(value, str) else str(value)
+    try:
+        return int(text, 0)
+    except ValueError:
+        pass
+
+    # Decimal without a base prefix: ``int(text, 0)`` rejects "1234".
+    if text.isdigit():
+        return int(text)
+
+    ea = resolve_symbol(text)
+    if ea is not None:
+        return ea
+    raise ValueError(f"Unknown address or name: {value}")
 
 
 # Python type -> JSON Schema type
