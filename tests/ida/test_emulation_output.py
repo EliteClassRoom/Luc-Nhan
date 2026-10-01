@@ -55,6 +55,15 @@ class TestDecodeStringCandidates(unittest.TestCase):
         self.assertFalse(meta["utf8_terminated"])
         self.assertFalse(meta["has_nul_terminator"])
 
+    def test_utf8_only_termination_counts_for_combined_flag(self) -> None:
+        # b"\xc3\xa9\x00" is "é" + NUL: ASCII breaks at the lead byte, the
+        # wide run is unterminated, only UTF-8 reaches the NUL.
+        meta = decode_string_candidates(b"\xc3\xa9\x00")
+        self.assertTrue(meta["utf8_terminated"])
+        self.assertFalse(meta["ascii_terminated"])
+        self.assertFalse(meta["utf16le_terminated"])
+        self.assertTrue(meta["has_nul_terminator"])
+
     def test_aligned_wide_terminator_ends_wide_candidate(self) -> None:
         payload = "hello".encode("utf-16le") + b"\x00\x00\xff\xff"
         meta = decode_string_candidates(payload)

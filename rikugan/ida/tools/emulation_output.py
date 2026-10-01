@@ -235,7 +235,7 @@ def decode_string_candidates(data: bytes) -> dict[str, Any]:
         "utf16le": wide_text,
         "utf16le_terminated": wide_terminated,
         "raw_length": len(payload),
-        "has_nul_terminator": ascii_terminated or wide_terminated,
+        "has_nul_terminator": ascii_terminated or utf8_terminated or wide_terminated,
     }
 
 

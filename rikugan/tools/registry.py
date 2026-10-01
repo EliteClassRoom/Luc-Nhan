@@ -367,26 +367,34 @@ class ToolRegistry:
         if dispatch_wrapper is not None and needs_host_dispatch:
             handler = dispatch_wrapper(handler)
 
-        # Deadline covers the host dispatch + handler + mutation lock wait,
-        # so handlers that split host and CPU phases can clamp their own
-        # budget against the same clock the registry timeout uses.
-        deadline = time.monotonic() + timeout
-        handler = _bind_context(
-            handler,
-            dispatch_wrapper=dispatch_wrapper,
-            cancel_event=cancel_event,
-            deadline=deadline,
-        )
-
         future = None
         try:
             # Mutating tools serialize so concurrent agents don't interleave IDB
             # writes — this keeps capture_pre_state / undo records coherent.
+            # The deadline is bound after the lock for the mutating path so it
+            # matches the enforced future.result(timeout), which also starts
+            # only once the lock is held — handlers clamping their own budget
+            # against context.deadline see the same clock the registry uses.
             if is_mutating:
                 with self._mutate_lock:
+                    handler = _bind_context(
+                        handler,
+                        dispatch_wrapper=dispatch_wrapper,
+                        cancel_event=cancel_event,
+                        deadline=time.monotonic() + timeout,
+                    )
                     future = _executor.submit(handler, **arguments)
                     result = future.result(timeout=timeout)
             else:
+                # Deadline covers the host dispatch + handler, so handlers
+                # that split host and CPU phases can clamp their own budget
+                # against the same clock the registry timeout uses.
+                handler = _bind_context(
+                    handler,
+                    dispatch_wrapper=dispatch_wrapper,
+                    cancel_event=cancel_event,
+                    deadline=time.monotonic() + timeout,
+                )
                 future = _executor.submit(handler, **arguments)
                 result = future.result(timeout=timeout)
         except FuturesTimeoutError:

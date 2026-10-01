@@ -69,13 +69,21 @@ class TestDefaultRegistryCreation(unittest.TestCase):
             self.assertIn("properties", schema, f"{defn.name} missing properties")
 
     def test_provider_format_all_tools(self):
-        """Every tool must produce valid provider format for the LLM."""
+        """Every tool must produce valid provider format for the LLM.
+
+        Deterministic: capabilities are forced off so the exclusion set is
+        exactly the tools whose requirements are not met, independent of the
+        ambient Hex-Rays probe (which changes with test import order).
+        """
+        self.registry.set_capabilities({"hexrays": False, "ida_ui": False})
         formats = self.registry.to_provider_format()
         fmt_names = {fmt["function"]["name"] for fmt in formats}
         all_names = set(self.registry.list_names())
-        # Verify that the format includes a reasonable subset of registered tools.
-        # Some internal/microcode/decompiler/web tools are intentionally excluded.
-        self.assertGreater(len(all_names), len(fmt_names), "Should exclude some tools")
+        excluded = all_names - fmt_names
+        requiring = {
+            t.name for t in self.registry.list_tools() if any(req in ("hexrays", "ida_ui") for req in t.requires)
+        }
+        self.assertEqual(excluded, requiring, "exactly capability-gated tools are excluded")
         self.assertGreater(len(all_names), 0)
         self.assertGreater(len(formats), 0)
         self.assertIn("list_functions", fmt_names, "basic tools must be present")
@@ -147,11 +155,13 @@ class TestRegistryExecution(unittest.TestCase):
 
     def test_execute_unknown_tool_raises(self):
         from rikugan.core.errors import ToolNotFoundError
+
         with self.assertRaises(ToolNotFoundError):
             self.registry.execute("nonexistent_tool_xyz", {})
 
     def test_execute_wrong_args_raises(self):
         from rikugan.core.errors import ToolError
+
         with self.assertRaises(ToolError):
             # list_functions expects int for offset — @tool wraps TypeError as ToolError
             self.registry.execute("list_functions", {"offset": "not_an_int"})
@@ -273,6 +283,7 @@ class TestExecuteCoerced(unittest.TestCase):
 
     def test_execute_coerced_unknown_tool_raises(self):
         from rikugan.core.errors import ToolNotFoundError
+
         with self.assertRaises(ToolNotFoundError):
             self.registry.execute_coerced("does_not_exist", {})
 
