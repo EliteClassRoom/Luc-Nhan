@@ -32,10 +32,11 @@ Design constraints (see plan: ``.kilo/plans/1784279972842-...``):
   with the offending address.
 * Instruction limit defaults to 100_000 with a 1_000_000 hard cap.
 
-The module exposes pure helpers (``page_align_down``, ``merge_contiguous``,
-``coerce_register_value``, ``_decode_string_candidates``, ``format_result``,
-``_build_mapping_plan``) that unit tests can exercise without a live IDA
-database or a Unicorn engine.
+The module exposes pure helpers (``page_align_down``, ``page_align_up``,
+``merge_contiguous``, ``coerce_register_value``, ``format_result``) that unit
+tests can exercise without a live IDA database or a Unicorn engine.
+``_build_mapping_plan`` and ``_decode_string_candidates`` are private but
+exercised directly by ``tests/ida/test_emulation.py``.
 """
 
 from __future__ import annotations
@@ -77,6 +78,37 @@ _MAX_MAPPED_IDB_BYTES = 16 * 1024 * 1024
 
 # Synthetic stack size.
 _STACK_SIZE = 1 * 1024 * 1024
+
+# Bytes left unused at the top of the synthetic stack: the initial ``esp``/
+# ``rsp`` points here rather than at the very top, so a routine that pushes
+# a small frame before reading its arguments does not run off the mapping.
+_STACK_TOP_RESERVED = 0x100
+
+# Internal permission mask: a compact R/W/X encoding used everywhere between
+# ``_seg_perms`` (IDA -> internal) and ``_ida_perms_to_unicorn``
+# (internal -> ``UC_PROT_*``). The values deliberately coincide with Unicorn's
+# ``UC_PROT_READ``/``WRITE``/``EXEC``, but the two are distinct
+# representations — never pass an internal mask where a ``UC_PROT_*`` is
+# expected.
+_PERM_R = 1
+_PERM_W = 2
+_PERM_X = 4
+_PERM_RW = _PERM_R | _PERM_W  # 3 — synthetic stack
+_PERM_RWX = _PERM_R | _PERM_W | _PERM_X  # 7 — fallback when IDA is absent
+
+# IDA's own ``SEGPERM_*`` bits, the encoding ``_seg_perms`` translates
+# *from*. Note these are the reverse order of the internal mask above:
+# IDA's read bit is 4 where the internal read bit is 1.
+_IDA_PERM_EXEC = 1
+_IDA_PERM_WRITE = 2
+_IDA_PERM_READ = 4
+_IDA_PERM_MASK = _IDA_PERM_READ | _IDA_PERM_WRITE | _IDA_PERM_EXEC
+
+# Write-preview bounds. The hex preview of a recorded write is masked to at
+# most 64 bits so a ``qword`` write does not render a 128-bit-narrow slice of
+# garbage, and to at least 8 so a single-byte write still shows one full byte.
+_PREVIEW_MAX_BITS = 64
+_PREVIEW_MIN_BITS = 8
 
 # Default + hard cap on emulator instructions per call.
 _DEFAULT_INSTRUCTION_LIMIT = 100_000
@@ -196,27 +228,14 @@ def merge_contiguous(regions: Sequence[tuple[int, int]]) -> list[tuple[int, int]
     return [(s, e) for s, e in merged]
 
 
-def is_hex_or_int(value: Any) -> bool:
-    """True if *value* would round-trip through ``int(value, 0)``."""
-
-    if isinstance(value, bool):  # bool is a subclass of int — reject explicitly
-        return False
-    if isinstance(value, int):
-        return True
-    if not isinstance(value, str):
-        return False
-    try:
-        int(value, 0)
-        return True
-    except (TypeError, ValueError):
-        return False
-
-
 def _coerce_addr(value: Any, *, ctx: str) -> int:
     """Coerce an address the LLM supplied as int, integral float, or hex/decimal string.
 
-    Addresses are always integers; ``is_hex_or_int`` rejects integral floats
-    (e.g. ``4198400.0``) which LLMs routinely emit in JSON.
+    Accepts ``int``, a ``float`` with no fractional part (LLMs routinely emit
+    addresses as ``4198400.0`` in JSON), and any string ``int(value, 0)``
+    parses (``"0x401000"``, ``"401000"``, ``"0X401000"``). Everything else —
+    ``bool`` (an ``int`` subclass, but never a meaningful address), ``None``,
+    non-integral floats, lists, unparsable strings — raises ``ToolError``.
     """
     try:
         if isinstance(value, bool):
@@ -550,16 +569,16 @@ def _seg_perms(seg: Any) -> int:
     """Translate IDA segment permission bits to a translated R/W/X mask."""
 
     try:
-        perm = int(seg.perm) & 0x7
+        perm = int(seg.perm) & _IDA_PERM_MASK
     except (AttributeError, TypeError):
-        return 1  # Read-only fallback
+        return _PERM_R  # Read-only fallback
     out = 0
-    if perm & 4:
-        out |= 1  # R
-    if perm & 2:
-        out |= 2  # W
-    if perm & 1:
-        out |= 4  # X
+    if perm & _IDA_PERM_READ:
+        out |= _PERM_R
+    if perm & _IDA_PERM_WRITE:
+        out |= _PERM_W
+    if perm & _IDA_PERM_EXEC:
+        out |= _PERM_X
     return out
 
 
@@ -589,13 +608,13 @@ def _pick_permission_for_range(start: int, end: int) -> int:
     """Best-effort permission translation for a planned mapping."""
 
     if ida_segment is None:
-        return 7  # RWX fallback when IDA is missing (test mode)
-    perms = 1
+        return _PERM_RWX  # RWX fallback when IDA is missing (test mode)
+    perms = _PERM_R
     for ea in (start, (start + end) // 2, end - 1):
         seg = _resolve_segment(ea)
         if seg is not None:
             perms |= _seg_perms(seg)
-    return perms or 1
+    return perms or _PERM_R
 
 
 def _build_mapping_plan(
@@ -658,10 +677,10 @@ def _build_mapping_plan(
             # mapped executable even when IDA flags the segment R|W (packed
             # binaries) or unreadable. Data-only ranges keep faithful segment
             # permissions so stray writes still surface as permission_error.
-            perms |= 4
+            perms |= _PERM_X
         page_regions.append((aligned_start, size, perms, False))
 
-    page_regions.append((arch.stack_base, _STACK_SIZE, 3, True))  # R|W synthetic stack
+    page_regions.append((arch.stack_base, _STACK_SIZE, _PERM_RW, True))  # R|W synthetic stack
     total += _STACK_SIZE
     if total > _MAX_MAPPED_IDB_BYTES:
         raise ToolError(
@@ -669,7 +688,7 @@ def _build_mapping_plan(
             tool_name="emulate_code",
         )
 
-    stack_top = arch.stack_base + _STACK_SIZE - 0x100
+    stack_top = arch.stack_base + _STACK_SIZE - _STACK_TOP_RESERVED
     return MappingPlan(
         page_aligned_regions=page_regions,
         total_bytes=total,
@@ -682,11 +701,11 @@ def _ida_perms_to_unicorn(perms: int, unicorn: Any) -> int:
     """Convert translated IDA R/W/X mask to a Unicorn ``UC_PROT_*`` value."""
 
     out = unicorn.UC_PROT_NONE
-    if perms & 1:
+    if perms & _PERM_R:
         out |= unicorn.UC_PROT_READ
-    if perms & 2:
+    if perms & _PERM_W:
         out |= unicorn.UC_PROT_WRITE
-    if perms & 4:
+    if perms & _PERM_X:
         out |= unicorn.UC_PROT_EXEC
     if out == unicorn.UC_PROT_NONE:
         out = unicorn.UC_PROT_READ
@@ -695,7 +714,6 @@ def _ida_perms_to_unicorn(perms: int, unicorn: Any) -> int:
 
 def _write_segment_payloads(
     engine: Any,
-    arch: ArchMode,
     start_address: int,
     stop_address: int,
     extra_ranges: Sequence[tuple[int, int]],
@@ -703,8 +721,14 @@ def _write_segment_payloads(
 ) -> None:
     """Copy the IDB bytes covered by the requested ranges into *engine*.
 
+    *extra_ranges* are ``(address, size)`` pairs — the shape
+    ``_normalize_memory_ranges`` produces and both tool entry points forward
+    verbatim — and are converted to ``(start, end)`` here so they merge
+    correctly with the code range. ``start_address``/``stop_address`` are
+    already an end-form range.
+
     Offsets are **segment-relative**: payloads are read from
-    ``seg.start_ea``, so a range that begins mid-segment (a function at
+    ``segment.start_ea``, so a range that begins mid-segment (a function at
     ``0x408345`` inside a ``0x401000``-based segment) gets the bytes that
     actually live at that address. Each merged region is walked segment by
     segment, so a range spanning adjacent segments is filled from each in
@@ -718,35 +742,50 @@ def _write_segment_payloads(
     regions.extend((cap.address, cap.address + cap.size) for cap in captures)
 
     for region_start, region_end in merge_contiguous(regions):
-        cur = region_start
-        while cur < region_end:
-            seg = _resolve_segment(cur)
-            if seg is None:
+        cursor = region_start
+        while cursor < region_end:
+            segment = _resolve_segment(cursor)
+            if segment is None:
                 # No IDB segment covers this address — leave the page as
                 # Unicorn mapped it (zero-filled) and resync on a boundary.
-                cur = page_align_up(cur + 1)
+                cursor = page_align_up(cursor + 1)
                 continue
-            seg_end = int(seg.end_ea)
-            if seg_end <= cur:
-                cur = page_align_up(cur + 1)  # defensive: never spin
+            segment_start_ea = int(segment.start_ea)
+            segment_end = int(segment.end_ea)
+            if segment_end <= cursor:
+                cursor = page_align_up(cursor + 1)  # defensive: never spin
                 continue
-            chunk_end = min(region_end, seg_end)
-            payload = _read_segment_bytes(seg)
+            write_end = min(region_end, segment_end)
+            payload = _read_segment_bytes(segment)
             if payload is not None:
-                offset = cur - int(seg.start_ea)
-                chunk = payload[offset : offset + (chunk_end - cur)]
+                # segment-relative — NOT page-relative: payloads are read
+                # from segment_start_ea, so a mid-segment entry point indexes
+                # the bytes that actually live at that address.
+                offset = cursor - segment_start_ea
+                chunk = payload[offset : offset + (write_end - cursor)]
                 if chunk:
                     try:
-                        engine.mem_write(cur, chunk)
+                        engine.mem_write(cursor, chunk)
                     except Exception as e:
-                        log_debug(f"_write_segment_payloads: write to 0x{cur:x} failed: {e}")
-            cur = chunk_end
+                        log_debug(f"_write_segment_payloads: write to 0x{cursor:x} failed: {e}")
+            cursor = write_end
 
 
 # ---------------------------------------------------------------------------
 # Emulation runner.  No side effects beyond the engine instance; returns a
 # fully-populated ``EmulationResult``.  Bounded by ``max_instructions``.
 # ---------------------------------------------------------------------------
+
+
+def _idb_mapped_ranges(plan: MappingPlan) -> list[tuple[int, int, int]]:
+    """Mapped IDB regions as ``(start, end, perms)`` for the result block.
+
+    The synthetic stack is excluded — it is runner scaffolding, not a
+    user-visible mapping, and reporting it would tell the caller their IDB
+    contains a 1 MiB R|W region at ``0x1000000`` that it does not.
+    """
+
+    return [(s, s + sz, p) for s, sz, p, is_stack in plan.page_aligned_regions if not is_stack]
 
 
 def _run(
@@ -759,6 +798,25 @@ def _run(
     captures: Sequence[CaptureRequest],
     max_instructions: int,
 ) -> EmulationResult:
+    """Execute ``[start_address, stop_address)`` and report what happened.
+
+    Phases, in order: build the mapping plan → construct the engine → map
+    every region → fill IDB payloads → seed registers → probe the entry point
+    for forbidden opcodes → install hooks → ``emu_start`` → read registers
+    back → capture the requested ranges.
+
+    Register seeding is safe because *only* user-supplied canonical registers
+    are written. A fresh ``Uc`` is already zero-filled, so omitting a register
+    never means "clobber it with 0"; ``esp``/``rsp`` and ``eflags``/``rflags``
+    get defaults only when the caller omitted them. ``_resolve_register_input``
+    has already canonicalised every supplied name to this arch's width, so an
+    alias write can no longer overwrite a user value with a zeroed one.
+
+    Every hook that halts the engine writes ``stop_state`` through ``_stop``
+    rather than returning a result directly, so a status decided mid-run has
+    the same precedence regardless of which hook observed it.
+    """
+
     plan = _build_mapping_plan(
         arch=arch,
         start_address=start_address,
@@ -806,7 +864,29 @@ def _run(
                     tool_name="emulate_code",
                 ) from e
 
-    _write_segment_payloads(engine, arch, start_address, stop_address, extra_ranges, captures=captures)
+    _write_segment_payloads(engine, start_address, stop_address, extra_ranges, captures=captures)
+
+    def _write_reg(reg_id: int, value: int, name: str) -> None:
+        """Write *value* to *reg_id*, logging (never raising) on failure.
+
+        A register Unicorn refuses is left as-is; the engine then fails with
+        a concrete ``emulator_error`` instead of an opaque construction error
+        part-way through seeding.
+        """
+
+        try:
+            engine.reg_write(reg_id, value)
+        except Exception as e:
+            log_debug(f"_run: reg_write({name}) failed: {e}")
+
+    def _read_reg(reg_id: int, name: str) -> int | None:
+        """Read *reg_id* masked to the arch's pointer width, or None on failure."""
+
+        try:
+            return int(engine.reg_read(reg_id)) & ((1 << (8 * arch.ptr_size)) - 1)
+        except Exception as e:
+            log_debug(f"_run: reg_read({name}) failed: {e}")
+            return None
 
     # Initial registers. ``_resolve_register_input`` already resolved every
     # supplied name to the canonical width for this arch, so writing only
@@ -819,31 +899,21 @@ def _run(
             continue
         final_registers[unified] = value
         reg_id = reg_ids.get(unified)
-        if reg_id is None:
-            continue
-        try:
-            engine.reg_write(reg_id, value)
-        except Exception:
-            pass  # ignored — Unicorn will not run if a required register is invalid.
+        if reg_id is not None:
+            _write_reg(reg_id, value, unified)
 
     # SP defaults to ``stack_top`` when the caller didn't supply ``esp``/``rsp``.
     ip_reg_id = reg_ids[arch.ip_reg]
     sp_reg_id = reg_ids[arch.sp_reg]
     if final_registers.get(arch.sp_reg) is None:
         final_registers[arch.sp_reg] = plan.stack_top
-    try:
-        engine.reg_write(sp_reg_id, final_registers[arch.sp_reg])
-    except Exception:
-        pass
+    _write_reg(sp_reg_id, final_registers[arch.sp_reg], arch.sp_reg)
     flags_reg_id = reg_ids[arch.flags_reg]
     if final_registers.get(arch.flags_reg) is None:
         # Unicorn refuses to run with undefined flags; only default when the
         # caller did not supply one (its value must survive verbatim).
         final_registers[arch.flags_reg] = 0
-        try:
-            engine.reg_write(flags_reg_id, 0)
-        except Exception:
-            pass
+        _write_reg(flags_reg_id, 0, arch.flags_reg)
 
     # Detect forbidden opcodes up front.
     try:
@@ -856,7 +926,7 @@ def _run(
             stop_pc=start_address,
             instruction_count=0,
             architecture=arch.label,
-            mapped_ranges=[(s, s + sz, p) for s, sz, p, is_stack in plan.page_aligned_regions if not is_stack],
+            mapped_ranges=_idb_mapped_ranges(plan),
             final_registers=final_registers,
         )
     forbidden = detect_unsupported_opcodes(entry_bytes)
@@ -868,7 +938,7 @@ def _run(
             stop_pc=start_address,
             instruction_count=0,
             architecture=arch.label,
-            mapped_ranges=[(s, s + sz, p) for s, sz, p, is_stack in plan.page_aligned_regions if not is_stack],
+            mapped_ranges=_idb_mapped_ranges(plan),
             final_registers=final_registers,
         )
 
@@ -876,36 +946,42 @@ def _run(
     stop_state = {"status": "completed", "reason": f"reached stop address 0x{stop_address:x}", "stop_pc": start_address}
     instruction_count = [0]
 
+    def uc_stop() -> None:
+        """Halt the engine; every terminating hook ends with this."""
+
+        engine.emu_stop()
+
+    def _stop(status: str, reason: str, pc: int) -> None:
+        """Record a terminal status and halt the engine from inside a hook."""
+
+        stop_state["status"] = status
+        stop_state["reason"] = reason
+        stop_state["stop_pc"] = pc
+        uc_stop()
+
     def _update_reg_state() -> None:
         # Read back only canonical names: aliases would report the same
-        # physical register twice (``eax`` and ``rax`` on x64).
+        # physical register twice (``eax`` and ``rax`` on x64). A register
+        # that fails to read keeps its seeded value rather than vanishing.
         for unified in _canonical_registers(arch.ptr_size):
             reg_id = reg_ids.get(unified)
             if reg_id is None:
                 continue
-            try:
-                final_registers[unified] = int(engine.reg_read(reg_id)) & ((1 << (8 * arch.ptr_size)) - 1)
-            except Exception:
-                pass
+            read_back = _read_reg(reg_id, unified)
+            if read_back is not None:
+                final_registers[unified] = read_back
 
     # Hook: code — track instruction count, range exit, instruction limit.
     def code_hook(uc, address, _size, _user):
         instruction_count[0] += 1
-        try:
-            next_ip = int(engine.reg_read(ip_reg_id))
-        except Exception:
+        next_ip = _read_reg(ip_reg_id, arch.ip_reg)
+        if next_ip is None:
             next_ip = address
         if next_ip < start_address or next_ip >= stop_address:
-            stop_state["status"] = "range_exit"
-            stop_state["reason"] = f"PC left range at 0x{next_ip:x}"
-            stop_state["stop_pc"] = next_ip
-            uc.emu_stop()
+            _stop("range_exit", f"PC left range at 0x{next_ip:x}", next_ip)
             return
         if instruction_count[0] >= limit:
-            stop_state["status"] = "instruction_limit"
-            stop_state["reason"] = f"hit instruction limit {limit} at 0x{next_ip:x}"
-            stop_state["stop_pc"] = next_ip
-            uc.emu_stop()
+            _stop("instruction_limit", f"hit instruction limit {limit} at 0x{next_ip:x}", next_ip)
 
     # Hook: memory-write — record bounded, coalesced changes.
     write_log: list[dict[str, Any]] = []
@@ -916,35 +992,34 @@ def _run(
                 {
                     "address": int(address),
                     "size": int(size),
-                    "hex_preview": f"0x{int(value) & ((1 << min(64, max(8, int(size) * 8))) - 1):x}",
+                    "hex_preview": f"0x{int(value) & ((1 << min(_PREVIEW_MAX_BITS, max(_PREVIEW_MIN_BITS, int(size) * 8))) - 1):x}",
                 }
             )
 
     # Hook: invalid memory or instruction — translate to status.
     def invalid_mem_hook(uc, access, address, _size, _value, _user):
-        try:
-            next_ip = int(engine.reg_read(ip_reg_id))
-        except Exception:
+        next_ip = _read_reg(ip_reg_id, arch.ip_reg)
+        if next_ip is None:
             next_ip = address
         # Distinguish unmapped vs. permission violations.
         if access & (unicorn.UC_MEM_READ_UNMAPPED | unicorn.UC_MEM_WRITE_UNMAPPED | unicorn.UC_MEM_FETCH_UNMAPPED):
-            stop_state["status"] = "unmapped_memory"
-            stop_state["reason"] = f"unmapped access (0x{int(address):x}) at PC 0x{next_ip:x}"
+            _stop(
+                "unmapped_memory",
+                f"unmapped access (0x{int(address):x}) at PC 0x{next_ip:x}",
+                next_ip,
+            )
         else:
-            stop_state["status"] = "permission_error"
-            stop_state["reason"] = f"permission violation at 0x{int(address):x} (PC 0x{next_ip:x})"
-        stop_state["stop_pc"] = next_ip
-        uc.emu_stop()
+            _stop(
+                "permission_error",
+                f"permission violation at 0x{int(address):x} (PC 0x{next_ip:x})",
+                next_ip,
+            )
 
     def invalid_insn_hook(uc, _user):
-        try:
-            next_ip = int(engine.reg_read(ip_reg_id))
-        except Exception:
+        next_ip = _read_reg(ip_reg_id, arch.ip_reg)
+        if next_ip is None:
             next_ip = 0
-        stop_state["status"] = "unsupported_instruction"
-        stop_state["reason"] = f"unsupported instruction at PC 0x{next_ip:x}"
-        stop_state["stop_pc"] = next_ip
-        uc.emu_stop()
+        _stop("unsupported_instruction", f"unsupported instruction at PC 0x{next_ip:x}", next_ip)
 
     try:
         engine.hook_add(unicorn.UC_HOOK_CODE, code_hook)
@@ -971,18 +1046,14 @@ def _run(
         if stop_state["status"] == "completed":
             stop_state["status"] = "emulator_error"
             stop_state["reason"] = f"Unicorn raised {type(e).__name__}: {e}"
-            try:
-                stop_state["stop_pc"] = int(engine.reg_read(ip_reg_id))
-            except Exception:
-                stop_state["stop_pc"] = start_address
+            read_back = _read_reg(ip_reg_id, arch.ip_reg)
+            stop_state["stop_pc"] = start_address if read_back is None else read_back
 
     if stop_state["status"] == "completed" and stop_state["stop_pc"] == start_address:
         # A completed run finished at ``stop_address``; report the PC the
         # engine actually holds rather than leaving the entry address.
-        try:
-            stop_state["stop_pc"] = int(engine.reg_read(ip_reg_id))
-        except Exception:
-            stop_state["stop_pc"] = stop_address
+        read_back = _read_reg(ip_reg_id, arch.ip_reg)
+        stop_state["stop_pc"] = stop_address if read_back is None else read_back
 
     _update_reg_state()
 
@@ -1004,7 +1075,7 @@ def _run(
         captures_out[cap.label] = payload
         cap_strings[cap.label] = _decode_string_candidates(payload)
 
-    mapped = [(s, s + sz, p) for s, sz, p, is_stack in plan.page_aligned_regions if not is_stack]
+    mapped = _idb_mapped_ranges(plan)
     return EmulationResult(
         status=stop_state["status"],
         reason=stop_state["reason"],

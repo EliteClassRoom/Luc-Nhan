@@ -29,8 +29,11 @@
 - Both tools require:
   - An explicit `registers` object (non-empty). `eip` / `rip` are
     always taken from `start_address` and cannot be overridden — both
-    names are rejected on x86 and x64. 32- and 64-bit names alias the
-    same physical register, and `r8`–`r15` / `rflags` are rejected on x86.
+    names are rejected on x86 and x64. Use the name matching the mode
+    (`eax`/`eflags` on x86, `rax`/`rflags` on x64); the other spelling is
+    accepted and normalised, but both spellings with *different* values is a
+    conflict error. `r8`–`r15` do not exist in 32-bit mode and are rejected
+    there.
   - `stop_address` is exclusive.
   - `memory_ranges` for any encrypted input, keys, or lookup tables
     that live outside the decoder function itself.

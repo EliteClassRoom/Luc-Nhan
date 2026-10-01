@@ -228,10 +228,12 @@ decoded ASCII string.
   execution falls off the end before "reaching" that address.
 - **`registers` must be non-empty and must not contain `eip`/`rip`.** The
   tool raises `ToolError` otherwise — both names are rejected on x86 and
-  x64. 32- and 64-bit names alias the same physical register (`eax`↔`rax`,
-  `eflags`↔`rflags`, …), so either spelling works; supplying both with
-  *different* values is a conflict error. `r8`–`r15` and `rflags` are
-  rejected on x86. `esp`/`rsp` defaults to the synthetic stack top.
+  x64. Use the name matching the mode: `eax`/`eflags` on x86, `rax`/`rflags`
+  on x64. The other spelling is accepted and normalised to the current mode's
+  register (`rflags` → `eflags` on x86, `eflags` → `rflags` on x64), but
+  supplying both spellings of one register with *different* values is a
+  conflict error. `r8`–`r15` do not exist in 32-bit mode and are rejected
+  there. `esp`/`rsp` defaults to the synthetic stack top.
 - **Map every input region.** Any address the routine reads that is not
   in the code range and not in `memory_ranges` will trigger
   `unmapped_memory`.

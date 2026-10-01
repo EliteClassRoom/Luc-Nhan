@@ -9,9 +9,20 @@ Payload shape::
 
     {
         "tool": "emulate_code" | "resolve_emulated_string",
-        "payload": {...}                       # forwarded to the tool,
-        "setup_pages": [(start, end, [bytes]), ...]  # simulated IDB regions
+        "payload": {...},                      # forwarded to the tool,
+        "setup_pages": [(start, end, [bytes]), ...],  # simulated IDB regions
+        "perm": 7                              # optional segment perm mask
     }
+
+``perm`` is applied to every simulated segment as IDA's ``SEGPERM_*`` mask
+(the encoding ``_seg_perms`` translates from: ``1`` exec, ``2`` write,
+``4`` read). It defaults to ``7`` (R|W|X) so decode tests can write to the
+buffer they set up; pass a narrower value to exercise read-only data regions.
+
+Mode is **inferred**, not declared: the plan has no explicit arch field, so
+the worker treats the scenario as 64-bit when any register key starts with
+``r`` (``rax``, ``r8``, …), and as 32-bit otherwise. A test that needs 64-bit
+semantics must therefore include at least one ``r*`` register.
 """
 
 from __future__ import annotations

@@ -86,6 +86,7 @@ def _make_ida_mock(
         del fresh.inf_get_app_bitness
     return fresh
 
+
 # ---------------------------------------------------------------------------
 # Pure helpers.
 # ---------------------------------------------------------------------------
@@ -112,19 +113,9 @@ class TestPureHelpers(unittest.TestCase):
         merged = emu.merge_contiguous(regions)
         self.assertEqual(merged, [(0x401000, 0x401500), (0x500000, 0x500100)])
 
-    def test_is_hex_or_int(self) -> None:
-        self.assertTrue(emu.is_hex_or_int(0x401000))
-        self.assertTrue(emu.is_hex_or_int("0x401000"))
-        self.assertTrue(emu.is_hex_or_int("401000"))
-        self.assertTrue(emu.is_hex_or_int(0))
-        self.assertFalse(emu.is_hex_or_int(True))
-        self.assertFalse(emu.is_hex_or_int(None))
-        self.assertFalse(emu.is_hex_or_int(""))
-        self.assertFalse(emu.is_hex_or_int("xyz"))
-
     def test_coerce_addr_accepts_int_hex_dec_and_integral_float(self) -> None:
-        # Regression: LLMs emit addresses as floats in JSON; is_hex_or_int
-        # rejects them but _coerce_addr must accept the integral form.
+        # Regression: LLMs emit addresses as floats in JSON; _coerce_addr
+        # must accept the integral form while still rejecting ``True``.
         self.assertEqual(emu._coerce_addr(0x401000, ctx="t"), 0x401000)
         self.assertEqual(emu._coerce_addr("0x401000", ctx="t"), 0x401000)
         self.assertEqual(emu._coerce_addr("4198400", ctx="t"), 4198400)
@@ -378,9 +369,7 @@ class TestArgumentCoercion(_ArchBoundTestCase):
     def setUp(self) -> None:
         self._use_arch(32)
         self.captured: dict = {}
-        self._patcher = unittest.mock.patch.object(
-            emu, "_run", side_effect=self._fake_run
-        )
+        self._patcher = unittest.mock.patch.object(emu, "_run", side_effect=self._fake_run)
         self._patcher.start()
         self.addCleanup(self._patcher.stop)
 
@@ -625,11 +614,24 @@ class TestIdaBitnessArchResolution(unittest.TestCase):
             emu.ida_ida = self._saved
         self.assertIn("IDA bitness query failed", str(ctx.exception))
 
+
 # ---------------------------------------------------------------------------
 # Real Unicorn integration — runs each scenario in a fresh subprocess via
 # ``tests.subprocess_test_worker`` so per-engine state cannot leak between
 # tests under Windows ctypes quirks.
 # ---------------------------------------------------------------------------
+
+
+def _nop_page(code: bytes, *, fill: int = 0x90, size: int = 0x1000) -> bytes:
+    """One simulated IDB page: *code* at offset 0, rest filled with *fill*.
+
+    *code* must begin at the page base address, which every caller below
+    arranges by making the page base the code's entry point.
+    """
+
+    raw = bytearray([fill]) * size
+    raw[: len(code)] = code
+    return bytes(raw)
 
 
 # Each worker serializes the simulated IDB + tool arguments and returns a
@@ -709,7 +711,7 @@ class TestRealUnicornIntegration(unittest.TestCase):
         """Run ``mov eax, ecx`` (89 c8) and return the worker result."""
 
         start = 0x401000
-        raw = b"\x89\xc8" + b"\x90" * (0x1000 - 2)
+        raw = _nop_page(b"\x89\xc8")  # 89 c8 = mov eax, ecx
         return _run_in_subprocess(
             "emulate_code",
             {
@@ -735,7 +737,7 @@ class TestRealUnicornIntegration(unittest.TestCase):
         start = 0x401000
         # 66 90 = two-byte x86-64 NOP (a lone 0x43 is REX.B, which takes the
         # following bytes as ModRM and reads address 0x1).
-        raw = b"\x66\x90" + b"\x90" * (0x1000 - 2)
+        raw = _nop_page(b"\x66\x90")
         out = _run_in_subprocess(
             "emulate_code",
             {
@@ -765,16 +767,18 @@ class TestRealUnicornIntegration(unittest.TestCase):
     def test_payload_spans_adjacent_segments(self) -> None:
         # Code in segment A reads a byte from segment B: the payload walk
         # must fill each segment from its own start, not assume one.
-        code = b"\x8a\x05\x05\x20\x40\x00" b"\x93"  # mov al,[0x402005]; xchg eax, ebx
+        # 8a 05 05 20 40 00 = mov al, byte ptr [0x402005]  (little-endian disp32)
+        # 93                = xchg eax, ebx
+        code = b"\x8a\x05\x05\x20\x40\x00\x93"
         seg_a = bytearray(b"\x90" * 0x1000)
-        seg_a[0x401ff0 - 0x401000 : 0x401ff0 - 0x401000 + len(code)] = code
+        seg_a[0x401FF0 - 0x401000 : 0x401FF0 - 0x401000 + len(code)] = code
         seg_b = bytearray(b"\x00" * 0x1000)
         seg_b[5] = 0x5A
         out = _run_in_subprocess(
             "emulate_code",
             {
-                "start_address": hex(0x401ff0),
-                "stop_address": hex(0x401ff0 + len(code)),
+                "start_address": hex(0x401FF0),
+                "stop_address": hex(0x401FF0 + len(code)),
                 "registers": {"ebx": 0xBB, "ecx": 0},
                 "memory_ranges": [{"address": "0x402000", "size": 0x1000}],
             },
@@ -794,7 +798,7 @@ class TestRealUnicornIntegration(unittest.TestCase):
 
     def test_branch_loop_hits_instruction_limit(self) -> None:
         start = 0x401000
-        raw = b"\xeb\xfe" + b"\x90" * (0x1000 - 2)
+        raw = b"\xeb\xfe" + b"\x90" * (0x1000 - 2)  # eb fe = jmp $-2 (spin forever)
         out = _run_in_subprocess(
             "emulate_code",
             {
@@ -809,6 +813,11 @@ class TestRealUnicornIntegration(unittest.TestCase):
 
     def test_resolve_emulated_string_returns_decoded_ascii(self) -> None:
         start = 0x401000
+        # c6 07 41           = mov byte ptr [edi+0], 0x41  ('A')
+        # c6 47 01 42        = mov byte ptr [edi+1], 0x42  ('B')
+        # c6 47 02 43        = mov byte ptr [edi+2], 0x43  ('C')
+        # c6 47 03 44        = mov byte ptr [edi+3], 0x44  ('D')
+        # c6 47 04 00        = mov byte ptr [edi+4], 0x00  (NUL terminator)
         stub = b"\xc6\x07\x41\xc6\x47\x01\x42\xc6\x47\x02\x43\xc6\x47\x03\x44\xc6\x47\x04\x00"
         raw = stub + b"\x90" * (0x2000 - len(stub))
         out = _run_in_subprocess(
@@ -842,3 +851,109 @@ class TestRealUnicornIntegration(unittest.TestCase):
                 registers={"eax": 0},
             )
         self.assertIn("Unsupported architecture", str(ctx.exception))
+
+
+# ---------------------------------------------------------------------------
+# Runner internals: the payload walk's range arithmetic and the mapped-range
+# projection. Both are invisible to the integration tests, which only observe
+# final register values and status strings.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingEngine:
+    """Fake Unicorn engine that records every ``mem_write`` as ``(addr, len)``."""
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[int, int]] = []
+
+    def mem_write(self, address: int, data: bytes) -> None:
+        self.writes.append((int(address), len(data)))
+
+    @property
+    def addresses(self) -> list[int]:
+        return [a for a, _n in self.writes]
+
+
+class _FakeSegment:
+    def __init__(self, start_ea: int, end_ea: int) -> None:
+        self.start_ea = start_ea
+        self.end_ea = end_ea
+        self.perm = 5  # R|X — the walk reads ``perm`` nowhere; kept realistic
+
+
+class TestWriteSegmentPayloads(unittest.TestCase):
+    """The payload walk must stay inside the requested ranges.
+
+    ``extra_ranges`` arrives as ``(address, size)`` pairs — the shape
+    ``_normalize_memory_ranges`` produces and both tool entry points forward
+    verbatim. ``_write_segment_payloads`` merges them into ``(start, end)``
+    regions, so a size must be converted to an end address *before* the merge.
+    Treating a size as an end address instead makes the walk run to
+    ``address + (address + size)``, filling hundreds of KB to megabytes of
+    IDB bytes nobody asked for.
+    """
+
+    def _install_fake_idb(self, seg_start: int, seg_end: int) -> None:
+        # Bind to the module's own references, not ``sys.modules``: a sibling
+        # test module may have replaced the shared ``ida_segment`` /
+        # ``ida_bytes`` mocks wholesale, and these stubs must win regardless.
+        segment = _FakeSegment(seg_start, seg_end)
+        ida_segment = emu.ida_segment
+        ida_bytes = emu.ida_bytes
+        previous = (ida_segment.getseg.side_effect, ida_bytes.get_bytes.side_effect)
+        ida_segment.getseg.side_effect = lambda ea: segment if seg_start <= ea < seg_end else None
+        ida_bytes.get_bytes.side_effect = lambda ea, size: b"\x90" * size
+        self.addCleanup(self._restore_fake_idb, *previous)
+
+    def _restore_fake_idb(self, getseg_side_effect, get_bytes_side_effect) -> None:
+        emu.ida_segment.getseg.side_effect = getseg_side_effect
+        emu.ida_bytes.get_bytes.side_effect = get_bytes_side_effect
+
+    def test_write_segment_payloads_respects_range_end(self) -> None:
+        # One segment spanning the code range and the declared extra range.
+        self._install_fake_idb(0x401000, 0x410000)
+        engine = _RecordingEngine()
+
+        emu._write_segment_payloads(engine, 0x401400, 0x401410, [(0x401400, 0x400)])
+
+        self.assertTrue(engine.writes, "expected the walk to write at least one payload")
+        for address in engine.addresses:
+            self.assertLess(
+                address,
+                0x401800,
+                f"payload walk wrote at 0x{address:x}, past the declared end 0x401800",
+            )
+
+    def test_extra_range_is_filled_through_its_declared_end(self) -> None:
+        # The complement of the guard above: the declared range must actually
+        # be *filled*, not truncated away, and its fill must end where the
+        # size says. The walk coalesces a single-segment region into one
+        # write, so assert on the covered byte span rather than per-address.
+        self._install_fake_idb(0x401000, 0x410000)
+        engine = _RecordingEngine()
+
+        emu._write_segment_payloads(engine, 0x401000, 0x401010, [(0x401400, 0x400)])
+
+        # Code range 0x401000..0x401010 plus the 0x400-byte extra range.
+        self.assertEqual(engine.writes, [(0x401000, 0x10), (0x401400, 0x400)])
+
+
+class TestIdbMappedRanges(unittest.TestCase):
+    """``_idb_mapped_ranges`` reports IDB mappings only, never the stack."""
+
+    def test_idb_mapped_ranges_excludes_stack(self) -> None:
+        plan = emu.MappingPlan(
+            page_aligned_regions=[
+                (0x401000, 0x1000, 5, False),
+                (0x402000, 0x1000, 3, False),
+                (0x1000000, emu._STACK_SIZE, 3, True),  # synthetic stack
+            ],
+            total_bytes=0x3000,
+            stack_base=0x1000000,
+            stack_top=0x1000000 + emu._STACK_SIZE - emu._STACK_TOP_RESERVED,
+        )
+
+        self.assertEqual(
+            emu._idb_mapped_ranges(plan),
+            [(0x401000, 0x402000, 5), (0x402000, 0x403000, 3)],
+        )
