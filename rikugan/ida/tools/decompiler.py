@@ -22,6 +22,11 @@ except ImportError:
 
 _BADADDR = 0xFFFFFFFF  # fallback if ida_idaapi not loaded
 
+# Every tool here runs Hex-Rays once.  On obfuscated or virtualised
+# malware a single function can take minutes, and the 30s registry
+# default cuts off legitimate analysis.
+_DECOMPILE_TIMEOUT = 120.0
+
 
 def _decompile(ea: int):
     """Decompile at *ea*, returning the cfunc_t or a user-facing error string."""
@@ -36,14 +41,14 @@ def _decompile(ea: int):
     return cfunc
 
 
-@tool(category="decompiler", requires_decompiler=True)
+@tool(category="decompiler", requires_decompiler=True, timeout=_DECOMPILE_TIMEOUT)
 def decompile_function(address: Annotated[str, "Function address (hex string)"]) -> str:
     """Decompile the function at the given address and return pseudocode."""
     result = _decompile(parse_addr(address))
     return result if isinstance(result, str) else str(result)
 
 
-@tool(category="decompiler", requires_decompiler=True)
+@tool(category="decompiler", requires_decompiler=True, timeout=_DECOMPILE_TIMEOUT)
 def get_pseudocode(
     address: Annotated[str, "Function address (hex string)"],
     with_line_numbers: Annotated[bool, "Include line numbers"] = True,
@@ -64,7 +69,7 @@ def get_pseudocode(
     return "\n".join(lines)
 
 
-@tool(category="decompiler", requires_decompiler=True)
+@tool(category="decompiler", requires_decompiler=True, timeout=_DECOMPILE_TIMEOUT)
 def get_decompiler_variables(
     address: Annotated[str, "Function address (hex string)"],
 ) -> str:

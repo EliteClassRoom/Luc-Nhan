@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Decompiler tools get a 120s timeout** — `decompile_function`,
+  `get_pseudocode` and `get_decompiler_variables` run Hex-Rays once each, which
+  can take minutes on obfuscated or virtualised malware, so they no longer
+  inherit the 30s registry default. The global default is unchanged and still
+  guards the rest of the tools against a wedged IDA main thread.
+
 - **Emulation runs outside the IDA main thread** after a host-thread snapshot.
   Cancellation and a bounded wall deadline cover setup and CPU execution;
   CPU-started interruptions preserve partial state. Tool execution context is
