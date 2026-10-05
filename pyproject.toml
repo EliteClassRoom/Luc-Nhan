@@ -35,7 +35,7 @@ classifiers = [
 # IDA Pro installs these via pip when the plugin loads; listing them here also lets
 # ``uv sync`` provision a working dev environment for provider/agent tests.
 dependencies = [
-  "anthropic>=0.120.2",
+  "anthropic>=0.125.0",
   "openai>=2.0.0",
   "google-genai>=2.0.0",
   "mcp>=1.28.0",
