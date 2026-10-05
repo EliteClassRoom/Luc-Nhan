@@ -1180,6 +1180,37 @@ class TestAbiLayout(unittest.TestCase):
                         return_address=0x401FFF,
                     )
 
+    def test_rejected_sp_reports_a_usable_stack_range(self) -> None:
+        # The exclusive top of the stack mapping is the value a caller most
+        # plausibly reaches for; the error has to name the real range and a
+        # concrete default, otherwise the retry repeats the same SP.
+        for label, reg in (("x86", "esp"), ("x64", "rsp")):
+            with self.subTest(arch=label):
+                arch = _arch(label)
+                with self.assertRaises(ToolError) as ctx:
+                    emu._build_abi(
+                        arch,
+                        tool_name="emulate_code",
+                        convention="",
+                        arguments=[],
+                        registers={reg: arch.stack_base + 0x100000},
+                        return_address=None,
+                    )
+                message = str(ctx.exception)
+                self.assertIn(f"the synthetic stack is 0x{arch.stack_base:x}", message)
+                # The advertised default must itself pass the same check.
+                top = arch.stack_base + 0x100000 - 0x100
+                self.assertIn(f"default 0x{top:x}", message)
+                abi = emu._build_abi(
+                    arch,
+                    tool_name="emulate_code",
+                    convention="",
+                    arguments=[],
+                    registers={},
+                    return_address=None,
+                )
+                self.assertEqual(abi.stack_pointer, top)
+
     def test_win64_shadow_space_must_fit(self) -> None:
         arch = _arch("x64")
         top = arch.stack_base + 0x100000 - 0x100

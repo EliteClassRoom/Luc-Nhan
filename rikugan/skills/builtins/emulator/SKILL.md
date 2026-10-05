@@ -249,6 +249,12 @@ decoded ASCII string.
   fail explicitly. Do not try to change them through `memory_ranges`.
 - **Aggregate mapped memory is capped at 16 MiB including the 1 MiB stack.**
   Map only needed pages. A collision with the fixed synthetic stack is rejected.
+- **Never guess `esp`/`rsp`.** The synthetic stack is a fixed 1 MiB mapping:
+  `0x7ffe0000..0x800dff00` on 32-bit, `0x7ffe00000000..0x7ffe000fff00` on
+  64-bit. The top is exclusive for the mapping, so an SP at or above
+  `base + 0x100000` is rejected. Omit the register and let the emulator pick
+  the default. A real address from the binary is a different address space and
+  will be rejected.
 - **Always redecompile/verify after analysis.** Emulation gives you a
   snapshot; cross-check the result against the static decompilation
   before annotating the IDB.

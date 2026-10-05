@@ -702,6 +702,18 @@ _ABI_X64: dict[str, tuple[tuple[str, ...], int]] = {
 _MAX_ABI_ARGUMENTS = 32
 
 
+def _stack_hint(arch: ArchMode) -> str:
+    """Describe where the synthetic stack lives, so a rejected SP is actionable."""
+
+    limit = arch.stack_base + _STACK_SIZE
+    top = limit - 0x100
+    return (
+        f"the synthetic stack is 0x{arch.stack_base:x}..0x{limit:x}; "
+        f"{arch.sp_reg} must be in [0x{arch.stack_base:x}, 0x{top:x}] — "
+        f"omit {arch.sp_reg} to get the default 0x{top:x}"
+    )
+
+
 @dataclass(frozen=True)
 class _AbiSetup:
     """Register state + stack layout derived from the calling convention."""
@@ -740,7 +752,8 @@ def _build_abi(
         supplied_sp = int(state[arch.sp_reg])
         if not (arch.stack_base <= supplied_sp < stack_limit):
             raise ToolError(
-                f"{tool_name}: {arch.sp_reg}=0x{supplied_sp:x} is outside the 1 MiB synthetic stack",
+                f"{tool_name}: {arch.sp_reg}=0x{supplied_sp:x} is outside the 1 MiB "
+                f"synthetic stack — {_stack_hint(arch)}",
                 tool_name=tool_name,
             )
     else:
@@ -779,7 +792,7 @@ def _build_abi(
         if address < arch.stack_base or address + length > stack_limit:
             raise ToolError(
                 f"{tool_name}: {what} at 0x{address:x}..0x{address + length:x} does not fit in "
-                "the 1 MiB synthetic stack",
+                f"the 1 MiB synthetic stack — {_stack_hint(arch)}",
                 tool_name=tool_name,
             )
 
@@ -1511,7 +1524,7 @@ def _run_tool(
             if not (arch.stack_base <= address and address + spec["size"] <= arch.stack_base + _STACK_SIZE):
                 raise ToolError(
                     f"{tool_name}: stack-relative capture {offset:+d} resolves to 0x{address:x}, "
-                    "outside the 1 MiB synthetic stack",
+                    f"outside the 1 MiB synthetic stack — {_stack_hint(arch)}",
                     tool_name=tool_name,
                 )
         captures.append(CaptureRequest(address=address, size=int(spec["size"]), label=str(spec["label"])))
@@ -1601,7 +1614,10 @@ def emulate_code(
         "x86/x64 register names (eax/ebx/rax/r8/eflags/etc.), values are "
         "integers or '0x'-style hex strings. "
         "Aliases of the same register (eax + rax) must agree. "
-        "eip/rip are taken from start_address and cannot be overridden.",
+        "eip/rip are taken from start_address and cannot be overridden. "
+        "esp/rsp must lie inside the fixed 1 MiB synthetic stack "
+        "(0x7ffe0000..0x800dff00 on 32-bit, 0x7ffe00000000..0x7ffe000fff00 "
+        "on 64-bit); omit it to get a working default.",
     ],
     memory_ranges: Annotated[
         list[dict] | None,
