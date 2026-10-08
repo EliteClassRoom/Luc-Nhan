@@ -275,6 +275,7 @@ class LucNhanPanelCore(QWidget):
         # Per-connection model catalog owned by the panel; filled from
         # Settings Refresh results, dropped on connection changes only.
         self._model_catalog = ModelCatalogCache()
+        self._footer_width_timer: QTimer | None = None
         log_debug(
             f"Config loaded: provider={self._config.provider.name} model={self._config.provider.model}",
         )
@@ -1310,7 +1311,13 @@ class LucNhanPanelCore(QWidget):
         return "\n".join(lines)
 
     def _refresh_footer_trigger_width(self) -> None:
-        """Keep the trigger at <= 68% of the footer (G6)."""
+        """Keep the trigger at <= 68% of the footer (G6).
+
+        The footer is pinned full-width under the composer, so its
+        ``width()`` IS its share of the dock — which is exactly why the
+        ceiling has to be recomputed on every resize instead of once at
+        build time (back then the footer was still parentless and 640 px).
+        """
         footer = getattr(self, "_footer", None)
         trigger = getattr(self, "_footer_trigger", None)
         if footer is None or trigger is None:
@@ -1393,6 +1400,28 @@ class LucNhanPanelCore(QWidget):
         """
         super().resizeEvent(event)
         self._apply_narrow_presentation(self.width() <= NARROW_BREAKPOINT_PX)
+        self._schedule_footer_trigger_width()
+
+    def _schedule_footer_trigger_width(self) -> None:
+        """Re-clamp the picker trigger to 68% of the footer (G6).
+
+        The first resize event arrives while Qt is still handing the
+        footer its pre-layout width, so the clamp is deferred by one
+        event-loop turn; the value then comes from the footer's real
+        width.  Deferred, not repeated: a single-shot 0 ms timer, so no
+        recurring work is added while the panel sits idle.  A host that
+        re-lays out without a panel resize (dock reflow) still keeps the
+        clamp correct because ``footer.width()`` is only read at that
+        moment.
+        """
+        timer = self._footer_width_timer
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._refresh_footer_trigger_width)
+            self._footer_width_timer = timer
+        if not timer.isActive():
+            timer.start(0)
 
     def _apply_narrow_presentation(self, narrow: bool) -> None:
         """Apply the narrow / wide chrome presentation.

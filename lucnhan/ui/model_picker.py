@@ -164,6 +164,9 @@ class ModelPicker(QFrame):
         self._rows: list[_Row] = []
         self._haystacks: dict[int, str] = {}
         self._catalog: dict[str, list[Any]] = {}
+        # True once at least one connection contributed a FETCHED list;
+        # an empty/partial catalog is the unfetched state G6 describes.
+        self._has_fetched_catalog = False
         self._items: list[QTreeWidgetItem | None] = []
         self._headers: dict[str, QTreeWidgetItem] = {}
         self._hidden: list[bool] = []
@@ -247,6 +250,7 @@ class ModelPicker(QFrame):
         to the ``Open Settings to refresh models`` entry.
         """
         self._catalog = {name: list(models or []) for name, models in (models_by_connection or {}).items()}
+        self._has_fetched_catalog = any(bool(models) for models in self._catalog.values())
         self._sync_rows()
 
     def _sync_rows(self) -> None:
@@ -401,8 +405,14 @@ class ModelPicker(QFrame):
             self._hint.setText(NO_MATCHES_TEXT)
         else:
             self._hint.setText("" if has_model_thinking_levels(self._selection.model_id) else UNCONFIRMED_HINT)
-        # The Settings entry only makes sense when nothing was fetched.
-        self._settings_btn.setVisible(visible == 0 and not self._rows)
+        # G6: the entry belongs to the UNFETCHED state, which is about the
+        # catalog — not about the row count.  ``_sync_rows`` always injects
+        # the configured model as a real row, so gating on "no rows" hid the
+        # entry for exactly the users who need it (fresh installs, ollama /
+        # custom connections with no builtin list).  A search that matches
+        # nothing still keeps it visible: the query, not the catalog, is the
+        # reason the list looks empty.
+        self._settings_btn.setVisible(not self._has_fetched_catalog)
 
     def model_rows(self) -> list[_Row]:
         """Every catalog row, in display order."""
@@ -572,6 +582,10 @@ class ModelPicker(QFrame):
 
     def settings_entry_text(self) -> str:
         return self._settings_btn.text()
+
+    def settings_entry_is_visible(self) -> bool:
+        """True when the ``Open Settings to refresh models`` entry shows."""
+        return self._settings_btn.isVisible()
 
     def set_open_settings_callback(self, callback: Callable[[], None]) -> None:
         self._on_open_settings = callback

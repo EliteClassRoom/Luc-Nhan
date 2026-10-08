@@ -47,6 +47,13 @@ def _picker() -> tuple[ModelPicker, list[ModelChoice]]:
     return ModelPicker(parent=None, on_select=chosen.append), chosen
 
 
+def _anchor():
+    """Stand-in trigger: opening the popup only needs a geometry."""
+    from PySide6.QtWidgets import QLineEdit
+
+    return QLineEdit()
+
+
 @requires_real_qt
 class _LogicBase(unittest.TestCase):
     """Logic-tier base: guarantees a ``QApplication`` for widget creation.
@@ -303,6 +310,40 @@ class TestNoFetchedCatalog(_LogicBase):
         picker.set_catalog({})
         self.assertEqual(picker.model_rows(), [])
         self.assertEqual(picker.settings_entry_text(), OPEN_SETTINGS_TEXT)
+
+    def test_saved_model_without_catalog_still_offers_the_settings_entry(self) -> None:
+        """Unfetched catalog = saved/current row PLUS the Settings entry.
+
+        ``set_catalog`` always injects the configured model, so gating the
+        entry on "no rows" hid it from exactly the users who need it:
+        fresh installs and ollama / custom connections that never get a
+        builtin list.
+        """
+        picker, _ = _picker()
+        picker.set_selection(ModelChoice("ollama", "llama3.1", "high"))
+        picker.set_catalog({})
+        self.assertEqual(
+            [(r.connection_name, r.model_id) for r in picker.model_rows()],
+            [("ollama", "llama3.1")],
+        )
+        picker.open_above(_anchor())
+        self.assertTrue(picker.settings_entry_is_visible())
+
+    def test_settings_entry_stays_visible_when_the_search_matches_nothing(self) -> None:
+        picker, _ = _picker()
+        picker.set_selection(ModelChoice("ollama", "llama3.1", "high"))
+        picker.set_catalog({})
+        picker.set_search_text("nothing-matches-this")
+        self.assertEqual(picker.visible_rows(), [])
+        self.assertEqual(picker.status_text(), NO_MATCHES_TEXT)
+        picker.open_above(_anchor())
+        self.assertTrue(picker.settings_entry_is_visible())
+
+    def test_settings_entry_disappears_once_a_connection_is_fetched(self) -> None:
+        picker, _ = _picker()
+        picker.set_selection(ModelChoice("openai", "gpt-4o", "high"))
+        picker.set_catalog({"openai": [_info("gpt-4o"), _info("o3")]})
+        self.assertFalse(picker.settings_entry_is_visible())
 
     def test_current_model_without_catalog_is_a_real_row(self) -> None:
         """The configured (connection, model) is a first-class row.
@@ -591,6 +632,82 @@ class TestModelPickerNative(unittest.TestCase):
         self.assertGreater(self.picker._tree.sizeHint().height(), 0)
 
     # -- helpers --------------------------------------------------------
+
+    # -- footer trigger width ceiling (GUI contract G3 + G6) -------------
+
+    def _footer_widget(self, footer_width: int = 900):
+        """A real footer built by ``_build_footer`` at a known width.
+
+        The ceiling is production's, so the test drives it directly:
+        ``_refresh_footer_trigger_width`` is exactly what
+        ``resizeEvent`` defers, and reading the footer's real width is
+        what a live dock would do.
+        """
+        from PySide6.QtWidgets import QApplication, QWidget
+
+        from lucnhan.ui.model_picker import ModelCatalogCache
+        from lucnhan.ui.panel_core import LucNhanPanelCore
+
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
+        QWidget.__init__(panel)
+        panel._use_native_host_theme = True
+        panel._footer_width_timer = None
+        panel._ctrl = type("_Ctrl", (), {"is_agent_running": False})()
+        panel._config = type(
+            "_Cfg",
+            (),
+            {
+                "provider": type("_P", (), {"name": "openai", "model": "gpt-4o", "extra": {}})(),
+                "providers": {},
+            },
+        )()
+        panel._model_catalog = ModelCatalogCache()
+        panel._build_footer()
+        footer = panel._footer
+        footer.resize(footer_width, footer.height())
+        QApplication.instance().processEvents()
+        return panel, footer
+
+    def _settle(self) -> None:
+        """Drain the one-shot clamp timer the resize path schedules."""
+        from PySide6.QtCore import QEventLoop, QTimer
+
+        loop = QEventLoop()
+        QTimer.singleShot(0, loop.quit)
+        loop.exec()
+
+    def test_trigger_ceiling_tracks_the_footer_width(self) -> None:
+        """68% follows the footer's live width, never the 640 px default."""
+        panel, footer = self._footer_widget(900)
+        panel._refresh_footer_trigger_width()
+        self.assertEqual(panel._footer_trigger.maximumWidth(), int(900 * 0.68))
+
+        # A narrower dock re-clamps; a wider one lifts the ceiling again.
+        for width in (460, 1100):
+            footer.resize(width, footer.height())
+            panel._refresh_footer_trigger_width()
+            self.assertEqual(
+                panel._footer_trigger.maximumWidth(),
+                int(width * 0.68),
+                f"ceiling must track a {width} px footer",
+            )
+
+    def test_panel_resize_defers_a_single_shot_reclamp(self) -> None:
+        """``resizeEvent`` re-arms the clamp without recurring work."""
+        panel, footer = self._footer_widget(900)
+        panel._refresh_footer_trigger_width()
+        before = panel._footer_trigger.maximumWidth()
+        self.assertEqual(before, int(900 * 0.68))
+
+        footer.resize(300, footer.height())
+        panel._schedule_footer_trigger_width()
+        timer = panel._footer_width_timer
+        self.assertEqual(timer.interval(), 0)
+        self.assertTrue(timer.isSingleShot(), "no recurring idle work")
+
+        self._settle()
+        self.assertEqual(panel._footer_trigger.maximumWidth(), int(300 * 0.68))
+        self.assertNotEqual(panel._footer_trigger.maximumWidth(), before)
 
     @staticmethod
     def _key(key):

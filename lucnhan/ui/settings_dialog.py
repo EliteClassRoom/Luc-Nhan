@@ -1492,7 +1492,7 @@ class SettingsDialog(QDialog):
             if provider_name != self._provider_combo.currentText():
                 return
             if kind == "models":
-                self._on_models_ready(data)
+                self._on_models_ready(data, fetched_for=provider_name)
             elif kind == "error":
                 self._on_fetch_error(data)
         except (ValueError, TypeError) as e:
@@ -1667,15 +1667,29 @@ class SettingsDialog(QDialog):
         self._fetch_btn.setEnabled(False)
         self._fetcher.fetch(provider, key, base)
 
-    def _on_models_ready(self, models: list, preserve_unmatched: bool = False) -> None:
+    def _on_models_ready(
+        self,
+        models: list,
+        preserve_unmatched: bool = False,
+        fetched_for: str | None = None,
+    ) -> None:
+        """Populate the combo with *models*.
+
+        ``fetched_for`` is set ONLY from the live Refresh result and names
+        the connection the fetch was issued for.  The panel-owned catalog
+        is written from that path alone:
+
+        * the static builtin populate (deferred init, provider switch, key
+          edit) must not overwrite a live fetched list, and
+        * a result that arrives after the combo moved on must not be
+          filed under the connection now shown.
+        """
         self._fetch_btn.setEnabled(True)
         self._fetched_models = models
-        # Hand the fetched list to the panel-owned per-connection cache so
-        # the footer picker can open without a network call.  Row metadata
-        # only — no credential ever reaches the cache.
+        # Row metadata only — no credential ever reaches the cache.
         catalog = getattr(self, "_model_catalog", None)
-        if catalog is not None:
-            catalog.store(self._provider_combo.currentText(), list(models))
+        if catalog is not None and fetched_for:
+            catalog.store(fetched_for, list(models))
 
         # Resolve the id to restore ONCE, before mutating the combo.  Reading
         # it later would see the half-populated combo, and the currentIndexChanged
