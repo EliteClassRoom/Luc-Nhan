@@ -578,9 +578,7 @@ class TestOpenAIStreamReasoningAndToolCall(unittest.TestCase):
         # The wrapper must be closed before the tool-call lifecycle ends.
         self.assertLess(closes[0], ends[0])
         # Balanced, contiguous wrapper in the visible channel.
-        self.assertEqual(
-            "".join(t for _, t in text_events), "<think>thinking</think>\n"
-        )
+        self.assertEqual("".join(t for _, t in text_events), "<think>thinking</think>\n")
 
     def test_reasoning_then_tool_call_in_same_chunk(self) -> None:
         """A single delta with both reasoning_content and tool_calls
@@ -589,7 +587,7 @@ class TestOpenAIStreamReasoningAndToolCall(unittest.TestCase):
         close fires on the finish-chunk — between START and END —
         so the wrapper is closed before the tool call ends."""
         # Build a delta that carries both reasoning_content and a tool
- # call, then a finish-chunk.
+        # call, then a finish-chunk.
         combined = SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -600,7 +598,7 @@ class TestOpenAIStreamReasoningAndToolCall(unittest.TestCase):
                             _tc_delta(index=0, id="call_1", name="do_thing", arguments="{}"),
                         ],
                     ),
-                finish_reason=None,
+                    finish_reason=None,
                 ),
             ],
             usage=None,
@@ -624,9 +622,7 @@ class TestOpenAIStreamReasoningAndToolCall(unittest.TestCase):
         # finish chunk, between START and END, still before the END.
         self.assertLess(starts[0], closes[0])
         self.assertLess(closes[0], ends[0])
-        self.assertEqual(
-            "".join(t for _, t in text_events), "<think>thinking</think>\n"
-        )
+        self.assertEqual("".join(t for _, t in text_events), "<think>thinking</think>\n")
 
 
 # ---------------------------------------------------------------------------
@@ -738,6 +734,71 @@ class TestOpenAIThinkingLevelWire(unittest.TestCase):
         p = self._make(extra)
         extra["thinking"]["reasoning_effort"] = "max"
         self.assertEqual(p._provider_extra_raw["thinking"]["reasoning_effort"], "high")
+
+
+class TestReasoningEffortAutoDrop(unittest.TestCase):
+    """Endpoints whose proxy rejects ``reasoning_effort`` (litellm
+    ``UnsupportedParamsError`` for unregistered model groups) get one
+    automatic retry without the parameter; the provider then remembers
+    the drop so later requests skip the 400 round-trip.
+    """
+
+    _LITELLM_400 = (
+        "Error code: 400 - litellm.UnsupportedParamsError: openai does not "
+        "support parameters: ['reasoning_effort'], for model=deepseek-v4-flash"
+    )
+
+    def _make(self):
+        from rikugan.providers.openai_provider import OpenAIProvider
+
+        return OpenAIProvider(
+            api_key="test-key",
+            model="deepseek-v4-flash",
+            extra={"thinking": {"enabled": True, "reasoning_effort": "high"}},
+        )
+
+    @staticmethod
+    def _client(script):
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            action = script[min(len(calls) - 1, len(script) - 1)]
+            if isinstance(action, Exception):
+                raise action
+            return action
+
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))), calls
+
+    def test_non_streaming_retries_once_without_param(self) -> None:
+        p = self._make()
+        client, calls = self._client([RuntimeError(self._LITELLM_400), "ok"])
+        result = p._call_api(client, p._build_request_kwargs([], None, 0.3, 128, ""))
+        self.assertEqual(result, "ok")
+        self.assertIn("reasoning_effort", calls[0])
+        self.assertNotIn("reasoning_effort", calls[1])
+        self.assertEqual(p._thinking_level, "")
+
+    def test_drop_is_remembered_on_later_requests(self) -> None:
+        p = self._make()
+        client, _ = self._client([RuntimeError(self._LITELLM_400), "ok"])
+        p._call_api(client, p._build_request_kwargs([], None, 0.3, 128, ""))
+        self.assertNotIn("reasoning_effort", p._build_request_kwargs([], None, 0.3, 128, ""))
+
+    def test_streaming_retries_once_without_param(self) -> None:
+        p = self._make()
+        client, calls = self._client([RuntimeError(self._LITELLM_400), iter(())])
+        list(p._stream_chunks(client, p._build_request_kwargs([], None, 0.3, 128, "")))
+        self.assertIn("reasoning_effort", calls[0])
+        self.assertNotIn("reasoning_effort", calls[1])
+        self.assertEqual(p._thinking_level, "")
+
+    def test_unrelated_400_still_raises(self) -> None:
+        p = self._make()
+        client, _ = self._client([RuntimeError("maximum context length is 8192 tokens")])
+        with self.assertRaises(RuntimeError):
+            p._call_api(client, p._build_request_kwargs([], None, 0.3, 128, ""))
+        self.assertEqual(p._thinking_level, "high")
 
 
 if __name__ == "__main__":

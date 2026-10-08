@@ -17,7 +17,7 @@ from ..core.errors import (
     ProviderError,
     RateLimitError,
 )
-from ..core.logging import log_debug
+from ..core.logging import log_debug, log_warning
 from ..core.types import (
     LLMRequestContext,
     Message,
@@ -184,6 +184,31 @@ def _parse_thinking_level(extra: dict[str, Any] | None) -> str:
     if not isinstance(level, str) or not level or level == "none":
         return ""
     return level
+
+
+def _is_unsupported_reasoning_effort_error(e: Exception) -> bool:
+    """Match endpoint 400s that reject ``reasoning_effort`` itself.
+
+    Proxies such as litellm validate request parameters against their
+    own model registry and reject ``reasoning_effort`` for model groups
+    they do not know — the backing model may still think by default.
+    The parameter name must appear in the message alongside an
+    unsupported-parameter phrase so context-length, quota, and other
+    400s never match.
+    """
+    text = str(e).lower()
+    if "reasoning_effort" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "unsupportedparams",
+            "does not support parameters",
+            "unsupported parameter",
+            "unrecognized request argument",
+            "is not supported",
+        )
+    )
 
 
 class OpenAIProvider(LLMProvider):
@@ -451,9 +476,34 @@ class OpenAIProvider(LLMProvider):
             kwargs["reasoning_effort"] = self._thinking_level
         return kwargs
 
+    def _drop_reasoning_effort(self, kwargs: dict[str, Any]) -> None:
+        """Forget ``reasoning_effort`` after the endpoint rejected it.
+
+        Drops the parameter for the current request and remembers the
+        drop so later requests skip the 400 round-trip entirely.  The
+        user's saved Settings level is untouched; a provider rebuild
+        (config change / restart) restores it.
+        """
+        kwargs.pop("reasoning_effort", None)
+        self._thinking_level = ""
+        log_warning(
+            f"{self.name}: endpoint rejected reasoning_effort for model {self.model}; "
+            "continuing without it (thinking follows the endpoint default)"
+        )
+
     def _call_api(self, client: Any, kwargs: dict[str, Any]) -> Any:
-        """Invoke the OpenAI chat.completions.create API."""
-        return client.chat.completions.create(**kwargs)
+        """Invoke the OpenAI chat.completions.create API.
+
+        A 400 that rejects ``reasoning_effort`` itself gets one retry
+        without the parameter (see :meth:`_drop_reasoning_effort`).
+        """
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as e:
+            if not (kwargs.get("reasoning_effort") and _is_unsupported_reasoning_effort_error(e)):
+                raise
+            self._drop_reasoning_effort(kwargs)
+            return client.chat.completions.create(**kwargs)
 
     def _stream_chunks(
         self,
@@ -512,8 +562,15 @@ class OpenAIProvider(LLMProvider):
         try:
             stream = client.chat.completions.create(**kwargs)
         except Exception as e:
-            self._handle_api_error(e)
-            return
+            if not (kwargs.get("reasoning_effort") and _is_unsupported_reasoning_effort_error(e)):
+                self._handle_api_error(e)
+                return
+            self._drop_reasoning_effort(kwargs)
+            try:
+                stream = client.chat.completions.create(**kwargs)
+            except Exception as retry_err:
+                self._handle_api_error(retry_err)
+                return
 
         # Cancel watchdog — closes the stream if cancel_event fires so the
         # consumer's per-chunk cancellation check is reached promptly.  The
