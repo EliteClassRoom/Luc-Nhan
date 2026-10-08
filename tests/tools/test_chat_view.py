@@ -212,10 +212,6 @@ class TestExecutePythonRouting(unittest.TestCase):
         view._scroll_timer = MagicMock()
         view._scroll_timer.isActive.return_value = False
         view._insert_widget = MagicMock()
-        # The approval card is wrapped in a bounded scroll region so a
-        # long script cannot push Deny/Allow below the fold (G4); the
-        # stub ChatView has no real viewport to measure, so bypass it.
-        view._wrap_approval_for_scroll = lambda widget: widget
         view._scroll_to_bottom = lambda: None
         view._hide_thinking = lambda: None
         view._reset_tool_run = lambda: None

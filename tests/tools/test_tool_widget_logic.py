@@ -24,7 +24,6 @@ from lucnhan.ui.tool_widgets import (
     _row_target_text,
     _status_style,
     _strip_mcp_prefix,
-    _truncate_preview,
 )
 
 # ---------------------------------------------------------------------------
@@ -200,37 +199,6 @@ class TestFormatToolSummary(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _truncate_preview
-# ---------------------------------------------------------------------------
-
-
-class TestTruncatePreview(unittest.TestCase):
-    def test_short_text_unchanged(self):
-        text = "line1\nline2\nline3"
-        self.assertEqual(_truncate_preview(text, max_lines=3), text)
-
-    def test_single_line_unchanged(self):
-        self.assertEqual(_truncate_preview("hello", max_lines=3), "hello")
-
-    def test_truncated_shows_count(self):
-        text = "\n".join(f"line{i}" for i in range(10))
-        result = _truncate_preview(text, max_lines=3)
-        self.assertIn("… +7 lines", result)
-        self.assertIn("line0", result)
-        self.assertIn("line2", result)
-        self.assertNotIn("line3", result)
-
-    def test_exactly_at_limit_unchanged(self):
-        text = "a\nb\nc"
-        self.assertEqual(_truncate_preview(text, max_lines=3), text)
-
-    def test_custom_max_lines(self):
-        text = "a\nb\nc\nd\ne"
-        result = _truncate_preview(text, max_lines=2)
-        self.assertIn("… +3 lines", result)
-
-
-# ---------------------------------------------------------------------------
 # _build_approval_header
 # ---------------------------------------------------------------------------
 
@@ -268,6 +236,120 @@ class TestBuildApprovalHeader(unittest.TestCase):
 
     def test_generic_tool_named(self):
         self.assertEqual(_build_approval_header("search_strings"), "Approve search_strings?")
+
+
+# ---------------------------------------------------------------------------
+# Tool row regressions (review round 1)
+# ---------------------------------------------------------------------------
+
+
+class TestToolRowDetailRendering(unittest.TestCase):
+    """Args/result must be rendered the FIRST time a row is expanded.
+
+    Regression: ``_toggle`` set ``_details_built`` *after* the builder ran,
+    and the builder's ``_render_detail_text`` call no-ops while that flag
+    is unset — so expanding a call whose args/result had already arrived
+    showed an empty inset.
+    """
+
+    def _widget(self):
+        from lucnhan.ui.tool_widgets import ToolCallWidget
+
+        return ToolCallWidget("decompile_function", "tc1")
+
+    def test_expand_renders_args_that_arrived_earlier(self):
+        widget = self._widget()
+        widget.set_arguments('{"address": "0x1400188b0"}')
+        self.assertFalse(hasattr(widget, "_args_label"))
+        widget._toggle()
+        self.assertIn("0x1400188b0", widget._args_label.text())
+
+    def test_expand_renders_result_that_arrived_earlier(self):
+        widget = self._widget()
+        widget.set_arguments('{"address": "0x1400188b0"}')
+        widget.set_result("some output", is_error=False)
+        widget._toggle()
+        self.assertIn("some output", widget._result_label.text())
+
+    def test_result_arriving_while_expanded_renders(self):
+        widget = self._widget()
+        widget.set_arguments('{"address": "0x1400188b0"}')
+        widget._toggle()
+        widget.set_result("late output", is_error=True)
+        self.assertIn("late output", widget._result_label.text())
+
+
+class TestToolRowTooltip(unittest.TestCase):
+    """G4: the row tooltip carries the FULL argument, not the 80-char
+    summary slice."""
+
+    def test_long_argument_kept_in_full(self):
+        from lucnhan.ui.tool_widgets import ToolCallWidget
+
+        args = json.dumps({"code": "print(" + "a" * 300 + ")"})
+        widget = ToolCallWidget("execute_python", "tc1")
+        widget.set_arguments(args)
+        self.assertEqual(widget._summary_label.toolTip(), args)
+        self.assertGreater(len(widget._summary_label.toolTip()), 200)
+
+    def test_summary_column_stays_elided(self):
+        from lucnhan.ui.tool_widgets import ToolCallWidget
+
+        widget = ToolCallWidget("execute_python", "tc1")
+        widget.set_arguments(json.dumps({"code": "x" * 400}))
+        self.assertLessEqual(len(widget._summary_label.text()), 120)
+
+
+class TestToolBatchEntries(unittest.TestCase):
+    """Each expanded batch entry must name its own target."""
+
+    def test_entries_render_per_call_args(self):
+        from lucnhan.ui.tool_widgets import ToolBatchWidget
+
+        batch = ToolBatchWidget("list_strings")
+        batch.add_call("b1", '{"pattern": "alpha"}')
+        batch.add_call("b2", '{"pattern": "beta"}')
+        batch._toggle()
+        texts = [e.text() for e in batch._entry_labels]
+        self.assertEqual(len(texts), 2)
+        self.assertTrue(texts[0].endswith("alpha"), texts)
+        self.assertTrue(texts[1].endswith("beta"), texts)
+
+    def test_add_call_while_expanded_appends_entry(self):
+        from lucnhan.ui.tool_widgets import ToolBatchWidget
+
+        batch = ToolBatchWidget("list_strings")
+        batch.add_call("b1", '{"pattern": "alpha"}')
+        batch._toggle()
+        batch.add_call("b2", '{"pattern": "beta"}')
+        self.assertEqual(len(batch._entry_labels), 2)
+
+    def test_set_args_for_call_updates_collapsed_batch(self):
+        from lucnhan.ui.tool_widgets import ToolBatchWidget
+
+        batch = ToolBatchWidget("list_strings")
+        batch.add_call("b1", "")
+        batch.add_call("b2", "")
+        batch.set_args_for_call("b2", '{"pattern": "beta"}')
+        batch._toggle()
+        self.assertTrue(batch._entry_labels[1].text().endswith("beta"), batch._entry_labels[1].text())
+
+
+class TestApprovalHeaderText(unittest.TestCase):
+    """G4 pins the literal ``Approval required`` in the approval header."""
+
+    def test_header_emits_approval_required(self):
+        from lucnhan.ui.tool_widgets import ToolApprovalWidget
+
+        widget = ToolApprovalWidget("a1", "execute_python", '{"code": "print(1)"}', "desc")
+        self.assertEqual(widget._required_label.text(), "Approval required")
+        self.assertIn("execute_python", widget._header.text())
+
+    def test_state_chip_reads_paused(self):
+        from lucnhan.ui.tool_widgets import ToolApprovalWidget
+
+        widget = ToolApprovalWidget("a1", "execute_python", '{"code": "print(1)"}', "desc")
+        self.assertEqual(widget._state_label.text(), "⏸ Paused")
 
 
 if __name__ == "__main__":

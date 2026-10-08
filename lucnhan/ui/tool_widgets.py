@@ -53,7 +53,6 @@ _MAX_RESULT_DISPLAY = 3000
 #: Maximum visible lines in the ExecutePythonWidget result editor before it
 #: scrolls. Mirrors the code editor's 15-line cap.
 _RESULT_MAX_LINES = 15
-_TOOL_PREVIEW_LINES = 3
 #: GUI contract G2 — tool summary row geometry.
 _TOOL_ROW_MIN_HEIGHT = 30
 #: GUI contract G4 — the expanded detail inset pads 7 top / 10 right-bottom /
@@ -201,7 +200,6 @@ def _make_detail_layout(parent: QWidget) -> QVBoxLayout:
 
 
 def _make_result_actions(
-    text: str,
     *,
     on_raw: Callable[[], None],
     on_copy: Callable[[], None],
@@ -243,7 +241,6 @@ def _make_result_actions(
     copy_btn.clicked.connect(on_copy)
     row.addWidget(copy_btn)
 
-    del text
     return container, row
 
 
@@ -274,10 +271,14 @@ class _ElidedLabel(QLabel):
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setTextFormat(Qt.TextFormat.PlainText)
 
-    def set_full_text(self, text: str) -> None:
-        """Set the complete text; the label shows the elided form."""
+    def set_full_text(self, text: str, tooltip: str | None = None) -> None:
+        """Set the complete text; the label shows the elided form.
+
+        ``tooltip`` overrides the tooltip (used when the full text is the
+        raw argument and the shown column is only its summary).
+        """
         self._full_text = text or ""
-        self.setToolTip(self._full_text)
+        self.setToolTip(self._full_text if tooltip is None else tooltip)
         self._refresh_elide()
 
     def _refresh_elide(self) -> None:
@@ -501,34 +502,6 @@ def _format_tool_summary(tool_name: str, args_text: str) -> str:
     return _trunc(summary, _SUMMARY_MAX_CHARS)
 
 
-def _truncate_preview(text: str, max_lines: int = _TOOL_PREVIEW_LINES) -> str:
-    """Return first N lines with a '… +M lines' indicator if truncated."""
-    lines = text.split("\n")
-    if len(lines) <= max_lines:
-        return text
-    preview = "\n".join(lines[:max_lines])
-    remaining = len(lines) - max_lines
-    return f"{preview}\n… +{remaining} lines"
-
-
-def _make_preview_label() -> QLabel:
-    """Create a collapsed-state preview QLabel (shared by ToolCallWidget/ToolBatchWidget).
-
-    Uses ``_HeightCachedLabel`` so the word-wrapped label opts out of Qt's
-    ``heightForWidth`` protocol — the same layout-cascade fix as the message
-    content labels. Agentic loops emit many tool calls; each preview label
-    would otherwise trigger an O(text_length) walk on its siblings whenever
-    ``setText`` fires.
-    """
-    lbl = _HeightCachedLabel()
-    lbl.setObjectName("tool_content")
-    lbl.setWordWrap(True)
-    tool_colors = get_tool_colors()
-    lbl.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit; margin-left: 28px;")
-    lbl.setVisible(False)
-    return lbl
-
-
 # ---------------------------------------------------------------------------
 # Shared spinner timer
 # ---------------------------------------------------------------------------
@@ -625,9 +598,6 @@ class ToolCallWidget(QFrame):
         self._details_built = False
         self._spin_idx = 0
         self._state = "running"
-        #: Duration only when the host actually measured one — never a
-        #: fabricated number (G4: "only real data").
-        self._duration_s: float | None = None
 
         layout = QVBoxLayout(self)
         # G2: tool summary padding 5 / 6 px, gap 8 px.
@@ -668,8 +638,16 @@ class ToolCallWidget(QFrame):
         if getattr(self, "_summary_label", None) is not None:
             self._summary_label.setStyleSheet(get_tool_row_target_style())
         self._apply_status_style(tool_colors)
-        if getattr(self, "_preview_label", None) is not None:
-            self._preview_label.setStyleSheet(get_tool_row_target_style())
+        # Detail labels exist only after the first expand, hence getattr.
+        if getattr(self, "_args_label", None) is not None:
+            self._args_label.setStyleSheet(get_tool_row_target_style())
+        if getattr(self, "_result_header", None) is not None:
+            self._result_header.setStyleSheet(get_tool_row_name_style())
+        if getattr(self, "_result_label", None) is not None:
+            if getattr(self, "_is_error", False):
+                self._result_label.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
+            else:
+                self._result_label.setStyleSheet(get_tool_row_target_style())
 
     def _apply_status_style(self, tool_colors: dict[str, str] | None = None) -> None:
         """Paint the status icon + right-hand status text from the state.
@@ -768,7 +746,6 @@ class ToolCallWidget(QFrame):
         detail_layout.addWidget(self._result_label)
 
         actions, _row = _make_result_actions(
-            self._result_text,
             on_raw=self._on_raw,
             on_copy=self._on_copy,
         )
@@ -842,15 +819,18 @@ class ToolCallWidget(QFrame):
     def _toggle(self) -> None:
         self._expanded = not self._expanded
         if self._expanded and not self._details_built:
-            self._build_detail_section()
+            # Flag FIRST: the builder renders into the detail labels, and
+            # ``_render_detail_text`` no-ops while the flag is unset — the
+            # old order left every expanded call with an empty inset.
             self._details_built = True
+            self._build_detail_section()
         self._detail_holder.setVisible(self._expanded)
         self._toggle_btn.setText("▼" if self._expanded else "▶")
         self._toggle_btn.setAccessibleName(
             f"{'Collapse' if self._expanded else 'Expand'} {_strip_mcp_prefix(self._tool_name)} details"
         )
 
-    def _set_state(self, state: str, detail: str = "") -> None:
+    def _set_state(self, state: str) -> None:
         """Apply a terminal/in-flight state to icon + right-hand text."""
         self._state = state
         icon, text = {
@@ -875,9 +855,13 @@ class ToolCallWidget(QFrame):
 
     def set_arguments(self, args_text: str) -> None:
         self._args_text = args_text
-        # Elided target column; the full, sanitised text lives in the
-        # tooltip (G4) and in the expanded detail.
-        self._summary_label.set_full_text(_row_target_text(_format_tool_summary(self._tool_name, args_text)))
+        # G4: the column shows the elided one-line summary, the tooltip
+        # carries the FULL argument text (not the 80-char summary slice),
+        # so nothing the user might need to audit is lost to truncation.
+        self._summary_label.set_full_text(
+            _row_target_text(_format_tool_summary(self._tool_name, args_text)),
+            tooltip=args_text.strip() or _row_target_text(_format_tool_summary(self._tool_name, args_text)),
+        )
         if self._expanded:
             self._render_detail_text()
 
@@ -962,6 +946,7 @@ class ToolBatchWidget(QFrame):
         self._expanded = False
         self._first_args: str = ""
         self._tool_call_ids: list[str] = []
+        self._call_args: list[str] = []
         self._results: dict[str, str] = {}
         self._errors: dict[str, str] = {}
         self._entry_labels: list[QLabel] = []
@@ -1058,24 +1043,33 @@ class ToolBatchWidget(QFrame):
     def add_call(self, tool_call_id: str, args_text: str = "") -> None:
         """Add another call to this batch.
 
-        Collapsed batches record the call id only — the per-call entry
-        label is created on expand (G4: detail content is built on
-        demand, never up front).
+        The per-call args are always recorded (so the expanded entries can
+        name each target); only the entry *labels* are deferred until the
+        batch is expanded (G4: detail content is built on demand).
         """
         self._count += 1
         self._tool_call_ids.append(tool_call_id)
+        self._call_args.append(args_text)
         self._update_status()
-        if not getattr(self, "_detail_layout", None):
-            return
 
         if self._count == 1 and args_text.strip():
             self._first_args = args_text
-            self._summary_label.set_full_text(_row_target_text(_format_tool_summary(self._tool_name, args_text)))
+            self._summary_label.set_full_text(
+                _row_target_text(_format_tool_summary(self._tool_name, args_text)),
+                tooltip=args_text.strip(),
+            )
 
+        if getattr(self, "_detail_layout", None):
+            self._append_entry(self._count - 1)
+
+    def _append_entry(self, idx: int) -> None:
+        """Create the entry label for call *idx* (index parallel to ids)."""
+        args_text = self._call_args[idx] if idx < len(self._call_args) else ""
         summary = _format_tool_summary(self._tool_name, args_text) if args_text else ""
         entry = _ElidedLabel()
-        entry.setFull_text(f"#{self._count}: {summary}" if summary else f"#{self._count}")
+        entry.set_full_text(f"#{idx + 1}: {summary}" if summary else f"#{idx + 1}")
         entry.setStyleSheet(get_tool_row_target_style())
+        del self._entry_labels[idx:]
         self._entry_labels.append(entry)
         self._detail_layout.addWidget(entry)
 
@@ -1089,9 +1083,14 @@ class ToolBatchWidget(QFrame):
         if idx < 0:
             return
 
+        if idx < len(self._call_args):
+            self._call_args[idx] = args_text
         if idx == 0 and not self._first_args:
             self._first_args = args_text
-            self._summary_label.set_full_text(_row_target_text(_format_tool_summary(self._tool_name, args_text)))
+            self._summary_label.set_full_text(
+                _row_target_text(_format_tool_summary(self._tool_name, args_text)),
+                tooltip=args_text.strip(),
+            )
 
         if idx < len(self._entry_labels):
             summary = _format_tool_summary(self._tool_name, args_text)
@@ -1137,21 +1136,19 @@ class ToolBatchWidget(QFrame):
         self._toggle_btn.setText("▼" if self._expanded else "▶")
 
     def _render_entries(self) -> None:
-        """Create one entry label per recorded call (expansion only)."""
+        """Create one entry label per recorded call (expansion only).
+
+        Uses the per-call args recorded in ``add_call`` /
+        ``set_args_for_call`` so every entry names its own target.
+        """
         while self._detail_layout.count():
             item = self._detail_layout.takeAt(0)
             widget = item.widget() if item else None
             if widget is not None:
                 widget.deleteLater()
         self._entry_labels = []
-        for idx, tool_call_id in enumerate(self._tool_call_ids):
-            del tool_call_id
-            summary = _format_tool_summary(self._tool_name, self._first_args) if idx == 0 and self._first_args else ""
-            entry = _ElidedLabel()
-            entry.set_full_text(f"#{idx + 1}: {summary}" if summary else f"#{idx + 1}")
-            entry.setStyleSheet(get_tool_row_target_style())
-            self._entry_labels.append(entry)
-            self._detail_layout.addWidget(entry)
+        for idx in range(len(self._tool_call_ids)):
+            self._append_entry(idx)
 
     @property
     def tool_name(self) -> str:
@@ -1492,17 +1489,33 @@ class ToolApprovalWidget(QFrame):
     # ------------------------------------------------------------------
 
     def _build_header(self) -> QHBoxLayout:
-        """Operation + 'Approval required' left, state 'Paused' right."""
+        """Real operation + 'Approval required' left, state 'Paused' right.
+
+        G4 pins the literal ``Approval required`` next to the operation
+        name, with the state chip on the right. The operation part is
+        still built by :func:`_build_approval_header` so the MCP prefix
+        stays stripped.
+        """
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
 
-        self._header = QLabel(_build_approval_header(self._tool_name))
+        self._header = QLabel()
+        # ``setText`` (not the constructor) so the literal is observable in
+        # headless stub runs too — the header wording is contract-pinned.
+        self._header.setText(_build_approval_header(self._tool_name))
         self._header.setTextFormat(Qt.TextFormat.PlainText)
         self._header.setStyleSheet(get_tool_approval_header_style())
         header.addWidget(self._header, 1)
 
-        self._state_label = QLabel(f"{STATE_APPROVAL[0]} {STATE_APPROVAL[1]}")
+        self._required_label = QLabel()
+        self._required_label.setText("Approval required")
+        self._required_label.setStyleSheet(get_tool_approval_header_style())
+        self._required_label.setAccessibleName("Approval required")
+        header.addWidget(self._required_label)
+
+        self._state_label = QLabel()
+        self._state_label.setText(f"{STATE_APPROVAL[0]} {STATE_APPROVAL[1]}")
         self._state_label.setStyleSheet(get_tool_approval_state_style())
         self._state_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         header.addWidget(self._state_label)
@@ -1537,6 +1550,8 @@ class ToolApprovalWidget(QFrame):
         self.setStyleSheet(get_tool_approval_frame_style())
         if getattr(self, "_header", None) is not None:
             self._header.setStyleSheet(get_tool_approval_header_style())
+        if getattr(self, "_required_label", None) is not None:
+            self._required_label.setStyleSheet(get_tool_approval_header_style())
         if getattr(self, "_state_label", None) is not None:
             self._state_label.setStyleSheet(get_tool_approval_state_style())
         # Info label: ``muted_text`` (AA on both window and alt_base).
@@ -1924,7 +1939,6 @@ class ExecutePythonWidget(QFrame):
         layout.addWidget(self._result_edit)
 
         actions, _row = _make_result_actions(
-            "",
             on_raw=self._on_raw,
             on_copy=self._on_copy,
         )

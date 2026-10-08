@@ -1129,36 +1129,8 @@ class ChatView(QScrollArea):
                     event.text,
                 )
                 widget.approved.connect(self._on_tool_approval)
-                self._insert_widget(self._wrap_approval_for_scroll(widget))
+                self._insert_widget(widget)
             self._scroll_to_bottom()
-
-    def _wrap_approval_for_scroll(self, widget: ToolApprovalWidget) -> QWidget:
-        """Give an approval card its own scroll region for code/details.
-
-        GUI contract G4: when the script is long (or the dock is short)
-        only the code/details area may scroll — the header and the
-        Deny/Allow strip must stay visible.  The chat panel itself
-        scrolls the whole transcript, so without a bounded inner region a
-        tall approval card pushes its decision buttons below the fold.
-
-        The widget is never truncated: the inner scroll area is capped at
-        40% of the chat viewport height and the code editor keeps its own
-        scroll region, so the full script stays reachable by scrolling
-        either region. The card is also inserted at the bottom of the
-        transcript so the decision strip is inside the first viewport.
-        """
-        scroll = QScrollArea(widget)
-        scroll.setObjectName("tool_approval_scroll")
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setWidget(widget)
-        scroll.setMinimumHeight(widget.sizeHint().height())
-        viewport_h = self.viewport().height() if self.viewport() is not None else 0
-        max_h = int(viewport_h * 0.4) if viewport_h > 0 else 0
-        if max_h > 0:
-            scroll.setMaximumHeight(max_h)
-        return scroll
 
     def _promote_widget_out_of_group(self, tool_call_id: str) -> None:
         """Re-parent a tool widget out of its ToolGroupWidget into the main layout.
