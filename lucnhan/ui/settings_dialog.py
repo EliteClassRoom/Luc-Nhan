@@ -127,6 +127,13 @@ def _prompt_zai_migration(parent: Any = None) -> bool:
     return result == QMessageBox.StandardButton.Yes
 
 
+def _fallback_model_catalog():
+    """Dialog used standalone (no panel): own a private cache."""
+    from .model_picker import ModelCatalogCache
+
+    return ModelCatalogCache()
+
+
 class _ModelFetcher:
     """Fetches models in a background thread. Results collected via queue.
 
@@ -273,6 +280,7 @@ class SettingsDialog(QDialog):
         registry: ProviderRegistry | None = None,
         tool_registry: Any | None = None,
         is_running_callback: Callable[[], bool] | None = None,
+        model_catalog: Any | None = None,
         parent: QWidget | None = None,
     ):
         # Use None parent to avoid lifecycle coupling with IDA PluginForm widgets
@@ -296,6 +304,10 @@ class SettingsDialog(QDialog):
         # currently running. The dialog uses it to disable inputs that
         # would race the live runner (e.g. provider switches mid-prompt).
         self._is_running_callback = is_running_callback or (lambda: False)
+        # Per-connection model catalog cache owned by the panel.  Refresh
+        # results land here so the footer picker never has to fetch; only
+        # an endpoint / credential / connection change drops an entry.
+        self._model_catalog = model_catalog if model_catalog is not None else _fallback_model_catalog()
         self._fetcher = _ModelFetcher(self._registry)
         self._fetched_models: list[ModelInfo] = []
         self._resolved_token: str = ""
@@ -426,6 +438,10 @@ class SettingsDialog(QDialog):
         # Connect provider/key change signals AFTER everything is built
         self._provider_combo.currentTextChanged.connect(self._on_provider_changed)
         self._api_key_edit.editingFinished.connect(self._on_key_edited)
+        # Endpoint change → same invalidation as a credential change.
+        self._api_base_edit.editingFinished.connect(
+            lambda: self._model_catalog.note_connection_changed(self._provider_combo.currentText())
+        )
         # Updating the selected model should immediately refresh the
         # Max Output Tokens range / value and Context Window.  The slot
         # is idempotent (it just reads the current combo state) so the
@@ -1485,6 +1501,9 @@ class SettingsDialog(QDialog):
     # --- Provider switching ---
 
     def _on_provider_changed(self, provider: str) -> None:
+        # ``currentText`` is ALREADY the new provider when this slot runs,
+        # so the connection being left comes from the live config.
+        self._model_catalog.note_connection_changed(self._config.provider.name)
         # Persist edits from the previous provider before switching.
         # Skip sync if switch_provider was already called externally (e.g. _on_add_custom_provider)
         # to avoid corrupting the new provider's config with stale UI values.
@@ -1558,6 +1577,9 @@ class SettingsDialog(QDialog):
         self._maybe_prompt_zai_migration()
 
     def _on_key_edited(self) -> None:
+        # Credential change → the cached model list no longer describes
+        # this connection (GUI contract G6).
+        self._model_catalog.note_connection_changed(self._provider_combo.currentText())
         # Capture the user's currently-selected / typed model BEFORE we
         # refresh the built-in list, so the refresh can preserve a
         # manually typed model for fresh providers with no saved model.
@@ -1648,6 +1670,12 @@ class SettingsDialog(QDialog):
     def _on_models_ready(self, models: list, preserve_unmatched: bool = False) -> None:
         self._fetch_btn.setEnabled(True)
         self._fetched_models = models
+        # Hand the fetched list to the panel-owned per-connection cache so
+        # the footer picker can open without a network call.  Row metadata
+        # only — no credential ever reaches the cache.
+        catalog = getattr(self, "_model_catalog", None)
+        if catalog is not None:
+            catalog.store(self._provider_combo.currentText(), list(models))
 
         # Resolve the id to restore ONCE, before mutating the combo.  Reading
         # it later would see the half-populated combo, and the currentIndexChanged

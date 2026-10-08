@@ -170,6 +170,58 @@ def _footer_style() -> str:
     )
 
 
+def _footer_picker_trigger_style() -> str:
+    """Footer picker trigger — flat chrome, focus ring on keyboard only.
+
+    The trigger is chrome, not a button: no border, no fill while idle,
+    an ``alt_base`` hover and a 2 px ``accent`` focus ring (G1/G9).
+    """
+    t = _tokens()
+    return (
+        f"QToolButton#footer_picker_trigger {{ background: transparent; border: none; "
+        f"border-radius: 4px; padding: 1px 4px; color: {t.text}; font-size: 11px; }}"
+        f"QToolButton#footer_picker_trigger:hover {{ background: {t.alt_base}; "
+        f"border: 1px solid {t.mid}; padding: 0px 3px; }}"
+        f"QToolButton#footer_picker_trigger:focus {{ background: {t.alt_base}; "
+        f"border: 2px solid {t.accent}; padding: 0px 2px; }}"
+    )
+
+
+def _model_picker_popup_style() -> str:
+    """Model picker popup — surface ``window``, 1 px border, 5 px radius.
+
+    GUI contract G6: padding 12 px, radius 5 px, border 1 px.  The tree
+    carries the list chrome; the frame itself is the only elevation.
+    """
+    t = _tokens()
+    return (
+        f"QFrame#model_picker {{ background: {t.window}; border: 1px solid {t.mid}; "
+        f"border-radius: 5px; }}"
+        f"QFrame#model_picker QLabel {{ background: transparent; border: none; }}"
+        f"QFrame#model_picker QLabel#model_picker_title {{ color: {t.text}; "
+        f"font-size: 12px; font-weight: semibold; }}"
+        f"QFrame#model_picker QLabel#model_picker_thinking_label, "
+        f"QFrame#model_picker QLabel#model_picker_hint {{ color: {t.muted_text}; font-size: 11px; }}"
+        f"QFrame#model_picker QLineEdit {{ background: {t.base}; color: {t.text}; "
+        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 7px; font-size: 12px; }}"
+        f"QFrame#model_picker QLineEdit:focus {{ border: 2px solid {t.accent}; padding: 3px 6px; }}"
+        f"QFrame#model_picker QTreeWidget {{ background: {t.base}; color: {t.text}; "
+        f"border: 1px solid {t.mid}; border-radius: 4px; font-size: 12px; "
+        f"outline: none; show-decoration-selected: 0; }}"
+        f"QFrame#model_picker QTreeWidget::item {{ border: none; padding: 0px; }}"
+        f"QFrame#model_picker QTreeWidget::item:selected {{ background: {t.selection}; color: {t.text}; }}"
+        f"QFrame#model_picker QTreeWidget::item:hover {{ background: {t.alt_base}; }}"
+        f"QFrame#model_picker QComboBox {{ background: {t.button}; color: {t.button_text}; "
+        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 3px 7px; font-size: 12px; "
+        f"min-height: 20px; }}"
+        f"QFrame#model_picker QComboBox:focus {{ border: 2px solid {t.accent}; padding: 2px 6px; }}"
+        f"QFrame#model_picker QPushButton {{ background: transparent; color: {t.accent}; "
+        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 8px; font-size: 11px; "
+        f"text-align: left; }}"
+        f"QFrame#model_picker QPushButton:hover {{ background: {t.alt_base}; border-color: {t.accent}; }}"
+    )
+
+
 # Session strip (chat tabs) — active tab uses selection fill + accent underline
 def _tab_widget_style() -> str:
     t = _tokens()
@@ -474,6 +526,14 @@ def get_context_bar_style() -> str:
 
 def get_footer_style() -> str:
     return _footer_style()
+
+
+def get_footer_picker_trigger_style() -> str:
+    return _footer_picker_trigger_style()
+
+
+def get_model_picker_popup_style() -> str:
+    return _model_picker_popup_style()
 
 
 def get_tab_widget_style() -> str:

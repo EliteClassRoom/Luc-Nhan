@@ -592,6 +592,23 @@ def _qt_class(name: str) -> type:
     return type(name, (), attrs)
 
 
+def _make_qsize_stub() -> type:
+    """Minimal ``QSize`` stand-in (width/height accessors only)."""
+
+    class _QSize:
+        def __init__(self, w=0, h=0):
+            self._w = w
+            self._h = h
+
+        def width(self):
+            return self._w
+
+        def height(self):
+            return self._h
+
+    return _QSize
+
+
 def _make_qtimer_stub() -> type:
     """Build a QTimer stub that mimics the real QTimer's contract.
 
@@ -1006,6 +1023,7 @@ def ensure_pyside6_stubs() -> None:
             QEvent=_qt_class("QEvent"),
             Qt=_sentinel,
             QObject=_qt_class("QObject"),
+            QSize=_make_qsize_stub(),
             QTimer=_make_qtimer_stub(),
             # Minimal QCoreApplication stub — real tests that need a
             # real event loop should drop these stubs and re-import

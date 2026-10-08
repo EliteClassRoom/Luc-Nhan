@@ -41,6 +41,12 @@ from .export_formatting import (
 )
 from .history_panel import HistoryPanel
 from .input_area import InputArea
+from .model_picker import (
+    MAX_TRIGGER_WIDTH_RATIO,
+    ModelCatalogCache,
+    ModelChoice,
+    ModelPicker,
+)
 from .mutation_log_view import MutationLogPanel
 from .qt_compat import (
     OK_CANCEL_BUTTONS,
@@ -266,6 +272,9 @@ class LucNhanPanelCore(QWidget):
             _early_log_crash(_exc)
             raise
         self._use_native_host_theme = use_native_host_theme()
+        # Per-connection model catalog owned by the panel; filled from
+        # Settings Refresh results, dropped on connection changes only.
+        self._model_catalog = ModelCatalogCache()
         log_debug(
             f"Config loaded: provider={self._config.provider.name} model={self._config.provider.model}",
         )
@@ -1214,11 +1223,16 @@ class LucNhanPanelCore(QWidget):
     def _build_footer(self) -> QWidget:
         """Pinned footer strip (min-height 25 px, padding 2 / 11).
 
-        Left: connection / model / thinking.  Right: context token usage.
-        Both read straight from the existing provider config — no new state
-        and no second copy of the model selection.
+        Left: clickable model/thinking trigger (GUI contract G6 —
+        ``Connection / Model`` + divider + thinking level + chevron,
+        max 68% of the footer width).  Right: context token usage.
+        Both read straight from the existing provider config — no new
+        state and no second copy of the model selection.
         """
-        from .theme.widgets_common import get_footer_style
+        from .theme.widgets_common import (
+            get_footer_picker_trigger_style,
+            get_footer_style,
+        )
 
         footer = QFrame()
         footer.setObjectName("panel_footer")
@@ -1230,30 +1244,129 @@ class LucNhanPanelCore(QWidget):
         footer_layout.setContentsMargins(11, 2, 11, 2)
         footer_layout.setSpacing(8)
 
-        provider = self._config.provider
-        thinking = getattr(provider, "thinking_level", "") or "off"
-        self._footer_left = QLabel(f"{provider.name} / {provider.model} · Thinking {thinking}")
-        self._footer_left.setObjectName("footer_left")
-        self._footer_left.setToolTip(f"{provider.name} / {provider.model}")
-        # Long connection / model names must not widen the dock; the
-        # tooltip keeps the full identity readable (GUI contract G3).
-        self._footer_left.setMinimumWidth(0)
-        self._footer_left.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        footer_layout.addWidget(self._footer_left)
-        footer_layout.addStretch()
+        self._picker = ModelPicker(footer, on_select=self._on_model_picker_select)
+        self._picker.set_open_settings_callback(self._on_settings)
+        self._picker.set_catalog(self._model_catalog.catalog_for(self._known_connection_names()))
+        self._picker.set_selection(self._current_model_choice())
+        self._picker.set_busy(self._ctrl.is_agent_running)
+        self._footer_trigger = QToolButton()
+        self._footer_trigger.setObjectName("footer_picker_trigger")
+        self._footer_trigger.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._footer_trigger.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._footer_trigger.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._footer_trigger.setArrowType(Qt.ArrowType.DownArrow)
+        self._footer_trigger.setText(self._footer_trigger_text())
+        self._footer_trigger.setToolTip(self._footer_tooltip())
+        self._footer_trigger.setAccessibleName("Model and thinking — choose model, connection or thinking level")
+        self._footer_trigger.setMinimumWidth(0)
+        # G6: the trigger may never eat the token summary's space.
+        self._footer_trigger.setMaximumWidth(int(MAX_TRIGGER_WIDTH_RATIO * 640))
+        self._footer_trigger.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._footer_trigger.clicked.connect(self._open_model_picker)
+        footer_layout.addWidget(self._footer_trigger)
 
         self._footer_tokens = QLabel("—")
         self._footer_tokens.setObjectName("footer_tokens")
         self._footer_tokens.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         footer_layout.addWidget(self._footer_tokens)
         footer.setStyleSheet(maybe_host_stylesheet(get_footer_style()))
+        self._footer_trigger.setStyleSheet(maybe_host_stylesheet(get_footer_picker_trigger_style()))
+        self._refresh_footer_trigger_width()
         return footer
+
+    def _current_thinking_level(self) -> str:
+        """Current thinking level read from live config (``none`` = off)."""
+        provider = self._config.provider
+        extra = provider.extra if isinstance(provider.extra, dict) else {}
+        thinking = extra.get("thinking")
+        if isinstance(thinking, dict):
+            level = str(thinking.get("reasoning_effort") or "").strip()
+            if level:
+                return level
+        return "none"
+
+    def _current_model_choice(self) -> ModelChoice:
+        provider = self._config.provider
+        return ModelChoice(provider.name, provider.model, self._current_thinking_level())
+
+    def _known_connection_names(self) -> list[str]:
+        """Active connection first, then every saved one (group order)."""
+        names = [self._config.provider.name]
+        names.extend(name for name in self._config.providers if name not in names)
+        return names
+
+    def _footer_trigger_text(self) -> str:
+        provider = self._config.provider
+        level = self._current_thinking_level()
+        shown = "off" if level == "none" else level
+        return f"{provider.name} / {provider.model}  │  {shown}  ⌄"
+
+    def _footer_tooltip(self) -> str:
+        provider = self._config.provider
+        level = self._current_thinking_level()
+        lines = [f"Connection: {provider.name}", f"Model: {provider.model}", f"Thinking: {level}"]
+        if self._ctrl.is_agent_running:
+            lines.append("Agent running — stop it to change the model")
+        return "\n".join(lines)
+
+    def _refresh_footer_trigger_width(self) -> None:
+        """Keep the trigger at <= 68% of the footer (G6)."""
+        footer = getattr(self, "_footer", None)
+        trigger = getattr(self, "_footer_trigger", None)
+        if footer is None or trigger is None:
+            return
+        trigger.setMaximumWidth(int(footer.width() * MAX_TRIGGER_WIDTH_RATIO) or 1)
+
+    def _open_model_picker(self) -> None:
+        """Open the picker above its trigger; no fetch, no workspace rebuild."""
+        picker = getattr(self, "_picker", None)
+        trigger = getattr(self, "_footer_trigger", None)
+        if picker is None or trigger is None:
+            return
+        picker.set_busy(self._ctrl.is_agent_running)
+        picker.set_catalog(self._model_catalog.catalog_for(self._known_connection_names()))
+        picker.set_selection(self._current_model_choice())
+        picker.open_above(trigger)
+
+    def _on_model_picker_select(self, choice: ModelChoice) -> None:
+        """Single commit path: controller first, presentation only on success."""
+        try:
+            self._ctrl.select_model(choice.connection_name, choice.model_id, choice.thinking_level)
+        except (ValueError, RuntimeError) as exc:
+            # Message carries no credential — controller errors are about
+            # names / levels / state, never secrets.
+            self._show_model_selection_error(str(exc))
+            return
+        except Exception as exc:  # persistence failure keeps the old selection
+            log_error(f"Model selection failed: {exc}")
+            self._show_model_selection_error("Could not save the model selection. Previous selection kept.")
+            return
+        self._model_catalog.note_selection_committed(
+            choice.connection_name, choice.model_id, choice.thinking_level
+        )
+        self._refresh_after_model_commit()
+
+    def _show_model_selection_error(self, message: str) -> None:
+        status = getattr(self, "_status_label", None)
+        if status is not None:
+            status.setText("Model unchanged")
+            status.setToolTip(message)
+
+    def _refresh_after_model_commit(self) -> None:
+        """Update footer + context metadata without showing() the workspace."""
+        self._update_footer()
+        if self._context_bar is not None:
+            self._context_bar.set_model(self._config.provider.model)
 
     def _update_footer(self) -> None:
         """Refresh the footer from live config + token state.
 
         Presentation only — never rebuilds the transcript or a session.
         """
+        trigger = getattr(self, "_footer_trigger", None)
+        if trigger is not None:
+            trigger.setText(self._footer_trigger_text())
+            trigger.setToolTip(self._footer_tooltip())
         footer_left = getattr(self, "_footer_left", None)
         if footer_left is not None:
             provider = self._config.provider
@@ -1440,11 +1553,21 @@ class LucNhanPanelCore(QWidget):
 
     def _apply_footer_styles(self) -> None:
         """Push token-driven footer styles from the current theme."""
-        from .theme.widgets_common import get_footer_style
+        from .theme.widgets_common import (
+            get_footer_picker_trigger_style,
+            get_footer_style,
+        )
 
         footer = getattr(self, "_footer", None)
         if footer is not None:
             footer.setStyleSheet(maybe_host_stylesheet(get_footer_style()))
+        trigger = getattr(self, "_footer_trigger", None)
+        if trigger is not None:
+            trigger.setStyleSheet(maybe_host_stylesheet(get_footer_picker_trigger_style()))
+        picker = getattr(self, "_picker", None)
+        if picker is not None:
+            self._model_catalog.note_theme_changed()
+            picker.refresh_theme()
 
     def _apply_action_button_tooltips(self) -> None:
         """Attach a one-line tooltip + accessible name to each header action.
@@ -2334,6 +2457,7 @@ class LucNhanPanelCore(QWidget):
                 registry=self._ctrl.provider_registry,
                 tool_registry=self._ctrl.tool_registry,
                 is_running_callback=lambda: self._ctrl.is_agent_running,
+                model_catalog=self._model_catalog,
             )
             result = dlg.exec()
             if result:
@@ -2344,6 +2468,7 @@ class LucNhanPanelCore(QWidget):
                 self._input_area.set_skill_slugs(self._ctrl.skill_slugs)
                 if self._context_bar is not None:
                     self._context_bar.set_model(self._config.provider.model)
+                self._refresh_after_model_commit()
                 log_info(f"Settings updated: {self._config.provider.name}/{self._config.provider.model}")
             dlg.setParent(None)
         except Exception as e:
@@ -4583,6 +4708,14 @@ class LucNhanPanelCore(QWidget):
             "Queue — Queue a follow-up message" if running else "Send — Send the message (Enter)"
         )
         self._cancel_btn.setVisible(running)
+        # Picker busy follows the existing turn lifecycle — no timer, no
+        # polling.  The controller guard still catches a race at commit.
+        picker = getattr(self, "_picker", None)
+        if picker is not None:
+            try:
+                picker.set_busy(bool(self._ctrl.is_agent_running))
+            except Exception as exc:  # pragma: no cover - defensive
+                log_debug(f"picker busy sync skipped: {exc}")
         # Header status carries the real agent state as *text* (never a
         # bare colour dot — GUI contract G1/G9).
         status = getattr(self, "_status_label", None)
