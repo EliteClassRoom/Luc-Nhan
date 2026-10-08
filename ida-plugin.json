@@ -18,7 +18,7 @@
     ],
     "idaVersions": [">=9.0"],
     "pythonDependencies": [
-      "anthropic>=0.120.2",
+      "anthropic>=0.125.0",
       "openai>=2.0.0",
       "google-genai>=2.0.0",
       "mcp>=1.28.0",
