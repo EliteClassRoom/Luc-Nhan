@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eliminate the PyQt5 compatibility layer so Rikugan uses PySide6 (Qt6) exclusively, fixing the `QVBoxLayout(QWidget): argument 1 has unexpected type 'PySide6.QtWidgets.QWidget'` crash on IDA 9.1.
+**Goal:** Eliminate the PyQt5 compatibility layer so Luc Nhan uses PySide6 (Qt6) exclusively, fixing the `QVBoxLayout(QWidget): argument 1 has unexpected type 'PySide6.QtWidgets.QWidget'` crash on IDA 9.1.
 
 **Architecture:** Remove `_detect_binding()` and the PyQt5 fallback branch entirely. `qt_compat.py` becomes a thin PySide6 re-export module (kept as the single import surface for future binding swaps). Delete the now-dead `qt_flags()` / `qt_run()` helpers and inline their trivial PySide6 equivalents (`|`, `.exec()`). The IDA wrappers (`panel.py`, `tools_form.py`) call `FormToPySideWidget(form)` directly.
 
@@ -14,7 +14,7 @@
 - **Minimum Python: 3.10** (unchanged — matches CLAUDE.md "Python 3.10 is safest for IDA").
 - **Breaking change.** Bump version `1.7.0` → `1.8.0` and document in CHANGELOG. Users on IDA 8.x or Qt5-only hosts must stay on `1.7.0`.
 - **PySide6 is the only Qt binding.** No `if QT_BINDING == "PyQt5"` branches anywhere. No `_detect_binding`. No `try: FormToPyQtWidget except: FormToPySideWidget`.
-- **`qt_compat.py` stays as a re-export layer** (Decision 2b): all call sites keep importing from `rikugan.ui.qt_compat`, but the module imports PySide6 directly. This keeps a single seam if IDA 10 ever swaps bindings.
+- **`qt_compat.py` stays as a re-export layer** (Decision 2b): all call sites keep importing from `lucnhan.ui.qt_compat`, but the module imports PySide6 directly. This keeps a single seam if IDA 10 ever swaps bindings.
 - **`qt_flags()` and `qt_run()` are deleted** (Decision 3). Replace with PySide6-native `|` and `.exec()`.
 - **TDD.** Every code task writes/fails/passes a test first.
 - **Frequent commits.** One commit per task, conventional-commit format, no Co-Authored-By trailer (attribution disabled globally).
@@ -25,20 +25,20 @@
 ## File Structure
 
 **Modify:**
-- `rikugan/ui/qt_compat.py` — Strip detection + PyQt5 branch; PySide6-only re-export. Delete `qt_flags`/`qt_run`.
-- `rikugan/ui/panel_core.py` — Remove `qt_flags`/`qt_run` imports + call sites (6 sites).
-- `rikugan/ui/message_widgets.py` — Remove `qt_flags` import + 2 call sites.
-- `rikugan/ui/tool_widgets.py` — Remove `qt_flags` import + 2 call sites.
-- `rikugan/ida/ui/panel.py` — Replace `FormToPyQtWidget`/`FormToPySideWidget` branch with direct `FormToPySideWidget`.
-- `rikugan/ida/ui/tools_form.py` — Same: direct `FormToPySideWidget`.
-- `rikugan/tests/conftest.py` — Remove `PyQt5` fallback import.
+- `lucnhan/ui/qt_compat.py` — Strip detection + PyQt5 branch; PySide6-only re-export. Delete `qt_flags`/`qt_run`.
+- `lucnhan/ui/panel_core.py` — Remove `qt_flags`/`qt_run` imports + call sites (6 sites).
+- `lucnhan/ui/message_widgets.py` — Remove `qt_flags` import + 2 call sites.
+- `lucnhan/ui/tool_widgets.py` — Remove `qt_flags` import + 2 call sites.
+- `lucnhan/ida/ui/panel.py` — Replace `FormToPyQtWidget`/`FormToPySideWidget` branch with direct `FormToPySideWidget`.
+- `lucnhan/ida/ui/tools_form.py` — Same: direct `FormToPySideWidget`.
+- `lucnhan/tests/conftest.py` — Remove `PyQt5` fallback import.
 - `tests/test_qt_compat.py` — Rewrite: drop PyQt5 detection tests, add PySide6-only regression test.
 - `tests/qt_stubs.py` — No code change, but verify stubs still align (PySide6-only).
 - `CLAUDE.md` — Update "IDA 9.x API changes" note: state PySide6-only.
 - `README.md` — Update Requirements: "IDA Pro 9.0+ (PySide6 / Qt6)".
 - `AGENTS.md` — Update any Qt-binding guidance (if it references PyQt5).
 - `CHANGELOG.md` — Add `1.8.0` entry.
-- `rikugan/constants.py` — Bump `PLUGIN_VERSION = "1.8.0"`.
+- `lucnhan/constants.py` — Bump `PLUGIN_VERSION = "1.8.0"`.
 - `pyproject.toml` — Bump `version = "1.8.0"`.
 - `ida-plugin.json` — Bump `"version": "1.8.0"`.
 
@@ -55,7 +55,7 @@ This test encodes the bug before we touch production code. It will FAIL on curre
 - Create: `tests/ida_ui/test_panel_onside_widget.py`
 
 **Interfaces:**
-- Produces: `TestPanelOnCreate::test_uses_form_to_pyside_widget_only` — asserts `RikuganPanel.OnCreate` invokes `FormToPySideWidget` and never `FormToPyQtWidget`. Later tasks must keep this green.
+- Produces: `TestPanelOnCreate::test_uses_form_to_pyside_widget_only` — asserts `LucNhanPanel.OnCreate` invokes `FormToPySideWidget` and never `FormToPyQtWidget`. Later tasks must keep this green.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -82,22 +82,22 @@ from unittest import mock
 
 class TestPanelOnCreatePySideOnly(unittest.TestCase):
     def test_uses_form_to_pyside_widget_only(self) -> None:
-        panel_mod = importlib.import_module("rikugan.ida.ui.panel")
-        panel = panel_mod.RikuganPanel.__new__(panel_mod.RikuganPanel)
+        panel_mod = importlib.import_module("lucnhan.ida.ui.panel")
+        panel = panel_mod.LucNhanPanel.__new__(panel_mod.LucNhanPanel)
 
         with mock.patch.object(panel, "FormToPySideWidget", create=True) as pyside, \
              mock.patch.object(panel, "FormToPyQtWidget", create=True) as pyqt:
             # The idaapi.PluginForm base provides these as instance methods;
             # create=True lets us patch them even if the real base is stubbed.
-            with mock.patch.object(panel_mod.RikuganPanel, "FormToPySideWidget", pyside), \
-                 mock.patch.object(panel_mod.RikuganPanel, "FormToPyQtWidget", pyqt):
-                # OnCreate constructs QWidget/QVBoxLayout/RikuganPanelCore —
+            with mock.patch.object(panel_mod.LucNhanPanel, "FormToPySideWidget", pyside), \
+                 mock.patch.object(panel_mod.LucNhanPanel, "FormToPyQtWidget", pyqt):
+                # OnCreate constructs QWidget/QVBoxLayout/LucNhanPanelCore —
                 # stub them via qt_compat so no real Qt is needed.
-                from rikugan.ui import qt_compat
+                from lucnhan.ui import qt_compat
                 with mock.patch.object(qt_compat, "QWidget", return_value=mock.MagicMock()), \
                      mock.patch.object(qt_compat, "QVBoxLayout", return_value=mock.MagicMock()):
-                    # RikuganPanelCore.__init__ is heavy; short-circuit it.
-                    with mock.patch("rikugan.ui.panel_core.RikuganPanelCore") as core_cls:
+                    # LucNhanPanelCore.__init__ is heavy; short-circuit it.
+                    with mock.patch("lucnhan.ui.panel_core.LucNhanPanelCore") as core_cls:
                         core_cls.return_value = mock.MagicMock()
                         try:
                             panel.OnCreate(mock.sentinel.form)
@@ -138,7 +138,7 @@ QVBoxLayout."
 Reduce `qt_compat.py` to a PySide6 re-export module. Delete `_detect_binding`, `QT_BINDING`, `is_pyside6`, `qt_flags`, `qt_run`, and the entire `else` (PyQt5) branch.
 
 **Files:**
-- Modify: `rikugan/ui/qt_compat.py` (full rewrite)
+- Modify: `lucnhan/ui/qt_compat.py` (full rewrite)
 
 **Interfaces:**
 - Removes: `QT_BINDING`, `is_pyside6`, `qt_flags`, `qt_run` — all call sites migrated in Tasks 3–4 before or during this task. **Order matters:** Tasks 3 and 4 (removing call sites) must land first OR in the same commit. This plan runs Task 2 *after* Tasks 3–4 to keep each commit green.
@@ -153,14 +153,14 @@ This task is sequenced last (before docs/version) precisely so we never have a b
 Replace the entire file with:
 
 ```python
-"""Qt binding surface for Rikugan.
+"""Qt binding surface for Luc Nhan.
 
-Rikugan targets IDA Pro ≥ 9.0, which ships PySide6 (Qt6) as its sole Qt
+Luc Nhan targets IDA Pro ≥ 9.0, which ships PySide6 (Qt6) as its sole Qt
 binding. (IDA 9.x exposes a ``PyQt5`` module, but it is a thin shim that
 delegates to PySide6 — not a separate Qt5 binding.)
 
 This module is the single import seam for Qt symbols across the package.
-All call sites import from ``rikugan.ui.qt_compat`` rather than from
+All call sites import from ``lucnhan.ui.qt_compat`` rather than from
 ``PySide6`` directly, so a future host binding swap (e.g. PySide7) only
 requires editing this one file.
 
@@ -230,7 +230,7 @@ from PySide6.QtWidgets import (
 
 Run:
 ```bash
-grep -rn "qt_flags\|qt_run\|QT_BINDING\|is_pyside6" rikugan/ tests/
+grep -rn "qt_flags\|qt_run\|QT_BINDING\|is_pyside6" lucnhan/ tests/
 ```
 Expected: no matches. (If any match, the corresponding task missed a call site — fix before committing.)
 
@@ -242,7 +242,7 @@ Expected: PASS (the rewritten test from Task 8).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rikugan/ui/qt_compat.py
+git add lucnhan/ui/qt_compat.py
 git commit -m "refactor(qt): drop PyQt5 detection — PySide6 only
 
 Remove _detect_binding, QT_BINDING, is_pyside6, qt_flags, qt_run, and
@@ -260,7 +260,7 @@ from PySide6 unconditionally."
 ### Task 3: Remove `qt_flags` / `qt_run` from `panel_core.py`
 
 **Files:**
-- Modify: `rikugan/ui/panel_core.py:27-48` (imports), `:154`, `:306`, `:315`, `:790`, `:798`, `:1186`, `:1223`
+- Modify: `lucnhan/ui/panel_core.py:27-48` (imports), `:154`, `:306`, `:315`, `:790`, `:798`, `:1186`, `:1223`
 
 **Interfaces:**
 - Consumes: PySide6-native `|` (replaces `qt_flags`) and `.exec()` (replaces `qt_run`).
@@ -278,7 +278,7 @@ import pathlib
 import unittest
 
 
-_PANEL_CORE = pathlib.Path("rikugan/ui/panel_core.py")
+_PANEL_CORE = pathlib.Path("lucnhan/ui/panel_core.py")
 
 
 class TestPanelCoreNoQtHelpers(unittest.TestCase):
@@ -299,7 +299,7 @@ Expected: FAIL — `qt_flags`/`qt_run` still referenced.
 
 - [ ] **Step 3: Edit the import block**
 
-In `rikugan/ui/panel_core.py`, change lines 27–48 — remove `qt_flags` and `qt_run` from the import list. The import block ends at `QWidget,` (drop the trailing two names).
+In `lucnhan/ui/panel_core.py`, change lines 27–48 — remove `qt_flags` and `qt_run` from the import list. The import block ends at `QWidget,` (drop the trailing two names).
 
 - [ ] **Step 4: Replace call sites**
 
@@ -339,7 +339,7 @@ Expected: PASS (no behavioral change — `|` and `.exec()` are PySide6-native eq
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/ui/panel_core.py tests/ui/test_panel_core_no_qt_helpers.py
+git add lucnhan/ui/panel_core.py tests/ui/test_panel_core_no_qt_helpers.py
 git commit -m "refactor(ui): inline qt_flags/qt_run in panel_core
 
 Replace qt_flags(A, B) with A | B and qt_run(x) with x.exec(). These
@@ -352,8 +352,8 @@ differences; with PySide6-only they were dead indirection."
 ### Task 4: Remove `qt_flags` from `message_widgets.py` and `tool_widgets.py`
 
 **Files:**
-- Modify: `rikugan/ui/message_widgets.py:13-27` (imports), `:343`, `:517`
-- Modify: `rikugan/ui/tool_widgets.py:12-27` (imports), `:567`, `:585`
+- Modify: `lucnhan/ui/message_widgets.py:13-27` (imports), `:343`, `:517`
+- Modify: `lucnhan/ui/tool_widgets.py:12-27` (imports), `:567`, `:585`
 
 **Interfaces:**
 - Consumes: PySide6-native `|`.
@@ -372,8 +372,8 @@ import unittest
 
 
 _FILES = [
-    pathlib.Path("rikugan/ui/message_widgets.py"),
-    pathlib.Path("rikugan/ui/tool_widgets.py"),
+    pathlib.Path("lucnhan/ui/message_widgets.py"),
+    pathlib.Path("lucnhan/ui/tool_widgets.py"),
 ]
 
 
@@ -421,7 +421,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/ui/message_widgets.py rikugan/ui/tool_widgets.py tests/ui/test_no_qt_flags_helpers.py
+git add lucnhan/ui/message_widgets.py lucnhan/ui/tool_widgets.py tests/ui/test_no_qt_flags_helpers.py
 git commit -m "refactor(ui): inline qt_flags in message/tool widgets
 
 Replace qt_flags(A, B) with A | B. PySide6 enums support | natively;
@@ -433,16 +433,16 @@ the helper was PyQt5-compat dead code."
 ### Task 5: Simplify `panel.py` `OnCreate` to PySide6-only
 
 **Files:**
-- Modify: `rikugan/ida/ui/panel.py:14` (import — drop `QT_BINDING`), `:191-197` (branch)
+- Modify: `lucnhan/ida/ui/panel.py:14` (import — drop `QT_BINDING`), `:191-197` (branch)
 
 **Interfaces:**
-- Produces: `RikuganPanel.OnCreate` calls `FormToPySideWidget(form)` unconditionally. Pinned by Task 1's test.
+- Produces: `LucNhanPanel.OnCreate` calls `FormToPySideWidget(form)` unconditionally. Pinned by Task 1's test.
 
 - [ ] **Step 1: Edit the import**
 
 Line 14:
 ```python
-from rikugan.ui.qt_compat import QApplication, QVBoxLayout, QWidget
+from lucnhan.ui.qt_compat import QApplication, QVBoxLayout, QWidget
 ```
 (Drop `QT_BINDING`.)
 
@@ -480,7 +480,7 @@ Expected: PASS — both tests green (the flipped one now asserts the post-Task-5
 - [ ] **Step 4: Commit**
 
 ```bash
-git add rikugan/ida/ui/panel.py
+git add lucnhan/ida/ui/panel.py
 git commit -m "refactor(ida-ui): OnCreate uses FormToPySideWidget only
 
 Drop the QT_BINDING branch. On IDA 9.x FormToPyQtWidget returns a
@@ -493,10 +493,10 @@ code and the crash trigger when detection picked PyQt5."
 ### Task 6: Simplify `tools_form.py` `OnCreate` to PySide6-only
 
 **Files:**
-- Modify: `rikugan/ida/ui/tools_form.py:39-42`
+- Modify: `lucnhan/ida/ui/tools_form.py:39-42`
 
 **Interfaces:**
-- Produces: `RikuganToolsForm.OnCreate` calls `FormToPySideWidget(form)` unconditionally.
+- Produces: `LucNhanToolsForm.OnCreate` calls `FormToPySideWidget(form)` unconditionally.
 
 - [ ] **Step 1: Replace the try/except branch**
 
@@ -522,7 +522,7 @@ Expected: PASS (or no tests collected — then run the broader `tests/ui/`).
 - [ ] **Step 3: Commit**
 
 ```bash
-git add rikugan/ida/ui/tools_form.py
+git add lucnhan/ida/ui/tools_form.py
 git commit -m "refactor(ida-ui): tools_form OnCreate uses FormToPySideWidget only"
 ```
 
@@ -531,14 +531,14 @@ git commit -m "refactor(ida-ui): tools_form OnCreate uses FormToPySideWidget onl
 ### Task 7: Remove PyQt5 fallback from `tests/conftest.py`
 
 **Files:**
-- Modify: `rikugan/tests/conftest.py:10-17`
+- Modify: `lucnhan/tests/conftest.py:10-17`
 
 - [ ] **Step 1: Simplify the import**
 
 Lines 10–17 currently:
 ```python
 try:
-    from rikugan.ui.qt_compat import QApplication
+    from lucnhan.ui.qt_compat import QApplication
 except ModuleNotFoundError:
     # Fallback: assume PySide6 is available in the test environment
     try:
@@ -549,10 +549,10 @@ except ModuleNotFoundError:
 
 Replace with:
 ```python
-from rikugan.ui.qt_compat import QApplication
+from lucnhan.ui.qt_compat import QApplication
 ```
 
-(Rikugan is now PySide6-only; the fallback chain served the deleted detection logic.)
+(Luc Nhan is now PySide6-only; the fallback chain served the deleted detection logic.)
 
 - [ ] **Step 2: Run a test that uses the qapp fixture**
 
@@ -562,7 +562,7 @@ Expected: PASS (this test exercises settings dialog widgets via qapp).
 - [ ] **Step 3: Commit**
 
 ```bash
-git add rikugan/tests/conftest.py
+git add lucnhan/tests/conftest.py
 git commit -m "refactor(tests): drop PyQt5 fallback in conftest qapp import"
 ```
 
@@ -578,7 +578,7 @@ git commit -m "refactor(tests): drop PyQt5 fallback in conftest qapp import"
 Replace the entire file with:
 
 ```python
-"""Tests for rikugan.ui.qt_compat — PySide6-only Qt surface."""
+"""Tests for lucnhan.ui.qt_compat — PySide6-only Qt surface."""
 
 from __future__ import annotations
 
@@ -587,7 +587,7 @@ import unittest
 from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
-import rikugan.ui.qt_compat as qt_compat  # noqa: E402
+import lucnhan.ui.qt_compat as qt_compat  # noqa: E402
 
 
 class TestQtCompat(unittest.TestCase):
@@ -682,7 +682,7 @@ Keep the existing Shiboken UAF note about Python 3.14.
 In the "IDA 9.x API changes" section (or near the Shiboken UAF note), add a line:
 
 ```markdown
-- **Qt binding: PySide6 only.** Rikugan targets IDA ≥ 9.0, which ships PySide6 (Qt6). The `PyQt5` module in IDA 9.x is a shim over PySide6 and is not used. `rikugan/ui/qt_compat.py` is the single Qt import seam — import Qt symbols from there, not from `PySide6` directly.
+- **Qt binding: PySide6 only.** Luc Nhan targets IDA ≥ 9.0, which ships PySide6 (Qt6). The `PyQt5` module in IDA 9.x is a shim over PySide6 and is not used. `lucnhan/ui/qt_compat.py` is the single Qt import seam — import Qt symbols from there, not from `PySide6` directly.
 ```
 
 - [ ] **Step 4: Commit**
@@ -700,14 +700,14 @@ is the single Qt import seam."
 ### Task 10: Bump version to 1.8.0 and CHANGELOG
 
 **Files:**
-- Modify: `rikugan/constants.py:10`
+- Modify: `lucnhan/constants.py:10`
 - Modify: `pyproject.toml` (version field)
 - Modify: `ida-plugin.json` (version field)
 - Modify: `CHANGELOG.md` (add 1.8.0 entry at top)
 
 - [ ] **Step 1: Bump the three version sources**
 
-`rikugan/constants.py:10`:
+`lucnhan/constants.py:10`:
 ```python
 PLUGIN_VERSION = "1.8.0"
 ```
@@ -724,25 +724,25 @@ At the top of `CHANGELOG.md` (above `## [1.7.0]`), insert:
 ## [1.8.0] — 2026-07-06
 
 ### Breaking
-- **Dropped PyQt5 support.** Rikugan now uses PySide6 (Qt6) exclusively. Minimum IDA Pro version is **9.0** (all 9.x releases ship PySide6 as their primary binding; IDA 9.x's `PyQt5` module is a thin shim over PySide6 and is no longer used). Users on IDA 8.x or Qt5-only hosts must stay on `1.7.0`.
+- **Dropped PyQt5 support.** Luc Nhan now uses PySide6 (Qt6) exclusively. Minimum IDA Pro version is **9.0** (all 9.x releases ship PySide6 as their primary binding; IDA 9.x's `PyQt5` module is a thin shim over PySide6 and is no longer used). Users on IDA 8.x or Qt5-only hosts must stay on `1.7.0`.
 
 ### Fixed
-- IDA 9.1 crash: `QVBoxLayout(QWidget): argument 1 has unexpected type 'PySide6.QtWidgets.QWidget'`. Root cause was `_detect_binding()` in `rikugan/ui/qt_compat.py` selecting PyQt5 when another plugin had pre-imported it into `sys.modules`, while the host actually ran PySide6. The entire detection layer is removed; Qt symbols now come from PySide6 unconditionally.
+- IDA 9.1 crash: `QVBoxLayout(QWidget): argument 1 has unexpected type 'PySide6.QtWidgets.QWidget'`. Root cause was `_detect_binding()` in `lucnhan/ui/qt_compat.py` selecting PyQt5 when another plugin had pre-imported it into `sys.modules`, while the host actually ran PySide6. The entire detection layer is removed; Qt symbols now come from PySide6 unconditionally.
 
 ### Removed
-- `rikugan/ui/qt_compat.py`: `_detect_binding()`, `QT_BINDING`, `is_pyside6()`, `qt_flags()`, `qt_run()`, and the PyQt5 import branch.
-- `rikugan/ida/ui/panel.py` and `rikugan/ida/ui/tools_form.py`: the `FormToPyQtWidget` / `FormToPySideWidget` try-except branch — `OnCreate` now calls `FormToPySideWidget(form)` directly.
-- `rikugan/tests/conftest.py`: PyQt5 fallback in the `qapp` fixture import.
+- `lucnhan/ui/qt_compat.py`: `_detect_binding()`, `QT_BINDING`, `is_pyside6()`, `qt_flags()`, `qt_run()`, and the PyQt5 import branch.
+- `lucnhan/ida/ui/panel.py` and `lucnhan/ida/ui/tools_form.py`: the `FormToPyQtWidget` / `FormToPySideWidget` try-except branch — `OnCreate` now calls `FormToPySideWidget(form)` directly.
+- `lucnhan/tests/conftest.py`: PyQt5 fallback in the `qapp` fixture import.
 
 ### Changed
-- `rikugan/ui/qt_compat.py` is now a thin PySide6 re-export layer (kept as the single Qt import seam). Call sites that used `qt_flags(A, B)` now use `A | B`; `qt_run(x)` now uses `x.exec()`.
+- `lucnhan/ui/qt_compat.py` is now a thin PySide6 re-export layer (kept as the single Qt import seam). Call sites that used `qt_flags(A, B)` now use `A | B`; `qt_run(x)` now uses `x.exec()`.
 ```
 
 - [ ] **Step 3: Verify version sync (three sources agree)**
 
 Run:
 ```bash
-grep 'PLUGIN_VERSION' rikugan/constants.py
+grep 'PLUGIN_VERSION' lucnhan/constants.py
 grep '^version' pyproject.toml
 grep '"version"' ida-plugin.json
 ```
@@ -751,7 +751,7 @@ Expected: all three show `1.8.0`.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add rikugan/constants.py pyproject.toml ida-plugin.json CHANGELOG.md
+git add lucnhan/constants.py pyproject.toml ida-plugin.json CHANGELOG.md
 git commit -m "chore(release): bump version to 1.8.0
 
 PyQt5 drop + IDA 9.1 crash fix. Breaking: minimum IDA 9.0 (PySide6)."
@@ -772,9 +772,9 @@ Expected: format + lint + mypy + pytest + desloppify all pass. Desloppify score 
 
 Run:
 ```bash
-grep -rn "PyQt5\|QT_BINDING\|qt_flags\|qt_run\|_detect_binding\|is_pyside6\|FormToPyQtWidget" rikugan/ tests/
+grep -rn "PyQt5\|QT_BINDING\|qt_flags\|qt_run\|_detect_binding\|is_pyside6\|FormToPyQtWidget" lucnhan/ tests/
 ```
-Expected: no matches in `rikugan/` or `tests/`. (Doc references in CHANGELOG are fine — they describe the removal.)
+Expected: no matches in `lucnhan/` or `tests/`. (Doc references in CHANGELOG are fine — they describe the removal.)
 
 - [ ] **Step 3: Run the full test suite once more**
 

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.fact_identity import semantic_fact_hash
-from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
-from rikugan.memory.workspace_store import (
+from lucnhan.memory.fact_identity import semantic_fact_hash
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+from lucnhan.memory.workspace_store import (
     FactRecord,
     StaleRevisionError,
     WorkspaceStore,
@@ -99,7 +99,7 @@ class TestListFacts:
         assert store.list_facts() == []
 
     def test_create_update_and_list_expose_current_semantic_hash(self, tmp_path: Path) -> None:
-        from rikugan.memory.fact_identity import semantic_fact_hash
+        from lucnhan.memory.fact_identity import semantic_fact_hash
 
         store, _ = _create_store(tmp_path)
         fid = new_record_id("fact")
@@ -453,7 +453,7 @@ class TestExactSaveConcurrency:
     def test_concurrent_exact_saves_create_one_fact_and_two_observations(self, tmp_path: Path) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
-        from rikugan.memory.repository import SQLiteKnowledgeRepository
+        from lucnhan.memory.repository import SQLiteKnowledgeRepository
 
         owner = new_memory_id()
         paths = MemoryLocator(tmp_path).binary(owner)
@@ -481,7 +481,7 @@ class TestExactSaveConcurrency:
     def test_concurrent_distinct_content_creates_two_facts(self, tmp_path: Path) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
-        from rikugan.memory.repository import SQLiteKnowledgeRepository
+        from lucnhan.memory.repository import SQLiteKnowledgeRepository
 
         owner = new_memory_id()
         paths = MemoryLocator(tmp_path).binary(owner)

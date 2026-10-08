@@ -1,6 +1,6 @@
 """Tests for the pure fact identity contract.
 
-The ``rikugan.memory.fact_identity`` module is the lowest layer of the
+The ``lucnhan.memory.fact_identity`` module is the lowest layer of the
 memory durability feature: a pure helper that canonicalizes fact
 type/content, produces semantic hashes, and builds deterministic
 import record IDs. It must not import from ``workspace_store`` or
@@ -13,7 +13,7 @@ import re
 
 import pytest
 
-from rikugan.memory.fact_identity import (
+from lucnhan.memory.fact_identity import (
     canonicalize_fact_content,
     canonicalize_fact_type,
     deterministic_import_record_id,

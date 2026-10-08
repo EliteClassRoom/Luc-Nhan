@@ -1,14 +1,14 @@
 # ──────────────────────────────────────────────────────────────────────
-# Rikugan — universal installer (Windows)
+# Luc Nhan — universal installer (Windows)
 #
-#   irm https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/EliteClassRoom/Luc-Nhan/master/install.ps1 | iex
 #
 # Or with arguments:
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.ps1))) -Target ida
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/EliteClassRoom/Luc-Nhan/master/install.ps1))) -Target ida
 #
 # Environment variables:
-#   RIKUGAN_DIR     — where to clone the repo   (default: ~\.rikugan)
-#   RIKUGAN_BRANCH  — git branch to check out   (default: master)
+#   LUCNHAN_DIR     — where to clone the repo   (default: ~\.lucnhan)
+#   LUCNHAN_BRANCH  — git branch to check out   (default: master)
 #   IDA_PYTHON      — override Python for IDA    (forwarded to install_ida.bat)
 # ──────────────────────────────────────────────────────────────────────
 
@@ -19,9 +19,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoUrl = "https://github.com/EliteClassRoom/rikugan.git"
-$InstallDir = if ($env:RIKUGAN_DIR) { $env:RIKUGAN_DIR } else { Join-Path $HOME ".rikugan" }
-$Branch = if ($env:RIKUGAN_BRANCH) { $env:RIKUGAN_BRANCH } else { "master" }
+$RepoUrl = "https://github.com/EliteClassRoom/Luc-Nhan.git"
+$InstallDir = if ($env:LUCNHAN_DIR) { $env:LUCNHAN_DIR } else { Join-Path $HOME ".lucnhan" }
+$Branch = if ($env:LUCNHAN_BRANCH) { $env:LUCNHAN_BRANCH } else { "master" }
 
 # ── Helpers ──────────────────────────────────────────────────────────
 function Write-Info    { param($Msg) Write-Host "[*] $Msg" -ForegroundColor Cyan }
@@ -32,7 +32,7 @@ function Write-Err     { param($Msg) Write-Host "[-] $Msg" -ForegroundColor Red 
 function Show-Banner {
     Write-Host ""
     Write-Host "    +==========================================+" -ForegroundColor White
-    Write-Host "    |            六眼  Rikugan                 |" -ForegroundColor White
+    Write-Host "    |            六眼  Luc Nhan                 |" -ForegroundColor White
     Write-Host "    |     Reverse Engineering AI Agent         |" -ForegroundColor White
     Write-Host "    |              IDA Pro                     |" -ForegroundColor White
     Write-Host "    +==========================================+" -ForegroundColor White
@@ -87,7 +87,7 @@ function Install-Repository {
             Write-Warn "$InstallDir exists but is not a git repo -- backing up to $backup"
             Rename-Item $InstallDir $backup
         }
-        Write-Info "Cloning Rikugan into $InstallDir..."
+        Write-Info "Cloning Luc Nhan into $InstallDir..."
         git clone --branch $Branch --depth 1 $RepoUrl $InstallDir --quiet 2>$null
         Write-Ok "Cloned successfully"
     }
@@ -150,7 +150,7 @@ if ($failed) {
     Write-Warn "Installation completed with errors. Check the output above."
 }
 else {
-    Write-Ok "Rikugan installation complete!"
+    Write-Ok "Luc Nhan installation complete!"
 }
 Write-Host "  Install location: $InstallDir" -ForegroundColor DarkGray
 Write-Host "  To update later:  cd $InstallDir; git pull" -ForegroundColor DarkGray

@@ -16,12 +16,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent import report_review
-from rikugan.agent.exploration_mode import ExplorationState, Finding
-from rikugan.agent.modes import exploration as exploration_mode
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.ingest import _stable_hash, make_store
-from rikugan.state.session import SessionState
+from lucnhan.agent import report_review
+from lucnhan.agent.exploration_mode import ExplorationState, Finding
+from lucnhan.agent.modes import exploration as exploration_mode
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.ingest import _stable_hash, make_store
+from lucnhan.state.session import SessionState
 
 
 def _drain(gen):
@@ -57,7 +57,7 @@ def _make_loop(idb_path: str) -> Any:
     loop = MagicMock()
     loop.provider = MagicMock()
     loop.tools = MagicMock()
-    loop.config = RikuganConfig()
+    loop.config = LucNhanConfig()
     loop.session = SessionState(idb_path=idb_path)
     loop.session.messages = []
     loop.host_name = "test"
@@ -219,7 +219,7 @@ class TestFinalizeExploreMemory(unittest.TestCase):
             runner = _scripted_runner_factory([_passing_response(mem_id)])
             with (
                 patch.object(report_review, "_build_runner", lambda _loop: runner),
-                patch("rikugan.memory.ingest.make_store", return_value=(None, None)),
+                patch("lucnhan.memory.ingest.make_store", return_value=(None, None)),
             ):
                 events = _drain(exploration_mode._finalize_explore_memory(loop, state))
             system_msgs = [e for e in events if e.text and "central index only" in e.text]

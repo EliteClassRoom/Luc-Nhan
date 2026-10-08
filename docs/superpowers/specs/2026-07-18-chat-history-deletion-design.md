@@ -6,7 +6,7 @@
 
 ## 1. Problem Statement
 
-Chat History On-Demand lets users list, search, and reopen saved chats for the current IDB, but it intentionally excluded deletion from its first version. Rikugan already has a low-level `SessionHistory.delete_session()` helper, but exposing that helper directly to Qt would be unsafe:
+Chat History On-Demand lets users list, search, and reopen saved chats for the current IDB, but it intentionally excluded deletion from its first version. Luc Nhan already has a low-level `SessionHistory.delete_session()` helper, but exposing that helper directly to Qt would be unsafe:
 
 - a queued autosave could run after deletion and recreate the chat;
 - a stale row from another IDB could target the wrong session;
@@ -23,7 +23,7 @@ The following product decisions were approved:
 1. Delete one chat at a time from History for the current IDB only.
 2. Deletion is permanent and requires confirmation.
 3. The confirmation names the chat, states that deletion cannot be undone, focuses `Cancel` by default, and uses a destructive `Delete` button.
-4. If the chat is open in any tab, deletion is blocked. Rikugan focuses that tab and asks the user to close it first.
+4. If the chat is open in any tab, deletion is blocked. Luc Nhan focuses that tab and asks the user to close it first.
 5. Each History row has a delete button that becomes visually prominent on hover or keyboard focus.
 6. After successful deletion, the row disappears immediately, the search query and scroll position are preserved, and a background refresh reconciles the panel with storage.
 7. On failure, the row remains and the panel offers Retry using a fixed user-safe error message.
@@ -61,13 +61,13 @@ The implementation extends the established History path:
 ```text
 HistoryRowWidget signal
   -> HistoryPanel signal
-  -> RikuganPanelCore main-thread preflight + confirmation
+  -> LucNhanPanelCore main-thread preflight + confirmation
   -> dedicated _history_executor worker
   -> SessionControllerBase Qt-free API
   -> SessionHistory ordered command on _SAVE_EXECUTOR
   -> typed result queue
   -> dedicated History QTimer
-  -> RikuganPanelCore main-thread apply
+  -> LucNhanPanelCore main-thread apply
   -> passive HistoryPanel update
 ```
 
@@ -167,7 +167,7 @@ clear_notice() -> None
 
 `show_notice()` provides non-modal feedback in a dedicated notice row above the list, so successful cached rows remain rendered and interactive unless `set_operation_pending()` disables them. A notice clears on explicit dismissal, Retry, the next terminal success, panel `clear()`, or IDB invalidation. The panel emits its existing Retry signal with PanelCore-owned retry routing; dismissing a notice only clears presentation state.
 
-### 6.3 `RikuganPanelCore`
+### 6.3 `LucNhanPanelCore`
 
 PanelCore owns confirmation, open-tab checks, delete submission, worker lifetime, retry routing, and UI updates.
 

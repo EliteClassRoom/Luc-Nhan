@@ -25,15 +25,15 @@ def _make_zip(entries: dict[str, str | bytes]) -> bytes:
 
 
 def test_validate_flat_zip_passes(tmp_path: Path) -> None:
-    # Arrange — ida-plugin.json + entryPoint at root, rikugan/ package
+    # Arrange — ida-plugin.json + entryPoint at root, lucnhan/ package
     data = _make_zip(
         {
-            "ida-plugin.json": json.dumps({"plugin": {"entryPoint": "rikugan_plugin.py"}}),
-            "rikugan_plugin.py": "# entry",
-            "rikugan/__init__.py": "",
+            "ida-plugin.json": json.dumps({"plugin": {"entryPoint": "lucnhan_plugin.py"}}),
+            "lucnhan_plugin.py": "# entry",
+            "lucnhan/__init__.py": "",
         }
     )
-    p = tmp_path / "rikugan-v1.0.zip"
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert — no exception
@@ -42,8 +42,8 @@ def test_validate_flat_zip_passes(tmp_path: Path) -> None:
 
 def test_validate_rejects_missing_ida_plugin_json(tmp_path: Path) -> None:
     # Arrange — no metadata file
-    data = _make_zip({"rikugan_plugin.py": "# entry"})
-    p = tmp_path / "rikugan-v1.0.zip"
+    data = _make_zip({"lucnhan_plugin.py": "# entry"})
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert
@@ -52,14 +52,14 @@ def test_validate_rejects_missing_ida_plugin_json(tmp_path: Path) -> None:
 
 
 def test_validate_rejects_wrapping_subfolder(tmp_path: Path) -> None:
-    # Arrange — ida-plugin.json nested under rikugan-v1.0/
+    # Arrange — ida-plugin.json nested under lucnhan-v1.0/
     data = _make_zip(
         {
-            "rikugan-v1.0/ida-plugin.json": json.dumps({"plugin": {"entryPoint": "rikugan_plugin.py"}}),
-            "rikugan-v1.0/rikugan_plugin.py": "# entry",
+            "lucnhan-v1.0/ida-plugin.json": json.dumps({"plugin": {"entryPoint": "lucnhan_plugin.py"}}),
+            "lucnhan-v1.0/lucnhan_plugin.py": "# entry",
         }
     )
-    p = tmp_path / "rikugan-v1.0.zip"
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert
@@ -71,10 +71,10 @@ def test_validate_rejects_missing_entry_point(tmp_path: Path) -> None:
     # Arrange — metadata points to entryPoint that isn't in the zip
     data = _make_zip(
         {
-            "ida-plugin.json": json.dumps({"plugin": {"entryPoint": "rikugan_plugin.py"}}),
+            "ida-plugin.json": json.dumps({"plugin": {"entryPoint": "lucnhan_plugin.py"}}),
         }
     )
-    p = tmp_path / "rikugan-v1.0.zip"
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert
@@ -87,10 +87,10 @@ def test_validate_rejects_invalid_json_metadata(tmp_path: Path) -> None:
     data = _make_zip(
         {
             "ida-plugin.json": "not json {{{",
-            "rikugan_plugin.py": "# entry",
+            "lucnhan_plugin.py": "# entry",
         }
     )
-    p = tmp_path / "rikugan-v1.0.zip"
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert

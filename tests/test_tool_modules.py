@@ -19,7 +19,7 @@ install_ida_mocks()
 # Force-reload tool modules so they pick up all IDA mocks (including ida_ida).
 import importlib
 
-import rikugan.ida.tools.database as _db_mod
+import lucnhan.ida.tools.database as _db_mod
 
 importlib.reload(_db_mod)
 
@@ -28,7 +28,7 @@ importlib.reload(_db_mod)
 
 class TestGetBinaryInfo(unittest.TestCase):
     def test_omits_filename_emits_metadata(self):
-        from rikugan.ida.tools.database import get_binary_info
+        from lucnhan.ida.tools.database import get_binary_info
         result = get_binary_info()
         # Filename must not appear — file names are untrusted labels.
         self.assertNotIn("test_binary", result)
@@ -37,45 +37,45 @@ class TestGetBinaryInfo(unittest.TestCase):
         self.assertIn("Functions:", result)
 
     def test_does_not_emit_file_header(self):
-        from rikugan.ida.tools.database import get_binary_info
+        from lucnhan.ida.tools.database import get_binary_info
         result = get_binary_info()
         self.assertNotIn("File: test_binary", result)
         self.assertNotIn("File:", result.splitlines()[0])
 
     def test_contains_processor_info(self):
-        from rikugan.ida.tools.database import get_binary_info
+        from lucnhan.ida.tools.database import get_binary_info
         result = get_binary_info()
         self.assertTrue("Processor:" in result or "unavailable" in result)
 
 class TestListSegments(unittest.TestCase):
     def test_returns_segment_header(self):
-        from rikugan.ida.tools.database import list_segments
+        from lucnhan.ida.tools.database import list_segments
         result = list_segments()
         self.assertTrue(result.startswith("Segments:"))
 
 
 class TestListExports(unittest.TestCase):
     def test_returns_exports_header(self):
-        from rikugan.ida.tools.database import list_exports
+        from lucnhan.ida.tools.database import list_exports
         result = list_exports()
         self.assertTrue(result.startswith("Exports:"))
 
 
 class TestListImports(unittest.TestCase):
     def test_returns_imports_header(self):
-        from rikugan.ida.tools.database import list_imports
+        from lucnhan.ida.tools.database import list_imports
         result = list_imports()
         self.assertTrue(result.startswith("Imports:"))
 
 
 class TestReadBytes(unittest.TestCase):
     def test_returns_hex_dump(self):
-        from rikugan.ida.tools.database import read_bytes
+        from lucnhan.ida.tools.database import read_bytes
         result = read_bytes("0x1000", size=16)
         self.assertIn("0x", result)
 
     def test_size_clamped_to_1024(self):
-        from rikugan.ida.tools.database import read_bytes
+        from lucnhan.ida.tools.database import read_bytes
         result = read_bytes("0x1000", size=9999)
         self.assertIsInstance(result, str)
 
@@ -84,7 +84,7 @@ class TestReadBytes(unittest.TestCase):
 
 class TestListFunctions(unittest.TestCase):
     def test_pagination(self):
-        from rikugan.ida.tools.functions import list_functions
+        from lucnhan.ida.tools.functions import list_functions
         result = list_functions(offset=0, limit=2)
         self.assertIn("Functions 0", result)
         lines = result.strip().split("\n")
@@ -94,26 +94,26 @@ class TestListFunctions(unittest.TestCase):
         self.assertLessEqual(len(lines), 4)
 
     def test_full_list(self):
-        from rikugan.ida.tools.functions import list_functions
+        from lucnhan.ida.tools.functions import list_functions
         result = list_functions()
         self.assertIn("of 3:", result)
 
 
 class TestSearchFunctions(unittest.TestCase):
     def test_finds_by_substring(self):
-        from rikugan.ida.tools.functions import search_functions
+        from lucnhan.ida.tools.functions import search_functions
         result = search_functions("sub")
         self.assertIn("sub_1000", result)
 
     def test_no_match(self):
-        from rikugan.ida.tools.functions import search_functions
+        from lucnhan.ida.tools.functions import search_functions
         result = search_functions("zzz_nonexistent_zzz")
         self.assertIn("No functions matching", result)
 
 
 class TestGetFunctionInfo(unittest.TestCase):
     def test_returns_name_and_address(self):
-        from rikugan.ida.tools.functions import get_function_info
+        from lucnhan.ida.tools.functions import get_function_info
         result = get_function_info("0x1000")
         self.assertIn("Name:", result)
         self.assertIn("Address:", result)
@@ -124,21 +124,21 @@ class TestGetFunctionInfo(unittest.TestCase):
 
 class TestListStrings(unittest.TestCase):
     def test_returns_header(self):
-        from rikugan.ida.tools.strings import list_strings
+        from lucnhan.ida.tools.strings import list_strings
         result = list_strings()
         self.assertIn("Strings 0", result)
 
 
 class TestSearchStrings(unittest.TestCase):
     def test_no_match_returns_message(self):
-        from rikugan.ida.tools.strings import search_strings
+        from lucnhan.ida.tools.strings import search_strings
         result = search_strings("zzz_nonexistent")
         self.assertIn("No strings matching", result)
 
 
 class TestGetStringAt(unittest.TestCase):
     def test_decodes_utf8(self):
-        from rikugan.ida.tools.strings import get_string_at
+        from lucnhan.ida.tools.strings import get_string_at
         result = get_string_at("0x1000")
         self.assertEqual(result, "test string")
 
@@ -147,26 +147,26 @@ class TestGetStringAt(unittest.TestCase):
 
 class TestXrefsTo(unittest.TestCase):
     def test_no_xrefs(self):
-        from rikugan.ida.tools.xrefs import xrefs_to
+        from lucnhan.ida.tools.xrefs import xrefs_to
         result = xrefs_to("0x1000")
         self.assertIn("(none)", result)
 
     def test_header_includes_address(self):
-        from rikugan.ida.tools.xrefs import xrefs_to
+        from lucnhan.ida.tools.xrefs import xrefs_to
         result = xrefs_to("0x1000")
         self.assertIn("0x1000", result)
 
 
 class TestXrefsFrom(unittest.TestCase):
     def test_no_xrefs(self):
-        from rikugan.ida.tools.xrefs import xrefs_from
+        from lucnhan.ida.tools.xrefs import xrefs_from
         result = xrefs_from("0x1000")
         self.assertIn("(none)", result)
 
 
 class TestFunctionXrefs(unittest.TestCase):
     def test_returns_callers_callees(self):
-        from rikugan.ida.tools.xrefs import function_xrefs
+        from lucnhan.ida.tools.xrefs import function_xrefs
         result = function_xrefs("0x1000")
         self.assertIn("Callers", result)
         self.assertIn("Callees", result)
@@ -176,7 +176,7 @@ class TestFunctionXrefs(unittest.TestCase):
 
 class TestRenameFunction(unittest.TestCase):
     def test_successful_rename(self):
-        from rikugan.ida.tools.annotations import rename_function
+        from lucnhan.ida.tools.annotations import rename_function
         result = rename_function("0x1000", "my_func")
         self.assertIn("Renamed", result)
         self.assertIn("my_func", result)
@@ -184,20 +184,20 @@ class TestRenameFunction(unittest.TestCase):
 
 class TestSetComment(unittest.TestCase):
     def test_set_regular_comment(self):
-        from rikugan.ida.tools.annotations import set_comment
+        from lucnhan.ida.tools.annotations import set_comment
         result = set_comment("0x1000", "my comment")
         self.assertIn("Set", result)
         self.assertIn("comment", result)
 
     def test_set_repeatable_comment(self):
-        from rikugan.ida.tools.annotations import set_comment
+        from lucnhan.ida.tools.annotations import set_comment
         result = set_comment("0x1000", "rep comment", repeatable=True)
         self.assertIn("repeatable", result)
 
 
 class TestRenameAddress(unittest.TestCase):
     def test_successful_rename(self):
-        from rikugan.ida.tools.annotations import rename_address
+        from lucnhan.ida.tools.annotations import rename_address
         result = rename_address("0x1000", "label_1000")
         self.assertIn("Named", result)
 
@@ -206,14 +206,14 @@ class TestRenameAddress(unittest.TestCase):
 
 class TestReadDisassembly(unittest.TestCase):
     def test_returns_disassembly(self):
-        from rikugan.ida.tools.disassembly import read_disassembly
+        from lucnhan.ida.tools.disassembly import read_disassembly
         result = read_disassembly("0x1000", count=1)
         self.assertIn("MOV", result)
 
 
 class TestGetInstructionInfo(unittest.TestCase):
     def test_returns_mnemonic_and_size(self):
-        from rikugan.ida.tools.disassembly import get_instruction_info
+        from lucnhan.ida.tools.disassembly import get_instruction_info
         result = get_instruction_info("0x1000")
         self.assertIn("Mnemonic: MOV", result)
         self.assertIn("Size: 4", result)

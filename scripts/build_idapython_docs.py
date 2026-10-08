@@ -1,7 +1,7 @@
 """Build the offline IDAPython docs bundle from Hex-Rays upstream.
 
 Runs at dev/CI time (NOT inside IDA). Produces raw RST files + MANIFEST.json
-under rikugan/data/idapython-docs/. See:
+under lucnhan/data/idapython-docs/. See:
 docs/superpowers/specs/2026-07-07-idapython-offline-docs-design.md
 """
 
@@ -33,7 +33,7 @@ UPSTREAM_INDEX_URL: str = f"{BASE_URL}/"
 SOURCES_URL_TEMPLATE: str = f"{BASE_URL}/_sources/{{module}}/index.rst.txt"
 
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
-OUTPUT_DIR: Path = REPO_ROOT / "rikugan" / "data" / "idapython-docs"
+OUTPUT_DIR: Path = REPO_ROOT / "lucnhan" / "data" / "idapython-docs"
 MANIFEST_PATH: Path = OUTPUT_DIR / "MANIFEST.json"
 
 MANIFEST_SCHEMA_VERSION: int = 1

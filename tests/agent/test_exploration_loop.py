@@ -13,10 +13,10 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.loop import AgentLoop
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import (
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import (
     Message,
     ModelInfo,
     ProviderCapabilities,
@@ -24,10 +24,10 @@ from rikugan.core.types import (
     StreamChunk,
     TokenUsage,
 )
-from rikugan.providers.base import LLMProvider
-from rikugan.state.session import SessionState
-from rikugan.tools.base import ParameterSchema, ToolDefinition
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.providers.base import LLMProvider
+from lucnhan.state.session import SessionState
+from lucnhan.tools.base import ParameterSchema, ToolDefinition
+from lucnhan.tools.registry import ToolRegistry
 
 
 class MockProvider(LLMProvider):
@@ -160,7 +160,7 @@ class TestExplorationModeEvents(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=_make_registry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
 
@@ -193,7 +193,7 @@ class TestExplorationModeEvents(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=_make_registry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
 
@@ -236,7 +236,7 @@ class TestExplorationModeEvents(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=_make_registry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
 
@@ -266,7 +266,7 @@ class TestExplorationModeEvents(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=_make_registry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
 
@@ -460,7 +460,7 @@ class TestMutationTracking(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=registry,
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
 
@@ -494,7 +494,7 @@ class TestMutationTracking(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=registry,
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
 
@@ -552,7 +552,7 @@ class TestMutationTracking(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=registry,
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
 
@@ -595,7 +595,7 @@ class TestMutationTracking(unittest.TestCase):
         loop2 = AgentLoop(
             provider=provider2,
             tool_registry=registry2,
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
 
@@ -653,7 +653,7 @@ class TestMutationTracking(unittest.TestCase):
                 loop = AgentLoop(
                     provider=provider,
                     tool_registry=registry,
-                    config=RikuganConfig(),
+                    config=LucNhanConfig(),
                     session=SessionState(),
                 )
                 events = list(loop.run("Set pseudocode comment"))
@@ -703,7 +703,7 @@ class TestMutationTracking(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=registry,
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
         events = list(loop.run("Set pseudocode comment"))
@@ -739,7 +739,7 @@ class TestMutationTracking(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=registry,
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
         events = list(loop.run("Set comment"))
@@ -772,7 +772,7 @@ class TestMutationTracking(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=registry,
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
         events = list(loop.run("Set comment"))
@@ -827,7 +827,7 @@ class TestMutationTracking(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=registry,
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
         events = list(loop.run("Rename variable"))
@@ -864,7 +864,7 @@ class TestMutationTracking(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=registry,
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
         events = list(loop.run("Run custom mutation"))
@@ -911,7 +911,7 @@ class TestSpawnSubagentPseudoTool(unittest.TestCase):
         loop = AgentLoop(
             provider=provider,
             tool_registry=_make_registry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             session=SessionState(),
         )
 

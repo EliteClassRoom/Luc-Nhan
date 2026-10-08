@@ -1,4 +1,4 @@
-"""Tests for rikugan.headless.runner."""
+"""Tests for lucnhan.headless.runner."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.headless.runner import (
+from lucnhan.headless.runner import (
     EXIT_APPROVAL_REQUIRED,
     EXIT_CANCELLED,
     EXIT_CONFIG_ERROR,
@@ -119,7 +119,7 @@ class TestRunPrompt(unittest.TestCase):
         self.assertEqual(result.exit_code, EXIT_GENERIC_ERROR)
 
     def test_normal_completion(self):
-        from rikugan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
 
         ctrl = _FakeController()
         events = [
@@ -138,7 +138,7 @@ class TestRunPrompt(unittest.TestCase):
         self.assertTrue(ctrl._finished_called)
 
     def test_tool_failure_error(self):
-        from rikugan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
 
         ctrl = _FakeController()
         events = [
@@ -155,7 +155,7 @@ class TestRunPrompt(unittest.TestCase):
         self.assertIn("Decompilation failed", result.errors)
 
     def test_cancellation_event(self):
-        from rikugan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
 
         ctrl = _FakeController()
         events = [
@@ -166,7 +166,7 @@ class TestRunPrompt(unittest.TestCase):
         self.assertEqual(result.exit_code, EXIT_CANCELLED)
 
     def test_approval_auto_denied(self):
-        from rikugan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
 
         agent_loop = MagicMock()
         ctrl = _FakeController()
@@ -185,7 +185,7 @@ class TestRunPrompt(unittest.TestCase):
         agent_loop.submit_tool_approval.assert_called_with("deny")
 
     def test_multiple_approval_events(self):
-        from rikugan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
 
         agent_loop = MagicMock()
         ctrl = _FakeController()
@@ -230,7 +230,7 @@ class TestReasoningRecoveryPassThrough(unittest.TestCase):
     """
 
     def test_reasoning_and_recovery_events_do_not_change_final_text_or_exit_code(self):
-        from rikugan.agent.turn import TurnEvent
+        from lucnhan.agent.turn import TurnEvent
 
         result = _run_with_events(
             [
@@ -250,7 +250,7 @@ class TestReasoningRecoveryPassThrough(unittest.TestCase):
         self.assertEqual(event_types[:2], ["reasoning_delta", "recovery_start"])
 
     def test_tool_call_discarded_does_not_mutate_status(self):
-        from rikugan.agent.turn import TurnEvent
+        from lucnhan.agent.turn import TurnEvent
 
         result = _run_with_events(
             [
@@ -267,7 +267,7 @@ class TestReasoningRecoveryPassThrough(unittest.TestCase):
 
     def test_recovery_failure_error_is_preserved_as_failure(self):
         """Recovery failure emits a real ERROR event — that IS a failure."""
-        from rikugan.agent.turn import TurnEvent
+        from lucnhan.agent.turn import TurnEvent
 
         result = _run_with_events(
             [

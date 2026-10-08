@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.fact_identity import semantic_fact_hash
-from rikugan.memory.repository import SavedKnowledgeMemory, SQLiteKnowledgeRepository
-from rikugan.memory.schema import (
+from lucnhan.memory.fact_identity import semantic_fact_hash
+from lucnhan.memory.repository import SavedKnowledgeMemory, SQLiteKnowledgeRepository
+from lucnhan.memory.schema import (
     KnowledgeEntity,
     KnowledgeMemory,
     KnowledgeObservation,
     KnowledgeRelation,
 )
-from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _create_repo(tmp_path: Path) -> tuple[SQLiteKnowledgeRepository, str]:

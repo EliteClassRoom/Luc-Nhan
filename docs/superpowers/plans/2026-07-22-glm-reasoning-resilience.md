@@ -26,9 +26,9 @@
 
 ### Files to create
 
-- `rikugan/core/glm_config.py` — typed GLM config, model metadata, validation.
-- `rikugan/providers/glm_provider.py` — GLM request/message/client/model dialect over OpenAI transport.
-- `rikugan/agent/glm_guard.py` — bounded streaming degeneration detector.
+- `lucnhan/core/glm_config.py` — typed GLM config, model metadata, validation.
+- `lucnhan/providers/glm_provider.py` — GLM request/message/client/model dialect over OpenAI transport.
+- `lucnhan/agent/glm_guard.py` — bounded streaming degeneration detector.
 - `tests/core/test_glm_config.py`
 - `tests/providers/test_glm_provider.py`
 - `tests/agent/test_glm_guard.py`
@@ -37,36 +37,36 @@
 
 ### Existing files to modify
 
-- `rikugan/constants.py` — add built-in GLM default model.
-- `rikugan/core/types.py` — reasoning, request context, usage provenance, capabilities, serialization.
-- `rikugan/core/config.py` — GLM validation and deep-copy provider `extra` persistence/migration.
-- `rikugan/core/log_sinks.py`, `rikugan/core/logging.py` — allowlisted structured attempt logging.
-- `rikugan/providers/base.py` — request-context plumbing.
-- `rikugan/providers/openai_provider.py` — capability-gated reasoning delta while preserving OpenAI inline thinking.
-- `rikugan/providers/anthropic_provider.py`, `gemini_provider.py`, `codex_provider.py`, `minimax_provider.py` — accept the request-context keyword without changing payloads.
-- `rikugan/providers/registry.py` — built-in GLM and custom dialect routing.
-- `rikugan/agent/turn.py` — reasoning/recovery/discard events and JSON serialization.
-- `rikugan/agent/loop.py` — typed attempt outcomes, guard integration, queue coalescing.
-- `rikugan/agent/modes/turn_helpers.py` — durable commit boundary and recovery transaction.
-- `rikugan/agent/modes/plan.py` — direct typed-outcome consumer.
-- `rikugan/agent/prompts/base.py` — protocol-oriented parallel tool wording.
-- `rikugan/state/session.py` — usage recording without a persisted message.
-- `rikugan/agent/context_window.py` — explicit reasoning omission during old-message compaction.
-- `rikugan/ui/session_controller_base.py` — pass active `extra` into provider creation.
-- `rikugan/ui/settings_dialog.py` — GLM controls and opt-in Z.AI migration.
-- `rikugan/ui/chat_view.py`, `rikugan/ui/tool_widgets.py` — transient reasoning/recovery/discard rendering and restore.
-- `rikugan/headless/runner.py`, `rikugan/control/server.py` — explicit pass-through semantics.
+- `lucnhan/constants.py` — add built-in GLM default model.
+- `lucnhan/core/types.py` — reasoning, request context, usage provenance, capabilities, serialization.
+- `lucnhan/core/config.py` — GLM validation and deep-copy provider `extra` persistence/migration.
+- `lucnhan/core/log_sinks.py`, `lucnhan/core/logging.py` — allowlisted structured attempt logging.
+- `lucnhan/providers/base.py` — request-context plumbing.
+- `lucnhan/providers/openai_provider.py` — capability-gated reasoning delta while preserving OpenAI inline thinking.
+- `lucnhan/providers/anthropic_provider.py`, `gemini_provider.py`, `codex_provider.py`, `minimax_provider.py` — accept the request-context keyword without changing payloads.
+- `lucnhan/providers/registry.py` — built-in GLM and custom dialect routing.
+- `lucnhan/agent/turn.py` — reasoning/recovery/discard events and JSON serialization.
+- `lucnhan/agent/loop.py` — typed attempt outcomes, guard integration, queue coalescing.
+- `lucnhan/agent/modes/turn_helpers.py` — durable commit boundary and recovery transaction.
+- `lucnhan/agent/modes/plan.py` — direct typed-outcome consumer.
+- `lucnhan/agent/prompts/base.py` — protocol-oriented parallel tool wording.
+- `lucnhan/state/session.py` — usage recording without a persisted message.
+- `lucnhan/agent/context_window.py` — explicit reasoning omission during old-message compaction.
+- `lucnhan/ui/session_controller_base.py` — pass active `extra` into provider creation.
+- `lucnhan/ui/settings_dialog.py` — GLM controls and opt-in Z.AI migration.
+- `lucnhan/ui/chat_view.py`, `lucnhan/ui/tool_widgets.py` — transient reasoning/recovery/discard rendering and restore.
+- `lucnhan/headless/runner.py`, `lucnhan/control/server.py` — explicit pass-through semantics.
 
 ### Consumers that must be migrated or regression-tested
 
 - `_stream_llm_turn()` direct consumers:
-  - `rikugan/agent/modes/turn_helpers.py::execute_single_turn`
-  - `rikugan/agent/modes/plan.py::_generate_plan_text`
+  - `lucnhan/agent/modes/turn_helpers.py::execute_single_turn`
+  - `lucnhan/agent/modes/plan.py::_generate_plan_text`
 - `execute_single_turn()` consumers:
-  - `rikugan/agent/modes/normal.py::run_normal_loop`
-  - `rikugan/agent/modes/exploration.py` at analysis, synthesis, and execution phases
-  - `rikugan/agent/modes/plan.py::_execute_step`
-  - `rikugan/agent/modes/research.py` research turn
+  - `lucnhan/agent/modes/normal.py::run_normal_loop`
+  - `lucnhan/agent/modes/exploration.py` at analysis, synthesis, and execution phases
+  - `lucnhan/agent/modes/plan.py::_execute_step`
+  - `lucnhan/agent/modes/research.py` research turn
 - `_build_request_kwargs()` implementations:
   - `LLMProvider`, `OpenAIProvider`, `AnthropicProvider`, `GeminiProvider`, `CodexProvider`, `MiniMaxProvider`; `OpenAICompatProvider` inherits OpenAI behavior
 - `_stream_chunks()` implementations:
@@ -83,7 +83,7 @@
 ### Task 1: Add provider-neutral reasoning and attempt contracts
 
 **Files:**
-- Modify: `rikugan/core/types.py:112-290`
+- Modify: `lucnhan/core/types.py:112-290`
 - Test: `tests/providers/test_providers.py:28-90`
 - Test: `tests/core/test_sanitize.py`
 
@@ -105,7 +105,7 @@
 Add to `tests/providers/test_providers.py`:
 
 ```python
-from rikugan.core.types import LLMRequestContext, ProviderCapabilities, StreamChunk
+from lucnhan.core.types import LLMRequestContext, ProviderCapabilities, StreamChunk
 
 
 def test_message_reasoning_roundtrip_is_sanitized():
@@ -163,7 +163,7 @@ Expected: collection or assertion failures because the fields/types do not exist
 
 - [ ] **Step 3: Add the immutable request, usage, disposition, and outcome types**
 
-In `rikugan/core/types.py`, add after `TokenUsage`:
+In `lucnhan/core/types.py`, add after `TokenUsage`:
 
 ```python
 @dataclass(frozen=True)
@@ -238,7 +238,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/core/types.py tests/providers/test_providers.py tests/core/test_sanitize.py
+git add lucnhan/core/types.py tests/providers/test_providers.py tests/core/test_sanitize.py
 git commit -m "feat(types): add reasoning attempt contracts"
 ```
 
@@ -247,7 +247,7 @@ git commit -m "feat(types): add reasoning attempt contracts"
 ### Task 2: Add reasoning, recovery, and discarded-tool events
 
 **Files:**
-- Modify: `rikugan/agent/turn.py:12-70,442-484`
+- Modify: `lucnhan/agent/turn.py:12-70,442-484`
 - Test: `tests/agent/test_turn_events.py`
 
 **Interfaces:**
@@ -369,7 +369,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rikugan/agent/turn.py tests/agent/test_turn_events.py
+git add lucnhan/agent/turn.py tests/agent/test_turn_events.py
 git commit -m "feat(events): add GLM reasoning recovery events"
 ```
 
@@ -378,13 +378,13 @@ git commit -m "feat(events): add GLM reasoning recovery events"
 ### Task 3: Add content-free structured attempt logging
 
 **Files:**
-- Modify: `rikugan/core/log_sinks.py:195-212`
-- Modify: `rikugan/core/logging.py:1-109`
+- Modify: `lucnhan/core/log_sinks.py:195-212`
+- Modify: `lucnhan/core/logging.py:1-109`
 - Test: `tests/core/test_logging.py`
 
 **Interfaces:**
 - Consumes: `strip_injection_markers()`, `strip_lone_surrogates()`.
-- Produces: `log_structured(event: dict[str, JSONScalar])` and one allowlisted `rikugan_event` JSON object per log record.
+- Produces: `log_structured(event: dict[str, JSONScalar])` and one allowlisted `lucnhan_event` JSON object per log record.
 
 - [ ] **Step 1: Write failing allowlist and sanitizer tests**
 
@@ -393,14 +393,14 @@ Add to `tests/core/test_logging.py`:
 ```python
 import json
 
-from rikugan.core.log_sinks import _JSONFormatter
-from rikugan.core.logging import log_structured
+from lucnhan.core.log_sinks import _JSONFormatter
+from lucnhan.core.logging import log_structured
 
 
 def test_json_formatter_includes_allowlisted_attempt_event():
     formatter = _JSONFormatter()
-    record = logging.LogRecord("Rikugan", logging.INFO, "", 0, "agent_attempt", (), None)
-    record.rikugan_event = {
+    record = logging.LogRecord("Luc Nhan", logging.INFO, "", 0, "agent_attempt", (), None)
+    record.lucnhan_event = {
         "provider": "glm",
         "attempt_number": 1,
         "disposition": "degenerated",
@@ -409,8 +409,8 @@ def test_json_formatter_includes_allowlisted_attempt_event():
 
     payload = json.loads(formatter.format(record))
 
-    assert payload["rikugan_event"]["provider"] == "glm"
-    assert payload["rikugan_event"]["discarded_attempt"] is True
+    assert payload["lucnhan_event"]["provider"] == "glm"
+    assert payload["lucnhan_event"]["discarded_attempt"] is True
 
 
 def test_log_structured_rejects_content_keys_and_nested_values():
@@ -422,13 +422,13 @@ def test_log_structured_rejects_content_keys_and_nested_values():
 
 def test_structured_strings_strip_role_markers_and_surrogates():
     formatter = _JSONFormatter()
-    record = logging.LogRecord("Rikugan", logging.INFO, "", 0, "agent_attempt", (), None)
-    record.rikugan_event = {"provider": "[SYSTEM] glm\ud800"}
+    record = logging.LogRecord("Luc Nhan", logging.INFO, "", 0, "agent_attempt", (), None)
+    record.lucnhan_event = {"provider": "[SYSTEM] glm\ud800"}
 
     payload = json.loads(formatter.format(record))
 
-    assert "[SYSTEM]" not in payload["rikugan_event"]["provider"]
-    assert "\ud800" not in payload["rikugan_event"]["provider"]
+    assert "[SYSTEM]" not in payload["lucnhan_event"]["provider"]
+    assert "\ud800" not in payload["lucnhan_event"]["provider"]
 ```
 
 Import `pytest` in this test file.
@@ -443,7 +443,7 @@ Expected: FAIL because `log_structured` and structured event formatting do not e
 
 - [ ] **Step 3: Implement the exact allowlist**
 
-In `rikugan/core/log_sinks.py` define:
+In `lucnhan/core/log_sinks.py` define:
 
 ```python
 JSONScalar = str | int | float | bool | None
@@ -478,11 +478,11 @@ STRUCTURED_EVENT_ALLOWLIST = frozenset(
 )
 ```
 
-Extend `_JSONFormatter.format()` to read one `record.rikugan_event`, validate keys and scalar values, sanitize every string, and write the sanitized dict under `entry["rikugan_event"]`.
+Extend `_JSONFormatter.format()` to read one `record.lucnhan_event`, validate keys and scalar values, sanitize every string, and write the sanitized dict under `entry["lucnhan_event"]`.
 
 - [ ] **Step 4: Implement the public helper**
 
-In `rikugan/core/logging.py`:
+In `lucnhan/core/logging.py`:
 
 ```python
 def log_structured(event: dict[str, JSONScalar]) -> None:
@@ -491,7 +491,7 @@ def log_structured(event: dict[str, JSONScalar]) -> None:
         raise KeyError(f"Unknown structured log keys: {sorted(unknown)}")
     if any(not isinstance(value, (str, int, float, bool, type(None))) for value in event.values()):
         raise TypeError("Structured log values must be JSON scalars")
-    get_logger().info("agent_attempt", extra={"rikugan_event": dict(event)})
+    get_logger().info("agent_attempt", extra={"lucnhan_event": dict(event)})
 ```
 
 Re-export `JSONScalar` and `STRUCTURED_EVENT_ALLOWLIST` from `log_sinks` into `logging.py`.
@@ -507,7 +507,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/core/log_sinks.py rikugan/core/logging.py tests/core/test_logging.py
+git add lucnhan/core/log_sinks.py lucnhan/core/logging.py tests/core/test_logging.py
 git commit -m "feat(logging): add safe attempt telemetry"
 ```
 
@@ -516,9 +516,9 @@ git commit -m "feat(logging): add safe attempt telemetry"
 ### Task 4: Add typed GLM configuration and preserve provider extras
 
 **Files:**
-- Create: `rikugan/core/glm_config.py`
-- Modify: `rikugan/constants.py:33-50`
-- Modify: `rikugan/core/config.py:17-56,181-241,283-303,403-439`
+- Create: `lucnhan/core/glm_config.py`
+- Modify: `lucnhan/constants.py:33-50`
+- Modify: `lucnhan/core/config.py:17-56,181-241,283-303,403-439`
 - Test: `tests/core/test_glm_config.py`
 - Test: `tests/headless/test_provider_config.py:270-405`
 
@@ -539,7 +539,7 @@ Create `tests/core/test_glm_config.py`:
 ```python
 import pytest
 
-from rikugan.core.glm_config import get_glm_model_metadata, parse_glm_extra
+from lucnhan.core.glm_config import get_glm_model_metadata, parse_glm_extra
 
 
 def test_default_glm_config_is_guarded_and_preserved():
@@ -586,7 +586,7 @@ Add to `tests/headless/test_provider_config.py`:
 
 ```python
 def test_switch_provider_preserves_nested_extra_without_aliasing():
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg.provider.name = "glm"
     cfg.provider.extra = {"dialect": "glm", "thinking": {"enabled": True}}
 
@@ -608,7 +608,7 @@ Expected: FAIL because parser/metadata and `extra` snapshot/restore are absent.
 
 - [ ] **Step 4: Implement GLM dataclasses and exact model metadata**
 
-Create `rikugan/core/glm_config.py` with frozen dataclasses:
+Create `lucnhan/core/glm_config.py` with frozen dataclasses:
 
 ```python
 @dataclass(frozen=True)
@@ -674,7 +674,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/constants.py rikugan/core/config.py rikugan/core/glm_config.py tests/core/test_glm_config.py tests/headless/test_provider_config.py
+git add lucnhan/constants.py lucnhan/core/config.py lucnhan/core/glm_config.py tests/core/test_glm_config.py tests/headless/test_provider_config.py
 git commit -m "feat(config): add GLM dialect settings"
 ```
 
@@ -683,12 +683,12 @@ git commit -m "feat(config): add GLM dialect settings"
 ### Task 5: Thread immutable request context through all providers
 
 **Files:**
-- Modify: `rikugan/providers/base.py:95-198`
-- Modify: `rikugan/providers/openai_provider.py:320-351`
-- Modify: `rikugan/providers/anthropic_provider.py:517-579`
-- Modify: `rikugan/providers/gemini_provider.py:256-307`
-- Modify: `rikugan/providers/codex_provider.py:474-535`
-- Modify: `rikugan/providers/minimax_provider.py:193-210`
+- Modify: `lucnhan/providers/base.py:95-198`
+- Modify: `lucnhan/providers/openai_provider.py:320-351`
+- Modify: `lucnhan/providers/anthropic_provider.py:517-579`
+- Modify: `lucnhan/providers/gemini_provider.py:256-307`
+- Modify: `lucnhan/providers/codex_provider.py:474-535`
+- Modify: `lucnhan/providers/minimax_provider.py:193-210`
 - Modify: `tests/agent/test_agent_loop.py:35-90`
 - Modify: `tests/agent/test_exploration_loop.py:33-95`
 - Modify: `tests/agent/test_subagent_manager.py:35-70`
@@ -833,7 +833,7 @@ Expected: PASS and payload equivalence assertions pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/providers/base.py rikugan/providers/openai_provider.py rikugan/providers/anthropic_provider.py rikugan/providers/gemini_provider.py rikugan/providers/codex_provider.py rikugan/providers/minimax_provider.py tests/providers tests/agent/test_agent_loop.py tests/agent/test_exploration_loop.py tests/agent/test_subagent_manager.py
+git add lucnhan/providers/base.py lucnhan/providers/openai_provider.py lucnhan/providers/anthropic_provider.py lucnhan/providers/gemini_provider.py lucnhan/providers/codex_provider.py lucnhan/providers/minimax_provider.py tests/providers tests/agent/test_agent_loop.py tests/agent/test_exploration_loop.py tests/agent/test_subagent_manager.py
 git commit -m "refactor(providers): thread request context"
 ```
 
@@ -842,10 +842,10 @@ git commit -m "refactor(providers): thread request context"
 ### Task 6: Implement the GLM provider dialect and registry routing
 
 **Files:**
-- Create: `rikugan/providers/glm_provider.py`
-- Modify: `rikugan/providers/openai_provider.py:35-70,115-235,440-640`
-- Modify: `rikugan/providers/registry.py:18-199`
-- Modify: `rikugan/ui/session_controller_base.py:425-447`
+- Create: `lucnhan/providers/glm_provider.py`
+- Modify: `lucnhan/providers/openai_provider.py:35-70,115-235,440-640`
+- Modify: `lucnhan/providers/registry.py:18-199`
+- Modify: `lucnhan/ui/session_controller_base.py:425-447`
 - Test: `tests/providers/test_glm_provider.py`
 - Test: `tests/providers/test_providers.py`
 - Test: `tests/providers/test_openai_provider.py`
@@ -974,7 +974,7 @@ Close inline tags only when `_in_reasoning` is true. GLM inherits the indexed to
 In `ProviderRegistry`:
 
 ```python
-"glm": "rikugan.providers.glm_provider:GLMProvider",
+"glm": "lucnhan.providers.glm_provider:GLMProvider",
 ```
 
 Change `register_custom_providers()` to accept optional `dialects: dict[str, str] | None`, track GLM custom names separately from compat names, and select the GLM import spec when dialect is `glm`. In `new_instance()`, pass `provider_name` for custom GLM and compat profiles.
@@ -1001,7 +1001,7 @@ Expected: PASS; OpenAI inline thinking tests retain current output.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add rikugan/providers/glm_provider.py rikugan/providers/openai_provider.py rikugan/providers/registry.py rikugan/ui/session_controller_base.py tests/providers
+git add lucnhan/providers/glm_provider.py lucnhan/providers/openai_provider.py lucnhan/providers/registry.py lucnhan/ui/session_controller_base.py tests/providers
 git commit -m "feat(providers): add GLM reasoning dialect"
 ```
 
@@ -1010,7 +1010,7 @@ git commit -m "feat(providers): add GLM reasoning dialect"
 ### Task 7: Implement the bounded GLM reasoning guard
 
 **Files:**
-- Create: `rikugan/agent/glm_guard.py`
+- Create: `lucnhan/agent/glm_guard.py`
 - Test: `tests/agent/test_glm_guard.py`
 
 **Interfaces:**
@@ -1134,7 +1134,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/agent/glm_guard.py tests/agent/test_glm_guard.py
+git add lucnhan/agent/glm_guard.py tests/agent/test_glm_guard.py
 git commit -m "feat(agent): detect GLM reasoning degeneration"
 ```
 
@@ -1143,8 +1143,8 @@ git commit -m "feat(agent): detect GLM reasoning degeneration"
 ### Task 8: Refactor streamed attempts into typed outcomes
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:656-710,740-1077`
-- Modify: `rikugan/agent/modes/plan.py:52-70`
+- Modify: `lucnhan/agent/loop.py:656-710,740-1077`
+- Modify: `lucnhan/agent/modes/plan.py:52-70`
 - Test: `tests/agent/test_agent_loop.py:294-559`
 - Test: `tests/agent/test_exploration_loop.py`
 
@@ -1159,7 +1159,7 @@ In `tests/agent/test_agent_loop.py`, add a direct-call test:
 ```python
 def test_stream_turn_returns_typed_completed_outcome():
     provider = MockProvider(responses=[_text_response("done")])
-    loop = AgentLoop(provider, ToolRegistry(), RikuganConfig(), SessionState())
+    loop = AgentLoop(provider, ToolRegistry(), LucNhanConfig(), SessionState())
 
     generator = loop._stream_llm_turn("system", None)
     events, outcome = _drain_generator_with_return(generator)
@@ -1244,7 +1244,7 @@ Expected: PASS, including all existing finish-reason and broken-stream cases.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/agent/loop.py rikugan/agent/modes/plan.py tests/agent/test_agent_loop.py tests/agent/test_exploration_loop.py
+git add lucnhan/agent/loop.py lucnhan/agent/modes/plan.py tests/agent/test_agent_loop.py tests/agent/test_exploration_loop.py
 git commit -m "refactor(agent): return typed stream outcomes"
 ```
 
@@ -1253,8 +1253,8 @@ git commit -m "refactor(agent): return typed stream outcomes"
 ### Task 9: Reject incomplete GLM tool calls with a safe persisted prefix
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:880-1037`
-- Modify: `rikugan/agent/turn.py`
+- Modify: `lucnhan/agent/loop.py:880-1037`
+- Modify: `lucnhan/agent/turn.py`
 - Test: `tests/agent/test_agent_loop.py`
 - Test: `tests/providers/test_glm_provider.py`
 
@@ -1336,7 +1336,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/agent/loop.py rikugan/agent/turn.py tests/agent/test_agent_loop.py tests/providers/test_glm_provider.py
+git add lucnhan/agent/loop.py lucnhan/agent/turn.py tests/agent/test_agent_loop.py tests/providers/test_glm_provider.py
 git commit -m "fix(agent): reject incomplete GLM tool calls"
 ```
 
@@ -1345,9 +1345,9 @@ git commit -m "fix(agent): reject incomplete GLM tool calls"
 ### Task 10: Implement the one-shot recovery transaction and usage accounting
 
 **Files:**
-- Modify: `rikugan/agent/modes/turn_helpers.py:18-99`
-- Modify: `rikugan/state/session.py:109-125`
-- Modify: `rikugan/agent/loop.py:656-710`
+- Modify: `lucnhan/agent/modes/turn_helpers.py:18-99`
+- Modify: `lucnhan/state/session.py:109-125`
+- Modify: `lucnhan/agent/loop.py:656-710`
 - Create: `tests/agent/test_glm_recovery.py`
 - Modify: `tests/agent/test_agent_loop.py`
 
@@ -1468,7 +1468,7 @@ Expected: PASS; normal/research/exploration/plan consumers continue reading exis
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/agent/modes/turn_helpers.py rikugan/state/session.py rikugan/agent/loop.py tests/agent/test_glm_recovery.py tests/agent/test_agent_loop.py
+git add lucnhan/agent/modes/turn_helpers.py lucnhan/state/session.py lucnhan/agent/loop.py tests/agent/test_glm_recovery.py tests/agent/test_agent_loop.py
 git commit -m "feat(agent): recover GLM reasoning loops once"
 ```
 
@@ -1477,7 +1477,7 @@ git commit -m "feat(agent): recover GLM reasoning loops once"
 ### Task 11: Replace prose-oriented parallel-call prompting
 
 **Files:**
-- Modify: `rikugan/agent/prompts/base.py:35-47`
+- Modify: `lucnhan/agent/prompts/base.py:35-47`
 - Test: `tests/agent/test_system_prompt.py`
 - Test: `tests/agent/test_bulk_renamer_prompts.py`
 
@@ -1532,7 +1532,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rikugan/agent/prompts/base.py tests/agent/test_system_prompt.py tests/agent/test_bulk_renamer_prompts.py
+git add lucnhan/agent/prompts/base.py tests/agent/test_system_prompt.py tests/agent/test_bulk_renamer_prompts.py
 git commit -m "fix(prompts): require structured tool invocation"
 ```
 
@@ -1541,9 +1541,9 @@ git commit -m "fix(prompts): require structured tool invocation"
 ### Task 12: Render transient reasoning and recovery safely in the UI
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:2394-2460`
-- Modify: `rikugan/ui/chat_view.py:86-130,290-359,752-922,1365-1413,2093-2154`
-- Modify: `rikugan/ui/tool_widgets.py:695-725`
+- Modify: `lucnhan/agent/loop.py:2394-2460`
+- Modify: `lucnhan/ui/chat_view.py:86-130,290-359,752-922,1365-1413,2093-2154`
+- Modify: `lucnhan/ui/tool_widgets.py:695-725`
 - Create: `tests/ui/test_chat_view_glm.py`
 - Modify: `tests/ui/test_chat_view_restore.py`
 - Modify: `tests/agent/test_agent_loop.py`
@@ -1659,7 +1659,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add rikugan/agent/loop.py rikugan/ui/chat_view.py rikugan/ui/tool_widgets.py tests/ui/test_chat_view_glm.py tests/ui/test_chat_view_restore.py tests/agent/test_agent_loop.py
+git add lucnhan/agent/loop.py lucnhan/ui/chat_view.py lucnhan/ui/tool_widgets.py tests/ui/test_chat_view_glm.py tests/ui/test_chat_view_restore.py tests/agent/test_agent_loop.py
 git commit -m "feat(ui): separate transient GLM reasoning"
 ```
 
@@ -1668,9 +1668,9 @@ git commit -m "feat(ui): separate transient GLM reasoning"
 ### Task 13: Add GLM Settings controls and explicit migration
 
 **Files:**
-- Modify: `rikugan/ui/settings_dialog.py:207-560,1003-1035,1284-1412`
+- Modify: `lucnhan/ui/settings_dialog.py:207-560,1003-1035,1284-1412`
 - Test: `tests/tools/test_settings_dialog.py`
-- Test: `rikugan/tests/test_settings_dialog_fixes.py`
+- Test: `lucnhan/tests/test_settings_dialog_fixes.py`
 
 **Interfaces:**
 - Consumes: `parse_glm_extra()`, GLM model metadata, deep-copy `extra` behavior.
@@ -1721,7 +1721,7 @@ Patch the prompt helper and assert a custom `api.z.ai` provider receives `dialec
 - [ ] **Step 3: Verify red**
 
 ```bash
-uv run pytest tests/tools/test_settings_dialog.py rikugan/tests/test_settings_dialog_fixes.py -k "glm" -v
+uv run pytest tests/tools/test_settings_dialog.py lucnhan/tests/test_settings_dialog_fixes.py -k "glm" -v
 ```
 
 Expected: FAIL because controls/migration do not exist.
@@ -1748,7 +1748,7 @@ Parse `urlparse(api_base).hostname`. Prompt only when host is exactly `api.z.ai`
 - [ ] **Step 6: Run settings tests green**
 
 ```bash
-uv run pytest tests/tools/test_settings_dialog.py rikugan/tests/test_settings_dialog_fixes.py tests/headless/test_provider_config.py -v
+uv run pytest tests/tools/test_settings_dialog.py lucnhan/tests/test_settings_dialog_fixes.py tests/headless/test_provider_config.py -v
 ```
 
 Expected: PASS.
@@ -1756,7 +1756,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/ui/settings_dialog.py tests/tools/test_settings_dialog.py rikugan/tests/test_settings_dialog_fixes.py
+git add lucnhan/ui/settings_dialog.py tests/tools/test_settings_dialog.py lucnhan/tests/test_settings_dialog_fixes.py
 git commit -m "feat(settings): configure GLM reasoning resilience"
 ```
 
@@ -1765,10 +1765,10 @@ git commit -m "feat(settings): configure GLM reasoning resilience"
 ### Task 14: Emit telemetry and lock headless/control semantics
 
 **Files:**
-- Modify: `rikugan/agent/modes/turn_helpers.py`
-- Modify: `rikugan/headless/runner.py:109-154`
-- Modify: `rikugan/control/server.py:155-249`
-- Modify: `rikugan/agent/context_window.py:41-86`
+- Modify: `lucnhan/agent/modes/turn_helpers.py`
+- Modify: `lucnhan/headless/runner.py:109-154`
+- Modify: `lucnhan/control/server.py:155-249`
+- Modify: `lucnhan/agent/context_window.py:41-86`
 - Test: `tests/core/test_logging.py`
 - Test: `tests/headless/test_runner.py`
 - Test: `tests/control/test_server.py`
@@ -1851,7 +1851,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add rikugan/agent/modes/turn_helpers.py rikugan/headless/runner.py rikugan/control/server.py rikugan/agent/context_window.py tests/core/test_logging.py tests/headless/test_runner.py tests/control/test_server.py tests/agent/test_minify.py
+git add lucnhan/agent/modes/turn_helpers.py lucnhan/headless/runner.py lucnhan/control/server.py lucnhan/agent/context_window.py tests/core/test_logging.py tests/headless/test_runner.py tests/control/test_server.py tests/agent/test_minify.py
 git commit -m "feat(agent): record GLM recovery telemetry"
 ```
 
@@ -1878,7 +1878,7 @@ Expected: PASS. If a non-GLM payload assertion fails, fix the implementation rat
 - [ ] **Step 2: Run UI, headless, control, and config suites**
 
 ```bash
-uv run pytest tests/ui tests/tools/test_settings_dialog.py tests/headless tests/control rikugan/tests/test_settings_dialog_fixes.py -v
+uv run pytest tests/ui tests/tools/test_settings_dialog.py tests/headless tests/control lucnhan/tests/test_settings_dialog_fixes.py -v
 ```
 
 Expected: PASS.
@@ -1886,7 +1886,7 @@ Expected: PASS.
 - [ ] **Step 3: Run all project tests**
 
 ```bash
-uv run pytest tests rikugan/tests -v
+uv run pytest tests lucnhan/tests -v
 ```
 
 Expected: PASS with zero failures/errors.
@@ -1914,7 +1914,7 @@ Expected: no lint errors. Do not run `--fix` across the whole repository.
 - [ ] **Step 5: Run strict type checks on affected packages**
 
 ```bash
-uv run mypy rikugan/core rikugan/providers rikugan/agent
+uv run mypy lucnhan/core lucnhan/providers lucnhan/agent
 ```
 
 Expected: no type errors.
@@ -1939,14 +1939,14 @@ Invoke:
 
 - `code-reviewer` for all changes;
 - `python-reviewer` for Python changes;
-- `ida-tooling-reviewer` only if any file under `rikugan/tools/`, `rikugan/ida/tools/`, or `rikugan/agent/mutation.py` was unexpectedly changed.
+- `ida-tooling-reviewer` only if any file under `lucnhan/tools/`, `lucnhan/ida/tools/`, or `lucnhan/agent/mutation.py` was unexpectedly changed.
 
 Apply only verified findings, rerun the affected focused tests, then rerun Steps 3–6.
 
 - [ ] **Step 8: Commit final integration fixes**
 
 ```bash
-git add rikugan tests rikugan/tests
+git add lucnhan tests lucnhan/tests
 git commit -m "test: verify GLM reasoning resilience"
 ```
 

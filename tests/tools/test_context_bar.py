@@ -1,4 +1,4 @@
-"""Tests for rikugan.ui.context_bar — pure logic in set_tokens, set_function, _function_name_at."""
+"""Tests for lucnhan.ui.context_bar — pure logic in set_tokens, set_function, _function_name_at."""
 
 from __future__ import annotations
 
@@ -12,20 +12,20 @@ ensure_pyside6_stubs()
 
 # Defensive: drop any ``_StubModule`` entries a sibling test file
 # (e.g. ``tests/tools/test_panel_core.py``) left in ``sys.modules``
-# before we import the real rikugan modules.  Without this purge
+# before we import the real lucnhan modules.  Without this purge
 # the ``ContextBar`` symbol here would be a ``MagicMock`` from a
 # previous test's stub, and ``object.__new__(ContextBar)`` would
 # raise ``TypeError``.
-from tests import purge_rikugan_stubs
+from tests import purge_lucnhan_stubs
 
-purge_rikugan_stubs()
+purge_lucnhan_stubs()
 
 # ``_StubModule`` instances created by sibling test files attach
-# MagicMocks to ``sys.modules['rikugan.ui.context_bar']``.  Force
+# MagicMocks to ``sys.modules['lucnhan.ui.context_bar']``.  Force
 # a re-import of the real module even if a previous import bound a
 # stub to the same name.  We then re-bind the symbols the tests
 # use from the freshly-imported module so a later
-# ``patch("rikugan.ui.context_bar.is_ida", ...)`` call targets the
+# ``patch("lucnhan.ui.context_bar.is_ida", ...)`` call targets the
 # same module instance our functions were bound to.  Without this
 # re-binding, ``patch`` would re-import context_bar (because the
 # stub purge removed the real module too) and our local
@@ -33,29 +33,29 @@ purge_rikugan_stubs()
 # module instance with its original ``is_ida`` — so the patch would
 # silently no-op and the function would see the un-patched
 # ``is_ida()`` (which may return True if a previous test left
-# ``rikugan.core.host._HOST = HOST_IDA``).
+# ``lucnhan.core.host._HOST = HOST_IDA``).
 for _name in (
-    "rikugan.ui.context_bar",
-    "rikugan.ui.styles",
-    "rikugan.ui.theme.manager",
-    "rikugan.core.host",
+    "lucnhan.ui.context_bar",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.core.host",
 ):
     sys.modules.pop(_name, None)
 
-import rikugan.ui.context_bar as _context_bar_mod
+import lucnhan.ui.context_bar as _context_bar_mod
 
 ContextBar = _context_bar_mod.ContextBar
 _function_name_at = _context_bar_mod._function_name_at
 
 # Defensive: ``tests/core/test_host.py`` mutates
-# ``rikugan.core.host._HOST`` to ``HOST_IDA`` (or ``HOST_STANDALONE``)
+# ``lucnhan.core.host._HOST`` to ``HOST_IDA`` (or ``HOST_STANDALONE``)
 # via ``setup_method`` and restores it in ``teardown_method``.  If a
 # teardown is skipped (e.g. an assertion error before the teardown
 # line, or a test that shares a class-scoped fixture), ``_HOST`` can
 # leak as ``HOST_IDA`` and bias subsequent tests that call
 # ``is_ida()``.  Force the standalone default here so the
 # ``_function_name_at`` test sees the expected host kind.
-import rikugan.core.host as _host_mod
+import lucnhan.core.host as _host_mod
 
 _host_mod._HOST = _host_mod.HOST_STANDALONE
 
@@ -171,7 +171,7 @@ class TestSetModel(unittest.TestCase):
 
 class TestFunctionNameAt(unittest.TestCase):
     def test_returns_none_in_standalone_mode(self):
-        with patch("rikugan.ui.context_bar.is_ida", return_value=False):
+        with patch("lucnhan.ui.context_bar.is_ida", return_value=False):
             result = _function_name_at(0x1000)
             self.assertIsNone(result)
 

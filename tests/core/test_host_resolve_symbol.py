@@ -1,4 +1,4 @@
-"""Tests for ``rikugan.core.host.resolve_symbol``.
+"""Tests for ``lucnhan.core.host.resolve_symbol``.
 
 Covers the unknown-name and non-IDA-host paths, which decide whether a bad
 tool argument raises an actionable ``ValueError`` or gets silently mapped to
@@ -16,8 +16,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-import rikugan.core.host as host_mod
-from rikugan.core.host import HOST_STANDALONE, resolve_symbol
+import lucnhan.core.host as host_mod
+from lucnhan.core.host import HOST_STANDALONE, resolve_symbol
 
 
 class TestResolveSymbol(unittest.TestCase):

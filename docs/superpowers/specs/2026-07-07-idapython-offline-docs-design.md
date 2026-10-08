@@ -20,10 +20,10 @@ all fail before pivoting to raw RST sources.
 | `/ida_<module>/<func>.html` | **`403 Forbidden`** (bot-protected) |
 | `/_sources/ida_<module>/index.rst.txt` | `200 OK` (raw Sphinx source) |
 
-The bundled `ida-scripting` skill (`rikugan/skills/builtins/ida-scripting/`)
+The bundled `ida-scripting` skill (`lucnhan/skills/builtins/ida-scripting/`)
 ships an `api-reference.md` (~451 lines) covering only ~10 modules. The
 docs-review gate's reviewer prompt previously steered the LLM to broken
-HTML URLs; prompt fix landed in `rikugan/agent/agents/ida_docs_reviewer.py`
+HTML URLs; prompt fix landed in `lucnhan/agent/agents/ida_docs_reviewer.py`
 and `SKILL.md` ("When to fetch more") on this date — but every fetch still
 incurs a network round-trip + a turn-budget cost (max 6 turns per script).
 
@@ -50,7 +50,7 @@ build time, ship it inside the plugin, and serve it via a local tool.
    directives).
 4. **Cập nhật**: One-shot build script — manual hoặc CI, không auto-update.
 5. **Storage & integration**: Bundle tách riêng tại
-   `rikugan/data/idapython-docs/<module>.rst.txt` + `MANIFEST.json`.
+   `lucnhan/data/idapython-docs/<module>.rst.txt` + `MANIFEST.json`.
    Truy cập qua tool mới `lookup_idapython_doc(module)` (token-efficient —
    chỉ pay khi agent cần tra cứu).
 6. **Module list source**: Auto-discover từ `python.docs.hex-rays.com/`
@@ -74,7 +74,7 @@ build time, ship it inside the plugin, and serve it via a local tool.
 │   │ 2. Parse module list (stdlib html.parser)                           │
 │   │ 3. For each module:                                                 │
 │   │    GET /_sources/<module>/index.rst.txt                             │
-│   │    Save to rikugan/data/idapython-docs/<module>.rst.txt             │
+│   │    Save to lucnhan/data/idapython-docs/<module>.rst.txt             │
 │   │ 4. Write MANIFEST.json {version, fetched_at, modules: [{...}]}      │
 │   │ 5. Optional: --verify (compare local hash vs upstream HEAD)         │
 │   └─→ Committed to git as snapshot                                       │
@@ -83,16 +83,16 @@ build time, ship it inside the plugin, and serve it via a local tool.
                                   │ (read at runtime)
                                   ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  RUNTIME (IDA Pro with Rikugan loaded)                                  │
+│  RUNTIME (IDA Pro with Luc Nhan loaded)                                  │
 │                                                                          │
-│  rikugan/tools/idapython_docs.py                                        │
+│  lucnhan/tools/idapython_docs.py                                        │
 │   @tool(name="lookup_idapython_doc", ...)                               │
 │   def lookup_idapython_doc(module: str) -> str:                         │
-│       # Read rikugan/data/idapython-docs/<module>.rst.txt               │
+│       # Read lucnhan/data/idapython-docs/<module>.rst.txt               │
 │       # Return header + content (paginated like web_fetch)              │
 │                                                                          │
-│  Registry: rikugan/ida/tools/registry.py                                │
-│   _BOOT_TOOL_MODULES += ("rikugan.tools.idapython_docs",)               │
+│  Registry: lucnhan/ida/tools/registry.py                                │
+│   _BOOT_TOOL_MODULES += ("lucnhan.tools.idapython_docs",)               │
 │                                                                          │
 │  Prompt updates:                                                        │
 │   - ida_docs_reviewer.py: prefer lookup_idapython_doc over web_fetch   │
@@ -117,7 +117,7 @@ build time, ship it inside the plugin, and serve it via a local tool.
 #   python scripts/build_idapython_docs.py --update # refresh only changed
 
 BASE_URL = "https://python.docs.hex-rays.com"
-OUTPUT_DIR = REPO_ROOT / "rikugan" / "data" / "idapython-docs"
+OUTPUT_DIR = REPO_ROOT / "lucnhan" / "data" / "idapython-docs"
 MANIFEST = OUTPUT_DIR / "MANIFEST.json"
 
 # 1. Discover: fetch HTML index, parse module links
@@ -168,7 +168,7 @@ Schema versioning allows future format changes without breaking old
 bundles. Field `schema_version` is mandatory; readers MUST reject unknown
 versions loudly.
 
-### Component 3: Tool (`rikugan/tools/idapython_docs.py`)
+### Component 3: Tool (`lucnhan/tools/idapython_docs.py`)
 
 ```python
 DOCS_DIR = Path(__file__).resolve().parent.parent / "data" / "idapython-docs"
@@ -181,7 +181,7 @@ def lookup_idapython_doc(
 ) -> str:
     """Look up an IDAPython module's documentation from the bundled offline bundle.
 
-    Reads from rikugan/data/idapython-docs/<module>.rst.txt — works without
+    Reads from lucnhan/data/idapython-docs/<module>.rst.txt — works without
     network access. Use this BEFORE web_fetch against python.docs.hex-rays.com
     because the site is bot-protected (403 on deep-link HTML pages).
 
@@ -206,12 +206,12 @@ Tip: run scripts/build_idapython_docs.py to refresh,
 
 ### Component 4: Tool Registration
 
-Trong `rikugan/ida/tools/registry.py`, thêm vào `_BOOT_TOOL_MODULES`:
+Trong `lucnhan/ida/tools/registry.py`, thêm vào `_BOOT_TOOL_MODULES`:
 
 ```python
 _BOOT_TOOL_MODULES = (
     ...,
-    "rikugan.tools.idapython_docs",  # NEW
+    "lucnhan.tools.idapython_docs",  # NEW
 )
 ```
 
@@ -243,7 +243,7 @@ NEW: lookup_idapython_doc(module="<module>")
     │     │   ├─ If 200 OK: read body, compute SHA-256
     │     │   ├─ If 4xx/5xx: log warning, add to "failures" list, continue
     │     │   └─ Retry: 3x exponential backoff (1s, 2s, 4s) on network errors
-    │     └─ Write rikugan/data/idapython-docs/<module>.rst.txt atomically
+    │     └─ Write lucnhan/data/idapython-docs/<module>.rst.txt atomically
     │
     ├─ 3. Write MANIFEST.json atomically (tmp file → rename)
     │     └─ If MANIFEST.json exists, preserve schema_version
@@ -263,13 +263,13 @@ mid-way, old bundle stays valid.
 ### Flow B: Runtime — agent calls `lookup_idapython_doc`
 
 ```
-[IDA Pro / Rikugan agent loop]
+[IDA Pro / Luc Nhan agent loop]
     │
     ├─ 1. Agent emits tool call: lookup_idapython_doc(module="ida_typeinf")
     │
     ├─ 2. Tool handler:
     │     ├─ Sanitize module name (allow [a-z0-9_]+ only, reject "..", "/", "\")
-    │     ├─ Path: rikugan/data/idapython-docs/<module>.rst.txt
+    │     ├─ Path: lucnhan/data/idapython-docs/<module>.rst.txt
     │     ├─ if file exists: read utf-8, paginate, return header + content
     │     └─ if missing: return error message listing available modules
     │

@@ -14,9 +14,9 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from rikugan.memory.fact_identity import semantic_fact_hash
-from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.fact_identity import semantic_fact_hash
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 _ROUNDS = 40
 _JOIN_TIMEOUT = 60.0

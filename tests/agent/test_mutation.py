@@ -11,13 +11,13 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.mutation import (
+from lucnhan.agent.mutation import (
     MutationRecord,
     build_reverse_record,
     capture_pre_state,
 )
-from rikugan.tools.base import ParameterSchema, ToolDefinition
-from rikugan.tools.coercion import coerce_bool
+from lucnhan.tools.base import ParameterSchema, ToolDefinition
+from lucnhan.tools.coercion import coerce_bool
 
 
 class TestBuildReverseRecord(unittest.TestCase):
@@ -119,13 +119,13 @@ class TestBuildReverseRecord(unittest.TestCase):
         resulting ``set_function_comment`` call must still point at
         the original pre-state, proving the undo path remains sound.
         """
-        from rikugan.ida.tools.annotations import merge_evidence_line
+        from lucnhan.ida.tools.annotations import merge_evidence_line
 
-        original = "analyst note\n[Rikugan Evidence] old claim\nfollowup"
+        original = "analyst note\n[Luc Nhan Evidence] old claim\nfollowup"
         merged = merge_evidence_line(original, "new claim")
         self.assertIn("analyst note", merged)
         self.assertIn("followup", merged)
-        self.assertIn("[Rikugan Evidence] new claim", merged)
+        self.assertIn("[Luc Nhan Evidence] new claim", merged)
         self.assertNotIn("old claim", merged)
         rec = build_reverse_record(
             "set_function_comment",
@@ -345,7 +345,7 @@ class TestBuildReverseRecord(unittest.TestCase):
 
     def test_boolean_consistency_registry_and_mutation(self):
         """coerce_bool() must agree with ToolRegistry coercion for both truthy and falsy repeatable values."""
-        from rikugan.tools.registry import ToolRegistry
+        from lucnhan.tools.registry import ToolRegistry
 
         bool_defn = ToolDefinition(
             name="test_bool",
@@ -645,7 +645,7 @@ class TestMutationContractConsistency(unittest.TestCase):
         # Inspect the module internals to enumerate both handler sets.
         import inspect
 
-        from rikugan.agent import mutation
+        from lucnhan.agent import mutation
 
         cls._reverse_tools = set(mutation._REVERSE_BUILDERS.keys())
 
@@ -704,7 +704,7 @@ class TestUndoHandlerRollback(unittest.TestCase):
     """
 
     def test_failing_reverse_keeps_record_for_retry(self):
-        from rikugan.agent.loop_commands import _handle_undo_command
+        from lucnhan.agent.loop_commands import _handle_undo_command
 
         class _StubLoop:
             def __init__(self, log):
@@ -726,7 +726,7 @@ class TestUndoHandlerRollback(unittest.TestCase):
         self.assertIs(loop._mutation_log[0], rec)
 
     def test_second_undo_after_failure_runs_reverse(self):
-        from rikugan.agent.loop_commands import _handle_undo_command
+        from lucnhan.agent.loop_commands import _handle_undo_command
 
         class _StubLoop:
             def __init__(self, log):
@@ -753,7 +753,7 @@ class TestUndoHandlerRollback(unittest.TestCase):
 
 class _FailingTools:
     def execute(self, name, arguments):
-        from rikugan.core.errors import ToolError
+        from lucnhan.core.errors import ToolError
         raise ToolError("boom")
 
 
@@ -763,7 +763,7 @@ class _SucceedAfterFirstFailTools:
     def execute(self, name, arguments):
         _SucceedAfterFirstFailTools.calls += 1
         if _SucceedAfterFirstFailTools.calls == 1:
-            from rikugan.core.errors import ToolError
+            from lucnhan.core.errors import ToolError
             raise ToolError("boom")
         return "ok"
 

@@ -11,7 +11,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.system_prompt import _BASE_PROMPT, build_system_prompt
+from lucnhan.agent.system_prompt import _BASE_PROMPT, build_system_prompt
 
 
 class TestBuildSystemPrompt(unittest.TestCase):
@@ -140,7 +140,7 @@ class TestBasePromptContent(unittest.TestCase):
 
     def test_renaming_section_covers_all_object_types(self):
         """Baseline RENAMING_SECTION must cover all 6 IDA object types."""
-        from rikugan.agent.prompts.base import RENAMING_SECTION
+        from lucnhan.agent.prompts.base import RENAMING_SECTION
 
         self.assertIn("PascalCase", RENAMING_SECTION)  # functions
         self.assertIn("snake_case", RENAMING_SECTION)  # variables
@@ -150,7 +150,7 @@ class TestBasePromptContent(unittest.TestCase):
 
     def test_renaming_section_references_naming_convention_skill(self):
         """Baseline must point to the naming-convention skill for edge cases."""
-        from rikugan.agent.prompts.base import RENAMING_SECTION
+        from lucnhan.agent.prompts.base import RENAMING_SECTION
 
         self.assertIn("naming-convention", RENAMING_SECTION)
 
@@ -202,14 +202,14 @@ class TestBasePromptContent(unittest.TestCase):
     def test_renaming_section_does_not_reference_ghost_tool(self):
         """Regression: rename_multi_variables is a ghost tool — must NOT be
         referenced as if it exists. See spec self-review round 2."""
-        from rikugan.agent.prompts.base import RENAMING_SECTION
+        from lucnhan.agent.prompts.base import RENAMING_SECTION
 
         # The phrase 'Use rename_multi_variables when available' must be gone.
         self.assertNotIn("Use rename_multi_variables", RENAMING_SECTION)
 
 
 def test_data_integrity_examples_match_emitted_tags():
-    from rikugan.agent.prompts.base import DATA_INTEGRITY_SECTION
+    from lucnhan.agent.prompts.base import DATA_INTEGRITY_SECTION
 
     for tag in (
         "<tool_result>",
@@ -229,7 +229,7 @@ def test_data_integrity_examples_match_emitted_tags():
         assert tag in DATA_INTEGRITY_SECTION, f"{tag} missing from DATA_INTEGRITY examples"
 
 def test_module_reference_does_not_duplicate_discipline_content():
-    from rikugan.agent.prompts.base import (
+    from lucnhan.agent.prompts.base import (
         IDA_API_DISCIPLINE_SECTION,
         IDA_API_MODULE_REFERENCE_SECTION,
     )
@@ -242,7 +242,7 @@ def test_module_reference_does_not_duplicate_discipline_content():
     assert "54 common modules" in IDA_API_DISCIPLINE_SECTION
 
 def test_module_reference_cross_references_discipline():
-    from rikugan.agent.prompts.base import IDA_API_MODULE_REFERENCE_SECTION
+    from lucnhan.agent.prompts.base import IDA_API_MODULE_REFERENCE_SECTION
 
     assert "IDAPython Module Quick Reference" in IDA_API_MODULE_REFERENCE_SECTION
     assert "lookup_idapython_doc" in IDA_API_MODULE_REFERENCE_SECTION
@@ -259,7 +259,7 @@ def test_parallel_tool_prompt_requires_structured_calls_without_rehearsal():
 
 def test_ida_base_prompt_contains_module_reference():
     """Module Quick Reference section phải có trong system prompt."""
-    from rikugan.agent.prompts.ida import IDA_BASE_PROMPT
+    from lucnhan.agent.prompts.ida import IDA_BASE_PROMPT
 
     assert "IDAPython Module Quick Reference" in IDA_BASE_PROMPT
     assert "ida_bytes" in IDA_BASE_PROMPT
@@ -269,7 +269,7 @@ def test_ida_base_prompt_contains_module_reference():
 
 def test_ida_base_prompt_docs_review_section_updated():
     """Docs-review gate section must describe post-error behavior, not pre-execute."""
-    from rikugan.agent.prompts.ida import IDA_BASE_PROMPT
+    from lucnhan.agent.prompts.ida import IDA_BASE_PROMPT
 
     # New post-error heading — absent from old code.
     assert "Docs-review gate (post-error)" in IDA_BASE_PROMPT

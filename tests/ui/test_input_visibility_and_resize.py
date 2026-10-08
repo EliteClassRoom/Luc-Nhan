@@ -11,10 +11,10 @@ Pins the contract that:
     capping the maximum, and uses ``Expanding`` vertical size policy
     so the editor fills the chat-splitter bottom pane when the user
     drags the handle taller.
-  * ``RikuganPanelCore._build_ui`` wires a vertical chat splitter
+  * ``LucNhanPanelCore._build_ui`` wires a vertical chat splitter
     between the main conversation area and the input section, so the
     user can drag the handle to grow the input.
-  * ``RikuganPanelCore.showEvent`` seeds the chat splitter default
+  * ``LucNhanPanelCore.showEvent`` seeds the chat splitter default
     sizes on first show and leaves the splitter alone on subsequent
     shows so the user can drag the handle afterwards.
 
@@ -38,11 +38,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)
 
-# Defensive purge — sibling tests stub rikugan.ui.* modules; see
+# Defensive purge — sibling tests stub lucnhan.ui.* modules; see
 # tests/tools/test_input_area.py for the canonical pattern.
-from tests import purge_rikugan_stubs
+from tests import purge_lucnhan_stubs
 
-purge_rikugan_stubs()
+purge_lucnhan_stubs()
 
 from tests.qt_stubs import ensure_pyside6_stubs
 
@@ -50,11 +50,12 @@ ensure_pyside6_stubs()
 
 # Force the real config module so a stub installed by a sibling test
 # cannot mask ``validate()``/``hide_strings``-style guards.
-sys.modules.pop("rikugan.core.config", None)
+sys.modules.pop("lucnhan.core.config", None)
 
-from rikugan.ui.styles import build_input_area_stylesheet
-from rikugan.ui.theme.palette_dark import DARK_TOKENS
-from rikugan.ui.theme.palette_light import LIGHT_TOKENS
+from lucnhan.ui.styles import build_input_area_stylesheet
+from lucnhan.ui.theme.palette_dark import DARK_TOKENS
+from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
+from tests.qt_real import live_class
 
 
 class _FakeColor:
@@ -108,7 +109,7 @@ class _FakeReceiver:
 
 class TestInputQssLightTheme(unittest.TestCase):
     def setUp(self) -> None:
-        import rikugan.ui.styles as _styles
+        import lucnhan.ui.styles as _styles
 
         self._orig_theme = _styles._current_theme
         _styles._current_theme = "light"
@@ -127,7 +128,7 @@ class TestInputQssLightTheme(unittest.TestCase):
 
 class TestInputQssDarkTheme(unittest.TestCase):
     def setUp(self) -> None:
-        import rikugan.ui.styles as _styles
+        import lucnhan.ui.styles as _styles
 
         self._orig_theme = _styles._current_theme
         _styles._current_theme = "dark"
@@ -149,7 +150,7 @@ class TestInputQssHostTheme(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        import rikugan.ui.styles as _styles
+        import lucnhan.ui.styles as _styles
 
         self._orig_theme = _styles._current_theme
         _styles._current_theme = "ida"
@@ -166,15 +167,21 @@ class TestInputPalette(unittest.TestCase):
     ``PlaceholderText`` on the editor's ``QPalette`` from the live
     tokens so typed text is visible in every theme.
 
-    The test patches a tiny ``QPalette`` / ``QColor`` onto
-    ``rikugan.ui.input_area`` so the unbound ``apply_palette``
-    resolves to the fakes.  A ``ColorRole`` enum-like is attached
-    to the fake palette so ``QPalette.ColorRole.Base/Text/...
+    The test patches a tiny ``QPalette`` / ``QColor`` into the module
+    that OWNS the ``InputArea`` class under test, so the unbound
+    ``apply_palette`` resolves to the fakes.  A ``ColorRole`` enum-like
+    is attached to the fake palette so ``QPalette.ColorRole.Base/Text/...
     `` resolves inside the production code.
     """
 
     def test_palette_roles_match_tokens(self) -> None:
-        from rikugan.ui import input_area as input_area_mod
+        # Resolve the class first and patch through ITS module: a
+        # sibling test can leave ``lucnhan.ui.input_area`` swapped for a
+        # stub (importable as an attribute of the ``lucnhan.ui``
+        # package), so patching one module object while calling a class
+        # from another silently patches nothing.
+        input_area_cls = live_class("lucnhan.ui.input_area.InputArea")
+        input_area_module = sys.modules[input_area_cls.__module__]
 
         # Attach ``ColorRole`` to the fake palette class so the
         # production code's ``QPalette.ColorRole.Base/Text/...``
@@ -190,12 +197,11 @@ class TestInputPalette(unittest.TestCase):
         )
 
         receiver = _FakeReceiver()
-        with patch.object(
-            input_area_mod, "QPalette", _FakePalette, create=True
-        ), patch.object(input_area_mod, "QColor", _FakeColor, create=True):
-            from rikugan.ui.input_area import InputArea
-
-            InputArea.apply_palette(receiver, LIGHT_TOKENS)
+        with patch.dict(
+            vars(input_area_module),
+            {"QPalette": _FakePalette, "QColor": _FakeColor},
+        ):
+            input_area_cls.apply_palette(receiver, LIGHT_TOKENS)
 
         self.assertEqual(
             receiver._palette._roles["Base"]._name,
@@ -225,16 +231,13 @@ class TestInputSizing(unittest.TestCase):
     """
 
     def test_input_area_sizing_contract(self) -> None:
-        from rikugan.ui.input_area import InputArea
+        from lucnhan.ui.input_area import InputArea
 
         source = inspect.getsource(InputArea.__init__)
         self.assertIn(
             "self.setMinimumHeight(60)",
             source,
-            msg=(
-                "InputArea must default to a 2-3 line minimum height "
-                "(60px at 18px line-height with 6px padding)."
-            ),
+            msg=("InputArea must default to a 2-3 line minimum height (60px at 18px line-height with 6px padding)."),
         )
         # ``setMaximumHeight`` must not be called on the editor — the
         # vertical QSplitter in the panel owns the upper bound.
@@ -242,8 +245,7 @@ class TestInputSizing(unittest.TestCase):
             "setMaximumHeight",
             source,
             msg=(
-                "InputArea must not cap its maximum height; the "
-                "vertical QSplitter in the panel owns the upper bound."
+                "InputArea must not cap its maximum height; the vertical QSplitter in the panel owns the upper bound."
             ),
         )
         # Vertical policy must be ``Expanding`` so the editor fills
@@ -263,18 +265,18 @@ class TestInputSizing(unittest.TestCase):
 
 
 class TestChatSplitterShowEventSizes(unittest.TestCase):
-    """``RikuganPanelCore.showEvent`` seeds the chat splitter default
+    """``LucNhanPanelCore.showEvent`` seeds the chat splitter default
     sizes on first show, then leaves the splitter alone on subsequent
     shows so the user can drag the handle afterwards.  The test
-    uses ``RikuganPanelCore.__new__`` to bypass the heavy ``__init__``
+    uses ``LucNhanPanelCore.__new__`` to bypass the heavy ``__init__``
     and installs ``MagicMock`` stand-ins for the splitter, so the
     test does not depend on real Qt construction.
     """
 
     def _make_panel(self, *, total_height: int, input_min: int = 60):
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._chat_splitter = MagicMock()
         panel._chat_splitter.height.return_value = total_height
         panel._input_area = MagicMock()

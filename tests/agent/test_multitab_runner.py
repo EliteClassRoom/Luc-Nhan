@@ -21,9 +21,9 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig
-from rikugan.ida.ui.session_controller import IdaSessionController
-from rikugan.state.history import SessionHistory
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.ida.ui.session_controller import IdaSessionController
+from lucnhan.state.history import SessionHistory
 
 
 class _StubProvider:
@@ -44,7 +44,7 @@ class _StubProvider:
 
 class TestMultiTabRunner(unittest.TestCase):
     def setUp(self):
-        self.cfg = RikuganConfig()
+        self.cfg = LucNhanConfig()
         self.cfg._config_dir = tempfile.mkdtemp()
         self.cfg.parallel_agent_enabled = True
         self.cfg.parallel_agent_max_concurrent = 3

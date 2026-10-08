@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.authority import MemoryAuthorityIssuer, MemoryWriteDenied
-from rikugan.memory.markdown import MemoryProjector
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.service import BinaryMemoryService, SaveMemoryResult, StaleMemoryContext
-from rikugan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.authority import MemoryAuthorityIssuer, MemoryWriteDenied
+from lucnhan.memory.markdown import MemoryProjector
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.service import BinaryMemoryService, SaveMemoryResult, StaleMemoryContext
+from lucnhan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _create_service(tmp_path: Path) -> tuple[BinaryMemoryService, MemoryAuthorityIssuer, MemoryRunContext]:
@@ -55,15 +55,15 @@ class TestPromptSourceSeparation:
         assert "Uses RC4" in structured
         assert "Check key schedule" not in structured
         assert "Check key schedule" in manual
-        assert "rikugan:record" not in manual
-        assert "rikugan:managed" not in manual
+        assert "lucnhan:record" not in manual
+        assert "lucnhan:managed" not in manual
 
     def test_empty_store_returns_empty_contexts(self, tmp_path: Path) -> None:
         service, _, _ = _create_service(tmp_path)
         structured = service.structured_context(query="nothing")
         manual = service.manual_notes_context()
 
-        assert "rikugan:managed" not in structured
+        assert "lucnhan:managed" not in structured
         assert manual.strip() == ""
 
 
@@ -90,7 +90,7 @@ class TestSaveFact:
         # Verify MEMORY.md has the managed projection
         md = service.paths.markdown.read_text(encoding="utf-8")
         assert "Uses HTTP" in md
-        assert "rikugan:managed:start" in md
+        assert "lucnhan:managed:start" in md
 
     def test_save_fact_without_authority_raises(self, tmp_path: Path) -> None:
         service, _, _ = _create_service(tmp_path)

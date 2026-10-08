@@ -1,4 +1,4 @@
-"""Tests for rikugan.core.dependencies optional-package detection."""
+"""Tests for lucnhan.core.dependencies optional-package detection."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import importlib.util
 import unittest
 from unittest.mock import patch
 
-from rikugan.core.dependencies import (
+from lucnhan.core.dependencies import (
     get_missing_dependency_warnings,
     get_optional_dependency_statuses,
 )
@@ -41,7 +41,7 @@ class TestDependencies(unittest.TestCase):
 
     def test_module_available_handles_exceptions(self) -> None:
         """_module_available must not raise on import-time errors."""
-        from rikugan.core import dependencies
+        from lucnhan.core import dependencies
 
         # Should not raise even with a weird import error
         result = dependencies._module_available("definitely_not_a_real_module_xyz")

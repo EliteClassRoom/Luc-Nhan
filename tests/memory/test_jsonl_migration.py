@@ -8,17 +8,17 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.jsonl_migration import (
+from lucnhan.memory.jsonl_migration import (
     jsonl_to_bundle_envelopes,
     maybe_import_legacy_jsonl,
     write_envelopes_to_temp_bundle,
 )
-from rikugan.memory.paths import KnowledgePaths, derive_binary_id
-from rikugan.memory.raw_store import KnowledgeRawStore
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.schema import KnowledgeEntity, KnowledgeMemory, KnowledgeRelation
-from rikugan.memory.workspace import MemoryLocator, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.paths import KnowledgePaths, derive_binary_id
+from lucnhan.memory.raw_store import KnowledgeRawStore
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.schema import KnowledgeEntity, KnowledgeMemory, KnowledgeRelation
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _make_paths(tmp_path: Path) -> KnowledgePaths:
@@ -255,7 +255,7 @@ def test_maybe_import_failed_leaves_marker_unset(tmp_path: Path, monkeypatch) ->
     def boom(*a, **k):
         raise RuntimeError("import crash")
 
-    monkeypatch.setattr("rikugan.memory.jsonl_migration.import_workspace_bundle", boom)
+    monkeypatch.setattr("lucnhan.memory.jsonl_migration.import_workspace_bundle", boom)
 
     with pytest.raises(RuntimeError, match="import crash"):
         maybe_import_legacy_jsonl(store, owner, jsonl_paths)

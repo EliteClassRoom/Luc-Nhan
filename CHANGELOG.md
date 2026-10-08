@@ -7,13 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Luc Nhan rename is now complete end to end.** The display name was
+  already Luc Nhan; the code, packaging and on-disk artifacts now follow. The
+  Python package is `lucnhan/`, the IDA entry point is `lucnhan_plugin.py`, the
+  config/data directory is `~/.idapro/lucnhan/`, and the environment variables,
+  headless CLI (`lucnhan-headless`), log filenames and knowledge store
+  (`.lucnhan-kb/`) moved with it. Existing data is carried over on first use:
+  `~/.idapro/rikugan/` is renamed, and a legacy `.rikugan-kb/` beside an IDB is
+  adopted once by the knowledge store. Encrypted key blocks are written with a
+  `lucnhan-encryption-v1` marker; blocks encrypted before the rename still
+  decrypt, because the old marker sits *inside* their ciphertext and cannot be
+  rewritten on read. Repository and download URLs now point at
+  `EliteClassRoom/Luc-Nhan`, matching the remote that was already renamed. The
+  legacy `RIKUGAN.md` filename keeps its old spelling deliberately — historical
+  notes and regression tests cite it by that name. If you install via an IDA
+  plugins directory, remove a stale `rikugan_plugin.py` there — IDA would
+  otherwise load it as a second copy of the plugin.
+
+### Removed
+
+- **The project website is gone.** `webpage/` — a hand-maintained landing page,
+  getting-started guide, rendered architecture page and their asset copies — is
+  deleted, together with every link to `rikugan.reversing.codes` and to the
+  upstream author's GitHub Pages mirror. Documentation lives in the repository:
+  `README.md`, `ARCHITECTURE.md`, `DEVELOPMENT.md`, `llms.txt`.
+
+## [1.14.1] - 2026-10-08
+
+### Fixed
+
+- **The test suite runs in a single process again** — the in-package
+  `lucnhan/tests/` tree is merged into the top-level `tests/` root. A bare
+  `pytest` collected both roots, and `lucnhan/tests/conftest.py` imported the
+  real PySide6 binding at module scope; the `tests.qt_stubs` fakes were then
+  written over classes inside the already-imported real Qt modules, leaving two
+  incompatible Qt type universes in one process. That fast-fails natively
+  (exit `0xC0000409`) instead of raising, so the run died at ~38% with no usable
+  output. `testpaths` is now `["tests"]`, the three basenames that clashed across
+  roots are folded into their authoritative sibling or moved beside it, and
+  `lucnhan/conftest.py` — a `sys.path` bootstrap that existed only for the inner
+  tree — is gone. `ensure_pyside6_stubs()` additionally refuses to install when
+  the real binding is already loaded. Real-Qt widget suites keep the existing
+  `requires_real_qt` convention and skip in the stubbed session; run those files
+  directly to exercise them.
+- **Tests no longer write into the repository root** — a bare `MagicMock()`
+  bound where a `LucNhanConfig` was expected satisfies `os.PathLike` and
+  stringifies into a *relative* path, so `SessionHistory` and
+  `MemoryWorkspaceManager` created real
+  `MagicMock/mock.config.checkpoints_dir/<id>/sessions` directories — with real
+  SQLite registries inside — in whatever directory pytest was started from.
+  Every site now binds a real config on a temp directory that is reclaimed in
+  teardown.
+
+### Changed
+
+- `ida-plugin.json` dependency floors are aligned with pyproject/requirements
+  (`tomli>=2.4.1`, `requests>=2.34.2`), and the manifest-consistency test now
+  covers every runtime dependency instead of three packages.
+- `lucnhan/agent/mutation.py` uses `EXECUTE_PYTHON_TOOL_NAME` instead of a
+  literal tool name; the unreferenced `pyrightconfig.json` is dropped.
+
+### Security
+
+- CI installs `bandit` alongside `desloppify`. Without it desloppify's
+  `security` detector skips its Python checks, and the PR gate filters findings
+  on exactly that detector — so the gate was passing vacuously.
+
+## [1.14.0] - 2026-10-08
+
 ### Added
+
+- **Read-only emulation inputs and function setup** — `memory_buffers` supplies
+  known non-executable scratch bytes, `code_ranges` authorizes IDB helpers,
+  and function mode builds x86 cdecl/stdcall/fastcall or x64 win64/sysv64 frames.
+  Captures support signed initial-stack offsets; optional discovery reports
+  string candidates overlapping changed bytes, including unknown-offset stack
+  output. Existing range mode keeps explicit register and stack state.
 
 - **Provider-neutral Thinking level in Settings** — a single **Thinking**
   combo in the Generation group replaces GLM's separate Thinking /
   Reasoning-effort controls and works for every provider. The combo lists
   the levels the selected model actually accepts, looked up in a new local
-  table (`rikugan/core/thinking.py`); no provider API advertises thinking
+  table (`lucnhan/core/thinking.py`); no provider API advertises thinking
   capability, so the table *is* the query. Models with no entry fall back
   to the full `none → ultra` range and the chosen level is sent as-is.
   - `'none'` is the storage spelling of "thinking off" — no separate toggle.
@@ -44,6 +121,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Decompiler tools get a 120s timeout** — `decompile_function`,
+  `get_pseudocode` and `get_decompiler_variables` run Hex-Rays once each, which
+  can take minutes on obfuscated or virtualised malware, so they no longer
+  inherit the 30s registry default. The global default is unchanged and still
+  guards the rest of the tools against a wedged IDA main thread.
+
+- **Emulation runs outside the IDA main thread** after a host-thread snapshot.
+  Cancellation and a bounded wall deadline cover setup and CPU execution;
+  CPU-started interruptions preserve partial state. Tool execution context is
+  isolated per worker; other tools retain their existing main-thread behavior.
+
 - **Mutating tools now serialize** (`ToolRegistry._mutate_lock`) so concurrent
   agents don't interleave IDB writes. This keeps the undo stack coherent
   across tabs. `/undo` remains global (reverses the most recent mutation
@@ -52,6 +140,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   concurrent background tabs no longer make it flicker between values.
 
 ### Fixed
+
+- **Emulation fidelity and limits** — snapshots use exact segment/page
+  intersections, original permissions and IDA's packed initialized-byte mask;
+  only genuine BSS undefined bytes are zero-filled. Padding, permission
+  conflicts, IDB/scratch page overlap and stack collisions fail explicitly.
+  Register aliases, flags, instruction budgets and per-instruction syscall/
+  interrupt gates are honored. Cross-page write discovery tracks exact changed
+  bytes independently of the bounded write log. Output prioritizes bounded
+  capture/discovery summaries and preserves independent encoding candidates.
+  The requested code range (entry span and `code_ranges` allowlist) executes
+  even when the segment is R|W — packed binaries — gaining X without ever
+  gaining W, so stray writes still fail; all other pages keep faithful
+  segment permissions.
 
 - **Address tools accept a function/symbol name, not just `0x…`** — the model
   routinely passes a name where a tool documents an address
@@ -76,7 +177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Starting Minimax MCP server") made the SDK's stdio reader dump a full
   pydantic `ValidationError` traceback per launch. The SDK recovers from
   these lines by design, so the `mcp.client.stdio` logger is now suppressed
-  at CRITICAL; genuine startup failures still surface as Rikugan's own
+  at CRITICAL; genuine startup failures still surface as Luc Nhan's own
   "initialize timed out" / "handshake failed" errors.
 - GLM requests no longer send `reasoning_effort` while thinking is disabled —
   `thinking.type = "disabled"` already expresses that, and the effort enum
@@ -89,7 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Restored chat history now actually renders.** Opening a saved chat from
   History could attach the session without rendering a single message,
   leaving a blank chat. Root cause: `RestoreWorker` (a `QThread` in
-  `rikugan/ui/chat_view.py`) pushed its built-message chunks onto a
+  `lucnhan/ui/chat_view.py`) pushed its built-message chunks onto a
   main-thread `queue.Queue` drained by a 50 ms `QTimer`. `QThread.finished`
   is delivered through the event loop, so whenever the worker finished
   before the next tick — a typical session does, well under one tick of
@@ -100,7 +201,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restored session was affected, not just long ones. The worker now
   guarantees its chunks reach the UI before `finished` is emitted,
   regardless of how fast it runs.
-- **Rikugan now opens into your most recent chat.** On startup it loads
+- **Luc Nhan now opens into your most recent chat.** On startup it loads
   the newest saved session for the currently open binary instead of
   starting from a blank `New Chat` draft. This reverses the 1.12.0
   "start fresh" decision: the startup-restore branch in
@@ -145,7 +246,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every entry, so the question rendered with **no buttons at all**
   and the user had nothing to click — the literal "doesn't display
   the option" symptom. Normalization now happens at the LLM-argument
-  boundary in `_handle_ask_user_tool` (`rikugan/agent/loop.py`)
+  boundary in `_handle_ask_user_tool` (`lucnhan/agent/loop.py`)
   before the list reaches `UserQuestionWidget`: a lone string becomes
   a single choice, dicts contribute their `label` (falling back to
   their string form), whitespace-only and duplicate entries are
@@ -183,7 +284,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Chat History on demand** — a History panel lists saved chats for the
   current IDB (scoped by 32-hex `db_instance_id` with path fallback).
-  Opening Rikugan or switching IDBs starts with one empty `New Chat`
+  Opening Luc Nhan or switching IDBs starts with one empty `New Chat`
   draft; reopen a past chat any time from History. Sessions load
   lazily — only the chats you open are parsed, so large histories no
   longer slow startup. Search filters titles case-insensitively.
@@ -201,10 +302,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Removed `startup_restore_sessions`. Older config files may retain the key, but Rikugan ignores it and omits it on the next save.
+- Removed `startup_restore_sessions`. Older config files may retain the key, but Luc Nhan ignores it and omits it on the next save.
 - Legacy `RIKUGAN.md` runtime read/write. **Legacy `RIKUGAN.md` data is
   not migrated — the old file is ignored.**
-- `rikugan/memory/legacy.py` importer (clean break, no migration tool).
+- `lucnhan/memory/legacy.py` importer (clean break, no migration tool).
 - Config flags `memory_workspaces_enabled`, `case_memory_enabled`,
   `peer_retrieval_enabled` (central memory is always-on).
 
@@ -213,7 +314,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added — Central Memory Subsystem
 
 - **Central memory workspaces** — per-binary SQLite workspace stores
-  (`memory.db`) replace folder-scoped `RIKUGAN.md` / `.rikugan-kb/*.jsonl`
+  (`memory.db`) replace folder-scoped `RIKUGAN.md` / `.lucnhan-kb/*.jsonl`
   as the authoritative structured-memory backend. Each workspace has
   deterministic `MEMORY.md` projection with managed/unmanaged region
   separation and cross-process `portalocker` locking. UUID-priority
@@ -245,7 +346,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Storage guard** — centralized path containment, symlink, size, and
   permission checks for all central-memory file operations.
 - **Legacy importer** — one-time migration from `RIKUGAN.md` /
-  `.rikugan-kb/*.jsonl` into the central workspace, idempotent by
+  `.lucnhan-kb/*.jsonl` into the central workspace, idempotent by
   source fingerprint + target + selected items.
 - **Config flags** — `memory_workspaces_enabled`, `case_memory_enabled`,
   and `peer_retrieval_enabled` (all default `False`). Typed-load
@@ -269,7 +370,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`rikugan/tools/traceback_classifier.py`** — new pure-function module that classifies an `execute_python` traceback as API-shaped (or not) and extracts the IDA modules referenced in the script, used by the post-error gate to decide whether to spawn the reviewer and which module docs to inject.
+- **`lucnhan/tools/traceback_classifier.py`** — new pure-function module that classifies an `execute_python` traceback as API-shaped (or not) and extracts the IDA modules referenced in the script, used by the post-error gate to decide whether to spawn the reviewer and which module docs to inject.
 
 ### Fixed
 
@@ -293,7 +394,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Added `get_tool_result_editor_style(text_color=None)` to `rikugan/ui/theme/widgets_mutation.py` — a token-driven QSS builder for the result editor that lets the caller override the foreground color for error output. (QSS keeps the first matching rule, so the color override replaces the `color:` value inside the `QPlainTextEdit` rule rather than appending a second rule.)
+- Added `get_tool_result_editor_style(text_color=None)` to `lucnhan/ui/theme/widgets_mutation.py` — a token-driven QSS builder for the result editor that lets the caller override the foreground color for error output. (QSS keeps the first matching rule, so the color override replaces the `color:` value inside the `QPlainTextEdit` rule rather than appending a second rule.)
 
 ## [1.10.1] — 2026-07-10
 
@@ -328,11 +429,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `lookup_idapython_doc` gains an optional `name` parameter for cheap point-lookups. `lookup_idapython_doc(module="ida_typeinf", name="apply_cdecl")` returns ~20 lines of context around each match, no user approval required. Makes verifying whether a specific function exists much cheaper than `hasattr()` or `inspect.signature()` probes.
-- README at `rikugan/data/idapython-docs/README.md` — documents the bundle, the right/wrong way to access it, and the update command.
+- README at `lucnhan/data/idapython-docs/README.md` — documents the bundle, the right/wrong way to access it, and the update command.
 
 ### Changed
 
-- Main agent system prompt (`rikugan/agent/prompts/base.py`) now includes a "Verifying APIs with the offline docs tool" section that explicitly names `lookup_idapython_doc`, mentions the `name=` parameter for point-lookups, and forbids `os.path.open()` / `pathlib.Path.read_text()` direct file access to the bundle.
+- Main agent system prompt (`lucnhan/agent/prompts/base.py`) now includes a "Verifying APIs with the offline docs tool" section that explicitly names `lookup_idapython_doc`, mentions the `name=` parameter for point-lookups, and forbids `os.path.open()` / `pathlib.Path.read_text()` direct file access to the bundle.
 - Main agent prompt and `ida-scripting` SKILL.md now call `hasattr()` / `inspect.signature()` in `execute_python` scripts as an anti-pattern: prefer the docs tool for API verification.
 - `ida-scripting` SKILL.md frontmatter `triggers` list extended with `ida_frame`, `idaapi`, `ida_ua`, `ida_nalt`, `ida_ida`, `ida_lines`, `idc` so the skill auto-activates on more module mentions.
 
@@ -344,8 +445,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Offline IDAPython docs bundle** — the docs-reviewer subagent now ships its own copy of the Hex-Rays Python reference (`rikugan/data/idapython-docs/`, 54 modules, ~1.94 MiB raw RST). Replaces network fetches to `python.docs.hex-rays.com` (which returns `403 Forbidden` on deep-link HTML pages due to bot protection) with deterministic, offline reads.
-- `lookup_idapython_doc(module, offset, limit)` tool (`rikugan/tools/idapython_docs.py`) — reads from the bundled RST source. Strict path-traversal prevention (regex `[a-z0-9_]+`); missing modules return a clear error listing the 54 available modules.
+- **Offline IDAPython docs bundle** — the docs-reviewer subagent now ships its own copy of the Hex-Rays Python reference (`lucnhan/data/idapython-docs/`, 54 modules, ~1.94 MiB raw RST). Replaces network fetches to `python.docs.hex-rays.com` (which returns `403 Forbidden` on deep-link HTML pages due to bot protection) with deterministic, offline reads.
+- `lookup_idapython_doc(module, offset, limit)` tool (`lucnhan/tools/idapython_docs.py`) — reads from the bundled RST source. Strict path-traversal prevention (regex `[a-z0-9_]+`); missing modules return a clear error listing the 54 available modules.
 - `scripts/build_idapython_docs.py` — stdlib-only CLI for fetching and rebuilding the bundle: `python scripts/build_idapython_docs.py` for full build, `--verify` for drift detection against upstream. Atomic writes (tempfile + fsync + `os.replace`), 3x exponential-backoff retry on transient network errors.
 - IDAPython docs-review gate prompt refined: web_fetch is now strictly the LAST resort, only triggered after `lookup_idapython_doc` either reports the module is not in the bundle OR was consulted but didn't resolve the verification.
 
@@ -361,42 +462,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **Dropped PyQt5 support.** Rikugan now uses PySide6 (Qt6) exclusively. Minimum IDA Pro version is **9.0** (all 9.x releases ship PySide6 as their primary binding; IDA 9.x's `PyQt5` module is a thin shim over PySide6 and is no longer used). Users on IDA 8.x or Qt5-only hosts must stay on `1.7.0`.
-- `ida-plugin.json` `idaVersions` is now `[">=9.0"]` (range) instead of an explicit version list. If the IDA Plugin Manager does not parse range syntax and fails to list Rikugan, install manually via the plugin directory.
+- **Dropped PyQt5 support.** Luc Nhan now uses PySide6 (Qt6) exclusively. Minimum IDA Pro version is **9.0** (all 9.x releases ship PySide6 as their primary binding; IDA 9.x's `PyQt5` module is a thin shim over PySide6 and is no longer used). Users on IDA 8.x or Qt5-only hosts must stay on `1.7.0`.
+- `ida-plugin.json` `idaVersions` is now `[">=9.0"]` (range) instead of an explicit version list. If the IDA Plugin Manager does not parse range syntax and fails to list Luc Nhan, install manually via the plugin directory.
 
 ### Fixed
 
-- IDA 9.1 crash: `QVBoxLayout(QWidget): argument 1 has unexpected type 'PySide6.QtWidgets.QWidget'`. Root cause was `_detect_binding()` in `rikugan/ui/qt_compat.py` selecting PyQt5 when another plugin had pre-imported it into `sys.modules`, while the host actually ran PySide6. The entire detection layer is removed; Qt symbols now come from PySide6 unconditionally.
+- IDA 9.1 crash: `QVBoxLayout(QWidget): argument 1 has unexpected type 'PySide6.QtWidgets.QWidget'`. Root cause was `_detect_binding()` in `lucnhan/ui/qt_compat.py` selecting PyQt5 when another plugin had pre-imported it into `sys.modules`, while the host actually ran PySide6. The entire detection layer is removed; Qt symbols now come from PySide6 unconditionally.
 
 ### Removed
 
-- `rikugan/ui/qt_compat.py`: `_detect_binding()`, `QT_BINDING`, `is_pyside6()`, `qt_flags()`, `qt_run()`, and the PyQt5 import branch.
-- `rikugan/ida/ui/panel.py` and `rikugan/ida/ui/tools_form.py`: the `FormToPyQtWidget` / `FormToPySideWidget` try-except branch — `OnCreate` now calls `FormToPySideWidget(form)` directly.
-- `rikugan/tests/conftest.py`: PyQt5 fallback in the `qapp` fixture import.
+- `lucnhan/ui/qt_compat.py`: `_detect_binding()`, `QT_BINDING`, `is_pyside6()`, `qt_flags()`, `qt_run()`, and the PyQt5 import branch.
+- `lucnhan/ida/ui/panel.py` and `lucnhan/ida/ui/tools_form.py`: the `FormToPyQtWidget` / `FormToPySideWidget` try-except branch — `OnCreate` now calls `FormToPySideWidget(form)` directly.
+- `lucnhan/tests/conftest.py`: PyQt5 fallback in the `qapp` fixture import.
 
 ### Changed
 
-- `rikugan/ui/qt_compat.py` is now a thin PySide6 re-export layer (kept as the single Qt import seam). Call sites that used `qt_flags(A, B)` now use `A | B`; `qt_run(x)` now uses `x.exec()`.
+- `lucnhan/ui/qt_compat.py` is now a thin PySide6 re-export layer (kept as the single Qt import seam). Call sites that used `qt_flags(A, B)` now use `A | B`; `qt_run(x)` now uses `x.exec()`.
 
 ## [1.7.0] — 2026-07-03
 
 ### Added
 
-- `naming-convention` skill (`rikugan/skills/builtins/naming-convention/`) — comprehensive naming standard covering functions, variables, globals, structs, enums, and typedefs, plus edge cases (wrappers/thunks, C++ mangling, Go/Rust, vtable) and a confidence-based escalation ladder with `Unknown_<Hint>_<addr>` placeholders.
+- `naming-convention` skill (`lucnhan/skills/builtins/naming-convention/`) — comprehensive naming standard covering functions, variables, globals, structs, enums, and typedefs, plus edge cases (wrappers/thunks, C++ mangling, Go/Rust, vtable) and a confidence-based escalation ladder with `Unknown_<Hint>_<addr>` placeholders.
 
 ### Changed
 
 - **BREAKING (behavior):** `bulk_renamer` Quick and Deep prompts now generate PascalCase function names (`InitializeGlobals`) instead of snake_case (`initialize_globals`). This unifies bulk-rename output with the system prompt and the new `naming-convention` skill. Existing IDBs are NOT migrated — old snake_case names persist; only new renames follow the standard. If you relied on snake_case output from Bulk Rename, regenerate names for affected functions.
-- `RENAMING_SECTION` in the system prompt (`rikugan/agent/prompts/base.py`) expanded from 3 naming rules to 6 (now covers variables, enums, typedefs) and references the `/naming-convention` skill for edge cases. Also removes the ghost-tool reference to `rename_multi_variables` (which never existed).
+- `RENAMING_SECTION` in the system prompt (`lucnhan/agent/prompts/base.py`) expanded from 3 naming rules to 6 (now covers variables, enums, typedefs) and references the `/naming-convention` skill for edge cases. Also removes the ghost-tool reference to `rename_multi_variables` (which never existed).
 - `malware-analysis` and `generic-re` skills: naming sections expanded from 1-3 rules to the full 6-rule summary, cross-referencing `/naming-convention`.
-- Removed ghost-tool references to `rename_multi_variables` in `rikugan/agent/exploration_mode.py` and `rikugan/agent/modes/research.py` (the tool never existed — agents in `/explore` and research modes would attempt to call it and waste a turn).
+- Removed ghost-tool references to `rename_multi_variables` in `lucnhan/agent/exploration_mode.py` and `lucnhan/agent/modes/research.py` (the tool never existed — agents in `/explore` and research modes would attempt to call it and waste a turn).
 
 ## [1.6.0] — 2026-07-02
 
 ### Added
 
-- `set_runtime_config` wiring in `rikugan/web/__init__.py` (fixes silent `getattr` no-op; security-constant-real-bug step 2).
-- `EXECUTE_PYTHON_TOOL_NAME` constant in `rikugan/constants.py` (security-constant-real-bug step 1).
+- `set_runtime_config` wiring in `lucnhan/web/__init__.py` (fixes silent `getattr` no-op; security-constant-real-bug step 2).
+- `EXECUTE_PYTHON_TOOL_NAME` constant in `lucnhan/constants.py` (security-constant-real-bug step 1).
 
 ### Fixed
 
@@ -409,7 +510,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Refactor / Quality
 
-- Pseudo tool schemas extracted to `rikugan/agent/pseudo_tool_schemas.py` (6 of 7 schemas imported into `loop.py`; `DELEGATE_EXTERNAL_TASK_SCHEMA` import pending — see Phase 2).
+- Pseudo tool schemas extracted to `lucnhan/agent/pseudo_tool_schemas.py` (6 of 7 schemas imported into `loop.py`; `DELEGATE_EXTERNAL_TASK_SCHEMA` import pending — see Phase 2).
 - Purged IDA 8.x `ida_struct` paths from `types_tools.py` (step 8 of dead-code-purge).
 - Removed duplicate `completed_tool_call_ids.add()` at `loop.py:775` (step 7).
 - Removed 58 empty legacy `{dark:'', light:''}` dict constants (step 6).
@@ -425,13 +526,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `delegate_external_task` pseudo-tool is now visible to the LLM. The handler (`_handle_delegate_external_task_tool`) and dispatch (`elif tc.name == "delegate_external_task"`) were previously unreachable because `DELEGATE_EXTERNAL_TASK_SCHEMA` was never appended to the tool list in `_build_tools_schema`. The schema is now imported and wired in `rikugan/agent/loop.py` (C.4 final step).
+- `delegate_external_task` pseudo-tool is now visible to the LLM. The handler (`_handle_delegate_external_task_tool`) and dispatch (`elif tc.name == "delegate_external_task"`) were previously unreachable because `DELEGATE_EXTERNAL_TASK_SCHEMA` was never appended to the tool list in `_build_tools_schema`. The schema is now imported and wired in `lucnhan/agent/loop.py` (C.4 final step).
 
 ## [1.5.0] — 2026-06-29
 
 ### Added
 
-- **Tool substitution guard** (`rikugan.tools.tool_substitution`): when the agent
+- **Tool substitution guard** (`lucnhan.tools.tool_substitution`): when the agent
   calls `execute_python` with a script that re-implements an existing dedicated
   tool, the tool now emits a non-blocking suggestion pointing at the dedicated
   alternative. Suggest-only — the script still runs, but the LLM sees the
@@ -468,7 +569,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking:** Removed the obsolete `ida-docs` and `ida-pro-mcp` built-in skills.
-  These were no longer maintained and have been deleted from `rikugan/skills/builtins/`.
+  These were no longer maintained and have been deleted from `lucnhan/skills/builtins/`.
 - Bumped version to 1.4.0.
 
 ### Security
@@ -489,7 +590,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Deleted `rikugan/providers/auth_compat.py` — a 61-LOC compatibility shim
+- Deleted `lucnhan/providers/auth_compat.py` — a 61-LOC compatibility shim
   ported from the upstream fork whose two public functions had zero callers.
 
 ### Fixed
@@ -501,8 +602,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Refactor / Quality
 
 - Extracted markdown export helpers from `panel_core.py` into a dedicated
-  `rikugan/ui/export_formatting.py` module (`panel_core.py` 2039 → 1937 LOC).
-- Documented the mutable-state contract on `RikuganConfig` (instances owned by
+  `lucnhan/ui/export_formatting.py` module (`panel_core.py` 2039 → 1937 LOC).
+- Documented the mutable-state contract on `LucNhanConfig` (instances owned by
   the host entry point, intentionally mutable for settings edit-in-place).
 - Replaced silent `except: pass` blocks in `a2a/registry.py` and
   `bulk_renamer.py` with `log_debug` so best-effort failures are traceable.

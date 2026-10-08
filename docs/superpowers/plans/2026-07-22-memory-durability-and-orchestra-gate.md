@@ -18,7 +18,7 @@
 - Exact lookup, optional insert, and observation append execute in one `BEGIN IMMEDIATE` transaction.
 - Production writable v1 opens require a uniquely named, verified backup before `WorkspaceStore.open()` can migrate.
 - `/orchestra` is default-disabled and exits before skill resolution, session append, prompt/schema construction, retrieval, provider calls, tools, or child agents.
-- `pyproject.toml` owns `testpaths = ["tests", "rikugan/tests"]`; CI must not pass a narrower positional test root.
+- `pyproject.toml` owns `testpaths = ["tests", "lucnhan/tests"]`; CI must not pass a narrower positional test root.
 - No live provider/model calls are added to CI.
 - Follow TDD for each task: failing test, observed failure, minimal implementation, passing focused tests, then commit.
 - Do not edit `uv.lock` as a side effect of test commands; use `uv run --frozen` where applicable.
@@ -30,8 +30,8 @@
 
 ### New files
 
-- `rikugan/memory/fact_identity.py` — pure Unicode canonicalization, semantic hashing, deterministic imported-record ID derivation; no store/repository imports.
-- `rikugan/memory/workspace_open.py` — inspect schema, verify/create migration backup, backup-aware production open, offline v1 rollback.
+- `lucnhan/memory/fact_identity.py` — pure Unicode canonicalization, semantic hashing, deterministic imported-record ID derivation; no store/repository imports.
+- `lucnhan/memory/workspace_open.py` — inspect schema, verify/create migration backup, backup-aware production open, offline v1 rollback.
 - `tests/memory/test_fact_identity.py` — canonicalization/hash/collision-boundary contract.
 - `tests/memory/test_workspace_migration_v2.py` — handcrafted v1 fixtures, v2 backfill/rollback/hash guards.
 - `tests/memory/test_workspace_open.py` — backup-before-open, verification failure, unique names, offline rollback, call-site routing.
@@ -39,17 +39,17 @@
 
 ### Modified production files
 
-- `rikugan/constants.py` — workspace schema version 2.
-- `rikugan/memory/workspace_store.py` — v2 migration, `FactRecord.semantic_hash`, hash-aware `put_fact()`, atomic exact-save primitive.
-- `rikugan/memory/repository.py` — canonical exact-save mapping and removal of category overwrite.
-- `rikugan/memory/service.py` — `SaveMemoryResult.outcome` and projection-preserving save response.
-- `rikugan/memory/backup.py` — collision-resistant exclusive backups, verification, version-preserving offline rollback primitive.
-- `rikugan/memory/workspace.py` — backup directory locator.
-- `rikugan/ui/session_controller_base.py` — backup-aware writable binary open.
-- `rikugan/memory/case_service.py` — backup-aware case open and hash-preserving promotion write.
-- `rikugan/memory/case_repository.py` — backup-aware writable case open; read-only/list access remains non-migrating where applicable.
-- `rikugan/memory/bundle_import.py` — deterministic target-scoped record IDs and record-count idempotency.
-- `rikugan/agent/loop.py` — compact `save_memory` result and early Orchestra gate.
+- `lucnhan/constants.py` — workspace schema version 2.
+- `lucnhan/memory/workspace_store.py` — v2 migration, `FactRecord.semantic_hash`, hash-aware `put_fact()`, atomic exact-save primitive.
+- `lucnhan/memory/repository.py` — canonical exact-save mapping and removal of category overwrite.
+- `lucnhan/memory/service.py` — `SaveMemoryResult.outcome` and projection-preserving save response.
+- `lucnhan/memory/backup.py` — collision-resistant exclusive backups, verification, version-preserving offline rollback primitive.
+- `lucnhan/memory/workspace.py` — backup directory locator.
+- `lucnhan/ui/session_controller_base.py` — backup-aware writable binary open.
+- `lucnhan/memory/case_service.py` — backup-aware case open and hash-preserving promotion write.
+- `lucnhan/memory/case_repository.py` — backup-aware writable case open; read-only/list access remains non-migrating where applicable.
+- `lucnhan/memory/bundle_import.py` — deterministic target-scoped record IDs and record-count idempotency.
+- `lucnhan/agent/loop.py` — compact `save_memory` result and early Orchestra gate.
 - `pyproject.toml` — pytest `testpaths`.
 - `.github/workflows/ci.yml` — invoke pytest without positional root.
 - `.github/workflows/release.yml` — same collection contract.
@@ -78,7 +78,7 @@
 
 **Files:**
 
-- Create: `rikugan/memory/fact_identity.py`
+- Create: `lucnhan/memory/fact_identity.py`
 - Create: `tests/memory/test_fact_identity.py`
 
 **Interfaces:**
@@ -100,7 +100,7 @@ import re
 
 import pytest
 
-from rikugan.memory.fact_identity import (
+from lucnhan.memory.fact_identity import (
     canonicalize_fact_content,
     canonicalize_fact_type,
     deterministic_import_record_id,
@@ -153,12 +153,12 @@ Run:
 uv run --frozen --python 3.11 python -m pytest tests/memory/test_fact_identity.py -q
 ```
 
-Expected: collection fails with `ModuleNotFoundError: No module named 'rikugan.memory.fact_identity'`.
+Expected: collection fails with `ModuleNotFoundError: No module named 'lucnhan.memory.fact_identity'`.
 
 - [ ] **Step 3: Implement the pure helper module**
 
 ```python
-# rikugan/memory/fact_identity.py
+# lucnhan/memory/fact_identity.py
 from __future__ import annotations
 
 import hashlib
@@ -214,7 +214,7 @@ Run:
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/memory/test_fact_identity.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/memory/fact_identity.py tests/memory/test_fact_identity.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/memory/fact_identity.py tests/memory/test_fact_identity.py
 ```
 
 Expected: all fact identity tests pass; Ruff prints `All checks passed!`.
@@ -222,7 +222,7 @@ Expected: all fact identity tests pass; Ruff prints `All checks passed!`.
 - [ ] **Step 5: Commit the fact identity unit**
 
 ```bash
-git add rikugan/memory/fact_identity.py tests/memory/test_fact_identity.py
+git add lucnhan/memory/fact_identity.py tests/memory/test_fact_identity.py
 git commit -m "feat(memory): define canonical fact identity"
 ```
 
@@ -232,8 +232,8 @@ git commit -m "feat(memory): define canonical fact identity"
 
 **Files:**
 
-- Modify: `rikugan/constants.py:42-48`
-- Modify: `rikugan/memory/workspace_store.py:32-50,94-178,200-382`
+- Modify: `lucnhan/constants.py:42-48`
+- Modify: `lucnhan/memory/workspace_store.py:32-50,94-178,200-382`
 - Create: `tests/memory/test_workspace_migration_v2.py`
 - Modify: `tests/memory/test_workspace_store.py:24-98`
 
@@ -256,10 +256,10 @@ import sqlite3
 
 import pytest
 
-from rikugan.memory.fact_identity import semantic_fact_hash
-from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
-from rikugan.memory import workspace_store
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.fact_identity import semantic_fact_hash
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+from lucnhan.memory import workspace_store
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _create_v1_database(path, owner: str) -> str:
@@ -350,13 +350,13 @@ Expected: failures because schema version remains 1 and `FactRecord` has no `sem
 
 - [ ] **Step 3: Add schema v2, backfill, triggers, and record field**
 
-Implement in `rikugan/constants.py`:
+Implement in `lucnhan/constants.py`:
 
 ```python
 MEMORY_WORKSPACE_SCHEMA_VERSION = 2
 ```
 
-Implement in `rikugan/memory/workspace_store.py`; import `re` at module scope for hash validation:
+Implement in `lucnhan/memory/workspace_store.py`; import `re` at module scope for hash validation:
 
 ```python
 @dataclass(frozen=True)
@@ -486,7 +486,7 @@ Expected: all tests pass.
 - [ ] **Step 6: Commit schema v2**
 
 ```bash
-git add rikugan/constants.py rikugan/memory/workspace_store.py tests/memory/test_workspace_migration_v2.py tests/memory/test_workspace_store.py
+git add lucnhan/constants.py lucnhan/memory/workspace_store.py tests/memory/test_workspace_migration_v2.py tests/memory/test_workspace_store.py
 git commit -m "feat(memory): migrate workspaces to semantic fact hashes"
 ```
 
@@ -496,8 +496,8 @@ git commit -m "feat(memory): migrate workspaces to semantic fact hashes"
 
 **Files:**
 
-- Modify: `rikugan/memory/workspace_store.py:260-382`
-- Modify: `rikugan/memory/repository.py:187-247`
+- Modify: `lucnhan/memory/workspace_store.py:260-382`
+- Modify: `lucnhan/memory/repository.py:187-247`
 - Modify: `tests/memory/test_workspace_store.py:211-227`
 - Modify: `tests/memory/test_repository.py`
 
@@ -515,7 +515,7 @@ git commit -m "feat(memory): migrate workspaces to semantic fact hashes"
 
 ```python
 # tests/memory/test_repository.py
-from rikugan.memory.fact_identity import semantic_fact_hash
+from lucnhan.memory.fact_identity import semantic_fact_hash
 
 
 def test_save_two_facts_in_same_category_preserves_both(tmp_path: Path) -> None:
@@ -555,7 +555,7 @@ Expected: failures because `save_memory_fact` and outcome result do not exist.
 
 - [ ] **Step 3: Implement one transaction-owning store primitive**
 
-First extract private validators from the inline checks inside `put_fact()` (currently lines 280-287 of `rikugan/memory/workspace_store.py`):
+First extract private validators from the inline checks inside `put_fact()` (currently lines 280-287 of `lucnhan/memory/workspace_store.py`):
 
 ```python
 def _validate_fact_type(value: str) -> None:
@@ -585,7 +585,7 @@ def _validate_semantic_hash_shape(value: str) -> None:
 
 Refactor `put_fact()` to call these helpers instead of the inline `if ... raise` blocks. `Task 2 Step 3` already requires `import re` at module scope for hash validation. These helpers are then reused by `save_fact_if_semantically_absent` below and by `put_fact()`'s new `semantic_hash` parameter (Task 2 Step 3).
 
-Add to `rikugan/memory/workspace_store.py`:
+Add to `lucnhan/memory/workspace_store.py`:
 
 ```python
 from typing import Literal
@@ -674,7 +674,7 @@ def save_fact_if_semantically_absent(
 
 - [ ] **Step 4: Replace category overwrite in repository**
 
-Add to `rikugan/memory/repository.py`:
+Add to `lucnhan/memory/repository.py`:
 
 ```python
 from dataclasses import dataclass
@@ -772,7 +772,7 @@ Expected: all tests pass, including concurrency.
 - [ ] **Step 7: Commit atomic fact save**
 
 ```bash
-git add rikugan/memory/workspace_store.py rikugan/memory/repository.py tests/memory/test_workspace_store.py tests/memory/test_repository.py
+git add lucnhan/memory/workspace_store.py lucnhan/memory/repository.py tests/memory/test_workspace_store.py tests/memory/test_repository.py
 git commit -m "fix(memory): preserve independent same-category facts"
 ```
 
@@ -782,8 +782,8 @@ git commit -m "fix(memory): preserve independent same-category facts"
 
 **Files:**
 
-- Modify: `rikugan/memory/service.py:22-34,131-177`
-- Modify: `rikugan/agent/loop.py:1580-1626`
+- Modify: `lucnhan/memory/service.py:22-34,131-177`
+- Modify: `lucnhan/agent/loop.py:1580-1626`
 - Modify: `tests/memory/test_service.py:70-126`
 - Modify: `tests/agent/test_memory_cutover.py`
 
@@ -837,7 +837,7 @@ Expected: failures because `SaveMemoryResult.outcome` and compact messages do no
 - [ ] **Step 3: Implement outcome propagation**
 
 ```python
-# rikugan/memory/service.py
+# lucnhan/memory/service.py
 from typing import Literal
 
 @dataclass(frozen=True)
@@ -866,7 +866,7 @@ return SaveMemoryResult(
 
 Mirror `outcome=saved.outcome` in the projection-dirty return branch.
 
-In `rikugan/agent/loop.py`:
+In `lucnhan/agent/loop.py`:
 
 ```python
 label = "Memory created" if result.outcome == "created" else "Memory already exists"
@@ -893,7 +893,7 @@ Expected: all tests pass.
 - [ ] **Step 5: Commit service/tool behavior**
 
 ```bash
-git add rikugan/memory/service.py rikugan/agent/loop.py tests/memory/test_service.py tests/agent/test_memory_cutover.py
+git add lucnhan/memory/service.py lucnhan/agent/loop.py tests/memory/test_service.py tests/agent/test_memory_cutover.py
 git commit -m "fix(memory): report exact save outcomes compactly"
 ```
 
@@ -903,9 +903,9 @@ git commit -m "fix(memory): report exact save outcomes compactly"
 
 **Files:**
 
-- Modify: `rikugan/memory/workspace.py:166-199`
-- Modify: `rikugan/memory/backup.py:20-135`
-- Create: `rikugan/memory/workspace_open.py`
+- Modify: `lucnhan/memory/workspace.py:166-199`
+- Modify: `lucnhan/memory/backup.py:20-135`
+- Create: `lucnhan/memory/workspace_open.py`
 - Create: `tests/memory/test_workspace_open.py`
 - Modify: `tests/memory/test_backup.py`
 
@@ -929,9 +929,9 @@ import sqlite3
 
 import pytest
 
-from rikugan.memory.backup import BackupVerificationError
-from rikugan.memory.workspace import MemoryLocator, new_memory_id
-from rikugan.memory.workspace_open import open_workspace_for_write, restore_v1_backup_offline
+from lucnhan.memory.backup import BackupVerificationError
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+from lucnhan.memory.workspace_open import open_workspace_for_write, restore_v1_backup_offline
 
 from .test_workspace_migration_v2 import _create_v1_database
 
@@ -957,7 +957,7 @@ def test_backup_failure_aborts_before_migration(tmp_path, monkeypatch) -> None:
     locator = MemoryLocator(tmp_path / "memory")
     paths = locator.binary(owner)
     _create_v1_database(paths.database, owner)
-    monkeypatch.setattr("rikugan.memory.workspace_open.create_backup", lambda *a, **k: (_ for _ in ()).throw(BackupVerificationError("boom")))
+    monkeypatch.setattr("lucnhan.memory.workspace_open.create_backup", lambda *a, **k: (_ for _ in ()).throw(BackupVerificationError("boom")))
     with pytest.raises(BackupVerificationError, match="boom"):
         open_workspace_for_write(paths, owner, locator.backups(owner))
     with sqlite3.connect(paths.database) as conn:
@@ -989,7 +989,7 @@ Expected: import failures for the new helper and verification error.
 
 - [ ] **Step 3: Harden backup creation and verification**
 
-In `rikugan/memory/workspace.py`:
+In `lucnhan/memory/workspace.py`:
 
 ```python
 def backups(self, workspace_id: str) -> Path:
@@ -998,7 +998,7 @@ def backups(self, workspace_id: str) -> Path:
     return self.root / "backups" / workspace_id
 ```
 
-In `rikugan/memory/backup.py`:
+In `lucnhan/memory/backup.py`:
 
 ```python
 class BackupVerificationError(RuntimeError):
@@ -1046,7 +1046,7 @@ def verify_backup(result: BackupResult, owner_memory_id: str) -> None:
 - [ ] **Step 4: Implement backup-aware open and offline rollback**
 
 ```python
-# rikugan/memory/workspace_open.py
+# lucnhan/memory/workspace_open.py
 from __future__ import annotations
 
 import os
@@ -1117,7 +1117,7 @@ Expected: all tests pass.
 - [ ] **Step 7: Commit backup-aware open**
 
 ```bash
-git add rikugan/memory/workspace.py rikugan/memory/backup.py rikugan/memory/workspace_open.py tests/memory/test_backup.py tests/memory/test_workspace_open.py
+git add lucnhan/memory/workspace.py lucnhan/memory/backup.py lucnhan/memory/workspace_open.py tests/memory/test_backup.py tests/memory/test_workspace_open.py
 git commit -m "feat(memory): back up workspaces before migration"
 ```
 
@@ -1127,11 +1127,11 @@ git commit -m "feat(memory): back up workspaces before migration"
 
 **Files:**
 
-- Modify: `rikugan/ui/session_controller_base.py:514-571`
-- Modify: `rikugan/memory/case_service.py:100-161`
-- Modify: `rikugan/memory/case_repository.py:27-36,320-380`
-- Modify: `rikugan/memory/peer_retrieval.py:101-126`
-- Modify: `rikugan/memory/backup.py:90-135`
+- Modify: `lucnhan/ui/session_controller_base.py:514-571`
+- Modify: `lucnhan/memory/case_service.py:100-161`
+- Modify: `lucnhan/memory/case_repository.py:27-36,320-380`
+- Modify: `lucnhan/memory/peer_retrieval.py:101-126`
+- Modify: `lucnhan/memory/backup.py:90-135`
 - Modify: `tests/memory/test_first_open_regression.py`
 - Modify: `tests/agent/test_session_controller.py`
 - Modify: `tests/memory/test_case_service.py`
@@ -1169,7 +1169,7 @@ def test_existing_binary_workspace_uses_backup_aware_open(tmp_path, monkeypatch)
 
 For the actual controller routing, add a focused test to the existing `TestIdaSessionController` class in `tests/agent/test_session_controller.py`. The existing `setUp()` already builds a real `IdaSessionController(self.cfg)` with a per-test tempdir at `self.cfg._config_dir`, and exposes `self.ctrl._db_instance_id` (an `IdaSessionController` attribute) plus `self.ctrl.session.idb_path`. The new test therefore does not need a new fixture — it patches within the existing scaffold.
 
-`SessionControllerBase._wire_central_memory(self, loop, tab_id=None)` (production code at `rikugan/ui/session_controller_base.py:583-648`) takes a `loop` argument and builds a `MemoryWorkspaceManager(self.config)` internally. The test must therefore:
+`SessionControllerBase._wire_central_memory(self, loop, tab_id=None)` (production code at `lucnhan/ui/session_controller_base.py:583-648`) takes a `loop` argument and builds a `MemoryWorkspaceManager(self.config)` internally. The test must therefore:
 
 1. **Seed the workspace DB once** by calling `_wire_central_memory(loop)` with a throwaway `AgentLoop` mock so the first-run path (line 622-623 `WorkspaceStore.create`) runs and writes `memory.db` to disk. Use `unittest.mock.MagicMock()` for `loop` — the only attribute `_wire_central_memory` touches on `loop` is `loop.memory_service = ...` and `loop._memory_authority = ...` and `loop._memory_manager = ...`, all of which `MagicMock` accepts.
 
@@ -1179,7 +1179,7 @@ For the actual controller routing, add a focused test to the existing `TestIdaSe
 def test_wire_central_memory_routes_existing_workspace_through_backup_helper(self) -> None:
     """Second-run _wire_central_memory must open via open_workspace_for_write."""
     from unittest.mock import MagicMock
-    from rikugan.memory import workspace_open
+    from lucnhan.memory import workspace_open
 
     # First call seeds memory.db on disk (first-run create path).
     self.ctrl._db_instance_id = "a" * 32
@@ -1217,12 +1217,12 @@ def test_list_relations_does_not_migrate_stale_workspace(tmp_path: Path) -> None
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
 ```
 
-Import `_create_v1_database` from `tests.memory.test_workspace_migration_v2` and `SchemaMigrationRequired` from `rikugan.memory.sqlite_backend`. The production call-site audit shows `PeerMemoryRetriever._find_eligible_peers()` is the only non-test caller. Make peer retrieval fail closed for a stale case workspace.
+Import `_create_v1_database` from `tests.memory.test_workspace_migration_v2` and `SchemaMigrationRequired` from `lucnhan.memory.sqlite_backend`. The production call-site audit shows `PeerMemoryRetriever._find_eligible_peers()` is the only non-test caller. Make peer retrieval fail closed for a stale case workspace.
 
 **Dependency order:** Step 3 changes `list_case_relations()` to open with `read_only=True` so that a stale v1 case DB raises `SchemaMigrationRequired` instead of silently migrating. Only after that change does the `try/except` in `_find_eligible_peers()` actually fire — if you wrap `_find_eligible_peers` before `list_case_relations` is read-only, the migration will run before the exception is raised and the test for `PRAGMA user_version == 1` will fail.
 
 ```python
-# rikugan/memory/peer_retrieval.py
+# lucnhan/memory/peer_retrieval.py
 from .sqlite_backend import SchemaMigrationRequired
 
 
@@ -1269,7 +1269,7 @@ else:
 `MemoryWorkspaceManager.locator` already exists and is used unchanged. Add the matching read-only property only to `CaseRepository`:
 
 ```python
-# rikugan/memory/case_repository.py
+# lucnhan/memory/case_repository.py
 @property
 def locator(self) -> MemoryLocator:
     return self._locator
@@ -1285,7 +1285,7 @@ store = (
 )
 ```
 
-Use a repository/locator property rather than private access when adding production code. **Make `list_case_relations()` read-only** by changing `WorkspaceStore.open(case_paths, owner_memory_id=case_id)` → `WorkspaceStore.open(case_paths, owner_memory_id=case_id, read_only=True)` at `rikugan/memory/case_repository.py:370`. This is a prerequisite for the peer-retrieval fail-closed behavior in Step 1 — without `read_only=True`, a stale v1 case DB silently migrates before the `SchemaMigrationRequired` exception can fire, so the `_find_eligible_peers` try/except becomes a no-op and the Step 1 test for `PRAGMA user_version == 1` fails.
+Use a repository/locator property rather than private access when adding production code. **Make `list_case_relations()` read-only** by changing `WorkspaceStore.open(case_paths, owner_memory_id=case_id)` → `WorkspaceStore.open(case_paths, owner_memory_id=case_id, read_only=True)` at `lucnhan/memory/case_repository.py:370`. This is a prerequisite for the peer-retrieval fail-closed behavior in Step 1 — without `read_only=True`, a stale v1 case DB silently migrates before the `SchemaMigrationRequired` exception can fire, so the `_find_eligible_peers` try/except becomes a no-op and the Step 1 test for `PRAGMA user_version == 1` fails.
 
 It must raise `SchemaMigrationRequired` for a stale v1 case rather than migrate during a list operation.
 
@@ -1346,11 +1346,11 @@ import ast
 from pathlib import Path
 
 allowed = {
-    Path('rikugan/memory/workspace_open.py'),
-    Path('rikugan/memory/workspace_store.py'),
+    Path('lucnhan/memory/workspace_open.py'),
+    Path('lucnhan/memory/workspace_store.py'),
 }
 violations = []
-for path in Path('rikugan').rglob('*.py'):
+for path in Path('lucnhan').rglob('*.py'):
     if path in allowed:
         continue
     tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
@@ -1390,7 +1390,7 @@ Expected: all tests pass.
 - [ ] **Step 7: Commit production open routing**
 
 ```bash
-git add rikugan/ui/session_controller_base.py rikugan/memory/case_service.py rikugan/memory/case_repository.py rikugan/memory/peer_retrieval.py rikugan/memory/backup.py tests/memory/test_first_open_regression.py tests/agent/test_session_controller.py tests/memory/test_case_service.py tests/memory/test_case_relations.py tests/memory/test_peer_retrieval.py tests/memory/test_workspace_open.py
+git add lucnhan/ui/session_controller_base.py lucnhan/memory/case_service.py lucnhan/memory/case_repository.py lucnhan/memory/peer_retrieval.py lucnhan/memory/backup.py tests/memory/test_first_open_regression.py tests/agent/test_session_controller.py tests/memory/test_case_service.py tests/memory/test_case_relations.py tests/memory/test_peer_retrieval.py tests/memory/test_workspace_open.py
 git commit -m "fix(memory): route writable opens through migration backup"
 ```
 
@@ -1400,7 +1400,7 @@ git commit -m "fix(memory): route writable opens through migration backup"
 
 **Files:**
 
-- Modify: `rikugan/memory/bundle_import.py:80-177`
+- Modify: `lucnhan/memory/bundle_import.py:80-177`
 - Modify: `tests/memory/test_bundle_import.py`
 - Modify: `tests/memory/test_bundle_export.py`
 - Modify: `tests/memory/test_markdown.py`
@@ -1570,7 +1570,7 @@ Expected: all tests pass.
 - [ ] **Step 7: Commit interchange compatibility**
 
 ```bash
-git add rikugan/memory/bundle_import.py tests/memory/test_bundle_import.py tests/memory/test_bundle_export.py tests/memory/test_markdown.py
+git add lucnhan/memory/bundle_import.py tests/memory/test_bundle_import.py tests/memory/test_bundle_export.py tests/memory/test_markdown.py
 git commit -m "fix(memory): make bundle reimport idempotent"
 ```
 
@@ -1580,7 +1580,7 @@ git commit -m "fix(memory): make bundle reimport idempotent"
 
 **Files:**
 
-- Modify: `rikugan/agent/loop.py:140-165,2227-2300`
+- Modify: `lucnhan/agent/loop.py:140-165,2227-2300`
 - Modify: `tests/agent/test_a2a_mode.py:38-84`
 - Modify: `tests/agent/test_agent_loop.py:123-150`
 - Modify: `README.md:55-70`
@@ -1589,7 +1589,7 @@ git commit -m "fix(memory): make bundle reimport idempotent"
 **Interfaces:**
 
 - Consumes: existing `_ParsedCommand.use_orchestra_mode` and `TurnEvent.text_done()`.
-- Produces: `rikugan.agent.loop._ORCHESTRA_ENABLED = False` and one early disabled response.
+- Produces: `lucnhan.agent.loop._ORCHESTRA_ENABLED = False` and one early disabled response.
 
 - [ ] **Step 1: Add failing no-side-effect gate test**
 
@@ -1638,7 +1638,7 @@ Expected: current code invokes skill/session/prompt work or reaches Orchestra.
 
 - [ ] **Step 3: Add the early gate**
 
-In `rikugan/agent/loop.py` near command parsing constants:
+In `lucnhan/agent/loop.py` near command parsing constants:
 
 ```python
 _ORCHESTRA_ENABLED = False
@@ -1696,7 +1696,7 @@ Expected: all tests pass.
 - [ ] **Step 7: Commit the gate**
 
 ```bash
-git add rikugan/agent/loop.py tests/agent/test_agent_loop.py tests/agent/test_a2a_mode.py README.md ARCHITECTURE.md
+git add lucnhan/agent/loop.py tests/agent/test_agent_loop.py tests/agent/test_a2a_mode.py README.md ARCHITECTURE.md
 git commit -m "fix(agent): gate unsafe orchestra mode"
 ```
 
@@ -1711,7 +1711,7 @@ git commit -m "fix(agent): gate unsafe orchestra mode"
 - Modify: `.github/workflows/ci.yml:83-97`
 - Modify: `.github/workflows/release.yml:91-105`
 - Modify: `ci-local.sh:81-90`
-- Create: `rikugan/tests/__init__.py` (empty package marker; see Step 3)
+- Create: `lucnhan/tests/__init__.py` (empty package marker; see Step 3)
 
 **Interfaces:**
 
@@ -1727,7 +1727,7 @@ uv run --frozen --python 3.11 python -m pytest --collect-only -q > .pytest-colle
 python - <<'PY'
 from pathlib import Path
 text = Path('.pytest-collect-before.txt').read_text(encoding='utf-8')
-assert 'rikugan/tests/test_token_usage_regression.py' not in text
+assert 'lucnhan/tests/test_token_usage_regression.py' not in text
 print('confirmed: package-local tests are absent before testpaths configuration')
 PY
 rm .pytest-collect-before.txt
@@ -1741,7 +1741,7 @@ Append to `pyproject.toml` before dependency groups:
 
 ```toml
 [tool.pytest.ini_options]
-testpaths = ["tests", "rikugan/tests"]
+testpaths = ["tests", "lucnhan/tests"]
 ```
 
 Create `tests/test_pytest_collection_roots.py`:
@@ -1756,21 +1756,21 @@ import tomllib
 
 def test_pytest_testpaths_include_both_regression_roots() -> None:
     config = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    assert config["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests", "rikugan/tests"]
+    assert config["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests", "lucnhan/tests"]
 
 
 def test_representative_tests_exist_in_both_roots() -> None:
     assert Path("tests/agent/test_agent_loop.py").is_file()
-    assert Path("rikugan/tests/test_token_usage_regression.py").is_file()
+    assert Path("lucnhan/tests/test_token_usage_regression.py").is_file()
 
 
-def test_rikugan_tests_is_a_package_to_avoid_bare_basename_collisions() -> None:
+def test_lucnhan_tests_is_a_package_to_avoid_bare_basename_collisions() -> None:
     # The two roots share a duplicate basename: tests/test_ida_docs_review_prompt.py
-    # and rikugan/tests/test_ida_docs_review_prompt.py both exist. The empty
+    # and lucnhan/tests/test_ida_docs_review_prompt.py both exist. The empty
     # __init__.py marker forces package-local tests to import as fully-qualified
-    # rikugan.tests.<name> (not bare basenames), preventing a prepend-mode
+    # lucnhan.tests.<name> (not bare basenames), preventing a prepend-mode
     # collection collision/shadow between the two roots.
-    assert Path("rikugan/tests/__init__.py").is_file()
+    assert Path("lucnhan/tests/__init__.py").is_file()
 ```
 
 - [ ] **Step 3: Collect both roots and resolve import/fixture conflicts**
@@ -1785,11 +1785,11 @@ from pathlib import Path
 for name in ('.pytest-collect-311.txt', '.pytest-collect-312.txt'):
     text = Path(name).read_text(encoding='utf-8')
     assert 'tests/agent/test_agent_loop.py' in text, name
-    assert 'rikugan/tests/test_token_usage_regression.py' in text, name
+    assert 'lucnhan/tests/test_token_usage_regression.py' in text, name
     # The two roots share a duplicate basename; assert BOTH collect (see the
     # __init__.py note below). Distinct fully-qualified names prove no collision.
     assert 'tests/test_ida_docs_review_prompt.py' in text, name
-    assert 'rikugan/tests/test_ida_docs_review_prompt.py' in text, name
+    assert 'lucnhan/tests/test_ida_docs_review_prompt.py' in text, name
 print('both roots collected on Python 3.11 and 3.12')
 PY
 rm .pytest-collect-311.txt .pytest-collect-312.txt
@@ -1797,9 +1797,9 @@ rm .pytest-collect-311.txt .pytest-collect-312.txt
 
 Expected: both roots are present and collection has no errors.
 
-Add an empty `rikugan/tests/__init__.py` **unconditionally** (not only on error). The two roots share a duplicate test filename — `tests/test_ida_docs_review_prompt.py` and `rikugan/tests/test_ida_docs_review_prompt.py` both exist — and `rikugan/tests/` currently has no `__init__.py`, so under pytest's default *prepend* import mode its files import by bare basename and can collide with / shadow the package-qualified `tests.test_ida_docs_review_prompt`. The marker makes every package-local test import as `rikugan.tests.<name>`, eliminating the collision and matching the existing mypy override at `pyproject.toml` (`module = ["rikugan.tests.test_settings_dialog_fixes"]`). This is why `__init__.py` is committed in Step 7 rather than omitted.
+Add an empty `lucnhan/tests/__init__.py` **unconditionally** (not only on error). The two roots share a duplicate test filename — `tests/test_ida_docs_review_prompt.py` and `lucnhan/tests/test_ida_docs_review_prompt.py` both exist — and `lucnhan/tests/` currently has no `__init__.py`, so under pytest's default *prepend* import mode its files import by bare basename and can collide with / shadow the package-qualified `tests.test_ida_docs_review_prompt`. The marker makes every package-local test import as `lucnhan.tests.<name>`, eliminating the collision and matching the existing mypy override at `pyproject.toml` (`module = ["lucnhan.tests.test_settings_dialog_fixes"]`). This is why `__init__.py` is committed in Step 7 rather than omitted.
 
-If `tests/conftest.py` stub cleanup is needed in `rikugan/tests`, move the shared hook into a root-level conftest or explicit plugin module and add a regression test; do not duplicate divergent cleanup hooks.
+If `tests/conftest.py` stub cleanup is needed in `lucnhan/tests`, move the shared hook into a root-level conftest or explicit plugin module and add a regression test; do not duplicate divergent cleanup hooks.
 
 - [ ] **Step 4: Run both roots under each supported Python**
 
@@ -1856,11 +1856,11 @@ Expected: tests pass, Bash syntax is valid, workflow YAML parses.
 - [ ] **Step 7: Commit dual-root CI**
 
 ```bash
-git add pyproject.toml tests/test_pytest_collection_roots.py .github/workflows/ci.yml .github/workflows/release.yml ci-local.sh rikugan/tests/__init__.py
+git add pyproject.toml tests/test_pytest_collection_roots.py .github/workflows/ci.yml .github/workflows/release.yml ci-local.sh lucnhan/tests/__init__.py
 git commit -m "test: enforce both pytest regression roots"
 ```
 
-`rikugan/tests/__init__.py` is always created in Step 3, so it is always included in the commit above.
+`lucnhan/tests/__init__.py` is always created in Step 3, so it is always included in the commit above.
 
 ---
 
@@ -1882,8 +1882,8 @@ git commit -m "test: enforce both pytest regression roots"
 Run:
 
 ```bash
-uv run --frozen --python 3.11 python -m ruff format --check rikugan/ tests/
-uv run --frozen --python 3.11 python -m ruff check rikugan/ tests/
+uv run --frozen --python 3.11 python -m ruff format --check lucnhan/ tests/
+uv run --frozen --python 3.11 python -m ruff check lucnhan/ tests/
 ```
 
 Expected: both commands exit 0.
@@ -1893,10 +1893,10 @@ Expected: both commands exit 0.
 Run:
 
 ```bash
-uv run --frozen --python 3.11 python -m mypy rikugan/core rikugan/providers rikugan/memory
+uv run --frozen --python 3.11 python -m mypy lucnhan/core lucnhan/providers lucnhan/memory
 ```
 
-Expected: exit 0 with no errors. If `rikugan/memory` is not yet in the configured strict-module set, fix actual annotations introduced by this tranche; do not silence the module wholesale.
+Expected: exit 0 with no errors. If `lucnhan/memory` is not yet in the configured strict-module set, fix actual annotations introduced by this tranche; do not silence the module wholesale.
 
 - [ ] **Step 3: Run focused durability and gate suites**
 
@@ -1949,7 +1949,7 @@ python - <<'PY'
 import ast
 from pathlib import Path
 violations = []
-for path in Path('rikugan').rglob('*.py'):
+for path in Path('lucnhan').rglob('*.py'):
     if path.name in {'workspace_store.py', 'workspace_open.py'}:
         continue
     for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'), filename=str(path))):
@@ -1985,7 +1985,7 @@ Dispatch:
 
 1. `python-reviewer` for all Python changes.
 2. `code-reviewer` for cross-layer correctness.
-3. `ida-tooling-reviewer` only if any file under `rikugan/tools/`, `rikugan/ida/tools/`, or `rikugan/agent/mutation.py` changed unexpectedly; normally it should not run for this tranche.
+3. `ida-tooling-reviewer` only if any file under `lucnhan/tools/`, `lucnhan/ida/tools/`, or `lucnhan/agent/mutation.py` changed unexpectedly; normally it should not run for this tranche.
 
 Fix confirmed findings with focused regression tests, then rerun Steps 1–6.
 
@@ -1995,7 +1995,7 @@ If review fixes were required, inspect the final diff, then stage each concrete 
 
 ```bash
 git status --short
-git add rikugan/memory/fact_identity.py tests/memory/test_fact_identity.py
+git add lucnhan/memory/fact_identity.py tests/memory/test_fact_identity.py
 git diff --cached --check
 git commit -m "fix: address memory durability review findings"
 ```
@@ -2016,7 +2016,7 @@ Report exact outputs/counts for:
 - Ruff and mypy;
 - working-tree state.
 
-Do not bump the Rikugan version, create a release, push, or open a PR unless separately requested.
+Do not bump the Luc Nhan version, create a release, push, or open a PR unless separately requested.
 
 ---
 
@@ -2044,7 +2044,7 @@ Do not bump the Rikugan version, create a release, push, or open a PR unless sep
 
 ### Placeholder scan
 
-The plan contains no `TBD`, `TODO`, `implement later`, generic “add tests,” or undefined neighboring interfaces. Conditional `rikugan/tests/__init__.py` creation is governed by a concrete observed-failure rule and regression test.
+The plan contains no `TBD`, `TODO`, `implement later`, generic “add tests,” or undefined neighboring interfaces. Conditional `lucnhan/tests/__init__.py` creation is governed by a concrete observed-failure rule and regression test.
 
 ### Type consistency
 

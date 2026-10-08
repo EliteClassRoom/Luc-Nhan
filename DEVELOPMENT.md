@@ -25,11 +25,11 @@ Clone the repo and symlink it into the IDA plugin directory so changes take effe
 
 ```bash
 # macOS / Linux
-git clone https://github.com/EliteClassRoom/rikugan
-ln -s "$(pwd)/rikugan" ~/.idapro/plugins/rikugan
+git clone https://github.com/EliteClassRoom/Luc-Nhan
+ln -s "$(pwd)/lucnhan" ~/.idapro/plugins/lucnhan
 
 # Windows (run as Administrator)
-mklink /D "%APPDATA%\Hex-Rays\IDA Pro\plugins\rikugan" "<full path to cloned repo>"
+mklink /D "%APPDATA%\Hex-Rays\IDA Pro\plugins\lucnhan" "<full path to cloned repo>"
 ```
 
 ---
@@ -171,9 +171,9 @@ Pipeline release đầy đủ tự động:
    git tag v1.x.x
    git push origin v1.x.x
    ```
-4. GitHub Actions tự chạy (verify → build → publish). Release xuất hiện tại `https://github.com/EliteClassRoom/rikugan/releases/tag/v1.x.x` với 2 artifact: `rikugan-v1.x.x.zip` + `SHA256SUMS`.
+4. GitHub Actions tự chạy (verify → build → publish). Release xuất hiện tại `https://github.com/EliteClassRoom/Luc-Nhan/releases/tag/v1.x.x` với 2 artifact: `lucnhan-v1.x.x.zip` + `SHA256SUMS`.
 
-**Install artifact** (HCLI): `curl -L https://github.com/EliteClassRoom/rikugan/releases/download/v1.x.x/rikugan-v1.x.x.zip -o rikugan.zip` rồi `hcli plugin install rikugan.zip`. ZIP phẳng theo spec Hex-Rays.
+**Install artifact** (HCLI): `curl -L https://github.com/EliteClassRoom/Luc-Nhan/releases/download/v1.x.x/lucnhan-v1.x.x.zip -o lucnhan.zip` rồi `hcli plugin install lucnhan.zip`. ZIP phẳng theo spec Hex-Rays.
 
 **Re-run**: Actions tab → workflow "Release" → "Run workflow" → nhập tag.
 
@@ -181,10 +181,10 @@ Pipeline release đầy đủ tự động:
 
 **Local dry-run** (test trước khi tag):
 ```bash
-python scripts/build_release.py --version 1.x.x-test --out-dir /tmp/rikugan-test
-unzip -l /tmp/rikugan-test/rikugan-v1.x.x-test.zip   # ida-plugin.json phải ở gốc
-python scripts/validate_archive.py /tmp/rikugan-test/rikugan-v1.x.x-test.zip
-rm -rf /tmp/rikugan-test
+python scripts/build_release.py --version 1.x.x-test --out-dir /tmp/lucnhan-test
+unzip -l /tmp/lucnhan-test/lucnhan-v1.x.x-test.zip   # ida-plugin.json phải ở gốc
+python scripts/validate_archive.py /tmp/lucnhan-test/lucnhan-v1.x.x-test.zip
+rm -rf /tmp/lucnhan-test
 ```
 
 **Smoke test pipeline** (dùng suffix `-rc1` → GitHub đánh dấu pre-release, không phải stable):
@@ -192,14 +192,14 @@ rm -rf /tmp/rikugan-test
 git tag v0.0.0-rc1 && git push origin v0.0.0-rc1
 # → check Actions tab: 3 jobs xanh
 git push origin :refs/tags/v0.0.0-rc1
-gh release delete v0.0.0-rc1 --repo EliteClassRoom/rikugan --yes
+gh release delete v0.0.0-rc1 --repo EliteClassRoom/Luc-Nhan --yes
 ```
 
 ---
 
 ## Developing Headless Mode
 
-Headless mode lets you run Rikugan inside ``idat.exe`` (Windows) / ``idat64`` (Linux/macOS) without the Qt GUI.
+Headless mode lets you run Luc Nhan inside ``idat.exe`` (Windows) / ``idat64`` (Linux/macOS) without the Qt GUI.
 
 ### Quick Smoke Commands
 
@@ -210,13 +210,13 @@ export IDA_PATH="E:/ida pro 9.2/idat.exe"  # Windows (preferred for IDA 9.x head
 export IDA_PATH="/path/to/idat64"           # Linux/macOS
 
 # One-shot mode — run a single prompt and get JSON output
-python -m rikugan.cli.headless ask /path/to/sample.exe "summarize binary metadata"
+python -m lucnhan.cli.headless ask /path/to/sample.exe "summarize binary metadata"
 
 # Server mode — start a control server
-python -m rikugan.cli.headless serve /path/to/sample.exe --ready-file rikugan-ready.json
+python -m lucnhan.cli.headless serve /path/to/sample.exe --ready-file lucnhan-ready.json
 
 # Read the ready-file to get URL and token
-cat rikugan-ready.json
+cat lucnhan-ready.json
 
 # Health check
 curl http://127.0.0.1:<PORT>/health
@@ -260,7 +260,7 @@ The GUI executable ``ida64.exe`` is **not** used for headless mode.
 On Windows, IDA paths and binary paths often contain spaces. Always test with quoted paths:
 
 ```bash
-python -m rikugan.cli.headless ask \
+python -m lucnhan.cli.headless ask \
   "C:/Path With Spaces/sample.exe" \
   "summarize metadata" \
   --ida "E:/ida pro 9.2/idat.exe"
@@ -280,7 +280,7 @@ python -m rikugan.cli.headless ask \
 
 - One-shot: IDA exits via ``idc.qexit(code)`` after writing results. Verify IDA releases its license.
 - Server: ``POST /shutdown`` calls ``idc.qexit(0)`` after a 200ms delay to allow the response to be sent.
-- The CLI direct-bootstrap path is the primary headless entry point; the plugin-based RIKUGAN_HEADLESS env var path is not supported for production use.
+- The CLI direct-bootstrap path is the primary headless entry point; the plugin-based LUCNHAN_HEADLESS env var path is not supported for production use.
 
 ### /events JSON Envelope
 
@@ -311,11 +311,11 @@ All ``/events`` responses use a JSON envelope:
 
 ### Bootstrap Mechanics
 
-The CLI generates a **direct ``-S`` bootstrap script** that adds the repo root to ``sys.path``, imports ``rikugan.ida.headless_bootstrap``, and calls ``main()``. Configuration is passed via a **temp JSON file** referenced by the ``RIKUGAN_HEADLESS_BOOTSTRAP`` environment variable — never via ``-S`` command-line arguments (which have fragile quoting on Windows).
+The CLI generates a **direct ``-S`` bootstrap script** that adds the repo root to ``sys.path``, imports ``lucnhan.ida.headless_bootstrap``, and calls ``main()``. Configuration is passed via a **temp JSON file** referenced by the ``LUCNHAN_HEADLESS_BOOTSTRAP`` environment variable — never via ``-S`` command-line arguments (which have fragile quoting on Windows).
 
 ### Ready-File (Serve Mode)
 
-In serve mode, the bootstrap writes a **ready file** (``rikugan-ready.json`` by default, or user-specified via ``--ready-file``) containing the server URL and auth token:
+In serve mode, the bootstrap writes a **ready file** (``lucnhan-ready.json`` by default, or user-specified via ``--ready-file``) containing the server URL and auth token:
 
 ```json
 {"url": "http://127.0.0.1:14913", "token": "abc123..."}
@@ -338,4 +338,4 @@ The control server **does not** add CORS headers by default. All requests are ex
 ## Getting Help
 
 - Read [AGENTS.md](AGENTS.md) for deep technical documentation on internals, architecture decisions, and coding rules
-- Open an issue at https://github.com/EliteClassRoom/rikugan/issues
+- Open an issue at https://github.com/EliteClassRoom/Luc-Nhan/issues

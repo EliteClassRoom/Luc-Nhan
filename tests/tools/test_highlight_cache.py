@@ -14,7 +14,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from rikugan.ui import highlight
+from lucnhan.ui import highlight
 
 
 class TestHighlightOutputCache(unittest.TestCase):

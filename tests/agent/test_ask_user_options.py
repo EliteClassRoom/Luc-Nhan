@@ -39,12 +39,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.loop import AgentLoop
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import ModelInfo, ProviderCapabilities, ToolCall
-from rikugan.providers.base import LLMProvider
-from rikugan.state.session import SessionState
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import ModelInfo, ProviderCapabilities, ToolCall
+from lucnhan.providers.base import LLMProvider
+from lucnhan.state.session import SessionState
 
 
 class _NullProvider(LLMProvider):

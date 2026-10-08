@@ -14,12 +14,12 @@ phát hiện các vấn đề sau (đều là stale facts hoặc cấu trúc sai
 
 1. **Số liệu sai**: "10 built-in skills" (thực 12), "~56 tools" / "56+ tools"
    (thực 73 `@tool` defs), "Known Broken IDA Tools" (4 tool đều đã fix).
-2. **Cấu trúc thư mục sai trong AGENTS.md**: liệt kê `rikugan/tools/navigation.py`,
+2. **Cấu trúc thư mục sai trong AGENTS.md**: liệt kê `lucnhan/tools/navigation.py`,
    `strings.py`, `database.py`, `decompiler.py`... nhưng các file này nằm ở
-   `rikugan/ida/tools/`. Developer đọc sẽ tìm sai chỗ.
+   `lucnhan/ida/tools/`. Developer đọc sẽ tìm sai chỗ.
 3. **`docs/` chứa 2 plan mâu thuẫn**: `PROJECT_MODIFICATION_PLAN.md` tự ghi
    "đã lạc hậu", bị `FORK_MIGRATION_ASSESSMENT.md` supersede.
-4. **`rikugan/plans/` chứa 2 design spec chưa implement** (web_researcher),
+4. **`lucnhan/plans/` chứa 2 design spec chưa implement** (web_researcher),
    không có status marker → dễ nhầm là đã xong hoặc đã bỏ.
 
 ---
@@ -28,16 +28,16 @@ phát hiện các vấn đề sau (đều là stale facts hoặc cấu trúc sai
 
 | Claim | Thực tế | Nguồn |
 |-------|---------|-------|
-| Built-in skills | **12** | `ls rikugan/skills/builtins/` (12 dir + `__init__.py`) |
-| `@tool` defs | **73** | `grep -rh "@tool(" rikugan/tools/ rikugan/ida/tools/` |
+| Built-in skills | **12** | `ls lucnhan/skills/builtins/` (12 dir + `__init__.py`) |
+| `@tool` defs | **73** | `grep -rh "@tool(" lucnhan/tools/ lucnhan/ida/tools/` |
 | `create_struct` broken? | **Không** — đã migrate `ida_typeinf` | `ida/tools/types_tools.py:373,381` |
 | `import_c_header` broken? | **Không** — dùng `idc.parse_decls()`, `idc` đã import | `types_tools.py:915,922` + `:30-34` import loop |
 | `set_function_prototype` broken? | **Không** — dùng `idc.SetType()` | `types_tools.py:899,908` |
 | `apply_type_to_variable` broken? | **Không** — guard đúng (`ida_typeinf is None`) | `types_tools.py:827,835` |
-| Tool impls ở đâu? | IDA impls ở `rikugan/ida/tools/`, framework ở `rikugan/tools/` | `ls` cả 2 dir |
-| `rikugan/plans/web_researcher_*` | **Chưa implement** — chỉ là design spec | `grep "web_researcher" rikugan/ --include="*.py"` → 0 hit |
+| Tool impls ở đâu? | IDA impls ở `lucnhan/ida/tools/`, framework ở `lucnhan/tools/` | `ls` cả 2 dir |
+| `lucnhan/plans/web_researcher_*` | **Chưa implement** — chỉ là design spec | `grep "web_researcher" lucnhan/ --include="*.py"` → 0 hit |
 
-### Cấu trúc `rikugan/tools/` thực tế (framework + shared helpers)
+### Cấu trúc `lucnhan/tools/` thực tế (framework + shared helpers)
 
 ```
 __init__.py  base.py  cache.py  coercion.py  formatting.py
@@ -45,7 +45,7 @@ pagination.py  registry.py  script_guard.py  value_format.py
 web.py  web_fetch.py  xrefs.py
 ```
 
-### Cấu trúc `rikugan/ida/tools/` thực tế (IDA tool implementations)
+### Cấu trúc `lucnhan/ida/tools/` thực tế (IDA tool implementations)
 
 ```
 __init__.py  annotations.py  database.py  decompiler.py  disassembly.py
@@ -99,17 +99,17 @@ Toàn bộ 4 tool đều đã fix (xem Ground Truth). Xóa block:
 
 ### Section B: Sửa cấu trúc thư mục AGENTS.md
 
-`AGENTS.md:45-60` liệt kê `rikugan/tools/` chứa cả IDA tool implementations
+`AGENTS.md:45-60` liệt kê `lucnhan/tools/` chứa cả IDA tool implementations
 (`navigation.py`, `strings.py`, `database.py`, `decompiler.py`, `annotations.py`,
 `types_tools.py`, `microcode*.py`, `scripting.py`) — nhưng các file này nằm ở
-`rikugan/ida/tools/`.
+`lucnhan/ida/tools/`.
 
 **Sửa**: viết lại 2 block tree theo ground truth:
 
-- `rikugan/tools/` → chỉ framework + shared helpers (`base.py`, `registry.py`,
+- `lucnhan/tools/` → chỉ framework + shared helpers (`base.py`, `registry.py`,
   `coercion.py`, `cache.py`, `formatting.py`, `pagination.py`, `value_format.py`,
   `script_guard.py`, `web.py`, `web_fetch.py`, `xrefs.py`) + comment đúng vai trò.
-- `rikugan/ida/tools/` → block riêng chứa IDA implementations (13 file) +
+- `lucnhan/ida/tools/` → block riêng chứa IDA implementations (13 file) +
   `registry.py` (IDA-specific `create_default_registry()`).
 
 Đồng bộ comment header `## tools/`: đổi từ "IDA tool implementations" thành
@@ -131,7 +131,7 @@ Toàn bộ 4 tool đều đã fix (xem Ground Truth). Xóa block:
 
 **C3. Giữ + rà `docs/EVALUATION_WORKFLOW.md`**
 - Workflow tái sử dụng được (language-agnostic). Giữ nguyên phần method.
-- §9 "Worked Example (Rikugan)" có sample data có thể stale (git state "23
+- §9 "Worked Example (Luc Nhan)" có sample data có thể stale (git state "23
   commits ahead", LOC "~45,000"). Đánh dấu rõ đây là **worked example snapshot
   2026-06**, không phải state hiện hành — thêm 1 dòng disclaimer ở đầu §9.
 
@@ -140,7 +140,7 @@ Toàn bộ 4 tool đều đã fix (xem Ground Truth). Xóa block:
 
 ---
 
-### Section D: `rikugan/plans/` status markers
+### Section D: `lucnhan/plans/` status markers
 
 2 file design spec `web_researcher` chưa implement. Thêm frontmatter/ header
 note vào đầu mỗi file:
@@ -151,8 +151,8 @@ note vào đầu mỗi file:
 > Chưa có code. Tham khảo khi triển khai.
 ```
 
-Files: `rikugan/plans/web_researcher_design.md`,
-`rikugan/plans/web_researcher_tools_design.md`.
+Files: `lucnhan/plans/web_researcher_design.md`,
+`lucnhan/plans/web_researcher_tools_design.md`.
 
 ---
 
@@ -176,8 +176,8 @@ Files: `rikugan/plans/web_researcher_design.md`,
 | Delete (C1) | `docs/PROJECT_MODIFICATION_PLAN.md` |
 | Edit (C1 ref) | `docs/FORK_MIGRATION_ASSESSMENT.md` |
 | Edit (C3 disclaimer) | `docs/EVALUATION_WORKFLOW.md` |
-| Edit (D) | `rikugan/plans/web_researcher_design.md` |
-| Edit (D) | `rikugan/plans/web_researcher_tools_design.md` |
+| Edit (D) | `lucnhan/plans/web_researcher_design.md` |
+| Edit (D) | `lucnhan/plans/web_researcher_tools_design.md` |
 
 **Tổng: 7 file edit + 1 file delete. Không chạm code.**
 
@@ -188,10 +188,10 @@ Files: `rikugan/plans/web_researcher_design.md`,
 - [ ] `grep "10 built-in" AGENTS.md llms.txt` → 0 hit
 - [ ] `grep "~56 tools\|56+ tools" ARCHITECTURE.md llms.txt` → 0 hit
 - [ ] `grep "Known Broken IDA Tools" llms.txt` → 0 hit
-- [ ] `AGENTS.md` tree block `rikugan/tools/` KHÔNG còn list `navigation.py`, `strings.py`, `database.py`, `decompiler.py`, `annotations.py`, `types_tools.py`, `microcode.py`, `scripting.py`
-- [ ] `AGENTS.md` có block `rikugan/ida/tools/` riêng
+- [ ] `AGENTS.md` tree block `lucnhan/tools/` KHÔNG còn list `navigation.py`, `strings.py`, `database.py`, `decompiler.py`, `annotations.py`, `types_tools.py`, `microcode.py`, `scripting.py`
+- [ ] `AGENTS.md` có block `lucnhan/ida/tools/` riêng
 - [ ] `docs/PROJECT_MODIFICATION_PLAN.md` không còn tồn tại
-- [ ] 2 file `rikugan/plans/web_researcher_*.md` có status note "NOT YET IMPLEMENTED"
+- [ ] 2 file `lucnhan/plans/web_researcher_*.md` có status note "NOT YET IMPLEMENTED"
 - [ ] `./ci-local.sh` không ảnh hưởng (không chạm code) — skip nếu tin cậy
 
 ---

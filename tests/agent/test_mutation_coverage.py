@@ -1,7 +1,7 @@
 """Drift-proof tests for mutation tracking coverage.
 
 CLAUDE.md / AGENTS.md mandate: every database-mutating tool must appear
-in ``rikugan.agent.mutation._REVERSE_BUILDERS`` (with both a real
+in ``lucnhan.agent.mutation._REVERSE_BUILDERS`` (with both a real
 ``build_reverse_record`` builder and a matching ``capture_pre_state``
 branch) OR in the explicit ``_INTENTIONALLY_NON_REVERSIBLE`` frozenset
 with a per-tool reason.
@@ -32,14 +32,14 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent import mutation
-from rikugan.agent.mutation import (
+from lucnhan.agent import mutation
+from lucnhan.agent.mutation import (
     _REVERSE_BUILDERS,
     build_reverse_record,
     capture_pre_state,
 )
-from rikugan.ida.tools import microcode_optim as _opt
-from rikugan.ida.tools.registry import (
+from lucnhan.ida.tools import microcode_optim as _opt
+from lucnhan.ida.tools.registry import (
     create_default_registry,
     register_advanced_tools,
 )
@@ -292,7 +292,7 @@ class TestNopMicrocodeRoundtrip(_BuilderRoundtripBase):
         peek at ``installed_optimizers`` to recover the actually-used
         name so /undo removes the real optimizer.
         """
-        from rikugan.ida.tools import microcode_optim as opt_mod
+        from lucnhan.ida.tools import microcode_optim as opt_mod
 
         # Simulate the runtime having installed the optimizer at func_ea=0x401000
         # for the target EAs the LLM asked to NOP — under the derived name.
@@ -656,7 +656,7 @@ class TestIntentionallyNonReversible(unittest.TestCase):
         that the previous test runs against the real registry now
         flags it.
         """
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from lucnhan.tools.base import ParameterSchema, ToolDefinition
 
         registry = _build_test_registry()
         registry.register(

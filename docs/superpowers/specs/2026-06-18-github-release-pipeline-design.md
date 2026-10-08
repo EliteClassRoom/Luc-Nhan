@@ -90,11 +90,11 @@ verify  →  build  →  publish
    - Strip leading `v` to get `VERSION`.
    - Compare `VERSION` to `ida-plugin.json.plugin.version`. Fail with `::error::` if mismatch.
    - Detect pre-release: `[[ "$TAG" =~ -(rc|alpha|beta|pre|dev)[0-9]*$ ]]` → `is_prerelease=true`.
-   - Compute `archive_basename=rikugan-v${VERSION}`.
+   - Compute `archive_basename=lucnhan-v${VERSION}`.
 5. **Re-run CI checks inline** (in this single step, `set -e`):
-   - `python -m ruff format --check rikugan/`
-   - `python -m ruff check rikugan/`
-   - `python -m mypy rikugan/core rikugan/providers`
+   - `python -m ruff format --check lucnhan/`
+   - `python -m ruff check lucnhan/`
+   - `python -m mypy lucnhan/core lucnhan/providers`
    - `python -m pytest tests/ --tb=short -q`
    - `desloppify scan --profile objective --no-badge` + score gate (`>= 89.0 - 0.5`)
 6. **HCLI packaging lint** (revised): `hcli plugin lint` against the built archive is run in the `build` job after the ZIP is produced (see Job 2), because lint needs the artifact to exist. Code-level checks stay in `verify`; packaging-correctness checks belong next to where the artifact is built.
@@ -111,7 +111,7 @@ verify  →  build  →  publish
 3. Run `python scripts/build_release.py --version "$VERSION" --out-dir dist`.
 4. **HCLI packaging validation** (revised): install the Hex-Rays CLI and lint the archive:
    - `pip install hex-rays-cli` (or the documented install method for `hcli`).
-   - `hcli plugin lint dist/rikugan-v{version}.zip` — fails the job if HCLI reports problems. This is the authoritative check that the archive is installable by HCLI.
+   - `hcli plugin lint dist/lucnhan-v{version}.zip` — fails the job if HCLI reports problems. This is the authoritative check that the archive is installable by HCLI.
    - **Fallback if `hcli` is unavailable on the runner**: run a structural validation shim in Python — assert `ida-plugin.json` is at the ZIP root, `entryPoint` exists at root, required fields present, no wrapping subfolder. The shim is a secondary check; HCLI lint is preferred when available.
 5. `actions/upload-artifact@v4` with `name: release-artifacts`, `path: dist/`, `if-no-files-found: error`.
 
@@ -119,12 +119,12 @@ verify  →  build  →  publish
 
 | Concept | Detail |
 |---------|--------|
-| **Include list** | `rikugan_plugin.py`, `rikugan/`, `install.sh`, `install_ida.sh`, `install.ps1`, `install_ida.bat`, `requirements.txt`, `ida-plugin.json`, `LICENSE`, `README.md` |
+| **Include list** | `lucnhan_plugin.py`, `lucnhan/`, `install.sh`, `install_ida.sh`, `install.ps1`, `install_ida.bat`, `requirements.txt`, `ida-plugin.json`, `LICENSE`, `README.md` |
 | **Exclude (any part of path)** | `__pycache__`, `.git`, `.venv`, `.mypy_cache`, `.ruff_cache`, `.pytest_cache`, `.desloppify`, `.codegraph`, `.reasonix`, `.claude`, `node_modules` |
 | **Exclude (suffix)** | `.pyc`, `.pyo`, `.pyd` |
-| **Output name** | `rikugan-v{version}.zip` (single ZIP — HCLI accepts only ZIP) |
-| **Archive layout** | **Flat** — files at ZIP root, no wrapping subfolder: `ida-plugin.json`, `rikugan_plugin.py`, `rikugan/...`, `install.sh`, ... This matches the HCLI contract that `ida-plugin.json` sits "in the root directory of the plugin within the archive". |
-| **SHA256SUMS** | `<hex>  rikugan-v{version}.zip\n` (two-space separator, GNU coreutils convention) |
+| **Output name** | `lucnhan-v{version}.zip` (single ZIP — HCLI accepts only ZIP) |
+| **Archive layout** | **Flat** — files at ZIP root, no wrapping subfolder: `ida-plugin.json`, `lucnhan_plugin.py`, `lucnhan/...`, `install.sh`, ... This matches the HCLI contract that `ida-plugin.json` sits "in the root directory of the plugin within the archive". |
+| **SHA256SUMS** | `<hex>  lucnhan-v{version}.zip\n` (two-space separator, GNU coreutils convention) |
 
 The script is invokable locally (same CLI as in CI) so the same build can be reproduced off-CI for debugging.
 
@@ -134,12 +134,12 @@ The script is invokable locally (same CLI as in CI) so the same build can be rep
 
 **Single step**: `softprops/action-gh-release@v2` with:
 - `tag_name`: `${{ needs.verify.outputs.tag }}` (preserves the original `v` prefix on the tag)
-- `name`: `"Rikugan ${{ needs.verify.outputs.version }}"`
+- `name`: `"Luc Nhan ${{ needs.verify.outputs.version }}"`
 - `prerelease`: `${{ needs.verify.outputs.is_prerelease == 'true' }}`
 - `generate_release_notes: true` (same behavior as today)
 - `fail_on_unmatched_files: true` (so a broken glob fails the job instead of producing an empty release)
 - `files`:
-  - `dist/rikugan-v{version}.zip`
+  - `dist/lucnhan-v{version}.zip`
   - `dist/SHA256SUMS`
 
 **Idempotency**: `softprops/action-gh-release@v2` overwrites an existing release with the same tag. The release artifacts, notes, and pre-release flag are all re-applied. This is what makes `workflow_dispatch` re-runs safe.
@@ -174,7 +174,7 @@ The regex is intentionally simple. It does not catch every pre-release conventio
 | Edit | `DEVELOPMENT.md` | Same: update the "Release Process" subsection, mention `scripts/build_release.py` for local dry-runs |
 | Edit | `.gitignore` | Add `dist/` to keep local build output out of git |
 
-**Not touched**: `ci.yml` (drift fix is a separate concern, separate PR), `install.sh` / `install.ps1` (the `curl | bash` path still works — release artifacts are an additional install method, not a replacement), `ida-plugin.json` schema, Python source under `rikugan/`.
+**Not touched**: `ci.yml` (drift fix is a separate concern, separate PR), `install.sh` / `install.ps1` (the `curl | bash` path still works — release artifacts are an additional install method, not a replacement), `ida-plugin.json` schema, Python source under `lucnhan/`.
 
 ---
 
@@ -195,25 +195,25 @@ In `scripts/test_build_release.py`, using pytest + AAA pattern. Each test seeds 
 | `test_zip_entry_point_at_root` | `entryPoint` from `ida-plugin.json` resolves at the ZIP root |
 | `test_zip_no_wrapping_subfolder` | No single subfolder wraps every entry (HCLI contract) |
 | `test_sha256_matches_stdlib` | `sha256_file(p) == hashlib.sha256(p.read_bytes()).hexdigest()` |
-| `test_archive_basename_format` | `--version 1.2.3` produces `rikugan-v1.2.3.zip` (no tar.gz) |
+| `test_archive_basename_format` | `--version 1.2.3` produces `lucnhan-v1.2.3.zip` (no tar.gz) |
 | `test_empty_source_root_fails` | `collect()` returning `[]` → script exits with code 1 and prints error to stderr |
 | `test_argparse_requires_version` | Omitting `--version` → `SystemExit(2)` from argparse |
-| `test_sha256sums_format` | File content matches `^[a-f0-9]{64}  rikugan-v.*\.zip$` (regex) |
+| `test_sha256sums_format` | File content matches `^[a-f0-9]{64}  lucnhan-v.*\.zip$` (regex) |
 
 ### Local dry-run (before push)
 
 ```bash
 # Build locally
-python scripts/build_release.py --version 1.2.3 --out-dir /tmp/rikugan-test
+python scripts/build_release.py --version 1.2.3 --out-dir /tmp/lucnhan-test
 
 # Inspect contents — ida-plugin.json MUST be at the ZIP root, no subfolder
-unzip -l /tmp/rikugan-test/rikugan-v1.2.3.zip
+unzip -l /tmp/lucnhan-test/lucnhan-v1.2.3.zip
 
 # Verify SHA256SUMS
-( cd /tmp/rikugan-test && sha256sum -c SHA256SUMS )
+( cd /tmp/lucnhan-test && sha256sum -c SHA256SUMS )
 
 # If hcli is installed locally, validate the archive
-hcli plugin lint /tmp/rikugan-test/rikugan-v1.2.3.zip
+hcli plugin lint /tmp/lucnhan-test/lucnhan-v1.2.3.zip
 
 # Run unit tests
 python -m pytest tests/scripts/test_build_release.py -v
@@ -222,9 +222,9 @@ python -m pytest tests/scripts/test_build_release.py -v
 ### Pre-merge checklist
 
 - [ ] `scripts/build_release.py` runs locally, produces flat zip + SHA256SUMS in the right format.
-- [ ] `unzip -l` shows `ida-plugin.json` and `rikugan_plugin.py` at the ZIP root (no wrapping subfolder).
+- [ ] `unzip -l` shows `ida-plugin.json` and `lucnhan_plugin.py` at the ZIP root (no wrapping subfolder).
 - [ ] `python -m pytest tests/scripts/test_build_release.py -v` — all pass.
-- [ ] `./ci-local.sh` still passes (script lives in `scripts/`, not `rikugan/`, so ruff/mypy don't lint it; pytest picks up `tests/scripts/`).
+- [ ] `./ci-local.sh` still passes (script lives in `scripts/`, not `lucnhan/`, so ruff/mypy don't lint it; pytest picks up `tests/scripts/`).
 - [ ] `actions/download-artifact@v4`, `actions/upload-artifact@v4`, `softprops/action-gh-release@v2` are pinned to a major version.
 
 ### Post-merge smoke test
@@ -232,22 +232,22 @@ python -m pytest tests/scripts/test_build_release.py -v
 1. Push a throwaway tag: `git tag v0.0.0-test && git push origin v0.0.0-test`.
 2. Watch the workflow run on GitHub Actions:
    - `verify` job: ruff/mypy/pytest/desloppify all green; tag/version match; `is_prerelease=false`.
-   - `build` job: `dist/` contains `rikugan-v0.0.0-test.zip` + `SHA256SUMS`; `hcli plugin lint` passes (or the structural shim passes as fallback).
-   - `publish` job: a **draft** release appears at `https://github.com/EliteClassRoom/rikugan/releases/tag/v0.0.0-test`.
+   - `build` job: `dist/` contains `lucnhan-v0.0.0-test.zip` + `SHA256SUMS`; `hcli plugin lint` passes (or the structural shim passes as fallback).
+   - `publish` job: a **draft** release appears at `https://github.com/EliteClassRoom/Luc-Nhan/releases/tag/v0.0.0-test`.
 3. Verify the draft release has both artifacts attached, and `SHA256SUMS` content is correct.
 4. Delete the throwaway tag and the draft release:
    ```bash
    git push origin :refs/tags/v0.0.0-test
-   gh release delete v0.0.0-test --repo EliteClassRoom/rikugan --yes
+   gh release delete v0.0.0-test --repo EliteClassRoom/Luc-Nhan --yes
    ```
 
 ### Long-term sanity check
 
 After the next real release (`v1.3.0` or whatever the next version is):
-- The GitHub Release page shows both artifacts (`rikugan-v{version}.zip`, `SHA256SUMS`).
+- The GitHub Release page shows both artifacts (`lucnhan-v{version}.zip`, `SHA256SUMS`).
 - The auto-generated release notes section appears (same as before).
 - Pre-release flag is correct for the tag pattern used.
-- A user can `curl -L https://github.com/EliteClassRoom/rikugan/releases/download/v1.3.0/rikugan-v1.3.0.zip -o rikugan.zip` and install via `hcli plugin install rikugan.zip` (flat layout — HCLI finds `ida-plugin.json` at the ZIP root).
+- A user can `curl -L https://github.com/EliteClassRoom/Luc-Nhan/releases/download/v1.3.0/lucnhan-v1.3.0.zip -o lucnhan.zip` and install via `hcli plugin install lucnhan.zip` (flat layout — HCLI finds `ida-plugin.json` at the ZIP root).
 
 ---
 

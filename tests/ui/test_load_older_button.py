@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import unittest
 
-from rikugan.ui.chat_view import (
+from lucnhan.ui.chat_view import (
     _RESTORE_DEFAULT_MAX_RENDERED,
     ChatView,
 )

@@ -26,8 +26,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.a2a.subprocess_bridge import SubprocessBridge
-from rikugan.agent.a2a.types import ExternalAgentConfig
+from lucnhan.agent.a2a.subprocess_bridge import SubprocessBridge
+from lucnhan.agent.a2a.types import ExternalAgentConfig
 
 # A real subprocess bridge uses shutil.which("python") to locate
 # the interpreter. We construct the agent config with
@@ -89,7 +89,7 @@ class TestSubprocessE2E(unittest.TestCase):
         """
         # Re-use the real validator so the test exercises the
         # same security guard as production.
-        from rikugan.agent.a2a.subprocess_bridge import _validate_task
+        from lucnhan.agent.a2a.subprocess_bridge import _validate_task
         _validate_task(task)
         return [_PYTHON, "-c", task]
 

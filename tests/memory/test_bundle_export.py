@@ -6,12 +6,12 @@ import re
 import zipfile
 from pathlib import Path
 
-from rikugan.memory.bundle_export import export_workspace
-from rikugan.memory.bundle_import import import_workspace_bundle
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.schema import KnowledgeEntity, KnowledgeMemory
-from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.bundle_export import export_workspace
+from lucnhan.memory.bundle_import import import_workspace_bundle
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.schema import KnowledgeEntity, KnowledgeMemory
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _seed_workspace(tmp_path: Path) -> tuple[WorkspaceStore, SQLiteKnowledgeRepository, MemoryLocator, str]:

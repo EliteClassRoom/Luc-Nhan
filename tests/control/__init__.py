@@ -1,1 +1,1 @@
-"""Tests for rikugan.control.server."""
+"""Tests for lucnhan.control.server."""

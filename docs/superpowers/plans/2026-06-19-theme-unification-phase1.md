@@ -12,7 +12,7 @@
 
 - Python `from __future__ import annotations` at top of every edited module.
 - Host API imports (ida_*) use `importlib.import_module()` in `try/except ImportError` — never module-level. (Project rule, CLAUDE.md §1.)
-- Type hints on all new/changed signatures. mypy must stay clean on `rikugan/core` + `rikugan/providers`.
+- Type hints on all new/changed signatures. mypy must stay clean on `lucnhan/core` + `lucnhan/providers`.
 - `./ci-local.sh` must pass (format + lint + mypy + pytest + desloppify).
 - Branch: `feat/theme-phase1` off `master`. Commit per task with conventional-commit format.
 - **IDA visual verification is the primary quality gate** for the bug fix — Qt theme cannot be unit-tested. The implementer (or user) must open IDA, switch theme mid-session, and confirm no stale widgets.
@@ -20,9 +20,9 @@
 ## File Structure
 
 **Modify:**
-- `rikugan/ida/ui/panel.py` — add `themeChanged` subscription + extract `_reapply_minimal_style()` from the inline `_apply_styles` body so it can be called both at init and on theme change.
-- `rikugan/ui/styles.py` — delete `LIGHT_THEME` (lines 72-661), `DARK_THEME` (lines 664-1252), `build_theme_stylesheet()` (lines 1450-1457). Keep everything else (the host-inherit bridge, re-exports, `build_*_stylesheet` builders).
-- `rikugan/ui/panel_core.py` — remove the 2 no-op `build_theme_stylesheet(self)` call sites (lines 531, 730) and the `build_theme_stylesheet` import (line 46).
+- `lucnhan/ida/ui/panel.py` — add `themeChanged` subscription + extract `_reapply_minimal_style()` from the inline `_apply_styles` body so it can be called both at init and on theme change.
+- `lucnhan/ui/styles.py` — delete `LIGHT_THEME` (lines 72-661), `DARK_THEME` (lines 664-1252), `build_theme_stylesheet()` (lines 1450-1457). Keep everything else (the host-inherit bridge, re-exports, `build_*_stylesheet` builders).
+- `lucnhan/ui/panel_core.py` — remove the 2 no-op `build_theme_stylesheet(self)` call sites (lines 531, 730) and the `build_theme_stylesheet` import (line 46).
 - `tests/tools/test_panel_core.py` — remove `DARK_THEME` + `build_theme_stylesheet` from the stub whitelist (lines 107-108).
 - `tests/tools/test_settings_dialog.py` — remove `DARK_THEME` + `build_theme_stylesheet` from the stub whitelist (lines 69-70) and the 2 override lines (123-124).
 
@@ -34,18 +34,18 @@
 ### Task 1: Extract `_reapply_minimal_style()` in panel.py (refactor, no behavior change)
 
 **Files:**
-- Modify: `rikugan/ida/ui/panel.py` (the `_apply_styles` / minimal_style block, lines ~260-417)
+- Modify: `lucnhan/ida/ui/panel.py` (the `_apply_styles` / minimal_style block, lines ~260-417)
 - Test: existing `tests/tools/test_ida_panel.py` (smoke)
 
 **Interfaces:**
 - Consumes: `ThemeManager.instance().tokens()` (already imported lazily elsewhere in panel.py)
-- Produces: `RikuganPanel._reapply_minimal_style(self) -> None` — rebuilds and sets `self._core.setStyleSheet(minimal_style)`. Callable at init and from the `themeChanged` slot.
+- Produces: `LucNhanPanel._reapply_minimal_style(self) -> None` — rebuilds and sets `self._core.setStyleSheet(minimal_style)`. Callable at init and from the `themeChanged` slot.
 
 **Why this first:** Pure refactor that makes the existing inline QSS-build reusable. No behavior change means existing tests stay green and we have a safe base before wiring the signal.
 
 - [ ] **Step 1: Read the current minimal_style block**
 
-Read `rikugan/ida/ui/panel.py` from the line where the colors are computed (the `_rgb_to_hex` / token reads, ~line 280) through line 417 (`self._core.setStyleSheet(minimal_style)`). Note the exact start line of the color setup so the extract is precise.
+Read `lucnhan/ida/ui/panel.py` from the line where the colors are computed (the `_rgb_to_hex` / token reads, ~line 280) through line 417 (`self._core.setStyleSheet(minimal_style)`). Note the exact start line of the color setup so the extract is precise.
 
 - [ ] **Step 2: Extract the method**
 
@@ -72,12 +72,12 @@ The call site (init path) becomes a single line: `self._reapply_minimal_style()`
 - [ ] **Step 3: Verify refactor is behavior-preserving**
 
 Run: `python -m pytest tests/tools/test_ida_panel.py -v`
-Expected: PASS (same as before refactor). Also `python -c "import rikugan.ida.ui.panel"` to confirm no import error.
+Expected: PASS (same as before refactor). Also `python -c "import lucnhan.ida.ui.panel"` to confirm no import error.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add rikugan/ida/ui/panel.py
+git add lucnhan/ida/ui/panel.py
 git commit -m "refactor(ida): extract _reapply_minimal_style in panel wrapper"
 ```
 
@@ -86,11 +86,11 @@ git commit -m "refactor(ida): extract _reapply_minimal_style in panel wrapper"
 ### Task 2: Subscribe panel.py to themeChanged (the bug fix)
 
 **Files:**
-- Modify: `rikugan/ida/ui/panel.py` (add subscription in the init/watcher path + disconnect in shutdown)
+- Modify: `lucnhan/ida/ui/panel.py` (add subscription in the init/watcher path + disconnect in shutdown)
 - Test: `tests/tools/test_ida_panel_theme_reapply.py` (new)
 
 **Interfaces:**
-- Consumes: `RikuganPanel._reapply_minimal_style()` (from Task 1), `ThemeManager.instance().themeChanged`
+- Consumes: `LucNhanPanel._reapply_minimal_style()` (from Task 1), `ThemeManager.instance().themeChanged`
 - Produces: panel.py now repaints `minimal_style` whenever `themeChanged` fires.
 
 - [ ] **Step 1: Write the failing test**
@@ -118,12 +118,12 @@ ensure_pyside6_stubs()
 
 class TestPanelReappliesMinimalStyleOnThemeChange(unittest.TestCase):
     def test_subscribe_connects_reapply_slot(self):
-        from rikugan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.manager import ThemeManager
 
         manager = ThemeManager.instance()
         manager.themeChanged = MagicMock()
 
-        with patch("rikugan.ida.ui.panel.ThemeManager", return_value=manager):
+        with patch("lucnhan.ida.ui.panel.ThemeManager", return_value=manager):
             # The panel wrapper subscribes during init; assert the slot is
             # connected to the manager's themeChanged signal.
             panel = _build_minimal_panel()
@@ -133,7 +133,7 @@ class TestPanelReappliesMinimalStyleOnThemeChange(unittest.TestCase):
         panel = _build_minimal_panel()
         panel._reapply_minimal_style = MagicMock()
         # Simulate the manager emitting themeChanged.
-        from rikugan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.manager import ThemeManager
 
         ThemeManager.instance().themeChanged.emit(object())
         panel._reapply_minimal_style.assert_called()
@@ -144,9 +144,9 @@ def _build_minimal_panel():
     from tests.mocks.ida_mock import install_ida_mocks
 
     install_ida_mocks()
-    from rikugan.ida.ui.panel import RikuganPanel
+    from lucnhan.ida.ui.panel import LucNhanPanel
 
-    return RikuganPanel()
+    return LucNhanPanel()
 
 
 if __name__ == "__main__":
@@ -162,7 +162,7 @@ Expected: FAIL — `themeChanged.connect` not called (subscription not added yet
 
 - [ ] **Step 3: Add the subscription**
 
-In `rikugan/ida/ui/panel.py`, add a helper that subscribes and call it from the init path (near `_maybe_start_theme_watcher`):
+In `lucnhan/ida/ui/panel.py`, add a helper that subscribes and call it from the init path (near `_maybe_start_theme_watcher`):
 
 ```python
 def _subscribe_theme_changes(self) -> None:
@@ -173,13 +173,13 @@ def _subscribe_theme_changes(self) -> None:
     every theme switch or those objects keep the old palette.
     """
     try:
-        from rikugan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.manager import ThemeManager
 
         ThemeManager.instance().themeChanged.connect(self._reapply_minimal_style)
     except Exception as e:
         import ida_kernwin
 
-        ida_kernwin.msg(f"[Rikugan] themeChanged subscribe failed: {type(e).__name__}: {e}")
+        ida_kernwin.msg(f"[Luc Nhan] themeChanged subscribe failed: {type(e).__name__}: {e}")
 ```
 
 Call `self._subscribe_theme_changes()` right after `self._reapply_minimal_style()` in the init path.
@@ -188,7 +188,7 @@ Add a disconnect in the panel's shutdown/cleanup path (search for the existing `
 
 ```python
 try:
-    from rikugan.ui.theme.manager import ThemeManager
+    from lucnhan.ui.theme.manager import ThemeManager
 
     ThemeManager.instance().themeChanged.disconnect(self._reapply_minimal_style)
 except Exception:
@@ -207,7 +207,7 @@ Expected: PASS, no regressions.
 
 - [ ] **Step 6: IDA visual verification (user / implementer)**
 
-This is the **primary quality gate** for the bug fix. Open Rikugan in IDA Pro, start a chat (so message widgets exist), then switch theme via Settings (dark → light → ida → dark). Confirm:
+This is the **primary quality gate** for the bug fix. Open Luc Nhan in IDA Pro, start a chat (so message widgets exist), then switch theme via Settings (dark → light → ida → dark). Confirm:
 - `thinking_block`, `message_queued`, `message_question`, `message_thinking` frames repaint.
 - `input_area`, `send_button`, `cancel_button`, `history_nav` repaint.
 - No widget keeps the old palette.
@@ -217,7 +217,7 @@ If visual verification is not possible in this session, STOP and request it befo
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/ida/ui/panel.py tests/tools/test_ida_panel_theme_reapply.py
+git add lucnhan/ida/ui/panel.py tests/tools/test_ida_panel_theme_reapply.py
 git commit -m "fix(ida): re-apply minimal_style on theme change
 
 panel.py built the host-scoped minimal_style QSS once at construction and
@@ -280,8 +280,8 @@ git commit -m "test: drop stale DARK_THEME/build_theme_stylesheet stub refs"
 ### Task 4: Delete dead code (LIGHT_THEME, DARK_THEME, build_theme_stylesheet)
 
 **Files:**
-- Modify: `rikugan/ui/styles.py` (delete lines 72-1252 for the two constants, 1450-1457 for build_theme_stylesheet)
-- Modify: `rikugan/ui/panel_core.py` (remove import line 46 + 2 call sites lines 531, 730)
+- Modify: `lucnhan/ui/styles.py` (delete lines 72-1252 for the two constants, 1450-1457 for build_theme_stylesheet)
+- Modify: `lucnhan/ui/panel_core.py` (remove import line 46 + 2 call sites lines 531, 730)
 
 **Interfaces:**
 - Consumes: Task 3 (tests no longer reference the symbols)
@@ -292,8 +292,8 @@ git commit -m "test: drop stale DARK_THEME/build_theme_stylesheet stub refs"
 Run these and confirm ONLY the definition sites remain:
 ```bash
 # Should show only styles.py:72, styles.py:664 (the definitions) and panel_core.py call sites
-grep -rn "LIGHT_THEME\|DARK_THEME" rikugan/ tests/
-grep -rn "build_theme_stylesheet" rikugan/ tests/
+grep -rn "LIGHT_THEME\|DARK_THEME" lucnhan/ tests/
+grep -rn "build_theme_stylesheet" lucnhan/ tests/
 ```
 Expected: only `styles.py` definitions + `panel_core.py` call sites. If any other reference appears, stop and handle it first.
 
@@ -315,7 +315,7 @@ def build_theme_stylesheet(widget: object) -> str:
 
 - [ ] **Step 4: Remove the import + call sites from panel_core.py**
 
-In `rikugan/ui/panel_core.py`:
+In `lucnhan/ui/panel_core.py`:
 - Remove `build_theme_stylesheet` from the `from .styles import (...)` block (line 46 area).
 - Remove the 2 call sites: `self.setStyleSheet(build_theme_stylesheet(self))` at line 531 (in `_build_ui`) and line 730 (in `_on_theme_changed`).
 
@@ -325,7 +325,7 @@ For line 730: since `build_theme_stylesheet` returned `""`, the call was a no-op
 
 Run:
 ```bash
-python -c "import rikugan.ui.styles; import rikugan.ui.panel_core; print('imports OK')"
+python -c "import lucnhan.ui.styles; import lucnhan.ui.panel_core; print('imports OK')"
 python -m pytest tests/ -q
 ```
 Expected: `imports OK` + full suite PASS (1597+ passed, same baseline minus any xfail churn).
@@ -334,16 +334,16 @@ Expected: `imports OK` + full suite PASS (1597+ passed, same baseline minus any 
 
 Run:
 ```bash
-python -m ruff check rikugan/ui/styles.py rikugan/ui/panel_core.py
-python -m ruff format --check rikugan/ui/styles.py rikugan/ui/panel_core.py
-python -m mypy rikugan/core rikugan/providers
+python -m ruff check lucnhan/ui/styles.py lucnhan/ui/panel_core.py
+python -m ruff format --check lucnhan/ui/styles.py lucnhan/ui/panel_core.py
+python -m mypy lucnhan/core lucnhan/providers
 ```
 Expected: ruff `All checks passed!`, format clean, mypy clean.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/ui/styles.py rikugan/ui/panel_core.py
+git add lucnhan/ui/styles.py lucnhan/ui/panel_core.py
 git commit -m "refactor(ui): remove dead LIGHT_THEME/DARK_THEME + build_theme_stylesheet
 
 ~1180 lines of QSS constants that no function ever returned (build_theme_stylesheet
@@ -366,13 +366,13 @@ Expected: PASS (format + lint + mypy + pytest + desloppify). If desloppify score
 
 Run:
 ```bash
-grep -c "LIGHT_THEME\|DARK_THEME\|build_theme_stylesheet" rikugan/ui/styles.py
+grep -c "LIGHT_THEME\|DARK_THEME\|build_theme_stylesheet" lucnhan/ui/styles.py
 ```
 Expected: `0`.
 
 - [ ] **Step 3: Confirm line reduction**
 
-Run: `wc -l rikugan/ui/styles.py`
+Run: `wc -l lucnhan/ui/styles.py`
 Expected: ~450 lines (down from 1628 — removed ~1180 lines).
 
 - [ ] **Step 4: IDA visual final check (user)**

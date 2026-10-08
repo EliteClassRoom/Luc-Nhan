@@ -9,17 +9,17 @@ from types import ModuleType
 
 import pytest
 
-from rikugan.memory.markdown import (
+from lucnhan.memory.markdown import (
     ManagedEntry,
     ManagedRegionError,
     MemoryProjector,
     parse_memory_document,
     render_memory_document,
 )
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.schema import KnowledgeMemory
-from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.schema import KnowledgeMemory
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 class TestParseMemoryDocument:
@@ -35,10 +35,10 @@ class TestParseMemoryDocument:
     def test_well_formed_managed_region(self) -> None:
         content = (
             "# Memory\n\n"
-            "<!-- rikugan:managed:start -->\n"
+            "<!-- lucnhan:managed:start -->\n"
             "## Confirmed Facts\n\n"
             "- [protocol] Uses RC4.\n"
-            "<!-- rikugan:managed:end -->\n\n"
+            "<!-- lucnhan:managed:end -->\n\n"
             "## User Notes\n\n"
             "Check key schedule.\n"
         )
@@ -46,26 +46,26 @@ class TestParseMemoryDocument:
 
         assert "Uses RC4" in doc.managed
         assert "Check key schedule" in doc.suffix
-        assert "rikugan:managed:start" not in doc.managed
+        assert "lucnhan:managed:start" not in doc.managed
 
     def test_nested_or_reversed_markers_are_conflicts(self) -> None:
         # Reversed order
-        content = "<!-- rikugan:managed:end -->\n<!-- rikugan:managed:start -->\n"
+        content = "<!-- lucnhan:managed:end -->\n<!-- lucnhan:managed:start -->\n"
         with pytest.raises(ManagedRegionError):
             parse_memory_document(content)
 
     def test_missing_end_marker_is_conflict(self) -> None:
-        content = "<!-- rikugan:managed:start -->\nSome content\n"
+        content = "<!-- lucnhan:managed:start -->\nSome content\n"
         with pytest.raises(ManagedRegionError):
             parse_memory_document(content)
 
     def test_missing_start_marker_is_conflict(self) -> None:
-        content = "Some content\n<!-- rikugan:managed:end -->\n"
+        content = "Some content\n<!-- lucnhan:managed:end -->\n"
         with pytest.raises(ManagedRegionError):
             parse_memory_document(content)
 
     def test_double_start_is_conflict(self) -> None:
-        content = "<!-- rikugan:managed:start -->\n<!-- rikugan:managed:start -->\n<!-- rikugan:managed:end -->\n"
+        content = "<!-- lucnhan:managed:start -->\n<!-- lucnhan:managed:start -->\n<!-- lucnhan:managed:end -->\n"
         with pytest.raises(ManagedRegionError):
             parse_memory_document(content)
 
@@ -78,15 +78,15 @@ class TestRenderMemoryDocument:
 
         assert "Important note." in rendered
         assert "fact1" in rendered
-        assert rendered.count("<!-- rikugan:managed:start -->") == 1
-        assert rendered.count("<!-- rikugan:managed:end -->") == 1
+        assert rendered.count("<!-- lucnhan:managed:start -->") == 1
+        assert rendered.count("<!-- lucnhan:managed:end -->") == 1
 
     def test_render_empty_managed_creates_section(self) -> None:
         doc = parse_memory_document("# Memory\n\nUser note.\n")
         rendered = render_memory_document(doc, managed_block="## Facts\n\n- A\n")
 
-        assert "<!-- rikugan:managed:start -->" in rendered
-        assert "<!-- rikugan:managed:end -->" in rendered
+        assert "<!-- lucnhan:managed:start -->" in rendered
+        assert "<!-- lucnhan:managed:end -->" in rendered
 
     def test_render_includes_record_markers(self) -> None:
         """Managed entries carry hidden stable record ID/revision markers."""
@@ -103,7 +103,7 @@ class TestRenderMemoryDocument:
         ]
         rendered = render_memory_document(doc, managed_block="", entries=entries)
 
-        assert "rikugan:record" in rendered
+        assert "lucnhan:record" in rendered
         assert "fact-aaa" in rendered
         assert "rev=3" in rendered
 
@@ -122,8 +122,8 @@ class TestMemoryProjector:
 
         content = paths.markdown.read_text(encoding="utf-8")
         assert "Uses RC4 for C2" in content
-        assert content.count("<!-- rikugan:managed:start -->") == 1
-        assert content.count("<!-- rikugan:managed:end -->") == 1
+        assert content.count("<!-- lucnhan:managed:start -->") == 1
+        assert content.count("<!-- lucnhan:managed:end -->") == 1
 
         state = store.projection_state()
         assert state.projection_dirty is False
@@ -169,7 +169,7 @@ class TestMemoryProjector:
         # Write an initial file with stale managed content
         paths.markdown.parent.mkdir(parents=True, exist_ok=True)
         paths.markdown.write_text(
-            "# Memory\n\n<!-- rikugan:managed:start -->\n## OLD\n\n- old content\n<!-- rikugan:managed:end -->\n",
+            "# Memory\n\n<!-- lucnhan:managed:start -->\n## OLD\n\n- old content\n<!-- lucnhan:managed:end -->\n",
             encoding="utf-8",
         )
 
@@ -203,7 +203,7 @@ class TestMemoryProjector:
         # Reload the module so the projector re-probes portalocker.
         import importlib
 
-        from rikugan.memory import markdown as _md
+        from lucnhan.memory import markdown as _md
 
         importlib.reload(_md)
         try:
@@ -374,7 +374,7 @@ class TestMemoryProjector:
         # (fact_type, title, fact_id). The two facts share fact_type, so
         # the sort resolves on title: "RC4 crypt" < "RC4 init".
         doc = parse_memory_document(content)
-        record_re = re.compile(r"<!-- rikugan:record id=([A-Za-z0-9._:-]+) rev=([1-9][0-9]*) -->")
+        record_re = re.compile(r"<!-- lucnhan:record id=([A-Za-z0-9._:-]+) rev=([1-9][0-9]*) -->")
         fact_ids = [match.group(1) for match in record_re.finditer(doc.managed)]
         assert len(fact_ids) == 2
         # The two facts share fact_type, so the title sort is the active key:

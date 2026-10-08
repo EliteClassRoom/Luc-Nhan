@@ -19,9 +19,9 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.loop import _parse_user_command
-from rikugan.agent.modes.a2a import run_a2a_mode
-from rikugan.agent.turn import TurnEventType
+from lucnhan.agent.loop import _parse_user_command
+from lucnhan.agent.modes.a2a import run_a2a_mode
+from lucnhan.agent.turn import TurnEventType
 
 
 def _drain(gen) -> tuple[list, str]:
@@ -142,7 +142,7 @@ class TestModeRunnerValidation(unittest.TestCase):
         def fake_discover(self):
             return []  # no agents — the dispatcher will error
 
-        with patch("rikugan.agent.a2a.dispatcher.SubprocessBridge.discover", new=fake_discover):
+        with patch("lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover", new=fake_discover):
             events, _ = _drain(run_a2a_mode(loop, "hello world", "", []))
         # We expect an error from the dispatcher (unknown agent),
         # not from the validator.
@@ -165,7 +165,7 @@ class TestModeRunnerDispatch(unittest.TestCase):
 
     def test_streams_dispatcher_events(self) -> None:
         """Successful run yields TEXT_DELTA + TEXT_DONE with the result."""
-        from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
+        from lucnhan.agent.a2a.types import A2AEvent, ExternalAgentConfig
 
         loop = self._fake_loop()
         agents = [
@@ -183,11 +183,11 @@ class TestModeRunnerDispatch(unittest.TestCase):
 
         with (
             patch(
-                "rikugan.agent.a2a.dispatcher.SubprocessBridge.discover",
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
                 return_value=agents,
             ),
             patch(
-                "rikugan.agent.a2a.dispatcher.SubprocessBridge.run_task",
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
                 new=fake_run,
             ),
         ):
@@ -210,7 +210,7 @@ class TestModeRunnerDispatch(unittest.TestCase):
     def test_unknown_agent_yields_error(self) -> None:
         loop = self._fake_loop()
         with patch(
-            "rikugan.agent.a2a.dispatcher.SubprocessBridge.discover",
+            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
             return_value=[],
         ):
             events, _ = _drain(run_a2a_mode(loop, "nonexagent do thing", "", []))
@@ -221,14 +221,14 @@ class TestModeRunnerDispatch(unittest.TestCase):
 
     def test_a2a_agents_config_forwarded_to_dispatcher(self) -> None:
         """The dispatcher's a2a_agents is sourced from loop.config."""
-        from rikugan.agent.a2a.types import ExternalAgentConfig
+        from lucnhan.agent.a2a.types import ExternalAgentConfig
 
         loop = self._fake_loop()
         loop.config.a2a_agents = [{"name": "x", "endpoint": "https://x"}]
         agents = [ExternalAgentConfig(name="x", transport="a2a", endpoint="https://x")]
 
         # Capture what the dispatcher was constructed with.
-        from rikugan.agent.modes import a2a as a2a_mode
+        from lucnhan.agent.modes import a2a as a2a_mode
 
         with patch.object(a2a_mode, "A2ADispatcher") as mock_dispatcher_cls:
             mock_dispatcher_cls.return_value.discover.return_value = agents
@@ -240,7 +240,7 @@ class TestModeRunnerDispatch(unittest.TestCase):
             mock_dispatcher_cls.return_value.run_task.side_effect = empty_run
 
             with patch(
-                "rikugan.agent.a2a.dispatcher.SubprocessBridge.discover",
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
                 return_value=[],
             ):
                 list(run_a2a_mode(loop, "x do thing", "", []))
@@ -272,14 +272,14 @@ class TestModeRunnerCancellation(unittest.TestCase):
         → ``run_a2a_mode`` raises CancellationError."""
         import threading
 
-        from rikugan.core.errors import CancellationError
+        from lucnhan.core.errors import CancellationError
 
         loop = self._fake_loop()
         cancel_event = threading.Event()
         cancel_event.set()  # user has cancelled before the runner runs
         loop._cancelled = cancel_event
 
-        from rikugan.agent.modes import a2a as a2a_mode
+        from lucnhan.agent.modes import a2a as a2a_mode
 
         def fake_dispatch(*args, **kwargs):
             # Mirror what SubprocessBridge._run_subprocess emits when
@@ -307,14 +307,14 @@ class TestModeRunnerCancellation(unittest.TestCase):
         with the cancel event set also re-raises."""
         import threading
 
-        from rikugan.core.errors import CancellationError
+        from lucnhan.core.errors import CancellationError
 
         loop = self._fake_loop()
         cancel_event = threading.Event()
         cancel_event.set()
         loop._cancelled = cancel_event
 
-        from rikugan.agent.modes import a2a as a2a_mode
+        from lucnhan.agent.modes import a2a as a2a_mode
 
         def fake_dispatch(*args, **kwargs):
             yield a2a_mode.TurnEvent.error_event("A2A task abc123 cancelled by user")
@@ -334,7 +334,7 @@ class TestModeRunnerCancellation(unittest.TestCase):
         cancel_event = threading.Event()  # NOT set
         loop._cancelled = cancel_event
 
-        from rikugan.agent.modes import a2a as a2a_mode
+        from lucnhan.agent.modes import a2a as a2a_mode
 
         def fake_dispatch(*args, **kwargs):
             yield a2a_mode.TurnEvent.error_event("agent unreachable: connection refused")

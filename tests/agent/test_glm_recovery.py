@@ -32,11 +32,11 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.loop import AgentLoop
-from rikugan.agent.modes.turn_helpers import TurnResult, execute_single_turn
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import (
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.agent.modes.turn_helpers import TurnResult, execute_single_turn
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import (
     LLMRequestContext,
     Message,
     ModelInfo,
@@ -45,10 +45,10 @@ from rikugan.core.types import (
     StreamChunk,
     TokenUsage,
 )
-from rikugan.providers.base import LLMProvider
-from rikugan.state.session import SessionState
-from rikugan.tools.base import ParameterSchema, ToolDefinition
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.providers.base import LLMProvider
+from lucnhan.state.session import SessionState
+from lucnhan.tools.base import ParameterSchema, ToolDefinition
+from lucnhan.tools.registry import ToolRegistry
 
 # ---------------------------------------------------------------------------
 # Scripted GLM provider
@@ -182,9 +182,9 @@ class ScriptedGLMProvider(LLMProvider):
 # ---------------------------------------------------------------------------
 
 
-def _make_glm_config() -> RikuganConfig:
+def _make_glm_config() -> LucNhanConfig:
     """Build a GLM-dialect config suitable for recovery testing."""
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config.auto_context = False
     config.provider.name = "glm"
     config.provider.model = "glm-5.2"
@@ -550,9 +550,9 @@ class TestRecoveryContextValueErrorPropagation(unittest.TestCase):
     """
 
     def test_invalid_glm_extra_raises_value_error(self):
-        from rikugan.agent.modes.turn_helpers import _build_recovery_context
+        from lucnhan.agent.modes.turn_helpers import _build_recovery_context
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.provider.name = "glm"
         config.provider.model = "glm-5.2"

@@ -10,11 +10,11 @@
 
 ## Global Constraints
 
-- Spec authority: `docs/superpowers/specs/2026-07-16-remove-rikugan-md-legacy-design.md`.
+- Spec authority: `docs/superpowers/specs/2026-07-16-remove-lucnhan-md-legacy-design.md`.
 - Không runtime read/write `RIKUGAN.md` sau khi plan xong.
 - Không dual-path, không fallback. Guard binding-state trong `manager.py` (`set_active_case`, `require_persistent_paths`) GIỮ — chỉ xóa guard flag.
 - `sanitize_memory()` GIỮ (vẫn wrap manual MEMORY.md notes).
-- Knowledge subsystem (`notes/`, `.rikugan-kb/`, `KnowledgeRawStore`) KHÔNG đụng — JSONL store riêng.
+- Knowledge subsystem (`notes/`, `.lucnhan-kb/`, `KnowledgeRawStore`) KHÔNG đụng — JSONL store riêng.
 - Identity-failure path silent: bind ephemeral → memory_service None → không warning.
 - Commit theo Conventional Commits: `feat(memory):`, `refactor(memory):`, `test(memory):`, `docs(memory):`.
 - Host API imports dùng `importlib.import_module()` trong try/except (không liên quan plan này, nhưng giữ convention).
@@ -26,19 +26,19 @@
 
 | File | Action | Responsibility |
 |---|---|---|
-| `rikugan/core/config.py` | Modify | Xóa 3 flag fields + load entries |
-| `rikugan/memory/manager.py` | Modify | Xóa dark-mode branches/guards flag, giữ binding-state guards |
-| `rikugan/ui/session_controller_base.py` | Modify | Luôn wire central memory |
-| `rikugan/agent/system_prompt.py` | Modify | Xóa `_load_persistent_memory` + param `idb_dir` |
-| `rikugan/agent/loop.py` | Modify | Xóa `append_to_memory_file`, `_MEMORY_HEADER`, legacy save_memory branch, case message |
-| `rikugan/agent/modes/plan.py` | Modify | `persist_plan` dùng service.save_plan |
-| `rikugan/agent/loop_commands.py` | Modify | `_handle_memory_command` xóa legacy branch |
-| `rikugan/agent/modes/research.py` | Modify | Docstring mention RIKUGAN.md → MEMORY.md |
-| `rikugan/agent/orchestra/main_agent.py` | Modify | Xóa `idb_dir` param |
-| `rikugan/memory/legacy.py` | Delete | Importer không còn |
-| `rikugan/memory/__init__.py` | Modify | Docstring dọn dark-mode mention |
-| `rikugan/memory/paths.py` | Modify | Docstring mention |
-| `rikugan/core/sanitize.py` | Modify | Docstring mention |
+| `lucnhan/core/config.py` | Modify | Xóa 3 flag fields + load entries |
+| `lucnhan/memory/manager.py` | Modify | Xóa dark-mode branches/guards flag, giữ binding-state guards |
+| `lucnhan/ui/session_controller_base.py` | Modify | Luôn wire central memory |
+| `lucnhan/agent/system_prompt.py` | Modify | Xóa `_load_persistent_memory` + param `idb_dir` |
+| `lucnhan/agent/loop.py` | Modify | Xóa `append_to_memory_file`, `_MEMORY_HEADER`, legacy save_memory branch, case message |
+| `lucnhan/agent/modes/plan.py` | Modify | `persist_plan` dùng service.save_plan |
+| `lucnhan/agent/loop_commands.py` | Modify | `_handle_memory_command` xóa legacy branch |
+| `lucnhan/agent/modes/research.py` | Modify | Docstring mention RIKUGAN.md → MEMORY.md |
+| `lucnhan/agent/orchestra/main_agent.py` | Modify | Xóa `idb_dir` param |
+| `lucnhan/memory/legacy.py` | Delete | Importer không còn |
+| `lucnhan/memory/__init__.py` | Modify | Docstring dọn dark-mode mention |
+| `lucnhan/memory/paths.py` | Modify | Docstring mention |
+| `lucnhan/core/sanitize.py` | Modify | Docstring mention |
 | `tests/memory/test_legacy.py` | Delete | Test importer đã xóa |
 | `tests/memory/test_activation_gate.py` | Delete | Toàn test flag |
 | `tests/memory/test_manager.py` | Modify | Xóa class TestDarkBinding + flag sets |
@@ -60,12 +60,12 @@
 ### Task 1: Xóa dark-scaffolding config flags
 
 **Files:**
-- Modify: `rikugan/core/config.py:149-165, 355-365, 394-405`
+- Modify: `lucnhan/core/config.py:149-165, 355-365, 394-405`
 - Test: `tests/memory/test_config.py`
 
 **Interfaces:**
-- Consumes: `RikuganConfig` dataclass, `_apply_loaded_config()` typed-load
-- Produces: `RikuganConfig` không còn `memory_workspaces_enabled` / `case_memory_enabled` / `peer_retrieval_enabled` fields
+- Consumes: `LucNhanConfig` dataclass, `_apply_loaded_config()` typed-load
+- Produces: `LucNhanConfig` không còn `memory_workspaces_enabled` / `case_memory_enabled` / `peer_retrieval_enabled` fields
 
 - [ ] **Step 1: Sửa test_config.py — xóa flag assertions**
 
@@ -76,16 +76,16 @@ Expected: FAIL (fields còn tồn tại, chưa xóa — nhưng nếu test đã x
 
 - [ ] **Step 2: Xóa 3 dataclass fields trong config.py**
 
-Sửa `rikugan/core/config.py`. Xóa block dòng 149-165 (comment header "Central memory workspaces" + 3 field definitions). Cụ thể xóa:
+Sửa `lucnhan/core/config.py`. Xóa block dòng 149-165 (comment header "Central memory workspaces" + 3 field definitions). Cụ thể xóa:
 
 ```python
     # ------------------------------------------------------------------
-    # Central memory workspaces (see rikugan.memory.*)
+    # Central memory workspaces (see lucnhan.memory.*)
     # ------------------------------------------------------------------
     # Dark-scaffolding switch: False until the atomic cutover plan
     # activates it.  When False, no central workspace directories are
     # created and all runtime memory continues to use the legacy
-    # folder-scoped RIKUGAN.md / .rikugan-kb layout.
+    # folder-scoped RIKUGAN.md / .lucnhan-kb layout.
     memory_workspaces_enabled: bool = False
 
     # Analysis case subsystem: when True and central memory is enabled,
@@ -124,14 +124,14 @@ Run: `python -m pytest tests/memory/test_config.py tests/core/test_profile.py -v
 Expected: PASS. Grep verify không còn reference flag trong config.py:
 
 ```bash
-git grep -n "memory_workspaces_enabled\|case_memory_enabled\|peer_retrieval_enabled" -- rikugan/core/config.py
+git grep -n "memory_workspaces_enabled\|case_memory_enabled\|peer_retrieval_enabled" -- lucnhan/core/config.py
 ```
 Expected: no matches.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/core/config.py tests/memory/test_config.py
+git add lucnhan/core/config.py tests/memory/test_config.py
 git commit -m "refactor(memory): remove dark-scaffolding config flags"
 ```
 
@@ -140,11 +140,11 @@ git commit -m "refactor(memory): remove dark-scaffolding config flags"
 ### Task 2: Xóa dark-mode branches trong MemoryWorkspaceManager
 
 **Files:**
-- Modify: `rikugan/memory/manager.py:1-10, 52-53, 55-81, 106-115`
+- Modify: `lucnhan/memory/manager.py:1-10, 52-53, 55-81, 106-115`
 - Test: `tests/memory/test_manager.py`, `tests/memory/test_foundation_gate.py`
 
 **Interfaces:**
-- Consumes: `RikuganConfig` (không còn `memory_workspaces_enabled`)
+- Consumes: `LucNhanConfig` (không còn `memory_workspaces_enabled`)
 - Produces: `MemoryWorkspaceManager` luôn init registry + luôn resolve bind. Guard binding-state (`set_active_case` line 114-115, `require_persistent_paths` line 147-148) GIỮ nguyên.
 
 - [ ] **Step 1: Sửa test_manager.py — xóa class TestDarkBinding + flag sets**
@@ -160,7 +160,7 @@ Expected: FAIL (manager vẫn còn dark-mode branch, bind giờ luôn resolve nh
 
 - [ ] **Step 2: Xóa guard flag trong __init__**
 
-Sửa `rikugan/memory/manager.py` dòng 52-53. Từ:
+Sửa `lucnhan/memory/manager.py` dòng 52-53. Từ:
 
 ```python
         if config.memory_workspaces_enabled:
@@ -251,7 +251,7 @@ Expected: các test_flag đã xóa → PASS. Nếu test_first_open/test_case_* c
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/memory/manager.py tests/memory/test_manager.py
+git add lucnhan/memory/manager.py tests/memory/test_manager.py
 git commit -m "refactor(memory): remove dark-mode branches from MemoryWorkspaceManager"
 ```
 
@@ -309,15 +309,15 @@ git commit -m "test(memory): remove dark-mode tests and flag references"
 ### Task 4: Controller luôn wire central memory
 
 **Files:**
-- Modify: `rikugan/ui/session_controller_base.py:488-499`
+- Modify: `lucnhan/ui/session_controller_base.py:488-499`
 
 **Interfaces:**
-- Consumes: `RikuganConfig` (không còn flag), `MemoryWorkspaceManager`
+- Consumes: `LucNhanConfig` (không còn flag), `MemoryWorkspaceManager`
 - Produces: `_wire_central_memory(loop)` luôn được gọi cho mỗi agent run
 
 - [ ] **Step 1: Xóa guard flag trong start_agent**
 
-Sửa `rikugan/ui/session_controller_base.py` dòng 488-499. Từ:
+Sửa `lucnhan/ui/session_controller_base.py` dòng 488-499. Từ:
 
 ```python
         # Inject central memory service when enabled.
@@ -366,14 +366,14 @@ Run: `python -m pytest tests/agent/test_session_controller.py tests/ui/ -v -k "m
 Expected: PASS hoặc no tests collected (UI tests cần Qt stubs). Verify syntax:
 
 ```bash
-python -c "import ast; ast.parse(open('rikugan/ui/session_controller_base.py').read())"
+python -c "import ast; ast.parse(open('lucnhan/ui/session_controller_base.py').read())"
 ```
 Expected: no output (valid syntax).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add rikugan/ui/session_controller_base.py
+git add lucnhan/ui/session_controller_base.py
 git commit -m "refactor(memory): always wire central memory in controller"
 ```
 
@@ -382,7 +382,7 @@ git commit -m "refactor(memory): always wire central memory in controller"
 ### Task 5: Xóa legacy system_prompt loading
 
 **Files:**
-- Modify: `rikugan/agent/system_prompt.py:1-145`
+- Modify: `lucnhan/agent/system_prompt.py:1-145`
 - Test: `tests/agent/test_prompt_cutover.py`, `tests/agent/test_system_prompt.py`
 
 **Interfaces:**
@@ -397,7 +397,7 @@ git commit -m "refactor(memory): always wire central memory in controller"
 ```python
     def test_build_system_prompt_no_memory_section_when_empty(self, tmp_path: Path) -> None:
         """Without structured_memory or manual_memory_notes, no memory section appears."""
-        from rikugan.agent.system_prompt import build_system_prompt
+        from lucnhan.agent.system_prompt import build_system_prompt
 
         prompt = build_system_prompt()
         # No memory content, but base prompt is present
@@ -412,8 +412,8 @@ Xóa mọi reference. Nếu test gọi `build_system_prompt(idb_dir=...)` → x�
 
 - [ ] **Step 3: Xóa legacy loading code trong system_prompt.py**
 
-Sửa `rikugan/agent/system_prompt.py`. Xóa:
-1. Dòng 5 `import os` (nếu `_load_persistent_memory` là user duy nhất — verify bằng `git grep -n "^import os\|os\." -- rikugan/agent/system_prompt.py`; nếu 0 match ngoài import → xóa).
+Sửa `lucnhan/agent/system_prompt.py`. Xóa:
+1. Dòng 5 `import os` (nếu `_load_persistent_memory` là user duy nhất — verify bằng `git grep -n "^import os\|os\." -- lucnhan/agent/system_prompt.py`; nếu 0 match ngoài import → xóa).
 2. Dòng 20-96: toàn bộ `_MAX_MEMORY_LINES`, comment block cache, `_MEMORY_CACHE`, `_MEMORY_MISSING_SENTINEL`, `_load_persistent_memory()`.
 3. Giữ import `sanitize_memory` dòng 10.
 
@@ -450,7 +450,7 @@ Thành:
 
 - [ ] **Step 4b: Dọn caller loop.py _build_system_prompt**
 
-Sửa `rikugan/agent/loop.py` `_build_system_prompt()` (dòng 494-560):
+Sửa `lucnhan/agent/loop.py` `_build_system_prompt()` (dòng 494-560):
 1. Xóa block derive idb_dir (dòng 515-518):
 
 ```python
@@ -469,7 +469,7 @@ Sửa `rikugan/agent/loop.py` `_build_system_prompt()` (dòng 494-560):
 
 - [ ] **Step 4c: Dọn caller orchestra/main_agent.py (để Task 5 tự đứng)**
 
-Sửa `rikugan/agent/orchestra/main_agent.py` dòng 141-154 (chi tiết ở Task 8 Step 1-2 — copy code đó vào đây). Xóa block idb_dir + xóa arg `idb_dir=idb_dir,` trong build_system_prompt call.
+Sửa `lucnhan/agent/orchestra/main_agent.py` dòng 141-154 (chi tiết ở Task 8 Step 1-2 — copy code đó vào đây). Xóa block idb_dir + xóa arg `idb_dir=idb_dir,` trong build_system_prompt call.
 
 - [ ] **Step 5: Run prompt tests**
 
@@ -479,7 +479,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/agent/system_prompt.py rikugan/agent/loop.py rikugan/agent/orchestra/main_agent.py tests/agent/test_prompt_cutover.py tests/agent/test_system_prompt.py
+git add lucnhan/agent/system_prompt.py lucnhan/agent/loop.py lucnhan/agent/orchestra/main_agent.py tests/agent/test_prompt_cutover.py tests/agent/test_system_prompt.py
 git commit -m "refactor(memory): remove legacy RIKUGAN.md loading from system prompt"
 ```
 
@@ -490,8 +490,8 @@ git commit -m "refactor(memory): remove legacy RIKUGAN.md loading from system pr
 ### Task 6: Xóa legacy save_memory + memory command + case message
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:82-88, 251-257, 459-461, 1601-1671`
-- Modify: `rikugan/agent/loop_commands.py:98-147`
+- Modify: `lucnhan/agent/loop.py:82-88, 251-257, 459-461, 1601-1671`
+- Modify: `lucnhan/agent/loop_commands.py:98-147`
 - Test: `tests/agent/test_memory_cutover.py`, `tests/agent/test_memory_write_ownership.py`
 
 **Interfaces:**
@@ -506,7 +506,7 @@ git commit -m "refactor(memory): remove legacy RIKUGAN.md loading from system pr
 ```python
     def test_save_memory_without_service_returns_error(self, tmp_path: Path) -> None:
         """When memory_service is None (identity failure), save_memory reports unavailable."""
-        config = RikuganConfig()
+        config = LucNhanConfig()
         session = SessionState(idb_path=str(tmp_path / "test.i64"))
         provider = MagicMock()
         tools = MagicMock()
@@ -524,7 +524,7 @@ git commit -m "refactor(memory): remove legacy RIKUGAN.md loading from system pr
 
 - [ ] **Step 2: Xóa _MEMORY_HEADER + append_to_memory_file trong loop.py**
 
-Sửa `rikugan/agent/loop.py`. Xóa:
+Sửa `lucnhan/agent/loop.py`. Xóa:
 1. Dòng 84-88 `_MEMORY_HEADER = (...)`.
 2. Dòng 251-257 hàm `append_to_memory_file()`.
 
@@ -636,7 +636,7 @@ Thành:
 
 - [ ] **Step 6: Xóa legacy branch trong _handle_memory_command (loop_commands.py)**
 
-Sửa `rikugan/agent/loop_commands.py` dòng 98-147. Thay toàn bộ method. Từ:
+Sửa `lucnhan/agent/loop_commands.py` dòng 98-147. Thay toàn bộ method. Từ:
 
 ```python
 def _handle_memory_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
@@ -729,7 +729,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add rikugan/agent/loop.py rikugan/agent/loop_commands.py tests/agent/test_memory_cutover.py
+git add lucnhan/agent/loop.py lucnhan/agent/loop_commands.py tests/agent/test_memory_cutover.py
 git commit -m "refactor(memory): remove legacy RIKUGAN.md save/read paths"
 ```
 
@@ -738,7 +738,7 @@ git commit -m "refactor(memory): remove legacy RIKUGAN.md save/read paths"
 ### Task 7: persist_plan dùng service.save_plan
 
 **Files:**
-- Modify: `rikugan/agent/modes/plan.py:1-12, 109-128`
+- Modify: `lucnhan/agent/modes/plan.py:1-12, 109-128`
 
 **Interfaces:**
 - Consumes: `loop.memory_service.save_plan()`, `loop._memory_authority`
@@ -746,7 +746,7 @@ git commit -m "refactor(memory): remove legacy RIKUGAN.md save/read paths"
 
 - [ ] **Step 1: Thêm import log_debug**
 
-Sửa `rikugan/agent/modes/plan.py` dòng 11. Từ:
+Sửa `lucnhan/agent/modes/plan.py` dòng 11. Từ:
 
 ```python
 from ...core.logging import log_error, log_info
@@ -814,7 +814,7 @@ def persist_plan(loop: AgentLoop, user_goal: str, steps: list[str]) -> None:
 Kiểm tra `plan.py` dòng 5-6: `import os` và `import time`. Sau refactor, `persist_plan` không còn dùng `os.path` hay `time.strftime`. Grep:
 
 ```bash
-git grep -n "os\.\|time\." -- rikugan/agent/modes/plan.py
+git grep -n "os\.\|time\." -- lucnhan/agent/modes/plan.py
 ```
 Nếu chỉ còn match trong `persist_plan` cũ (đã xóa) → xóa `import os` và `import time`. Nếu có match khác → giữ import tương ứng.
 
@@ -824,13 +824,13 @@ Run: `python -m pytest tests/agent/ -v -k "plan" 2>&1 | head -40`
 Expected: PASS hoặc no plan-persist tests. Verify syntax:
 
 ```bash
-python -c "import ast; ast.parse(open('rikugan/agent/modes/plan.py').read())"
+python -c "import ast; ast.parse(open('lucnhan/agent/modes/plan.py').read())"
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rikugan/agent/modes/plan.py
+git add lucnhan/agent/modes/plan.py
 git commit -m "refactor(memory): persist plans via central memory service"
 ```
 
@@ -839,7 +839,7 @@ git commit -m "refactor(memory): persist plans via central memory service"
 ### Task 8: Dọn research docstring (orchestra đã dọn ở Task 5)
 
 **Files:**
-- Modify: `rikugan/agent/modes/research.py:146, 162`
+- Modify: `lucnhan/agent/modes/research.py:146, 162`
 
 **Interfaces:**
 - Consumes: (orchestra/main_agent.py đã dọn ở Task 5 Step 4c)
@@ -847,7 +847,7 @@ git commit -m "refactor(memory): persist plans via central memory service"
 
 - [ ] **Step 1: Dọn research.py docstring**
 
-Sửa `rikugan/agent/modes/research.py`:
+Sửa `lucnhan/agent/modes/research.py`:
 1. Dòng 146: `Persist confirmed findings to RIKUGAN.md for future sessions.` → `Persist confirmed findings to central memory (MEMORY.md) for future sessions.`
 2. Dòng 162: `Use \`save_memory\` to persist confirmed findings to RIKUGAN.md so future sessions` → `Use \`save_memory\` to persist confirmed findings to central memory (MEMORY.md) so future sessions`
 
@@ -856,7 +856,7 @@ Sửa `rikugan/agent/modes/research.py`:
 Run:
 
 ```bash
-git grep -n "idb_dir" -- rikugan/agent/
+git grep -n "idb_dir" -- lucnhan/agent/
 ```
 Expected: no matches (loop.py + orchestra đã dọn ở Task 5).
 
@@ -866,13 +866,13 @@ Run: `python -m pytest tests/agent/test_agent_loop.py tests/agent/test_system_pr
 Expected: PASS. Verify syntax:
 
 ```bash
-python -c "import ast; ast.parse(open('rikugan/agent/modes/research.py').read())"
+python -c "import ast; ast.parse(open('lucnhan/agent/modes/research.py').read())"
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add rikugan/agent/modes/research.py
+git add lucnhan/agent/modes/research.py
 git commit -m "docs(memory): update research mode prompt to reference MEMORY.md"
 ```
 
@@ -881,39 +881,39 @@ git commit -m "docs(memory): update research mode prompt to reference MEMORY.md"
 ### Task 9: Xóa module legacy.py + dọn docstrings
 
 **Files:**
-- Delete: `rikugan/memory/legacy.py`
-- Modify: `rikugan/memory/__init__.py:7-17`
-- Modify: `rikugan/memory/paths.py:11`
-- Modify: `rikugan/core/sanitize.py:5`
+- Delete: `lucnhan/memory/legacy.py`
+- Modify: `lucnhan/memory/__init__.py:7-17`
+- Modify: `lucnhan/memory/paths.py:11`
+- Modify: `lucnhan/core/sanitize.py:5`
 
 **Interfaces:**
 - Consumes: (không — legacy.py không còn caller sau Task 6)
-- Produces: package `rikugan.memory` không còn importer
+- Produces: package `lucnhan.memory` không còn importer
 
 - [ ] **Step 1: Verify legacy.py không còn import**
 
 Run:
 
 ```bash
-git grep -n "from.*memory.legacy import\|from.*memory\.legacy\|memory\.legacy" -- rikugan/ tests/
+git grep -n "from.*memory.legacy import\|from.*memory\.legacy\|memory\.legacy" -- lucnhan/ tests/
 ```
-Expected: chỉ match trong `tests/memory/test_legacy.py` (sẽ xóa Task 10) và chính `legacy.py`. Không match trong `rikugan/` runtime code.
+Expected: chỉ match trong `tests/memory/test_legacy.py` (sẽ xóa Task 10) và chính `legacy.py`. Không match trong `lucnhan/` runtime code.
 
 - [ ] **Step 2: Xóa file legacy.py**
 
 ```bash
-git rm rikugan/memory/legacy.py
+git rm lucnhan/memory/legacy.py
 ```
 
 - [ ] **Step 3: Dọn __init__.py docstring**
 
-Sửa `rikugan/memory/__init__.py` dòng 7-17. Xóa đoạn deprecation/dark-mode:
+Sửa `lucnhan/memory/__init__.py` dòng 7-17. Xóa đoạn deprecation/dark-mode:
 
 ```python
 .. deprecated::
     This folder-scoped JSONL subsystem is superseded by the central
-    SQLite workspace store (``rikugan.memory.workspace_store``,
-    ``rikugan.memory.repository``, ``rikugan.memory.service``).
+    SQLite workspace store (``lucnhan.memory.workspace_store``,
+    ``lucnhan.memory.repository``, ``lucnhan.memory.service``).
     When ``config.memory_workspaces_enabled`` is True, all readers and
     writers should use the central service instead of this module's
     ``KnowledgeRawStore`` / ``knowledge_paths`` APIs. The legacy path
@@ -924,7 +924,7 @@ Giữ phần docstring còn lại (Storage layout, mô tả module). Module này
 
 - [ ] **Step 4: Dọn paths.py docstring**
 
-Sửa `rikugan/memory/paths.py` dòng 9-11. Thay:
+Sửa `lucnhan/memory/paths.py` dòng 9-11. Thay:
 
 ```python
 The filesystem layout is fixed by the plan. ``<idb_dir>`` is the
@@ -942,7 +942,7 @@ parent directory of the IDB file, matching how existing code derives
 
 - [ ] **Step 5: Dọn sanitize.py docstring**
 
-Sửa `rikugan/core/sanitize.py` dòng 5. Từ:
+Sửa `lucnhan/core/sanitize.py` dòng 5. Từ:
 
 ```
 (skills, RIKUGAN.md) is considered **untrusted**.  This module provides:
@@ -962,8 +962,8 @@ Expected: PASS (2 ignore là file sẽ xóa Task 10).
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/memory/__init__.py rikugan/memory/paths.py rikugan/core/sanitize.py
-git rm rikugan/memory/legacy.py 2>/dev/null; true
+git add lucnhan/memory/__init__.py lucnhan/memory/paths.py lucnhan/core/sanitize.py
+git rm lucnhan/memory/legacy.py 2>/dev/null; true
 git commit -m "refactor(memory): remove legacy importer and clean docstrings"
 ```
 
@@ -1022,7 +1022,7 @@ git commit -m "test(memory): remove obsolete legacy and activation-gate tests"
 Run:
 
 ```bash
-git grep -ln "RIKUGAN\.md" -- CLAUDE.md AGENTS.md ARCHITECTURE.md README.md llms.txt webpage/
+git grep -ln "LUCNHAN\.md" -- CLAUDE.md AGENTS.md ARCHITECTURE.md README.md llms.txt webpage/
 ```
 Expected: list file cần sửa. KHÔNG include `docs/superpowers/` (historical plans/specs giữ nguyên) và `CHANGELOG.md` (xử lý riêng).
 
@@ -1030,14 +1030,14 @@ Expected: list file cần sửa. KHÔNG include `docs/superpowers/` (historical 
 
 Mở `CLAUDE.md`. Cụ thể:
 1. Dòng 209 bảng sanitize: `| \`sanitize_memory()\` | nội dung RIKUGAN.md |` → `| \`sanitize_memory()\` | nội dung MEMORY.md (manual notes) |`.
-2. Grep toàn file: `git grep -n "RIKUGAN\.md" -- CLAUDE.md`. Mỗi mention: nếu mô tả persistent memory file → đổi `RIKUGAN.md` → `MEMORY.md`. Nếu mô tả "file cạnh IDB" → cập nhật thành "central memory workspace".
+2. Grep toàn file: `git grep -n "LUCNHAN\.md" -- CLAUDE.md`. Mỗi mention: nếu mô tả persistent memory file → đổi `RIKUGAN.md` → `MEMORY.md`. Nếu mô tả "file cạnh IDB" → cập nhật thành "central memory workspace".
 3. Tìm mention dark scaffolding flags (`memory_workspaces_enabled`, `case_memory_enabled`, `peer_retrieval_enabled`) → xóa hoặc cập nhật "always-on".
 
 - [ ] **Step 3: Sửa AGENTS.md**
 
 Mở `AGENTS.md`:
 1. Dòng 579: `- **\`sanitize_memory()\`** — RIKUGAN.md content loaded into the system prompt.` → `- **\`sanitize_memory()\`** — MEMORY.md manual notes loaded into the system prompt.`
-2. Grep: `git grep -n "RIKUGAN\.md\|memory_workspaces_enabled\|case_memory_enabled\|peer_retrieval_enabled" -- AGENTS.md`. Sửa từng match.
+2. Grep: `git grep -n "LUCNHAN\.md\|memory_workspaces_enabled\|case_memory_enabled\|peer_retrieval_enabled" -- AGENTS.md`. Sửa từng match.
 
 - [ ] **Step 4: Sửa ARCHITECTURE.md, README.md, llms.txt, webpage/**
 
@@ -1060,7 +1060,7 @@ Sửa `CHANGELOG.md`. Thêm entry ở đầu (sau header), dạng:
 ### Removed
 - Legacy `RIKUGAN.md` runtime read/write. **Legacy `RIKUGAN.md` data is
   not migrated — the old file is ignored.**
-- `rikugan/memory/legacy.py` importer (clean break, no migration tool).
+- `lucnhan/memory/legacy.py` importer (clean break, no migration tool).
 - Config flags `memory_workspaces_enabled`, `case_memory_enabled`,
   `peer_retrieval_enabled` (central memory is always-on).
 ```
@@ -1070,7 +1070,7 @@ Sửa `CHANGELOG.md`. Thêm entry ở đầu (sau header), dạng:
 Run:
 
 ```bash
-git grep -n "RIKUGAN\.md" -- rikugan/
+git grep -n "LUCNHAN\.md" -- lucnhan/
 ```
 Expected: no matches (code runtime sạch). Historical plans/specs trong `docs/superpowers/` vẫn có mention — đó OK.
 
@@ -1101,14 +1101,14 @@ Expected: PASS (format + lint + mypy + pytest + desloppify). Nếu fail → đ�
 Run:
 
 ```bash
-echo "=== RIKUGAN.md in rikugan/ ==="
-git grep -n "RIKUGAN\.md" -- rikugan/ || echo "CLEAN"
-echo "=== flags in rikugan/ ==="
-git grep -n "memory_workspaces_enabled\|case_memory_enabled\|peer_retrieval_enabled" -- rikugan/ || echo "CLEAN"
+echo "=== RIKUGAN.md in lucnhan/ ==="
+git grep -n "LUCNHAN\.md" -- lucnhan/ || echo "CLEAN"
+echo "=== flags in lucnhan/ ==="
+git grep -n "memory_workspaces_enabled\|case_memory_enabled\|peer_retrieval_enabled" -- lucnhan/ || echo "CLEAN"
 echo "=== append_to_memory_file / _load_persistent_memory ==="
-git grep -n "append_to_memory_file\|_load_persistent_memory\|_MEMORY_HEADER\|_MEMORY_CACHE" -- rikugan/ || echo "CLEAN"
+git grep -n "append_to_memory_file\|_load_persistent_memory\|_MEMORY_HEADER\|_MEMORY_CACHE" -- lucnhan/ || echo "CLEAN"
 echo "=== idb_dir param ==="
-git grep -n "idb_dir" -- rikugan/agent/ || echo "CLEAN"
+git grep -n "idb_dir" -- lucnhan/agent/ || echo "CLEAN"
 ```
 Expected: tất cả CLEAN (không match).
 
@@ -1120,7 +1120,7 @@ Run:
 echo "=== flags in tests/ ==="
 git grep -n "memory_workspaces_enabled\|case_memory_enabled\|peer_retrieval_enabled" -- tests/ || echo "CLEAN"
 echo "=== legacy import in tests/ ==="
-git grep -n "from rikugan.memory.legacy\|memory\.legacy" -- tests/ || echo "CLEAN"
+git grep -n "from lucnhan.memory.legacy\|memory\.legacy" -- tests/ || echo "CLEAN"
 ```
 Expected: tất cả CLEAN.
 
@@ -1129,10 +1129,10 @@ Expected: tất cả CLEAN.
 Run:
 
 ```bash
-python -c "from rikugan.core.config import RikuganConfig; c = RikuganConfig(); print('config OK')"
-python -c "from rikugan.memory.manager import MemoryWorkspaceManager; print('manager OK')"
-python -c "from rikugan.agent.system_prompt import build_system_prompt; print(build_system_prompt()[:50])"
-python -c "from rikugan.agent.loop import AgentLoop; print('loop OK')"
+python -c "from lucnhan.core.config import LucNhanConfig; c = LucNhanConfig(); print('config OK')"
+python -c "from lucnhan.memory.manager import MemoryWorkspaceManager; print('manager OK')"
+python -c "from lucnhan.agent.system_prompt import build_system_prompt; print(build_system_prompt()[:50])"
+python -c "from lucnhan.agent.loop import AgentLoop; print('loop OK')"
 ```
 Expected: 4 dòng `... OK` + prompt prefix, không có ImportError/AttributeError.
 

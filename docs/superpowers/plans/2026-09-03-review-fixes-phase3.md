@@ -14,7 +14,7 @@
 
 - `from __future__ import annotations`; type hints on all new signatures.
 - `EXECUTE_PYTHON_TOOL_NAME` constant; never hardcode the string.
-- Single sink for `eval`/`exec`: `rikugan/tools/script_guard.py` (Phase-1 invariant; Task 1 must not regress).
+- Single sink for `eval`/`exec`: `lucnhan/tools/script_guard.py` (Phase-1 invariant; Task 1 must not regress).
 - No new third-party deps.
 - Queue + `QTimer` for any cross-thread UI updates.
 - Cancellation only via existing `threading.Event`/queue patterns.
@@ -26,8 +26,8 @@
 ### Task 1: Architectural fix — namespace scrubbing for guarded scripts (closes the transitive-leak class)
 
 **Files:**
-- Modify: `rikugan/tools/script_guard.py` (`_guarded_import`, `safe_builtins`, `run_guarded_script`, `run_guarded_code` — exact names may have drifted after Phase 1/2)
-- Modify: `rikugan/ida/tools/microcode_optim.py` (optimizer compile path keeps using the hardened sink)
+- Modify: `lucnhan/tools/script_guard.py` (`_guarded_import`, `safe_builtins`, `run_guarded_script`, `run_guarded_code` — exact names may have drifted after Phase 1/2)
+- Modify: `lucnhan/ida/tools/microcode_optim.py` (optimizer compile path keeps using the hardened sink)
 - Test: extend `tests/tools/test_script_guard.py`
 
 **Background from the Phase-1 ledger.**
@@ -60,8 +60,8 @@ Static blocklists cannot close this class: most `PureModule + DotAttribute` look
 ### Task 2: Close per-run WorkspaceStore connection leak
 
 **Files:**
-- Modify: `rikugan/ui/session_controller_base.py` (`_wire_central_memory` + the `_on_agent_finished` path — grep those names)
-- Modify: `rikugan/memory/workspace_store.py` (`close()` becomes idempotent if not already)
+- Modify: `lucnhan/ui/session_controller_base.py` (`_wire_central_memory` + the `_on_agent_finished` path — grep those names)
+- Modify: `lucnhan/memory/workspace_store.py` (`close()` becomes idempotent if not already)
 - Test: extend `tests/memory/` (new `test_workspace_store_lifecycle.py`)
 
 **Interfaces:**
@@ -75,8 +75,8 @@ Static blocklists cannot close this class: most `PureModule + DotAttribute` look
 ### Task 3: `max_turns` becomes a hard ceiling (not advisory)
 
 **Files:**
-- Modify: `rikugan/agent/subagent.py` (`SubagentRunner.run_task`/`run_mode`/`run_exploration` accept `max_turns`; `rikugan/agent/modes/normal.py::run_normal_loop` enforces it)
-- Modify: `rikugan/agent/subagent_manager.py` (per-type overrides reach the runner as a hard limit; orchestrator path stays gated off)
+- Modify: `lucnhan/agent/subagent.py` (`SubagentRunner.run_task`/`run_mode`/`run_exploration` accept `max_turns`; `lucnhan/agent/modes/normal.py::run_normal_loop` enforces it)
+- Modify: `lucnhan/agent/subagent_manager.py` (per-type overrides reach the runner as a hard limit; orchestrator path stays gated off)
 - Test: extend existing subagent tests
 
 **Interfaces:**
@@ -95,7 +95,7 @@ Static blocklists cannot close this class: most `PureModule + DotAttribute` look
 ### Task 4: BackgroundAgentRunner: never drop control events
 
 **Files:**
-- Modify: `rikugan/agent/loop.py` (`BackgroundAgentRunner._safe_put`)
+- Modify: `lucnhan/agent/loop.py` (`BackgroundAgentRunner._safe_put`)
 - Test: extend existing agent loop tests
 
 **Interfaces:**
@@ -114,7 +114,7 @@ Static blocklists cannot close this class: most `PureModule + DotAttribute` look
 ### Task 5: Anthropic — deep-copy raw blocks on every request
 
 **Files:**
-- Modify: `rikugan/providers/anthropic_provider.py` (`_format_messages` block-list copy)
+- Modify: `lucnhan/providers/anthropic_provider.py` (`_format_messages` block-list copy)
 - Test: extend `tests/providers/`
 
 **Interfaces:**
@@ -133,7 +133,7 @@ Static blocklists cannot close this class: most `PureModule + DotAttribute` look
 ### Task 6: Cancel label — plan-step and `/a2a` mode must emit CANCELLED, not ERROR
 
 **Files:**
-- Modify: `rikugan/agent/modes/a2a.py` (run_a2a_mode catches CancellationError separately)
+- Modify: `lucnhan/agent/modes/a2a.py` (run_a2a_mode catches CancellationError separately)
 - Test: extend existing a2a tests; add a quick check that plan-step "turn_limit" label is observable
 
 **Interfaces:**
@@ -156,9 +156,9 @@ Static blocklists cannot close this class: most `PureModule + DotAttribute` look
 - Add: `pyproject.toml`'s `[tool.pytest.ini_options]` timeout if sensible
 
 **Interfaces:**
-- Produces: `mypy` config includes `rikugan.memory` and (separately) `rikugan.ui` modules that are non-shiboken — strict enough to catch regressions but no more than the layering requires. `ruff check` includes `tests/` directory. `[tool.pytest.ini_options]` adds a default per-test timeout so the known flakes (e.g. `test_height_cached_label` mock pollution) don't hang the suite.
+- Produces: `mypy` config includes `lucnhan.memory` and (separately) `lucnhan.ui` modules that are non-shiboken — strict enough to catch regressions but no more than the layering requires. `ruff check` includes `tests/` directory. `[tool.pytest.ini_options]` adds a default per-test timeout so the known flakes (e.g. `test_height_cached_label` mock pollution) don't hang the suite.
 
-- [ ] **Step 1: Land the config** with the smallest scope that adds value — mypy targets explicitly chosen modules by reading `pyproject.toml [tool.mypy]` and excluding only ones that touch shiboken at import time (e.g. `rikugan.ui.chat_view` may need to stay `ignore_errors = true` if the stubs don't cover QWidget signal overloads; evaluate per-module).
+- [ ] **Step 1: Land the config** with the smallest scope that adds value — mypy targets explicitly chosen modules by reading `pyproject.toml [tool.mypy]` and excluding only ones that touch shiboken at import time (e.g. `lucnhan.ui.chat_view` may need to stay `ignore_errors = true` if the stubs don't cover QWidget signal overloads; evaluate per-module).
 
 - [ ] **Step 2: Run new checks; fix any pre-existing failures they surface EXCEPT master's known pre-existing failures (workspace migration v2/v3/portalocker manifest) — record the rest as new audit-worthy items separately, do not fix here.
 
@@ -171,7 +171,7 @@ Static blocklists cannot close this class: most `PureModule + DotAttribute` look
 - [ ] `./ci-local.sh` — no failure NEW vs master baseline for the affected check (mypy/ruff now point at more code; pre-existing per-module ignores preserved where the stub gap is real).
 - [ ] Full pytest — failure set ⊆ master's 28 (Task 2 may *reduce* some by closing the WorkspaceStore lifecycle gap).
 - [ ] `git log --oneline` shows the 7 task commits on `fix/review-phase3`.
-- [ ] Push branch + PR to `master` (fork `EliteClassRoom/rikugan`) — or local merge per user choice.
+- [ ] Push branch + PR to `master` (fork `EliteClassRoom/Luc-Nhan`) — or local merge per user choice.
 
 ## Explicitly out of scope (Phase 4 / accepted)
 

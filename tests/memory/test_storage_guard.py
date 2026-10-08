@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.storage_guard import (
+from lucnhan.memory.storage_guard import (
     StorageError,
     ensure_private_directory,
     validate_memory_root,

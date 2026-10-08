@@ -1,6 +1,6 @@
-"""Regression tests for the Rikugan Light theme on SettingsDialog and InputArea.
+"""Regression tests for the Luc Nhan Light theme on SettingsDialog and InputArea.
 
-The reported regression: when the user picks Rikugan Light mode,
+The reported regression: when the user picks Luc Nhan Light mode,
 parts of the SettingsDialog body and the chat input still render
 with a black/dark background — the host's default Qt palette bleeds
 through because the dialog was relying on global ``QWidget``
@@ -17,8 +17,8 @@ These tests pin the corrected behaviour:
 2. ``build_input_area_stylesheet(LIGHT_TOKENS)`` paints the input
    editor with ``LIGHT_TOKENS.base`` / ``LIGHT_TOKENS.text`` and a
    visible ``LIGHT_TOKENS.mid`` border.
-3. The stylesheets for Rikugan Light mode are object-name-scoped
-   (``#rikugan_settings``, ``#input_area``) so they do not bleed
+3. The stylesheets for Luc Nhan Light mode are object-name-scoped
+   (``#lucnhan_settings``, ``#input_area``) so they do not bleed
    into the host application.
 4. Refreshing the stylesheet on ``ThemeManager.themeChanged``
    re-applies the new palette (the dialog does not stay stuck on
@@ -34,18 +34,18 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
-def _purge_rikugan_modules() -> None:
-    """Drop rikugan modules from sys.modules so we get the real
+def _purge_lucnhan_modules() -> None:
+    """Drop lucnhan modules from sys.modules so we get the real
     implementations, not the test stubs that sibling test files
     (e.g. ``tests.tools.test_panel_core``) may have installed.
     """
     for name in list(sys.modules):
-        if name == "rikugan.ui.theme" or name.startswith("rikugan.ui.theme."):
+        if name == "lucnhan.ui.theme" or name.startswith("lucnhan.ui.theme."):
             del sys.modules[name]
         elif name in (
-            "rikugan.ui.styles",
-            "rikugan.ui.settings_dialog",
-            "rikugan.ui.input_area",
+            "lucnhan.ui.styles",
+            "lucnhan.ui.settings_dialog",
+            "lucnhan.ui.input_area",
         ):
             del sys.modules[name]
 
@@ -54,11 +54,11 @@ class TestBuildSettingsDialogStylesheetLight(unittest.TestCase):
     """SettingsDialog's explicit-light QSS must use LIGHT_TOKENS."""
 
     def setUp(self) -> None:
-        import rikugan.ui.styles as _styles
-        from rikugan.ui.styles import build_settings_dialog_stylesheet
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
-        from rikugan.ui.theme.tokens import ThemeMode
+        import lucnhan.ui.styles as _styles
+        from lucnhan.ui.styles import build_settings_dialog_stylesheet
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.build_settings_dialog_stylesheet = build_settings_dialog_stylesheet
         self.LIGHT_TOKENS = LIGHT_TOKENS
@@ -120,12 +120,12 @@ class TestBuildSettingsDialogStylesheetLight(unittest.TestCase):
             )
 
     def test_light_stylesheet_is_object_name_scoped(self) -> None:
-        """The QSS must start with the ``#rikugan_settings`` object
+        """The QSS must start with the ``#lucnhan_settings`` object
         name so the styles do not bleed into the rest of the host
         application (e.g. IDA's main window)."""
         qss = self.build_settings_dialog_stylesheet(self.LIGHT_TOKENS)
         self.assertTrue(
-            qss.startswith("#rikugan_settings"),
+            qss.startswith("#lucnhan_settings"),
             f"QSS must be scoped to the dialog's object name; got: {qss[:80]!r}",
         )
 
@@ -140,9 +140,9 @@ class TestBuildInputAreaStylesheetLight(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        import rikugan.ui.styles as _styles
-        from rikugan.ui.styles import build_input_area_stylesheet
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
+        import lucnhan.ui.styles as _styles
+        from lucnhan.ui.styles import build_input_area_stylesheet
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
 
         self.build_input_area_stylesheet = build_input_area_stylesheet
         self.LIGHT_TOKENS = LIGHT_TOKENS
@@ -159,6 +159,7 @@ class TestBuildInputAreaStylesheetLight(unittest.TestCase):
             qss.startswith("QPlainTextEdit#input_area"),
             f"QSS must be scoped to #input_area; got: {qss[:80]!r}",
         )
+
     def test_light_input_qss_uses_light_token_colors(self) -> None:
         """The light-mode QSS must use ``LIGHT_TOKENS`` for the editor
         background, border, and selection colors so the input
@@ -169,13 +170,14 @@ class TestBuildInputAreaStylesheetLight(unittest.TestCase):
         self.assertIn(self.LIGHT_TOKENS.highlight, qss)
         self.assertIn(self.LIGHT_TOKENS.highlight_text, qss)
 
+
 class TestBuildSkillPopupStylesheetLight(unittest.TestCase):
     """The skill-autocomplete popup QSS must also be light-theme aware."""
 
     def setUp(self) -> None:
-        import rikugan.ui.styles as _styles
-        from rikugan.ui.styles import build_skill_popup_stylesheet
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
+        import lucnhan.ui.styles as _styles
+        from lucnhan.ui.styles import build_skill_popup_stylesheet
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
 
         self.build_skill_popup_stylesheet = build_skill_popup_stylesheet
         self.LIGHT_TOKENS = LIGHT_TOKENS
@@ -212,8 +214,8 @@ class TestHostThemeReturnsEmptyStylesheet(unittest.TestCase):
         # helper is called*.  Setting the attribute on the same
         # module object the helper reads is the only safe way to
         # influence the result.
-        import rikugan.ui.styles as _styles
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
+        import lucnhan.ui.styles as _styles
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
 
         self.LIGHT_TOKENS = LIGHT_TOKENS
         self._styles = _styles
@@ -222,12 +224,12 @@ class TestHostThemeReturnsEmptyStylesheet(unittest.TestCase):
         self.addCleanup(_styles.__setattr__, "_current_theme", self._orig_current)
 
     def tearDown(self) -> None:
-        from rikugan.ui import styles as _styles
+        from lucnhan.ui import styles as _styles
 
         _styles._current_theme = self._orig_current
 
     def test_settings_dialog_returns_empty_in_host_mode(self) -> None:
-        from rikugan.ui.styles import build_settings_dialog_stylesheet
+        from lucnhan.ui.styles import build_settings_dialog_stylesheet
 
         self.assertEqual(build_settings_dialog_stylesheet(self.LIGHT_TOKENS), "")
 
@@ -239,7 +241,7 @@ class TestHostThemeReturnsEmptyStylesheet(unittest.TestCase):
         ``InputArea.apply_palette`` (QPalette roles), so the host
         palette never bleeds through to render typed text invisible.
         """
-        from rikugan.ui.styles import build_input_area_stylesheet
+        from lucnhan.ui.styles import build_input_area_stylesheet
 
         qss = build_input_area_stylesheet(self.LIGHT_TOKENS)
         self.assertTrue(qss, "input QSS must be non-empty in host mode")
@@ -247,41 +249,37 @@ class TestHostThemeReturnsEmptyStylesheet(unittest.TestCase):
             qss.startswith("QPlainTextEdit#input_area"),
             f"input QSS must be scoped to #input_area in host mode; got: {qss[:80]!r}",
         )
+
     def test_skill_popup_returns_empty_in_host_mode(self) -> None:
-        from rikugan.ui.styles import build_skill_popup_stylesheet
+        from lucnhan.ui.styles import build_skill_popup_stylesheet
 
         self.assertEqual(build_skill_popup_stylesheet(self.LIGHT_TOKENS), "")
 
 
-@unittest.expectedFailure
 class TestSettingsDialogAppliesThemeOnShow(unittest.TestCase):
     """The settings dialog must call ``_apply_theme_styles`` on
     construction (or first show) so the light-mode QSS is applied
     before the user sees the dialog.  A pre-existing dark QSS must
     be replaced when the dialog is shown with light mode active.
 
-    Marked expectedFailure: these tests need a clean
-    ThemeManager singleton (no pending signal connections from
-    earlier test files) and a clean ``rikugan.ui.styles`` module
-    state. In the full suite, ``test_panel_core`` and
-    ``test_chat_view`` install stub modules that bleed theme
-    state across the test boundary. Tracked in
-    PROJECT_MODIFICATION_PLAN.md as D.3 remaining work.
+    (Earlier versions marked this class expectedFailure because stub
+    modules bled theme state across the test boundary; the per-test
+    purge in tests/conftest.py since made that obsolete.)
     """
 
     def setUp(self) -> None:
-        _purge_rikugan_modules()
+        _purge_lucnhan_modules()
         from PySide6.QtWidgets import QApplication
 
         self._qapp = QApplication.instance() or QApplication([])
 
     def test_settings_dialog_applies_light_qss_on_show(self) -> None:
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui import styles as _styles
-        from rikugan.ui.settings_dialog import SettingsDialog
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui import styles as _styles
+        from lucnhan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         # Pin the manager to LIGHT.
         ThemeManager.reset()
@@ -291,7 +289,7 @@ class TestSettingsDialogAppliesThemeOnShow(unittest.TestCase):
         orig = _styles._current_theme
         _styles._current_theme = "light"
         try:
-            cfg = RikuganConfig()
+            cfg = LucNhanConfig()
             dlg = SettingsDialog(cfg)
             self.addCleanup(dlg.deleteLater)
             dlg._apply_theme_styles()
@@ -302,8 +300,8 @@ class TestSettingsDialogAppliesThemeOnShow(unittest.TestCase):
             self.assertIn(LIGHT_TOKENS.text, qss)
             # And it must be scoped to the dialog's object name.
             self.assertTrue(
-                qss.lstrip().startswith("#rikugan_settings"),
-                f"QSS must start with #rikugan_settings; got: {qss[:60]!r}",
+                qss.lstrip().startswith("#lucnhan_settings"),
+                f"QSS must start with #lucnhan_settings; got: {qss[:60]!r}",
             )
         finally:
             _styles._current_theme = orig
@@ -313,13 +311,13 @@ class TestSettingsDialogAppliesThemeOnShow(unittest.TestCase):
         """A theme change while the dialog is alive must update
         the QSS so a stale dark QSS doesn't remain after the user
         switches to light mode (or vice versa)."""
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui import styles as _styles
-        from rikugan.ui.settings_dialog import SettingsDialog
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.palette_dark import DARK_TOKENS
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui import styles as _styles
+        from lucnhan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.palette_dark import DARK_TOKENS
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         ThemeManager.reset()
         tm = ThemeManager.instance()
@@ -328,7 +326,7 @@ class TestSettingsDialogAppliesThemeOnShow(unittest.TestCase):
             # Start dark.
             tm.set_mode(ThemeMode.DARK)
             _styles._current_theme = "dark"
-            cfg = RikuganConfig()
+            cfg = LucNhanConfig()
             dlg = SettingsDialog(cfg)
             self.addCleanup(dlg.deleteLater)
             dlg._apply_theme_styles()

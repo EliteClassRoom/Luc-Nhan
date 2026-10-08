@@ -11,9 +11,9 @@
 ## Global Constraints
 
 - Every module starts with `from __future__ import annotations`.
-- Qt symbols imported from `rikugan.ui.qt_compat`, never from `PySide6` directly.
+- Qt symbols imported from `lucnhan.ui.qt_compat`, never from `PySide6` directly.
 - Host/theme helpers use lazy import inside functions to avoid cycles (pattern: `_tokens()` in `widgets_mutation.py`).
-- Tool name constant: use `rikugan.constants.EXECUTE_PYTHON_TOOL_NAME`, never hardcode the string.
+- Tool name constant: use `lucnhan.constants.EXECUTE_PYTHON_TOOL_NAME`, never hardcode the string.
 - No mutation of existing objects — build new QSS strings.
 - Run `python -m ruff format` and `python -m ruff check --fix` on changed files before committing.
 - Tests stub Qt via `tests/qt_stubs.py`; no IDA Pro needed.
@@ -22,9 +22,9 @@
 
 ## File Structure
 
-- **Modify** `rikugan/ui/theme/widgets_mutation.py` — add `get_tool_result_editor_style(text_color=None)` + private `_tool_result_editor_style`.
-- **Modify** `rikugan/ui/styles.py` — re-export the new function (line ~144 area).
-- **Modify** `rikugan/ui/tool_widgets.py` — rewrite `ExecutePythonWidget`: drop toggle, swap result label for `QPlainTextEdit`, simplify `set_result` / `set_code` / `_apply_styles` / `set_docs_gate_status`.
+- **Modify** `lucnhan/ui/theme/widgets_mutation.py` — add `get_tool_result_editor_style(text_color=None)` + private `_tool_result_editor_style`.
+- **Modify** `lucnhan/ui/styles.py` — re-export the new function (line ~144 area).
+- **Modify** `lucnhan/ui/tool_widgets.py` — rewrite `ExecutePythonWidget`: drop toggle, swap result label for `QPlainTextEdit`, simplify `set_result` / `set_code` / `_apply_styles` / `set_docs_gate_status`.
 - **Modify** `tests/tools/test_execute_python_widget.py` — flip collapse-assertions to always-visible, add scroll/cap/color tests.
 
 ---
@@ -32,8 +32,8 @@
 ### Task 1: Add result-editor style builder
 
 **Files:**
-- Modify: `rikugan/ui/theme/widgets_mutation.py` (after line 99, the `_tool_approval_code_editor_style` block)
-- Modify: `rikugan/ui/styles.py:134-152` (re-export block)
+- Modify: `lucnhan/ui/theme/widgets_mutation.py` (after line 99, the `_tool_approval_code_editor_style` block)
+- Modify: `lucnhan/ui/styles.py:134-152` (re-export block)
 - Test: `tests/ui/test_widgets_mutation_styles.py` (create)
 
 **Interfaces:**
@@ -56,9 +56,9 @@ from tests.qt_stubs import ensure_pyside6_stubs
 ensure_pyside6_stubs()
 
 # Ensure the real module is loaded even if another test stubbed it.
-sys.modules.pop("rikugan.ui.theme.widgets_mutation", None)
+sys.modules.pop("lucnhan.ui.theme.widgets_mutation", None)
 
-from rikugan.ui.theme.widgets_mutation import (  # noqa: E402
+from lucnhan.ui.theme.widgets_mutation import (  # noqa: E402
     get_tool_result_editor_style,
 )
 
@@ -95,7 +95,7 @@ Expected: FAIL — `ImportError: cannot import name 'get_tool_result_editor_styl
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `rikugan/ui/theme/widgets_mutation.py`, add after the `_tool_approval_code_editor_style` function (after line 99):
+In `lucnhan/ui/theme/widgets_mutation.py`, add after the `_tool_approval_code_editor_style` function (after line 99):
 
 ```python
 def _tool_result_editor_style(text_color: str | None = None) -> str:
@@ -131,7 +131,7 @@ def get_tool_result_editor_style(text_color: str | None = None) -> str:
 
 - [ ] **Step 4: Re-export from styles.py**
 
-In `rikugan/ui/styles.py`, find the import block from `.theme.widgets_mutation` (around line 134-144) and add `get_tool_result_editor_style` to the imported names, keeping alphabetical-ish order matching the surrounding block.
+In `lucnhan/ui/styles.py`, find the import block from `.theme.widgets_mutation` (around line 134-144) and add `get_tool_result_editor_style` to the imported names, keeping alphabetical-ish order matching the surrounding block.
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -141,9 +141,9 @@ Expected: PASS (3 tests).
 - [ ] **Step 6: Lint and commit**
 
 ```bash
-python -m ruff format rikugan/ui/theme/widgets_mutation.py rikugan/ui/styles.py
-python -m ruff check rikugan/ui/theme/widgets_mutation.py rikugan/ui/styles.py tests/ui/test_widgets_mutation_styles.py --fix
-git add rikugan/ui/theme/widgets_mutation.py rikugan/ui/styles.py tests/ui/test_widgets_mutation_styles.py
+python -m ruff format lucnhan/ui/theme/widgets_mutation.py lucnhan/ui/styles.py
+python -m ruff check lucnhan/ui/theme/widgets_mutation.py lucnhan/ui/styles.py tests/ui/test_widgets_mutation_styles.py --fix
+git add lucnhan/ui/theme/widgets_mutation.py lucnhan/ui/styles.py tests/ui/test_widgets_mutation_styles.py
 git commit -m "feat(ui): add get_tool_result_editor_style for execute_python output block"
 ```
 
@@ -152,7 +152,7 @@ git commit -m "feat(ui): add get_tool_result_editor_style for execute_python out
 ### Task 2: Rewrite ExecutePythonWidget to always-visible + scrollable output
 
 **Files:**
-- Modify: `rikugan/ui/tool_widgets.py:1367-1822` (the entire `ExecutePythonWidget` class)
+- Modify: `lucnhan/ui/tool_widgets.py:1367-1822` (the entire `ExecutePythonWidget` class)
 - Test: `tests/tools/test_execute_python_widget.py`
 
 **Interfaces:**
@@ -161,7 +161,7 @@ git commit -m "feat(ui): add get_tool_result_editor_style for execute_python out
 
 - [ ] **Step 1: Update module-level constant**
 
-In `rikugan/ui/tool_widgets.py`, find the constants block near line 41-43:
+In `lucnhan/ui/tool_widgets.py`, find the constants block near line 41-43:
 
 ```python
 _MAX_ARGS_DISPLAY = 2000
@@ -179,7 +179,7 @@ _RESULT_MAX_LINES = 15
 
 - [ ] **Step 2: Update the styles import**
 
-In `rikugan/ui/tool_widgets.py`, in the `from .styles import (...)` block (lines 28-37), add `get_tool_result_editor_style` to the imported names.
+In `lucnhan/ui/tool_widgets.py`, in the `from .styles import (...)` block (lines 28-37), add `get_tool_result_editor_style` to the imported names.
 
 - [ ] **Step 3: Rewrite the class**
 
@@ -585,14 +585,14 @@ Expected: Several FAILs — tests asserting collapsed state / `toggle_all` / `_r
 - [ ] **Step 5: Lint the changed file**
 
 ```bash
-python -m ruff format rikugan/ui/tool_widgets.py
-python -m ruff check rikugan/ui/tool_widgets.py --fix
+python -m ruff format lucnhan/ui/tool_widgets.py
+python -m ruff check lucnhan/ui/tool_widgets.py --fix
 ```
 
 - [ ] **Step 6: Commit (tests still failing — intentional, fixed next task)**
 
 ```bash
-git add rikugan/ui/tool_widgets.py
+git add lucnhan/ui/tool_widgets.py
 git commit -m "refactor(ui): rewrite ExecutePythonWidget to always-visible scrollable output
 
 Drop the collapse/expand toggle and all _result_*_visible state flags.
@@ -628,9 +628,9 @@ from tests.qt_stubs import ensure_pyside6_stubs
 ensure_pyside6_stubs()
 
 # Ensure the real module is loaded even if another test stubbed it.
-sys.modules.pop("rikugan.ui.tool_widgets", None)
+sys.modules.pop("lucnhan.ui.tool_widgets", None)
 
-from rikugan.ui.tool_widgets import ExecutePythonWidget  # noqa: E402
+from lucnhan.ui.tool_widgets import ExecutePythonWidget  # noqa: E402
 
 
 class TestExecutePythonWidgetInit(unittest.TestCase):
@@ -783,7 +783,7 @@ class TestSetResult(unittest.TestCase):
     def test_result_long_output_capped_and_scrollable(self):
         """A long output caps the editor height at _RESULT_MAX_LINES; the
         full text is still present in the document (scrollable)."""
-        from rikugan.ui.tool_widgets import _RESULT_MAX_LINES
+        from lucnhan.ui.tool_widgets import _RESULT_MAX_LINES
 
         long_output = "\n".join(f"line {i}" for i in range(50))
         w = ExecutePythonWidget("tc1")
@@ -864,7 +864,7 @@ git commit -m "test(ui): flip execute_python widget tests to always-visible beha
 ### Task 4: Verify ChatView callers and run full CI
 
 **Files:**
-- Verify only: `rikugan/ui/chat_view.py`
+- Verify only: `lucnhan/ui/chat_view.py`
 
 **Interfaces:**
 - Consumes: `ExecutePythonWidget.hide_preview` (no-op), `append_args_delta` (no-op), `set_result`, `set_code`/`set_arguments` (via `set_arguments`).
@@ -878,7 +878,7 @@ ChatView calls on ExecutePythonWidget at these lines (from earlier grep):
 - `chat_view.py:963` — `existing_tw.set_result(event.tool_result, event.tool_is_error)` → works.
 - `chat_view.py:978` — `isinstance(existing, ExecutePythonWidget)` then accesses — verify the block still only references attributes that exist (it surfaces the widget from a group). Read lines 968-1030 to confirm no `toggle_all()` / `_set_expanded` / `_result_content_visible` references remain.
 
-Run: `grep -n "toggle_all\|_set_expanded\|_result_content_visible\|_result_header_visible\|_status_detail_visible\|_code_expanded\|_result_block_visible" rikugan/ui/chat_view.py`
+Run: `grep -n "toggle_all\|_set_expanded\|_result_content_visible\|_result_header_visible\|_status_detail_visible\|_code_expanded\|_result_block_visible" lucnhan/ui/chat_view.py`
 Expected: no output (no references to removed attributes/methods).
 
 - [ ] **Step 2: Fix any stragglers if grep found references**
@@ -901,7 +901,7 @@ Expected: PASS (format + lint + mypy + pytest + desloppify ≥ 88.5).
 - [ ] **Step 5: Commit any ChatView fixes (if Step 2 changed anything)**
 
 ```bash
-git add rikugan/ui/chat_view.py
+git add lucnhan/ui/chat_view.py
 git commit -m "fix(ui): drop removed execute_python toggle refs in ChatView"
 ```
 (If no changes were needed, skip this commit.)

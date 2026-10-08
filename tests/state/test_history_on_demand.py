@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.constants import HISTORY_DELETE_SLOW_NOTICE_SECONDS, HISTORY_TITLE_MAX_CHARS
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role
-from rikugan.state.history import (
+from lucnhan.constants import HISTORY_DELETE_SLOW_NOTICE_SECONDS, HISTORY_TITLE_MAX_CHARS
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import Message, Role
+from lucnhan.state.history import (
     MANIFEST_FILE,
     MANIFEST_SCHEMA_VERSION,
     SessionDeleteOutcome,
@@ -29,7 +29,7 @@ from rikugan.state.history import (
     SessionHistory,
     derive_history_title,
 )
-from rikugan.state.history_types import (
+from lucnhan.state.history_types import (
     HistoryAttachResult,
     HistoryAttachStatus,
     HistoryDeleteResult,
@@ -39,7 +39,7 @@ from rikugan.state.history_types import (
     HistoryScope,
     SessionHistoryEntry,
 )
-from rikugan.state.session import SessionState
+from lucnhan.state.session import SessionState
 
 
 def test_history_entry_and_scope_are_frozen() -> None:
@@ -126,7 +126,7 @@ def test_history_delete_contract_is_frozen_and_stable() -> None:
 
 
 def _history(tmp_path: Path) -> SessionHistory:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     return SessionHistory(config)
 
@@ -710,7 +710,7 @@ def test_empty_session_rows_excluded_from_listing(tmp_path: Path) -> None:
 
 def test_matches_current_idb_by_instance_id() -> None:
     """Spec §8.3 — instance ID is authoritative when both sides have one."""
-    from rikugan.state.history import _matches_current_idb
+    from lucnhan.state.history import _matches_current_idb
 
     assert _matches_current_idb(
         entry_idb_path="C:/sample.i64",
@@ -722,7 +722,7 @@ def test_matches_current_idb_by_instance_id() -> None:
 
 def test_matches_current_idb_rejects_different_instance() -> None:
     """Spec §8.3 — different ``db_instance_id`` is rejected even if path matches."""
-    from rikugan.state.history import _matches_current_idb
+    from lucnhan.state.history import _matches_current_idb
 
     assert not _matches_current_idb(
         entry_idb_path="C:/sample.i64",
@@ -734,7 +734,7 @@ def test_matches_current_idb_rejects_different_instance() -> None:
 
 def test_matches_current_idb_falls_back_to_path_when_no_instance() -> None:
     """Spec §8.3 — legacy entries without a valid instance ID fall back to path."""
-    from rikugan.state.history import _matches_current_idb
+    from lucnhan.state.history import _matches_current_idb
 
     # Legacy entry has empty instance id — match by normalized path only.
     assert _matches_current_idb(
@@ -753,7 +753,7 @@ def test_matches_current_idb_falls_back_to_path_when_no_instance() -> None:
 
 def test_canonical_instance_id_rejects_malformed() -> None:
     """Spec §8.3 — non-32-hex values must be treated as absent (legacy fallback)."""
-    from rikugan.state.history import _canonical_instance_id
+    from lucnhan.state.history import _canonical_instance_id
 
     # Wrong length, non-hex, surrounding whitespace.
     assert _canonical_instance_id("deadbeef") == ""

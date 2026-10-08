@@ -13,8 +13,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.ida.tools import file_io
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.ida.tools import file_io
+from lucnhan.tools.registry import ToolRegistry
 
 
 def _with_root(root: str):
@@ -163,7 +163,7 @@ class TestWriteFile(unittest.TestCase):
         """
         from unittest.mock import patch as _patch
 
-        from rikugan.ida.tools import file_io as fio
+        from lucnhan.ida.tools import file_io as fio
 
         with _with_root(self.tmp), _patch.object(
             fio, "atomic_replace", side_effect=OSError("forced failure")
@@ -175,7 +175,7 @@ class TestWriteFile(unittest.TestCase):
             root
             for root, _dirs, files in os.walk(self.tmp)
             for name in files
-            if name.startswith(".rikugan-write-")
+            if name.startswith(".lucnhan-write-")
         ]
         self.assertEqual(leftovers, [])
 

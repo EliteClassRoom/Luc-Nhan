@@ -13,9 +13,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## What is Rikugan?
+## What is Luc Nhan?
 
-Rikugan (六眼) is an **IDA Pro** plugin that embeds an LLM agent directly inside the disassembler. It has its **own agentic loop** (not an MCP client), orchestrates 80+ IDA tools, supports parallel subagents, skills, an MCP client, and a **headless mode** (runs inside `idat.exe` / `idat64` without Qt). It supports Claude, OpenAI/Codex, Gemini, GLM (Z.AI), Ollama, MiniMax, and any OpenAI-compatible endpoint.
+Luc Nhan (六眼) is an **IDA Pro** plugin that embeds an LLM agent directly inside the disassembler. It has its **own agentic loop** (not an MCP client), orchestrates 80+ IDA tools, supports parallel subagents, skills, an MCP client, and a **headless mode** (runs inside `idat.exe` / `idat64` without Qt). It supports Claude, OpenAI/Codex, Gemini, GLM (Z.AI), Ollama, MiniMax, and any OpenAI-compatible endpoint.
 
 ```
 User message → command detection → skill resolution → build system prompt
@@ -41,11 +41,11 @@ User message → command detection → skill resolution → build system prompt
 
 ```bash
 # Format + lint
-python3 -m ruff format rikugan/
-python3 -m ruff check rikugan/ --fix
+python3 -m ruff format lucnhan/
+python3 -m ruff check lucnhan/ --fix
 
 # Type check (core + providers only — configured in pyproject.toml)
-python3 -m mypy rikugan/core rikugan/providers
+python3 -m mypy lucnhan/core lucnhan/providers
 
 # Tests
 python3 -m pytest tests/ -v                                    # all
@@ -72,10 +72,10 @@ Baseline objective score: **89.0/100** (CI fails if it drops more than 0.5 point
 export IDA_PATH="/path/to/idat64"   # or idat.exe on Windows
 
 # One-shot
-python -m rikugan.cli.headless ask /path/to/sample.exe "summarize metadata"
+python -m lucnhan.cli.headless ask /path/to/sample.exe "summarize metadata"
 
 # Server (HTTP control server on 127.0.0.1, requires bearer token)
-python -m rikugan.cli.headless serve /path/to/sample.exe --ready-file ready.json
+python -m lucnhan.cli.headless serve /path/to/sample.exe --ready-file ready.json
 cat ready.json  # → {"url": "...", "token": "..."}
 ```
 
@@ -90,13 +90,13 @@ This fork uses `master` as its main branch (no `dev`/`main` like upstream). Bran
 1. **Bump the version in all 3 places** (keep in sync — origin once had a bug bumping only 2 of 3):
    - `pyproject.toml` (`version = "..."`)
    - `ida-plugin.json` (`"version": "..."`)
-   - `rikugan/constants.py` (`PLUGIN_VERSION = "..."`)
+   - `lucnhan/constants.py` (`PLUGIN_VERSION = "..."`)
 2. Separate commit with message `chore(release): bump version to X.Y.Z`
-3. Create an annotated tag: `git tag -a vX.Y.Z -m "Rikugan vX.Y.Z\n\n<commit list since last tag>"` (from HEAD)
+3. Create an annotated tag: `git tag -a vX.Y.Z -m "Luc Nhan vX.Y.Z\n\n<commit list since last tag>"` (from HEAD)
 4. Push: `git push origin master vX.Y.Z`
 5. Wait for the CI workflow (`.github/workflows/ci.yml` triggers on both `push` and `pull_request` to `[master, main, dev]` — pushing directly to master still runs CI; but prefer a branch + PR for safety)
 
-> **Remote note:** `origin` → fork `EliteClassRoom/rikugan` (master), `tuna-main` → upstream `tuna1999/Rikugan` (main). Don't push to the wrong remote. This fork has no required-PR workflow, so a mistaken force-push to master bypasses review — use a branch + PR. Still run `./ci-local.sh` before pushing to catch errors early (CI on the runner is slower than local).
+> **Remote note:** `origin` → fork `EliteClassRoom/Luc-Nhan` (master), `tuna-main` → upstream `tuna1999/Rikugan` (main). Don't push to the wrong remote. This fork has no required-PR workflow, so a mistaken force-push to master bypasses review — use a branch + PR. Still run `./ci-local.sh` before pushing to catch errors early (CI on the runner is slower than local).
 
 ---
 
@@ -106,8 +106,8 @@ This fork uses `master` as its main branch (no `dev`/`main` like upstream). Bran
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  rikugan_plugin.py           (IDA entry: PLUGIN_ENTRY)       │
-│  rikugan/cli/headless.py     (Headless CLI: ask, serve)      │
+│  lucnhan_plugin.py           (IDA entry: PLUGIN_ENTRY)       │
+│  lucnhan/cli/headless.py     (Headless CLI: ask, serve)      │
 └─────────────────┬────────────────────────────────────────────┘
                   │
     ┌─────────────┼─────────────┐
@@ -123,7 +123,7 @@ This fork uses `master` as its main branch (no `dev`/`main` like upstream). Bran
                  │
                  ▼
            ┌──────────┐
-           │ rikugan/ │
+           │ lucnhan/ │
            │   ida/   │  ← IDA Pro host (tools, UI, dispatch, headless bootstrap)
            └──────────┘
 
@@ -145,7 +145,7 @@ This fork uses `master` as its main branch (no `dev`/`main` like upstream). Bran
 
 Everything flows through a `TurnEvent` stream from a background thread → `queue.Queue` → Qt `QTimer._poll_events()` → UI. **Never** use Qt signals across threads.
 
-Event types: `TURN_START`/`END`, `TEXT_DELTA`/`DONE`, `TOOL_CALL_START`/`DONE`, `TOOL_RESULT`, `EXPLORATION_*`, `MUTATION_RECORDED`, `SUBAGENT_*`, `ERROR`, `CANCELLED`, `USER_QUESTION`, `PLAN_GENERATED`, ... (see `rikugan/agent/turn.py`).
+Event types: `TURN_START`/`END`, `TEXT_DELTA`/`DONE`, `TOOL_CALL_START`/`DONE`, `TOOL_RESULT`, `EXPLORATION_*`, `MUTATION_RECORDED`, `SUBAGENT_*`, `ERROR`, `CANCELLED`, `USER_QUESTION`, `PLAN_GENERATED`, ... (see `lucnhan/agent/turn.py`).
 
 ### Modes
 
@@ -156,12 +156,12 @@ Event types: `TURN_START`/`END`, `TEXT_DELTA`/`DONE`, `TOOL_CALL_START`/`DONE`, 
 | Exploration | `/modify <msg>` | 4 phases: EXPLORE (subagent) → PLAN → EXECUTE → SAVE |
 | Explore-only | `/explore <msg>` | autonomous investigation, no patching |
 
-Subagents (see `rikugan/agent/subagent_manager.py` + `rikugan/agent/agents/`) run a dedicated `SubagentRunner` — fully isolated, can run in parallel via `ThreadPoolExecutor`. The A2A bridge (`rikugan/agent/a2a/`) lets you delegate tasks to external agents (Claude Code CLI, Codex CLI, A2A-compatible servers).
+Subagents (see `lucnhan/agent/subagent_manager.py` + `lucnhan/agent/agents/`) run a dedicated `SubagentRunner` — fully isolated, can run in parallel via `ThreadPoolExecutor`. The A2A bridge (`lucnhan/agent/a2a/`) lets you delegate tasks to external agents (Claude Code CLI, Codex CLI, A2A-compatible servers).
 
 ### Skills & MCP
 
-- **Skills**: Markdown + YAML frontmatter in `rikugan/skills/builtins/<slug>/SKILL.md`. Users add their own in `~/.idapro/rikugan/skills/`. 11 built-in skills: `malware-analysis`, `elf-malware-analysis`, `deobfuscation`, `ctf`, `modify`, `smart-patch-ida`, `vuln-audit`, `ida-scripting`, `driver-analysis`, `generic-re`, `naming-convention`.
-- **MCP**: a JSON-RPC 2.0 client in `rikugan/mcp/`. Tools from an MCP server are bridged into the `ToolRegistry` with the prefix `mcp_<server>_<tool>`.
+- **Skills**: Markdown + YAML frontmatter in `lucnhan/skills/builtins/<slug>/SKILL.md`. Users add their own in `~/.idapro/lucnhan/skills/`. 11 built-in skills: `malware-analysis`, `elf-malware-analysis`, `deobfuscation`, `ctf`, `modify`, `smart-patch-ida`, `vuln-audit`, `ida-scripting`, `driver-analysis`, `generic-re`, `naming-convention`.
+- **MCP**: a JSON-RPC 2.0 client in `lucnhan/mcp/`. Tools from an MCP server are bridged into the `ToolRegistry` with the prefix `mcp_<server>_<tool>`.
 
 ### Approval gates
 
@@ -171,15 +171,15 @@ Subagents (see `rikugan/agent/subagent_manager.py` + `rikugan/agent/agents/`) ru
 
 ### Mutation tracking & undo
 
-Every database-mutating tool call captures pre-state + builds a reverse operation. `/undo [N]` replays them backwards. A mutating tool **must** set `mutating=True` in `@tool` and **must** have an entry in `rikugan/agent/mutation.py` (both `build_reverse_record` and `capture_pre_state`).
+Every database-mutating tool call captures pre-state + builds a reverse operation. `/undo [N]` replays them backwards. A mutating tool **must** set `mutating=True` in `@tool` and **must** have an entry in `lucnhan/agent/mutation.py` (both `build_reverse_record` and `capture_pre_state`).
 
 ### Context window
 
-Auto-compaction kicks in past 80% of the token window. Summaries pass through `strip_injection_markers()` before being stored. Persistent memory runs on the **central memory subsystem** (`rikugan/memory/` — `BinaryMemoryService`, SQLite structured facts + `MEMORY.md` manual notes), always-on; the agent writes via the `save_memory` tool and loads it into the system prompt each session.
+Auto-compaction kicks in past 80% of the token window. Summaries pass through `strip_injection_markers()` before being stored. Persistent memory runs on the **central memory subsystem** (`lucnhan/memory/` — `BinaryMemoryService`, SQLite structured facts + `MEMORY.md` manual notes), always-on; the agent writes via the `save_memory` tool and loads it into the system prompt each session.
 
 ### Chat history (on demand)
 
-HistoryPanel owns presentation only. RikuganPanelCore owns the dedicated history executor, bounded queue, main-thread poll timer, and generation. History never auto-restores and never uses `_SAVE_EXECUTOR`.
+HistoryPanel owns presentation only. LucNhanPanelCore owns the dedicated history executor, bounded queue, main-thread poll timer, and generation. History never auto-restores and never uses `_SAVE_EXECUTOR`.
 
 ---
 
@@ -190,11 +190,11 @@ HistoryPanel owns presentation only. RikuganPanelCore owns the dedicated history
 IDA Pro's Qt binding (Shiboken) has a Use-After-Free bug triggered when importing a C extension while a Qt signal is dispatching. Two mitigations are in place:
 
 1. Every `import ida_*` **must** go through `importlib.import_module()` inside a `try/except ImportError` — **never** `import ida_funcs` at module level
-2. `rikugan_plugin.py` installs a re-entrancy guard on `builtins.__import__`
+2. `lucnhan_plugin.py` installs a re-entrancy guard on `builtins.__import__`
 
-**Python 3.10 is the safest choice** for IDA. Higher versions may still work but are less stable. See the `rikugan_plugin.py` header (re-entrancy guard); IDA 9.x API details are in section 6 below.
+**Python 3.10 is the safest choice** for IDA. Higher versions may still work but are less stable. See the `lucnhan_plugin.py` header (re-entrancy guard); IDA 9.x API details are in section 6 below.
 
-- **Qt binding: PySide6 only.** Rikugan targets IDA ≥ 9.0, which ships PySide6 (Qt6). The `PyQt5` module in IDA 9.x is a shim over PySide6 and is not used. `rikugan/ui/qt_compat.py` is the single Qt import seam — import Qt symbols from there, not from `PySide6` directly.
+- **Qt binding: PySide6 only.** Luc Nhan targets IDA ≥ 9.0, which ships PySide6 (Qt6). The `PyQt5` module in IDA 9.x is a shim over PySide6 and is not used. `lucnhan/ui/qt_compat.py` is the single Qt import seam — import Qt symbols from there, not from `PySide6` directly.
 
 ### 2. Thread safety
 
@@ -248,8 +248,8 @@ The binary being analyzed contains strings, function names, decompiled code — 
 ### 4. Script execution is the highest-risk attack surface
 
 - `execute_python` is **NEVER** auto-approved, not even in headless mode, not even in "fast"/"batch" mode
-- **Constant centralization** (security invariant): every reference to the `execute_python` tool name **must** use `rikugan.constants.EXECUTE_PYTHON_TOOL_NAME` — **never** hardcode the string. A typo anywhere will silently disable the approval gate. Centralizing also makes grep audits easy.
-- **IDAPython docs-review gate** (origin `4295fdc`; post-error migration): the docs-reviewer subagent (`rikugan/agent/agents/ida_docs_reviewer.py`) runs **after** `execute_python` fails with an API-shaped error (`ImportError`, `AttributeError` for a non-existent module/attr), NOT pre-execute. The traceback classifier (`rikugan/tools/idapython_complexity.py::classify_traceback`) decides whether to spawn the reviewer. When triggered, the reviewer is injected with a Module Quick Reference (top-N commonly used IDA modules, preloaded in the system prompt section `IDA_API_MODULE_REFERENCE_SECTION`) before judging. Configurable via the `docs_review_mode` enum (`"on_error"` / `"off"`, default `"on_error"`) in Settings. The legacy `require_ida_docs_for_complex_scripts` boolean auto-migrates.
+- **Constant centralization** (security invariant): every reference to the `execute_python` tool name **must** use `lucnhan.constants.EXECUTE_PYTHON_TOOL_NAME` — **never** hardcode the string. A typo anywhere will silently disable the approval gate. Centralizing also makes grep audits easy.
+- **IDAPython docs-review gate** (origin `4295fdc`; post-error migration): the docs-reviewer subagent (`lucnhan/agent/agents/ida_docs_reviewer.py`) runs **after** `execute_python` fails with an API-shaped error (`ImportError`, `AttributeError` for a non-existent module/attr), NOT pre-execute. The traceback classifier (`lucnhan/tools/idapython_complexity.py::classify_traceback`) decides whether to spawn the reviewer. When triggered, the reviewer is injected with a Module Quick Reference (top-N commonly used IDA modules, preloaded in the system prompt section `IDA_API_MODULE_REFERENCE_SECTION`) before judging. Configurable via the `docs_review_mode` enum (`"on_error"` / `"off"`, default `"on_error"`) in Settings. The legacy `require_ida_docs_for_complex_scripts` boolean auto-migrates.
 - Blocklist patterns (`subprocess`, `os.system`, `os.popen`, `os.exec*`, `os.spawn*`, `Popen`, `__import__("subprocess")`) → add to the frozensets in `script_guard.py`: `_BLOCKED_MODULES` (module names), `_BLOCKED_CALLS` (callable names), `_BLOCKED_ATTRS` (`(obj, attr)` pairs), `_BLOCKED_DUNDER_ATTRS` (dangerous dunders), `_REMOVED_BUILTINS` (builtins stripped from the exec namespace). The AST check in `_check_ast()` rejects them before they reach approval.
 - `exec()` runs in a restricted namespace, with `stdout`/`stderr` redirected to `StringIO`
 - Never add `os`, `sys`, `subprocess`, `shutil`, or `pathlib` to the default namespace
@@ -259,7 +259,7 @@ The binary being analyzed contains strings, function names, decompiled code — 
 - The control server binds only to `127.0.0.1`. `--host 0.0.0.0` is blocked
 - Every endpoint (except `/health`) requires `Bearer <TOKEN>`. The auth token only ever appears in the ready-file / startup stdout, never in logs
 - `/health` returns only `{"status": "ok"}` — no leaking of paths, tokens, or config
-- Bootstrap params are passed via an env-var JSON file (`RIKUGAN_HEADLESS_BOOTSTRAP`), NOT via `-S` args (Windows quoting is fragile)
+- Bootstrap params are passed via an env-var JSON file (`LUCNHAN_HEADLESS_BOOTSTRAP`), NOT via `-S` args (Windows quoting is fragile)
 - `IdaHeadlessDispatcher` **must not** import `ida_kernwin`
 
 ### 6. IDA 9.x API changes (need to know when editing tools)
@@ -276,8 +276,8 @@ The binary being analyzed contains strings, function names, decompiled code — 
 - Every module starts with `from __future__ import annotations`
 - Type hints on every signature. Tool params use `typing.Annotated[type, "description"]`
 - Dataclasses for all structured data (config, events, records) — no loose dicts
-- **Cross-package imports**: `from rikugan.tools.base import tool` (absolute)
-- **Within a package**: also absolute: `from rikugan.tools.navigation import jump_to`
+- **Cross-package imports**: `from lucnhan.tools.base import tool` (absolute)
+- **Within a package**: also absolute: `from lucnhan.tools.navigation import jump_to`
 - **Host API imports**: `importlib.import_module()` inside `try/except ImportError`
 - f-strings for formatting, hex addresses as `f"0x{ea:x}"`. No mutable defaults, no bare `except:`, no magic numbers
 
@@ -288,9 +288,9 @@ The binary being analyzed contains strings, function names, decompiled code — 
 ### New tool
 
 ```python
-# File: rikugan/tools/my_category.py
+# File: lucnhan/tools/my_category.py
 from typing import Annotated
-from rikugan.tools.base import tool
+from lucnhan.tools.base import tool
 
 @tool(category="navigation", mutating=False)
 def my_tool(address: Annotated[str, "Target address (hex)"]) -> str:
@@ -299,11 +299,11 @@ def my_tool(address: Annotated[str, "Target address (hex)"]) -> str:
     return f"Jumped to 0x{ea:x}"
 ```
 
-Then add the module to `_BOOT_TOOL_MODULES` in `rikugan/ida/tools/registry.py`. If `mutating=True`, you **must** add `build_reverse_record` + `capture_pre_state` to `rikugan/agent/mutation.py`.
+Then add the module to `_BOOT_TOOL_MODULES` in `lucnhan/ida/tools/registry.py`. If `mutating=True`, you **must** add `build_reverse_record` + `capture_pre_state` to `lucnhan/agent/mutation.py`.
 
 ### New skill
 
-Create `rikugan/skills/builtins/<slug>/SKILL.md` with YAML frontmatter:
+Create `lucnhan/skills/builtins/<slug>/SKILL.md` with YAML frontmatter:
 
 ```markdown
 ---
@@ -319,18 +319,18 @@ A `references/` directory (optional) holds `.md` files that are auto-appended to
 
 ### New LLM provider
 
-Subclass the `LLMProvider` ABC in `rikugan/providers/base.py`, register in `rikugan/providers/registry.py`. OpenAI-compatible providers (MiniMax, custom endpoints) can subclass `OpenAICompatProvider` for convenience.
+Subclass the `LLMProvider` ABC in `lucnhan/providers/base.py`, register in `lucnhan/providers/registry.py`. OpenAI-compatible providers (MiniMax, custom endpoints) can subclass `OpenAICompatProvider` for convenience.
 
 ### New config field
 
-Add it to the `RikuganConfig` dataclass (`rikugan/core/config.py`), update `load()`/`validate()`/`save()`. If it needs UI, add it to `SettingsDialog._build_behavior_group()` and wire it in `_on_accept()`.
+Add it to the `LucNhanConfig` dataclass (`lucnhan/core/config.py`), update `load()`/`validate()`/`save()`. If it needs UI, add it to `SettingsDialog._build_behavior_group()` and wire it in `_on_accept()`.
 
 ---
 
 ## Pre-merge checklist
 
 - [ ] `./ci-local.sh` passes (format + lint + mypy + pytest + desloppify)
-- [ ] New tool is registered in `rikugan/ida/tools/registry.py`
+- [ ] New tool is registered in `lucnhan/ida/tools/registry.py`
 - [ ] Mutating tool has `build_reverse_record` + `capture_pre_state` in `mutation.py`
 - [ ] Getter tool used by `capture_pre_state` returns raw data, not a formatted string
 - [ ] `_check_cancelled()` is present in any new loop/blocking wait

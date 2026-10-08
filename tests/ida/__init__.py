@@ -1,1 +1,1 @@
-"""Tests for rikugan.ida.dispatch (headless dispatcher)."""
+"""Tests for lucnhan.ida.dispatch (headless dispatcher)."""

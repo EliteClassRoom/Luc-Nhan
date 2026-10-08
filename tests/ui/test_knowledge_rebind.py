@@ -25,7 +25,7 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.state.history_types import (
+from lucnhan.state.history_types import (
     HistoryAttachStatus,
     HistoryLoadResult,
     HistoryRequestStatus,
@@ -44,9 +44,9 @@ def _build_loaded_result(status, session=None):
 
 class TestHistoryLoadRebindsKnowledge(unittest.TestCase):
     def _build_panel(self):
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._history_panel = MagicMock()
         panel._history_delete_intents = set()
@@ -102,9 +102,9 @@ class TestHistoryLoadRebindsKnowledge(unittest.TestCase):
 
 class TestTabChangeRebindsKnowledge(unittest.TestCase):
     def test_tab_switch_triggers_knowledge_refresh(self) -> None:
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._chat_views = {}
         panel._ctrl = MagicMock()
@@ -120,9 +120,9 @@ class TestTabChangeRebindsKnowledge(unittest.TestCase):
         refresh.assert_called_once_with("tab_changed")
 
     def test_negative_index_does_not_refresh(self) -> None:
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         with patch.object(panel, "_on_knowledge_event_refresh") as refresh:
             panel._on_tab_changed(-1)
@@ -131,9 +131,9 @@ class TestTabChangeRebindsKnowledge(unittest.TestCase):
 
 class TestDatabaseChangeRebindsKnowledge(unittest.TestCase):
     def test_idb_change_triggers_knowledge_refresh(self) -> None:
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._ctrl = MagicMock()
         panel._ctrl._idb_path = "OLD"
@@ -154,9 +154,9 @@ class TestDatabaseChangeRebindsKnowledge(unittest.TestCase):
         refresh.assert_called_once_with("database_changed")
 
     def test_same_idb_does_not_refresh(self) -> None:
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._ctrl = MagicMock()
         target = os.path.normcase(os.path.realpath(os.path.abspath("C:\\SAME")))

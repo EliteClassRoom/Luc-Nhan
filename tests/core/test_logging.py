@@ -16,7 +16,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.logging import (
+from lucnhan.core.logging import (
     IDAHandler,
     _FlushFileHandler,
     get_logger,
@@ -52,7 +52,7 @@ class TestLogFunctions(unittest.TestCase):
     def test_get_logger_returns_logger(self):
         logger = get_logger()
         self.assertIsInstance(logger, logging.Logger)
-        self.assertEqual(logger.name, "Rikugan")
+        self.assertEqual(logger.name, "LucNhan")
 
     def test_get_logger_singleton(self):
         a = get_logger()
@@ -120,7 +120,7 @@ class TestIDAHandler(unittest.TestCase):
         """When no host sink is registered, HostOutputHandler falls back to stderr."""
         import io
 
-        import rikugan.core.log_sinks as sinks_mod
+        import lucnhan.core.log_sinks as sinks_mod
 
         handler = IDAHandler()
         handler.setFormatter(logging.Formatter("%(message)s"))
@@ -177,11 +177,11 @@ class TestFlushFileHandler(unittest.TestCase):
             os.unlink(path)
 
     def test_log_file_path_creates_directory(self):
-        from rikugan.core.log_sinks import _log_file_path
+        from lucnhan.core.log_sinks import _log_file_path
 
         path = _log_file_path()
         self.assertTrue(os.path.isdir(os.path.dirname(path)))
-        self.assertTrue(path.endswith("rikugan_debug.log"))
+        self.assertTrue(path.endswith("lucnhan_debug.log"))
 
 
 class TestSilenceSDKDebugLoggers(unittest.TestCase):
@@ -189,16 +189,14 @@ class TestSilenceSDKDebugLoggers(unittest.TestCase):
     chat-halting SDK loggers so an OpenAI request that contains non-ASCII
     content does not crash the logging thread with UnicodeEncodeError on
     Windows cp1252 streams. The test snapshots only the SDK logger
-    levels it touches so it does not interfere with the rikugan.core.logging
-    singleton, the Rikugan logger's handler set, or any sibling tests.
+    levels it touches so it does not interfere with the lucnhan.core.logging
+    singleton, the Luc Nhan logger's handler set, or any sibling tests.
     """
 
     _SDK_LOGGERS = ("openai", "openai._base_client", "httpx", "httpcore", "mcp.client.stdio")
 
     def setUp(self):
-        self._prior_levels = {
-            name: logging.getLogger(name).level for name in self._SDK_LOGGERS
-        }
+        self._prior_levels = {name: logging.getLogger(name).level for name in self._SDK_LOGGERS}
         for name in self._SDK_LOGGERS:
             logging.getLogger(name).setLevel(logging.NOTSET)
 
@@ -207,13 +205,13 @@ class TestSilenceSDKDebugLoggers(unittest.TestCase):
             logging.getLogger(name).setLevel(level)
 
     def test_openai_logger_level_is_warning(self):
-        from rikugan.core.logging import silence_sdk_debug_loggers
+        from lucnhan.core.logging import silence_sdk_debug_loggers
 
         silence_sdk_debug_loggers()
         self.assertEqual(logging.getLogger("openai").level, logging.WARNING)
 
     def test_httpx_logger_level_is_warning(self):
-        from rikugan.core.logging import silence_sdk_debug_loggers
+        from lucnhan.core.logging import silence_sdk_debug_loggers
 
         silence_sdk_debug_loggers()
         self.assertEqual(logging.getLogger("httpx").level, logging.WARNING)
@@ -221,14 +219,14 @@ class TestSilenceSDKDebugLoggers(unittest.TestCase):
     def test_mcp_stdio_logger_level_is_critical(self):
         """The mcp SDK tolerates non-JSON stdout lines (server startup
         banners) by design but logs them with a full traceback — suppressed
-        at CRITICAL; real failures surface via Rikugan's own errors."""
-        from rikugan.core.logging import silence_sdk_debug_loggers
+        at CRITICAL; real failures surface via Luc Nhan's own errors."""
+        from lucnhan.core.logging import silence_sdk_debug_loggers
 
         silence_sdk_debug_loggers()
         self.assertEqual(logging.getLogger("mcp.client.stdio").level, logging.CRITICAL)
 
     def test_helper_is_idempotent(self):
-        from rikugan.core.logging import silence_sdk_debug_loggers
+        from lucnhan.core.logging import silence_sdk_debug_loggers
 
         silence_sdk_debug_loggers()
         silence_sdk_debug_loggers()
@@ -236,8 +234,8 @@ class TestSilenceSDKDebugLoggers(unittest.TestCase):
         self.assertEqual(logging.getLogger("httpx").level, logging.WARNING)
 
 
-class TestRikuganLoggerDoesNotPropagate(unittest.TestCase):
-    """Regression: rikugan records must not propagate to the root logger.
+class TestLucNhanLoggerDoesNotPropagate(unittest.TestCase):
+    """Regression: lucnhan records must not propagate to the root logger.
     Otherwise an inherited cp1252 StreamHandler (e.g. the one IDA Pro
     installs on sys.stderr) crashes on Unicode in the message.
 
@@ -249,22 +247,22 @@ class TestRikuganLoggerDoesNotPropagate(unittest.TestCase):
     def test_codepage_root_handler_does_not_crash(self):
         import io
 
-        from rikugan.core import logging as rikugan_logging_module
-        from rikugan.core.logging import get_logger
+        from lucnhan.core import logging as lucnhan_logging_module
+        from lucnhan.core.logging import get_logger
 
         # Reset the singleton so get_logger() rebuilds from scratch;
         # otherwise an already-cached logger from an earlier test could
         # mask the create-time propagate=False setting. Snapshot the
         # pre-existing handler set so we can detach and close only the
         # handlers the rebuild appended.
-        named = logging.getLogger("Rikugan")
+        named = logging.getLogger("LucNhan")
         prior_handlers = list(named.handlers)
-        prior_singleton = rikugan_logging_module._logger
-        rikugan_logging_module._logger = None
+        prior_singleton = lucnhan_logging_module._logger
+        lucnhan_logging_module._logger = None
         try:
-            rikugan_logger = get_logger()
+            lucnhan_logger = get_logger()
         finally:
-            current = logging.getLogger("Rikugan")
+            current = logging.getLogger("LucNhan")
             for handler in list(current.handlers):
                 if handler not in prior_handlers:
                     current.removeHandler(handler)
@@ -272,10 +270,10 @@ class TestRikuganLoggerDoesNotPropagate(unittest.TestCase):
                         handler.close()
                     except Exception:
                         pass
-            rikugan_logging_module._logger = prior_singleton
+            lucnhan_logging_module._logger = prior_singleton
 
         self.assertFalse(
-            rikugan_logger.propagate,
+            lucnhan_logger.propagate,
             "get_logger() must set propagate=False at creation",
         )
         root_logger = logging.getLogger()
@@ -303,7 +301,7 @@ class TestRikuganLoggerDoesNotPropagate(unittest.TestCase):
         root_logger.addHandler(root_handler)
         try:
             try:
-                rikugan_logger.debug("skill: /test → arrow glyph")
+                lucnhan_logger.debug("skill: /test → arrow glyph")
             except UnicodeEncodeError as exc:  # pragma: no cover
                 self.fail(f"propagation to cp1252 handler crashed: {exc}")
         finally:
@@ -317,11 +315,11 @@ class TestRikuganLoggerDoesNotPropagate(unittest.TestCase):
         self.assertEqual(
             sink.getvalue(),
             "",
-            "root cp1252 handler must not receive rikugan records when propagate=False",
+            "root cp1252 handler must not receive lucnhan records when propagate=False",
         )
 
     def test_propagate_is_false_by_default(self):
-        from rikugan.core.logging import get_logger
+        from lucnhan.core.logging import get_logger
 
         self.assertFalse(
             get_logger().propagate,
@@ -339,9 +337,7 @@ class TestProviderBoundarySilencesSDKLoggers(unittest.TestCase):
     _SDK_LOGGERS = ("openai", "openai._base_client", "httpx", "httpcore")
 
     def setUp(self):
-        self._prior_levels = {
-            name: logging.getLogger(name).level for name in self._SDK_LOGGERS
-        }
+        self._prior_levels = {name: logging.getLogger(name).level for name in self._SDK_LOGGERS}
         for name in self._SDK_LOGGERS:
             logging.getLogger(name).setLevel(logging.DEBUG)
 
@@ -350,7 +346,7 @@ class TestProviderBoundarySilencesSDKLoggers(unittest.TestCase):
             logging.getLogger(name).setLevel(level)
 
     def test_chat_silences_openai_before_call_api(self):
-        from rikugan.providers.base import LLMProvider
+        from lucnhan.providers.base import LLMProvider
 
         observed_level: dict[str, int] = {}
 
@@ -374,7 +370,7 @@ class TestProviderBoundarySilencesSDKLoggers(unittest.TestCase):
                 return None
 
             def _normalize_response(self, raw):
-                from rikugan.core.types import Message
+                from lucnhan.core.types import Message
 
                 return Message(role="assistant", content="")
 
@@ -411,14 +407,14 @@ class TestProviderBoundarySilencesSDKLoggers(unittest.TestCase):
 # Structured attempt logging (telemetry allowlist)
 # ---------------------------------------------------------------------------
 
-from rikugan.core.log_sinks import _JSONFormatter
-from rikugan.core.logging import log_structured
+from lucnhan.core.log_sinks import _JSONFormatter
+from lucnhan.core.logging import log_structured
 
 
 def test_json_formatter_includes_allowlisted_attempt_event():
     formatter = _JSONFormatter()
-    record = logging.LogRecord("Rikugan", logging.INFO, "", 0, "agent_attempt", (), None)
-    record.rikugan_event = {
+    record = logging.LogRecord("Luc Nhan", logging.INFO, "", 0, "agent_attempt", (), None)
+    record.lucnhan_event = {
         "provider": "glm",
         "attempt_number": 1,
         "disposition": "degenerated",
@@ -427,8 +423,8 @@ def test_json_formatter_includes_allowlisted_attempt_event():
 
     payload = json.loads(formatter.format(record))
 
-    assert payload["rikugan_event"]["provider"] == "glm"
-    assert payload["rikugan_event"]["discarded_attempt"] is True
+    assert payload["lucnhan_event"]["provider"] == "glm"
+    assert payload["lucnhan_event"]["discarded_attempt"] is True
 
 
 def test_log_structured_rejects_content_keys_and_nested_values():
@@ -440,21 +436,21 @@ def test_log_structured_rejects_content_keys_and_nested_values():
 
 def test_structured_strings_strip_role_markers_and_surrogates():
     formatter = _JSONFormatter()
-    record = logging.LogRecord("Rikugan", logging.INFO, "", 0, "agent_attempt", (), None)
-    record.rikugan_event = {"provider": "[SYSTEM] glm\ud800"}
+    record = logging.LogRecord("Luc Nhan", logging.INFO, "", 0, "agent_attempt", (), None)
+    record.lucnhan_event = {"provider": "[SYSTEM] glm\ud800"}
 
     payload = json.loads(formatter.format(record))
 
-    assert "[SYSTEM]" not in payload["rikugan_event"]["provider"]
-    assert "\ud800" not in payload["rikugan_event"]["provider"]
+    assert "[SYSTEM]" not in payload["lucnhan_event"]["provider"]
+    assert "\ud800" not in payload["lucnhan_event"]["provider"]
 
 
 # ---------------------------------------------------------------------------
 # Telemetry integration: one allowlisted record per logical attempt
 # ---------------------------------------------------------------------------
 
-from rikugan.agent.modes.turn_helpers import execute_single_turn
-from rikugan.core.types import (
+from lucnhan.agent.modes.turn_helpers import execute_single_turn
+from lucnhan.core.types import (
     LLMRequestContext,
     Message,
     ModelInfo,
@@ -464,10 +460,10 @@ from rikugan.core.types import (
     TokenUsage,
     TurnDisposition,
 )
-from rikugan.providers.base import LLMProvider
-from rikugan.state.session import SessionState
-from rikugan.tools.base import ParameterSchema, ToolDefinition
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.providers.base import LLMProvider
+from lucnhan.state.session import SessionState
+from lucnhan.tools.base import ParameterSchema, ToolDefinition
+from lucnhan.tools.registry import ToolRegistry
 
 # Reasoning payload large enough to trip the hard ceiling.
 _DEGENERATED_REASONING = "outputting read_bytes tool now\n" * 3500
@@ -541,19 +537,19 @@ class _ScriptedGLMProvider(LLMProvider):
 
 def _drive_turn(responses: list[list[StreamChunk]]) -> list[dict]:
     """Drive ``execute_single_turn`` once with *responses* and return the
-    list of captured ``rikugan_event`` dicts.
+    list of captured ``lucnhan_event`` dicts.
     """
     import json as _json
 
-    from rikugan.agent.loop import AgentLoop
-    from rikugan.core.config import RikuganConfig
+    from lucnhan.agent.loop import AgentLoop
+    from lucnhan.core.config import LucNhanConfig
 
     capture = _CaptureHandler()
     capture.setFormatter(_JSONFormatter())
     get_logger().addHandler(capture)
     try:
         provider = _ScriptedGLMProvider(responses=responses)
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.provider.name = "glm"
         config.provider.model = "glm-5.2"
@@ -593,7 +589,7 @@ def _drive_turn(responses: list[list[StreamChunk]]) -> list[dict]:
         for rec in capture.records:
             if rec.getMessage() == "agent_attempt":
                 payload = _json.loads(capture.formatter.format(rec))
-                ev = payload.get("rikugan_event")
+                ev = payload.get("lucnhan_event")
                 if isinstance(ev, dict):
                     records.append(ev)
         return records
@@ -650,7 +646,7 @@ def test_normal_turn_logs_single_content_free_record():
 # Telemetry for error/cancellation paths (one record per started attempt)
 # ---------------------------------------------------------------------------
 
-from rikugan.core.errors import CancellationError, ProviderError
+from lucnhan.core.errors import CancellationError, ProviderError
 
 
 class _ErroringGLMProvider(_ScriptedGLMProvider):
@@ -696,14 +692,14 @@ def _drive_turn_with_provider(provider, capture_records=True, cancel_before_reco
     """
     import json as _json
 
-    from rikugan.agent.loop import AgentLoop
-    from rikugan.core.config import RikuganConfig
+    from lucnhan.agent.loop import AgentLoop
+    from lucnhan.core.config import LucNhanConfig
 
     capture = _CaptureHandler()
     capture.setFormatter(_JSONFormatter())
     get_logger().addHandler(capture)
     try:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.provider.name = "glm"
         config.provider.model = "glm-5.2"
@@ -765,7 +761,7 @@ def _drive_turn_with_provider(provider, capture_records=True, cancel_before_reco
             for rec in capture.records:
                 if rec.getMessage() == "agent_attempt":
                     payload = _json.loads(capture.formatter.format(rec))
-                    ev = payload.get("rikugan_event")
+                    ev = payload.get("lucnhan_event")
                     if isinstance(ev, dict):
                         records.append(ev)
         return records, result_or_exc, raised
@@ -855,7 +851,7 @@ def test_emit_attempt_telemetry_surfaces_keyerror_from_log_structured(monkeypatc
     silently swallow it — that would defeat the content-free fail-fast guard
     and let a bad call site leak untrusted content via an unknown field.
     """
-    import rikugan.agent.modes.turn_helpers as turn_helpers_mod
+    import lucnhan.agent.modes.turn_helpers as turn_helpers_mod
 
     def _raise_keyerror(event):
         raise KeyError("Unknown structured log keys: ['sneaky_field']")
@@ -873,7 +869,7 @@ def test_emit_attempt_telemetry_surfaces_typeerror_from_log_structured(monkeypat
     """If log_structured raises TypeError (non-scalar value), the helper MUST
     surface it, not swallow it.
     """
-    import rikugan.agent.modes.turn_helpers as turn_helpers_mod
+    import lucnhan.agent.modes.turn_helpers as turn_helpers_mod
 
     def _raise_typeerror(event):
         raise TypeError("Structured log values must be JSON scalars")
@@ -903,10 +899,10 @@ class _EmptyOutcomeLike:
 
 def _make_minimal_loop():
     """Build a minimal AgentLoop for telemetry helper unit tests."""
-    from rikugan.agent.loop import AgentLoop
-    from rikugan.core.config import RikuganConfig
+    from lucnhan.agent.loop import AgentLoop
+    from lucnhan.core.config import LucNhanConfig
 
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config.provider.name = "test"
     config.provider.model = "test-model"
     config.provider.extra = {}

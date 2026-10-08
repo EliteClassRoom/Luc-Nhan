@@ -5,14 +5,14 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.case_schema import CaseRelationType
-from rikugan.memory.peer_retrieval import PeerContextPack, PeerMemoryRetriever
-from rikugan.memory.registry import MemoryRegistry
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.schema import KnowledgeMemory
-from rikugan.memory.workspace import MemoryLocator, new_record_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.case_repository import CaseRepository
+from lucnhan.memory.case_schema import CaseRelationType
+from lucnhan.memory.peer_retrieval import PeerContextPack, PeerMemoryRetriever
+from lucnhan.memory.registry import MemoryRegistry
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.schema import KnowledgeMemory
+from lucnhan.memory.workspace import MemoryLocator, new_record_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 from .test_workspace_migration_v2 import _create_v1_database
 

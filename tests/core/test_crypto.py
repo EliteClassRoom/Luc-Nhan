@@ -1,10 +1,11 @@
-"""Tests for rikugan.core.crypto — API key encryption."""
+"""Tests for lucnhan.core.crypto — API key encryption."""
 
 from __future__ import annotations
 
 import pytest
 
-from rikugan.core.crypto import decrypt_keys, encrypt_keys, is_available
+from lucnhan.core import crypto
+from lucnhan.core.crypto import decrypt_keys, encrypt_keys, is_available
 
 
 @pytest.mark.skipif(not is_available(), reason="cryptography not installed")
@@ -27,6 +28,19 @@ class TestCrypto:
     def test_malformed_block(self):
         with pytest.raises(ValueError, match="Malformed"):
             decrypt_keys("pw", {"bad": "data"})
+
+    def test_decrypts_pre_rename_block(self, monkeypatch):
+        """Blocks written before the rename stay readable.
+
+        The marker is sealed *inside* the ciphertext, so it cannot be rewritten
+        on read — the legacy spelling has to keep verifying or stored API keys
+        become unreachable.
+        """
+        data = {"provider_api_key": "sk-ant-legacy"}
+        monkeypatch.setattr(crypto, "_VERIFY_SENTINEL", next(iter(crypto._LEGACY_VERIFY_SENTINELS)))
+        enc = encrypt_keys("pw", data)
+        monkeypatch.undo()
+        assert decrypt_keys("pw", enc) == data
 
     def test_fresh_salt_per_call(self):
         data = {"provider_api_key": "key"}

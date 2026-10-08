@@ -11,12 +11,12 @@
 ## Global Constraints
 
 - `from __future__ import annotations` at top of every modified `.py` module.
-- All references to the tool name go through `rikugan.constants.EXECUTE_PYTHON_TOOL_NAME` — never hardcode the string `"execute_python"`.
-- Qt imports must come from `rikugan.ui.qt_compat` (the single Qt import seam) — never import directly from `PySide6`.
+- All references to the tool name go through `lucnhan.constants.EXECUTE_PYTHON_TOOL_NAME` — never hardcode the string `"execute_python"`.
+- Qt imports must come from `lucnhan.ui.qt_compat` (the single Qt import seam) — never import directly from `PySide6`.
 - Host API imports (`ida_*`) use `importlib.import_module()` in `try/except ImportError` — N/A to this plan (no new IDA API usage).
 - `execute_python` approval is NEVER auto-approved (security invariant). The widget shows buttons only when the loop emits `TOOL_APPROVAL_REQUEST`.
 - Follow existing patterns: `@dataclass` for structured data, union types over ad-hoc protocols, f-strings for formatting, `f"0x{ea:x}"` for hex.
-- Every test file starts with `from tests.qt_stubs import ensure_pyside6_stubs; ensure_pyside6_stubs()` before importing `rikugan.ui.*` modules.
+- Every test file starts with `from tests.qt_stubs import ensure_pyside6_stubs; ensure_pyside6_stubs()` before importing `lucnhan.ui.*` modules.
 
 ---
 
@@ -24,10 +24,10 @@
 
 | File | Responsibility |
 |------|---------------|
-| `rikugan/agent/turn.py` | Add `DOCS_GATE_STATUS` enum value + `docs_gate_status()` factory method |
-| `rikugan/agent/loop.py` | Change `_review_complex_idapython_script` to emit `DOCS_GATE_STATUS` instead of `TEXT_DELTA`; change FAILED path to fall-through; blank `_describe_tool_call` for execute_python |
-| `rikugan/ui/tool_widgets.py` | Add `ExecutePythonWidget` class (new); keep `ToolCallWidget` / `ToolApprovalWidget` unchanged for other tools |
-| `rikugan/ui/chat_view.py` | Route `execute_python` to `ExecutePythonWidget` (live + restore); add `DOCS_GATE_STATUS` handler; route `TOOL_APPROVAL_REQUEST` into existing widget; widen `_tool_widgets` type hint |
+| `lucnhan/agent/turn.py` | Add `DOCS_GATE_STATUS` enum value + `docs_gate_status()` factory method |
+| `lucnhan/agent/loop.py` | Change `_review_complex_idapython_script` to emit `DOCS_GATE_STATUS` instead of `TEXT_DELTA`; change FAILED path to fall-through; blank `_describe_tool_call` for execute_python |
+| `lucnhan/ui/tool_widgets.py` | Add `ExecutePythonWidget` class (new); keep `ToolCallWidget` / `ToolApprovalWidget` unchanged for other tools |
+| `lucnhan/ui/chat_view.py` | Route `execute_python` to `ExecutePythonWidget` (live + restore); add `DOCS_GATE_STATUS` handler; route `TOOL_APPROVAL_REQUEST` into existing widget; widen `_tool_widgets` type hint |
 | `tests/tools/test_execute_python_widget.py` | NEW — unit tests for `ExecutePythonWidget` |
 | `tests/test_idapython_docs_gate.py` | UPDATE — assert `DOCS_GATE_STATUS` events, FAILED fall-through |
 | `tests/tools/test_tool_widget_logic.py` | UPDATE — add `docs_gate_status` factory test if event factory is tested here (or in `tests/agent/test_turn_events.py`) |
@@ -37,7 +37,7 @@
 ## Task 1: Add `DOCS_GATE_STATUS` event type and factory
 
 **Files:**
-- Modify: `rikugan/agent/turn.py:12-45` (enum), `rikugan/agent/turn.py:63-178` (factory area)
+- Modify: `lucnhan/agent/turn.py:12-45` (enum), `lucnhan/agent/turn.py:63-178` (factory area)
 - Test: `tests/agent/test_turn_events.py`
 
 **Interfaces:**
@@ -82,7 +82,7 @@ class TestDocsGateStatusEvent(unittest.TestCase):
         )
 ```
 
-Add `from rikugan.agent.turn import TurnEvent, TurnEventType` to the imports at the top of the test file if not already present.
+Add `from lucnhan.agent.turn import TurnEvent, TurnEventType` to the imports at the top of the test file if not already present.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -91,7 +91,7 @@ Expected: FAIL — `AttributeError: type object 'TurnEventType' has no attribute
 
 - [ ] **Step 3: Add the enum value**
 
-In `rikugan/agent/turn.py`, add to the `TurnEventType` enum (after `KNOWLEDGE_RETRIEVED`, around line 44):
+In `lucnhan/agent/turn.py`, add to the `TurnEventType` enum (after `KNOWLEDGE_RETRIEVED`, around line 44):
 
 ```python
     DOCS_GATE_STATUS = "docs_gate_status"
@@ -99,7 +99,7 @@ In `rikugan/agent/turn.py`, add to the `TurnEventType` enum (after `KNOWLEDGE_RE
 
 - [ ] **Step 4: Add the factory method**
 
-In `rikugan/agent/turn.py`, add a new static method to the `TurnEvent` dataclass (after `tool_approval_request`, around line 178):
+In `lucnhan/agent/turn.py`, add a new static method to the `TurnEvent` dataclass (after `tool_approval_request`, around line 178):
 
 ```python
     @staticmethod
@@ -135,7 +135,7 @@ Expected: PASS (3 tests)
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/agent/turn.py tests/agent/test_turn_events.py
+git add lucnhan/agent/turn.py tests/agent/test_turn_events.py
 git commit -m "feat(agent): add DOCS_GATE_STATUS event type and factory"
 ```
 
@@ -144,7 +144,7 @@ git commit -m "feat(agent): add DOCS_GATE_STATUS event type and factory"
 ## Task 2: Loop emits `DOCS_GATE_STATUS` instead of `TEXT_DELTA`; FAILED falls through
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:1164-1168` (gate-fire message), `rikugan/agent/loop.py:1191-1199` (exception → fall-through), `rikugan/agent/loop.py:1219-1231` (verdict APPROVED/blocked messages)
+- Modify: `lucnhan/agent/loop.py:1164-1168` (gate-fire message), `lucnhan/agent/loop.py:1191-1199` (exception → fall-through), `lucnhan/agent/loop.py:1219-1231` (verdict APPROVED/blocked messages)
 - Test: `tests/test_idapython_docs_gate.py`
 
 **Interfaces:**
@@ -153,7 +153,7 @@ git commit -m "feat(agent): add DOCS_GATE_STATUS event type and factory"
 
 - [ ] **Step 1: Read current code to confirm line numbers**
 
-Run: `python3 -m pytest tests/test_idapython_docs_gate.py -v --co -q` to confirm the existing test file collects. Then read `rikugan/agent/loop.py` lines 1140-1235 to confirm the three emission sites match the task's "Modify" line ranges (they may have drifted).
+Run: `python3 -m pytest tests/test_idapython_docs_gate.py -v --co -q` to confirm the existing test file collects. Then read `lucnhan/agent/loop.py` lines 1140-1235 to confirm the three emission sites match the task's "Modify" line ranges (they may have drifted).
 
 - [ ] **Step 2: Write the failing test for event type**
 
@@ -168,13 +168,13 @@ class TestDocsGateStatusEmission(unittest.TestCase):
 
         Returns the list of TurnEvent objects and the (approved, summary) tuple.
         """
-        from rikugan.agent.loop import AgentLoop
-        from rikugan.agent.turn import TurnEvent, TurnEventType
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.idapython_complexity import (
+        from lucnhan.agent.loop import AgentLoop
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.idapython_complexity import (
             classify_idapython_script,
         )
-        from rikugan.tools.validate_idapython import validate_idapython
+        from lucnhan.tools.validate_idapython import validate_idapython
 
         loop = _build_minimal_loop(verdict_text=verdict_text)
         tc = ToolCall(id="tc1", name="execute_python", arguments={"code": script})
@@ -220,10 +220,10 @@ class TestDocsGateStatusEmission(unittest.TestCase):
         """Behavior change: reviewer crash now returns (True, '') to fall
         through to user approval instead of hard-blocking."""
         loop = _build_minimal_loop(raise_on_run=ValueError("boom"))
-        from rikugan.agent.turn import TurnEventType
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.idapython_complexity import classify_idapython_script
-        from rikugan.tools.validate_idapython import validate_idapython
+        from lucnhan.agent.turn import TurnEventType
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.idapython_complexity import classify_idapython_script
+        from lucnhan.tools.validate_idapython import validate_idapython
 
         script = "import idautils\nimport idc\nfor ea in idautils.Functions():\n    print(ea)\n" * 3
         tc = ToolCall(id="tc2", name="execute_python", arguments={"code": script})
@@ -267,7 +267,7 @@ def _build_minimal_loop(verdict_text: str = "VERDICT: APPROVED", raise_on_run=No
     verdict or raise.
     """
     from unittest.mock import MagicMock
-    from rikugan.agent.loop import AgentLoop
+    from lucnhan.agent.loop import AgentLoop
 
     loop = MagicMock(spec=AgentLoop)
     loop._DOCS_GATE_VERDICT_PREFIX = AgentLoop._DOCS_GATE_VERDICT_PREFIX
@@ -275,7 +275,7 @@ def _build_minimal_loop(verdict_text: str = "VERDICT: APPROVED", raise_on_run=No
     # _review_complex_idapython_script builds a SubagentRunner inline and
     # calls runner.run_task(...). We patch the class so any instance returns
     # our canned value.
-    import rikugan.agent.loop as loop_mod
+    import lucnhan.agent.loop as loop_mod
 
     def _fake_run_task(self, task, **kwargs):
         if raise_on_run is not None:
@@ -297,7 +297,7 @@ Expected: FAIL — `TEXT_DELTA` is still in `types` (current code emits it); `te
 
 - [ ] **Step 4: Replace the gate-fire message**
 
-In `rikugan/agent/loop.py`, find the `_review_complex_idapython_script` method. Replace the "Notify the chat that the gate is firing" `TEXT_DELTA` block (around lines 1164-1168):
+In `lucnhan/agent/loop.py`, find the `_review_complex_idapython_script` method. Replace the "Notify the chat that the gate is firing" `TEXT_DELTA` block (around lines 1164-1168):
 
 ```python
         # Notify the chat that the gate is firing.
@@ -366,7 +366,7 @@ Expected: PASS — no regressions. If an existing test asserts `TEXT_DELTA` was 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add rikugan/agent/loop.py tests/test_idapython_docs_gate.py
+git add lucnhan/agent/loop.py tests/test_idapython_docs_gate.py
 git commit -m "refactor(agent): emit DOCS_GATE_STATUS instead of TEXT_DELTA for docs gate
 
 - Gate-fire, approved, blocked states now emit DOCS_GATE_STATUS
@@ -382,7 +382,7 @@ git commit -m "refactor(agent): emit DOCS_GATE_STATUS instead of TEXT_DELTA for 
 ## Task 3: Blank `_describe_tool_call` for execute_python
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:1056-1064` (`_describe_tool_call`)
+- Modify: `lucnhan/agent/loop.py:1056-1064` (`_describe_tool_call`)
 - Test: `tests/test_idapython_docs_gate.py` (or `tests/agent/test_agent_loop.py`)
 
 **Interfaces:**
@@ -395,8 +395,8 @@ Append to `tests/test_idapython_docs_gate.py`:
 ```python
 class TestDescribeToolCallExecutePython(unittest.TestCase):
     def test_execute_python_returns_empty_description(self):
-        from rikugan.agent.loop import AgentLoop
-        from rikugan import constants
+        from lucnhan.agent.loop import AgentLoop
+        from lucnhan import constants
 
         desc = AgentLoop._describe_tool_call(
             constants.EXECUTE_PYTHON_TOOL_NAME,
@@ -405,7 +405,7 @@ class TestDescribeToolCallExecutePython(unittest.TestCase):
         self.assertEqual(desc, "")
 
     def test_other_mutating_tool_still_described(self):
-        from rikugan.agent.loop import AgentLoop
+        from lucnhan.agent.loop import AgentLoop
 
         desc = AgentLoop._describe_tool_call(
             "rename_function",
@@ -422,7 +422,7 @@ Expected: FAIL — current code returns `"Run Python code:\n..."`.
 
 - [ ] **Step 3: Modify `_describe_tool_call`**
 
-In `rikugan/agent/loop.py`, at the top of `_describe_tool_call` (around line 1056), change the `execute_python` branch to return empty:
+In `lucnhan/agent/loop.py`, at the top of `_describe_tool_call` (around line 1056), change the `execute_python` branch to return empty:
 
 ```python
     @staticmethod
@@ -445,7 +445,7 @@ Expected: PASS (2 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rikugan/agent/loop.py tests/test_idapython_docs_gate.py
+git add lucnhan/agent/loop.py tests/test_idapython_docs_gate.py
 git commit -m "refactor(agent): blank _describe_tool_call for execute_python
 
 The unified ExecutePythonWidget renders its own code block, so the
@@ -457,11 +457,11 @@ description that duplicated the first line of code is no longer needed."
 ## Task 4: Create `ExecutePythonWidget` class
 
 **Files:**
-- Create: `rikugan/ui/tool_widgets.py` (append class at end of file)
+- Create: `lucnhan/ui/tool_widgets.py` (append class at end of file)
 - Test: `tests/tools/test_execute_python_widget.py` (NEW)
 
 **Interfaces:**
-- Consumes (from existing code): `_PythonHighlighter` (line 939), `_build_approval_header` (line 171), `_extract_code`-style JSON parsing, `get_tool_colors()`, `get_tool_approval_*_style()` from `rikugan.ui.styles`.
+- Consumes (from existing code): `_PythonHighlighter` (line 939), `_build_approval_header` (line 171), `_extract_code`-style JSON parsing, `get_tool_colors()`, `get_tool_approval_*_style()` from `lucnhan.ui.styles`.
 - Produces: `ExecutePythonWidget(QFrame)` with:
   - `Signal approved = Signal(str, str)` — `(tool_call_id, "allow" | "allow_all" | "deny")`
   - `__init__(self, tool_call_id: str, parent: QWidget | None = None)`
@@ -491,9 +491,9 @@ from tests.qt_stubs import ensure_pyside6_stubs
 ensure_pyside6_stubs()
 
 # Ensure the real module is loaded even if another test stubbed it.
-sys.modules.pop("rikugan.ui.tool_widgets", None)
+sys.modules.pop("lucnhan.ui.tool_widgets", None)
 
-from rikugan.ui.tool_widgets import ExecutePythonWidget  # noqa: E402
+from lucnhan.ui.tool_widgets import ExecutePythonWidget  # noqa: E402
 
 
 class TestExecutePythonWidgetInit(unittest.TestCase):
@@ -647,11 +647,11 @@ if __name__ == "__main__":
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/tools/test_execute_python_widget.py -v`
-Expected: FAIL — `ImportError: cannot import name 'ExecutePythonWidget' from 'rikugan.ui.tool_widgets'`.
+Expected: FAIL — `ImportError: cannot import name 'ExecutePythonWidget' from 'lucnhan.ui.tool_widgets'`.
 
 - [ ] **Step 3: Implement `ExecutePythonWidget`**
 
-Append to the END of `rikugan/ui/tool_widgets.py` (after the existing `ToolApprovalWidget` class). Use these imports — they are already at the top of the file (`QFrame`, `QHBoxLayout`, `QLabel`, `QPlainTextEdit`, `QToolButton`, `QVBoxLayout`, `QWidget`, `Signal`, `Qt`, `json`, and the style helpers). Add `constants` import is already present (line 10).
+Append to the END of `lucnhan/ui/tool_widgets.py` (after the existing `ToolApprovalWidget` class). Use these imports — they are already at the top of the file (`QFrame`, `QHBoxLayout`, `QLabel`, `QPlainTextEdit`, `QToolButton`, `QVBoxLayout`, `QWidget`, `Signal`, `Qt`, `json`, and the style helpers). Add `constants` import is already present (line 10).
 
 ```python
 class ExecutePythonWidget(QFrame):
@@ -995,17 +995,17 @@ class ExecutePythonWidget(QFrame):
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest tests/tools/test_execute_python_widget.py -v`
-Expected: PASS (all tests). If a test fails because a helper (e.g. `_tool_card_css`, `_tool_color`) is not defined or has a different name, grep for the correct name: `grep -n "_tool_card_css\|def _tool_color\|_HeightCachedLabel" rikugan/ui/tool_widgets.py` and adjust the implementation to match the real names.
+Expected: PASS (all tests). If a test fails because a helper (e.g. `_tool_card_css`, `_tool_color`) is not defined or has a different name, grep for the correct name: `grep -n "_tool_card_css\|def _tool_color\|_HeightCachedLabel" lucnhan/ui/tool_widgets.py` and adjust the implementation to match the real names.
 
 - [ ] **Step 5: Verify imports resolve**
 
-Run: `python3 -c "from tests.qt_stubs import ensure_pyside6_stubs; ensure_pyside6_stubs(); import rikugan.ui.tool_widgets; print('OK', hasattr(rikugan.ui.tool_widgets, 'ExecutePythonWidget'))"`
+Run: `python3 -c "from tests.qt_stubs import ensure_pyside6_stubs; ensure_pyside6_stubs(); import lucnhan.ui.tool_widgets; print('OK', hasattr(lucnhan.ui.tool_widgets, 'ExecutePythonWidget'))"`
 Expected: `OK True`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/ui/tool_widgets.py tests/tools/test_execute_python_widget.py
+git add lucnhan/ui/tool_widgets.py tests/tools/test_execute_python_widget.py
 git commit -m "feat(ui): add ExecutePythonWidget unified lifecycle widget
 
 Renders code, docs-review status, approval buttons, and result in one
@@ -1018,7 +1018,7 @@ hide buttons on docs-gate BLOCKED; keeps them on FAILED."
 ## Task 5: Route `execute_python` to `ExecutePythonWidget` in ChatView (live events)
 
 **Files:**
-- Modify: `rikugan/ui/chat_view.py:505` (type hint), `rikugan/ui/chat_view.py:930-966` (`_handle_tool_event`), `rikugan/ui/chat_view.py:751-790` (event dispatch — add `DOCS_GATE_STATUS`)
+- Modify: `lucnhan/ui/chat_view.py:505` (type hint), `lucnhan/ui/chat_view.py:930-966` (`_handle_tool_event`), `lucnhan/ui/chat_view.py:751-790` (event dispatch — add `DOCS_GATE_STATUS`)
 - Test: `tests/tools/test_chat_view.py` (or `tests/ui/`)
 
 **Interfaces:**
@@ -1027,7 +1027,7 @@ hide buttons on docs-gate BLOCKED; keeps them on FAILED."
 
 - [ ] **Step 1: Read the event dispatch method**
 
-Read `rikugan/ui/chat_view.py` lines 751-800 (the `handle_event` dispatch) and 930-966 (`_handle_tool_event`) to confirm exact structure. The dispatch likely has `if etype in (...): self._handle_tool_event(event)` — confirm `TOOL_RESULT` and `TOOL_APPROVAL_REQUEST` are dispatched there.
+Read `lucnhan/ui/chat_view.py` lines 751-800 (the `handle_event` dispatch) and 930-966 (`_handle_tool_event`) to confirm exact structure. The dispatch likely has `if etype in (...): self._handle_tool_event(event)` — confirm `TOOL_RESULT` and `TOOL_APPROVAL_REQUEST` are dispatched there.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1038,9 +1038,9 @@ class TestExecutePythonRouting(unittest.TestCase):
     """ChatView routes execute_python to ExecutePythonWidget."""
 
     def setUp(self):
-        from rikugan.ui.chat_view import ChatView
-        from rikugan.agent.turn import TurnEvent, TurnEventType
-        from rikugan import constants
+        from lucnhan.ui.chat_view import ChatView
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan import constants
         self.ChatView = ChatView
         self.TurnEvent = TurnEvent
         self.TurnEventType = TurnEventType
@@ -1062,14 +1062,14 @@ class TestExecutePythonRouting(unittest.TestCase):
         view = self._make_view()
         ev = self.TurnEvent.tool_call_start("tc1", self.EXEC_PY)
         view._handle_tool_event(ev)
-        from rikugan.ui.tool_widgets import ExecutePythonWidget
+        from lucnhan.ui.tool_widgets import ExecutePythonWidget
         self.assertIsInstance(view._tool_widgets["tc1"], ExecutePythonWidget)
 
     def test_other_tool_still_uses_tool_call_widget(self):
         view = self._make_view()
         ev = self.TurnEvent.tool_call_start("tc2", "rename_function")
         view._handle_tool_event(ev)
-        from rikugan.ui.tool_widgets import ToolCallWidget
+        from lucnhan.ui.tool_widgets import ToolCallWidget
         self.assertIsInstance(view._tool_widgets["tc2"], ToolCallWidget)
 
     def test_tool_call_done_sets_code(self):
@@ -1095,7 +1095,7 @@ class TestExecutePythonRouting(unittest.TestCase):
         view._handle_tool_event(self.TurnEvent.tool_call_start("tc1", self.EXEC_PY))
         ev = self.TurnEvent.tool_approval_request("tc1", self.EXEC_PY, '{"code":"x"}', "")
         view._handle_tool_event(ev)
-        from rikugan.ui.tool_widgets import ExecutePythonWidget
+        from lucnhan.ui.tool_widgets import ExecutePythonWidget
         self.assertIsInstance(view._tool_widgets["tc1"], ExecutePythonWidget)
         self.assertTrue(view._tool_widgets["tc1"]._buttons_visible)
 ```
@@ -1109,7 +1109,7 @@ Expected: FAIL — `execute_python` still creates `ToolCallWidget` (current code
 
 - [ ] **Step 4: Update the type hint**
 
-In `rikugan/ui/chat_view.py` line 505, change:
+In `lucnhan/ui/chat_view.py` line 505, change:
 
 ```python
         self._tool_widgets: dict[str, ToolCallWidget] = {}
@@ -1119,7 +1119,7 @@ to:
         self._tool_widgets: dict[str, ToolCallWidget | ExecutePythonWidget] = {}
 ```
 
-Ensure `ExecutePythonWidget` is imported at the top of `chat_view.py`. Find the existing `from .tool_widgets import ...` line (search `grep -n "from .tool_widgets import" rikugan/ui/chat_view.py`) and add `ExecutePythonWidget` to the import list.
+Ensure `ExecutePythonWidget` is imported at the top of `chat_view.py`. Find the existing `from .tool_widgets import ...` line (search `grep -n "from .tool_widgets import" lucnhan/ui/chat_view.py`) and add `ExecutePythonWidget` to the import list.
 
 - [ ] **Step 5: Route `TOOL_CALL_START`**
 
@@ -1137,7 +1137,7 @@ In `_handle_tool_event` (`chat_view.py:932-937`), change the `TOOL_CALL_START` b
             self._scroll_to_bottom()
 ```
 
-Ensure `constants` is imported in `chat_view.py` (search `grep -n "from .. import constants\|import constants" rikugan/ui/chat_view.py`; if missing add `from .. import constants`).
+Ensure `constants` is imported in `chat_view.py` (search `grep -n "from .. import constants\|import constants" lucnhan/ui/chat_view.py`; if missing add `from .. import constants`).
 
 - [ ] **Step 6: Route `TOOL_CALL_DONE` with code**
 
@@ -1226,7 +1226,7 @@ Expected: PASS — no regressions. If `test_chat_view_restore.py` breaks, fix in
 - [ ] **Step 11: Commit**
 
 ```bash
-git add rikugan/ui/chat_view.py tests/tools/test_chat_view.py
+git add lucnhan/ui/chat_view.py tests/tools/test_chat_view.py
 git commit -m "feat(ui): route execute_python to ExecutePythonWidget in ChatView
 
 - TOOL_CALL_START creates ExecutePythonWidget for execute_python
@@ -1241,7 +1241,7 @@ git commit -m "feat(ui): route execute_python to ExecutePythonWidget in ChatView
 ## Task 6: Route `execute_python` in history restore
 
 **Files:**
-- Modify: `rikugan/ui/chat_view.py:2088-2096` (`_build_restored_tool_widgets`)
+- Modify: `lucnhan/ui/chat_view.py:2088-2096` (`_build_restored_tool_widgets`)
 - Test: `tests/ui/test_chat_view_restore.py`
 
 **Interfaces:**
@@ -1250,7 +1250,7 @@ git commit -m "feat(ui): route execute_python to ExecutePythonWidget in ChatView
 
 - [ ] **Step 1: Read the current restore method**
 
-Read `rikugan/ui/chat_view.py` lines 2075-2110 to confirm the loop structure and the `ToolSpec` fields available (`ts.name`, `ts.id`, `ts.arguments_json`, `ts.result_content`, `ts.result_is_error`).
+Read `lucnhan/ui/chat_view.py` lines 2075-2110 to confirm the loop structure and the `ToolSpec` fields available (`ts.name`, `ts.id`, `ts.arguments_json`, `ts.result_content`, `ts.result_is_error`).
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1259,11 +1259,11 @@ Append to `tests/ui/test_chat_view_restore.py` (read its header to match setup).
 ```python
 class TestRestoreExecutePython(unittest.TestCase):
     def test_execute_python_restores_as_execute_python_widget(self):
-        from rikugan.ui.chat_view import ChatView
-        from rikugan.ui.tool_widgets import ExecutePythonWidget
-        from rikugan import constants
+        from lucnhan.ui.chat_view import ChatView
+        from lucnhan.ui.tool_widgets import ExecutePythonWidget
+        from lucnhan import constants
         # Find the ToolSpec class used by the restore path.
-        import rikugan.ui.chat_view as cv_mod
+        import lucnhan.ui.chat_view as cv_mod
         ToolSpec = cv_mod.ToolSpec
 
         ts = ToolSpec(
@@ -1286,7 +1286,7 @@ class TestRestoreExecutePython(unittest.TestCase):
         self.assertFalse(widgets[0]._is_error)
 ```
 
-Note: confirm the `ToolSpec` field names by reading its definition (`grep -n "class ToolSpec" rikugan/ui/chat_view.py` then read that class — around line 86). Adjust field names in the test if they differ (`arguments_json` vs `arguments`, `result_content` vs `result`).
+Note: confirm the `ToolSpec` field names by reading its definition (`grep -n "class ToolSpec" lucnhan/ui/chat_view.py` then read that class — around line 86). Adjust field names in the test if they differ (`arguments_json` vs `arguments`, `result_content` vs `result`).
 
 - [ ] **Step 3: Run test to verify it fails**
 
@@ -1295,7 +1295,7 @@ Expected: FAIL — restore creates `ToolCallWidget`.
 
 - [ ] **Step 4: Add the branch to `_build_restored_tool_widgets`**
 
-In `rikugan/ui/chat_view.py` lines 2088-2096, change the loop body:
+In `lucnhan/ui/chat_view.py` lines 2088-2096, change the loop body:
 
 ```python
         tool_widgets = []
@@ -1322,7 +1322,7 @@ Expected: PASS — new test + all existing restore tests green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/ui/chat_view.py tests/ui/test_chat_view_restore.py
+git add lucnhan/ui/chat_view.py tests/ui/test_chat_view_restore.py
 git commit -m "feat(ui): restore execute_python as ExecutePythonWidget from history
 
 Restored execute_python calls now render with the unified widget (code
@@ -1344,12 +1344,12 @@ Expected: PASS — all tests green. If `-x` stops on first failure, read the fai
 
 - [ ] **Step 2: Run format + lint**
 
-Run: `python3 -m ruff format rikugan/ tests/ && python3 -m ruff check rikugan/ tests/ --fix`
+Run: `python3 -m ruff format lucnhan/ tests/ && python3 -m ruff check lucnhan/ tests/ --fix`
 Expected: clean. If ruff reports issues, re-run `--fix` then verify.
 
 - [ ] **Step 3: Run type check**
 
-Run: `python3 -m mypy rikugan/core rikugan/providers rikugan/agent rikugan/ui`
+Run: `python3 -m mypy lucnhan/core lucnhan/providers lucnhan/agent lucnhan/ui`
 Expected: no new errors compared to baseline. If `_tool_widgets: dict[str, ToolCallWidget | ExecutePythonWidget]` introduces a mypy error in a call site that expects `ToolCallWidget`, narrow with `isinstance` or adjust the call site.
 
 - [ ] **Step 4: Run local CI mirror**

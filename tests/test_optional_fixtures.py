@@ -19,7 +19,7 @@ from pathlib import Path
 
 from tests.optional_fixtures import optional_test_data_dir, optional_test_data_path
 
-_ENV_VAR = "RIKUGAN_OPTIONAL_TEST_DATA"
+_ENV_VAR = "LUCNHAN_OPTIONAL_TEST_DATA"
 
 
 class TestOptionalTestDataGating(unittest.TestCase):

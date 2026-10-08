@@ -32,7 +32,7 @@ def _ensure_qapp() -> None:
     once here and let every test share it.
     """
     try:
-        from rikugan.ui.qt_compat import QApplication
+        from lucnhan.ui.qt_compat import QApplication
     except Exception:
         from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication([])
@@ -57,12 +57,12 @@ class _StubMemoryService:
 
 
 def _make_panel_core():
-    """Build a bare ``RikuganPanelCore`` via ``__new__`` so the heavy
+    """Build a bare ``LucNhanPanelCore`` via ``__new__`` so the heavy
     ``__init__`` (which would touch every dependency) is bypassed.
     """
-    from rikugan.ui.panel_core import RikuganPanelCore
+    from lucnhan.ui.panel_core import LucNhanPanelCore
 
-    panel = RikuganPanelCore.__new__(RikuganPanelCore)
+    panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
     panel._is_shutdown = False
     panel._ctrl = MagicMock()
     panel._config = MagicMock()
@@ -73,7 +73,7 @@ def _make_panel_core():
 
 @pytest.fixture
 def panel_core_with_widget():
-    """Yield a bare ``RikuganPanelCore`` whose ``_knowledge_panel`` is
+    """Yield a bare ``LucNhanPanelCore`` whose ``_knowledge_panel`` is
     a MagicMock.  Tests can inspect the panel's call history.
     """
     return _make_panel_core()
@@ -88,7 +88,7 @@ def test_refresh_panel_reads_sqlite_when_service_wired(tmp_path: Path) -> None:
     """When ``memory_service`` is wired, the panel populates from the
     repository's ``list_*`` outputs without touching ``make_store``.
     """
-    from rikugan.ui.knowledge_panel import KnowledgePanel
+    from lucnhan.ui.knowledge_panel import KnowledgePanel
 
     panel = KnowledgePanel()
     service = MagicMock()
@@ -114,7 +114,7 @@ def test_refresh_panel_falls_back_to_jsonl_when_service_none(tmp_path: Path) -> 
     """When ``memory_service`` is ``None``, the panel renders the
     ``No IDB path`` placeholder cleanly.
     """
-    from rikugan.ui.knowledge_panel import KnowledgePanel
+    from lucnhan.ui.knowledge_panel import KnowledgePanel
 
     panel = KnowledgePanel()
     panel.set_disabled_message("No IDB path is set.")
@@ -137,7 +137,7 @@ def test_sqlite_path_calls_repository_and_skips_make_store(panel_core_with_widge
     panel._ctrl.session = MagicMock()
     panel._ctrl.session.idb_path = "/tmp/some-binary.i64"
 
-    with patch("rikugan.memory.ingest.make_store") as make_store:
+    with patch("lucnhan.memory.ingest.make_store") as make_store:
         panel._refresh_knowledge_panel()
 
     # SQLite path was taken: repository.list_*() were called.
@@ -162,9 +162,9 @@ def test_sqlite_path_passes_notes_dir_as_string(panel_core_with_widget, tmp_path
     panel._ctrl.session = MagicMock()
     panel._ctrl.session.idb_path = "/tmp/some-binary.i64"
 
-    # Stub ``rikugan.memory.notes.list_notes`` so we can inspect the
+    # Stub ``lucnhan.memory.notes.list_notes`` so we can inspect the
     # argument type without touching the filesystem.
-    with patch("rikugan.memory.notes.list_notes", return_value=[]) as list_notes:
+    with patch("lucnhan.memory.notes.list_notes", return_value=[]) as list_notes:
         panel._refresh_knowledge_panel()
 
     list_notes.assert_called_once()
@@ -188,7 +188,7 @@ def test_sqlite_path_populates_with_set_counts(panel_core_with_widget, tmp_path:
     panel._ctrl.session = MagicMock()
     panel._ctrl.session.idb_path = "/tmp/some-binary.i64"
 
-    with patch("rikugan.memory.notes.list_notes", return_value=[]):
+    with patch("lucnhan.memory.notes.list_notes", return_value=[]):
         panel._refresh_knowledge_panel()
 
     panel._knowledge_panel.set_counts.assert_called_once_with(
@@ -224,10 +224,10 @@ def test_sqlite_path_failure_falls_back_to_jsonl(panel_core_with_widget, tmp_pat
     fake_paths.notes_dir = str(tmp_path / "notes")
     with (
         patch(
-            "rikugan.memory.ingest.make_store",
+            "lucnhan.memory.ingest.make_store",
             return_value=(fake_store, fake_paths),
         ),
-        patch("rikugan.memory.notes.list_notes", return_value=[]),
+        patch("lucnhan.memory.notes.list_notes", return_value=[]),
     ):
         panel._refresh_knowledge_panel()
 
@@ -260,10 +260,10 @@ def test_jsonl_path_used_when_memory_service_is_none(panel_core_with_widget, tmp
     fake_paths.notes_dir = str(tmp_path / "notes")
     with (
         patch(
-            "rikugan.memory.ingest.make_store",
+            "lucnhan.memory.ingest.make_store",
             return_value=(fake_store, fake_paths),
         ) as make_store,
-        patch("rikugan.memory.notes.list_notes", return_value=[]),
+        patch("lucnhan.memory.notes.list_notes", return_value=[]),
     ):
         panel._refresh_knowledge_panel()
 
@@ -283,7 +283,7 @@ def test_jsonl_path_disabled_when_store_init_fails(panel_core_with_widget, tmp_p
     panel._ctrl.session.idb_path = str(tmp_path / "fake.i64")
 
     with patch(
-        "rikugan.memory.ingest.make_store",
+        "lucnhan.memory.ingest.make_store",
         return_value=(None, None),
     ):
         panel._refresh_knowledge_panel()

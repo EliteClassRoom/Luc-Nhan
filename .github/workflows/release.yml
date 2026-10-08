@@ -53,13 +53,13 @@ jobs:
           # Version must agree in ALL THREE sources, per the release flow
           # documented in CLAUDE.md ("Bump version ở cả 3 nguồn (sync)").
           # Catches drift between ida-plugin.json (HCLI metadata),
-          # pyproject.toml (PEP 621), and rikugan/constants.py (runtime
+          # pyproject.toml (PEP 621), and lucnhan/constants.py (runtime
           # PLUGIN_VERSION shown in UI / logs).
           PLUGIN_JSON_VERSION=$(python -c "import json; print(json.load(open('ida-plugin.json'))['plugin']['version'])")
           PYPROJECT_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           CONSTANTS_VERSION=$(python -c "
           import re
-          src = open('rikugan/constants.py').read()
+          src = open('lucnhan/constants.py').read()
           m = re.search(r'^PLUGIN_VERSION\\s*=\\s*[\"\\']([^\"\\']+)[\"\\']', src, re.MULTILINE)
           print(m.group(1) if m else '')
           ")
@@ -73,7 +73,7 @@ jobs:
             exit 1
           fi
           if [ "$VERSION" != "$CONSTANTS_VERSION" ]; then
-            echo "::error::Tag '$TAG' (→ version '$VERSION') does not match rikugan/constants.py PLUGIN_VERSION '$CONSTANTS_VERSION' — bump constants.py to '$VERSION'"
+            echo "::error::Tag '$TAG' (→ version '$VERSION') does not match lucnhan/constants.py PLUGIN_VERSION '$CONSTANTS_VERSION' — bump constants.py to '$VERSION'"
             exit 1
           fi
 
@@ -86,19 +86,19 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
-          echo "::notice::Parsed: tag=$TAG, version=$VERSION (synced in ida-plugin.json, pyproject.toml, rikugan/constants.py), is_prerelease=$IS_PRERELEASE"
+          echo "::notice::Parsed: tag=$TAG, version=$VERSION (synced in ida-plugin.json, pyproject.toml, lucnhan/constants.py), is_prerelease=$IS_PRERELEASE"
 
       - name: Re-run CI checks (inline)
         run: |
           set -e
           echo "── ruff format check ──"
-          python -m ruff format --check rikugan/
+          python -m ruff format --check lucnhan/
 
           echo "── ruff lint ──"
-          python -m ruff check rikugan/
+          python -m ruff check lucnhan/
 
           echo "── mypy ──"
-          python -m mypy rikugan/core rikugan/providers
+          python -m mypy lucnhan/core lucnhan/providers
 
           echo "── pytest ──"
           python -m pytest --tb=short -q
@@ -137,10 +137,10 @@ jobs:
           # Prefer hcli plugin lint if available; else run the Python shim.
           if command -v hcli >/dev/null 2>&1; then
             echo "hcli found — running 'hcli plugin lint'"
-            hcli plugin lint "dist/rikugan-v${{ needs.verify.outputs.version }}.zip"
+            hcli plugin lint "dist/lucnhan-v${{ needs.verify.outputs.version }}.zip"
           else
             echo "hcli not found — running structural shim"
-            python scripts/validate_archive.py "dist/rikugan-v${{ needs.verify.outputs.version }}.zip"
+            python scripts/validate_archive.py "dist/lucnhan-v${{ needs.verify.outputs.version }}.zip"
           fi
 
       - name: Upload artifacts
@@ -165,10 +165,10 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.verify.outputs.tag }}
-          name: "Rikugan ${{ needs.verify.outputs.version }}"
+          name: "Luc Nhan ${{ needs.verify.outputs.version }}"
           prerelease: ${{ needs.verify.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist/rikugan-v${{ needs.verify.outputs.version }}.zip
+            dist/lucnhan-v${{ needs.verify.outputs.version }}.zip
             dist/SHA256SUMS

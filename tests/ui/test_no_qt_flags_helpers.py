@@ -6,8 +6,8 @@ import pathlib
 import unittest
 
 _FILES = [
-    pathlib.Path("rikugan/ui/message_widgets.py"),
-    pathlib.Path("rikugan/ui/tool_widgets.py"),
+    pathlib.Path("lucnhan/ui/message_widgets.py"),
+    pathlib.Path("lucnhan/ui/tool_widgets.py"),
 ]
 
 

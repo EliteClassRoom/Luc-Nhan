@@ -1,4 +1,4 @@
-"""Tests for rikugan.ui.settings_dialog — pure logic helpers."""
+"""Tests for lucnhan.ui.settings_dialog — pure logic helpers."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 # Install the lightweight ``PySide6`` stubs BEFORE importing any
-# rikugan module.  The conftest hook uninstalls those stubs
+# lucnhan module.  The conftest hook uninstalls those stubs
 # (and re-imports the real C extension) for the *next* test
 # module's collection, so sibling tests that need real Qt
-# (e.g. ``rikugan/tests/test_chat_view_async_restore.py``)
+# (e.g. ``lucnhan/tests/test_chat_view_async_restore.py``)
 # pick up the real classes even when this file runs first.
 from tests.qt_stubs import ensure_pyside6_stubs
 
@@ -33,30 +33,30 @@ class _StubModule(types.ModuleType):
 
 
 for _mod_name in [
-    "rikugan.core.config",
-    "rikugan.core.logging",
-    "rikugan.core.types",
-    "rikugan.core.host",
-    "rikugan.providers.anthropic_provider",
-    "rikugan.providers.auth_cache",
-    "rikugan.providers.ollama_provider",
-    "rikugan.providers.registry",
-    "rikugan.ui.styles",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.applicator",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
-    "rikugan.ui.tool_widgets",
+    "lucnhan.core.config",
+    "lucnhan.core.logging",
+    "lucnhan.core.types",
+    "lucnhan.core.host",
+    "lucnhan.providers.anthropic_provider",
+    "lucnhan.providers.auth_cache",
+    "lucnhan.providers.ollama_provider",
+    "lucnhan.providers.registry",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.applicator",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
+    "lucnhan.ui.tool_widgets",
 ]:
     _stub = _StubModule(_mod_name)
     for _attr in [
-        "RikuganConfig",
+        "LucNhanConfig",
         "log_debug",
         "log_error",
         "log_info",
@@ -85,8 +85,8 @@ for _mod_name in [
 # that a downstream test imported between the time we installed
 # the stub and the time teardown runs.
 #
-# NOTE: We intentionally do NOT stub ``rikugan.ui.markdown``,
-# ``rikugan.ui.chat_view``, or ``rikugan.ui.panel_core`` here.
+# NOTE: We intentionally do NOT stub ``lucnhan.ui.markdown``,
+# ``lucnhan.ui.chat_view``, or ``lucnhan.ui.panel_core`` here.
 # Those modules are imported by sibling tests (e.g.
 # ``tests/tools/test_markdown.py``) and stubbing them would
 # silently corrupt those tests when pytest collects this
@@ -94,40 +94,40 @@ for _mod_name in [
 # modules, so leaving them out of the stub list is safe.
 _STUBBED_BY_THIS_MODULE = frozenset(
     [
-        "rikugan.core.config",
-        "rikugan.core.logging",
-        "rikugan.core.types",
-        "rikugan.core.host",
-        "rikugan.providers.anthropic_provider",
-        "rikugan.providers.auth_cache",
-        "rikugan.providers.ollama_provider",
-        "rikugan.providers.registry",
-        "rikugan.ui.styles",
-        "rikugan.ui.theme",
-        "rikugan.ui.theme.applicator",
-        "rikugan.ui.theme.manager",
-        "rikugan.ui.theme.tokens",
-        "rikugan.ui.theme.palette_dark",
-        "rikugan.ui.theme.palette_light",
-        "rikugan.ui.theme.palette_ida",
-        "rikugan.ui.message_widgets",
-        "rikugan.ui.input_area",
-        "rikugan.ui.context_bar",
-        "rikugan.ui.tool_widgets",
+        "lucnhan.core.config",
+        "lucnhan.core.logging",
+        "lucnhan.core.types",
+        "lucnhan.core.host",
+        "lucnhan.providers.anthropic_provider",
+        "lucnhan.providers.auth_cache",
+        "lucnhan.providers.ollama_provider",
+        "lucnhan.providers.registry",
+        "lucnhan.ui.styles",
+        "lucnhan.ui.theme",
+        "lucnhan.ui.theme.applicator",
+        "lucnhan.ui.theme.manager",
+        "lucnhan.ui.theme.tokens",
+        "lucnhan.ui.theme.palette_dark",
+        "lucnhan.ui.theme.palette_light",
+        "lucnhan.ui.theme.palette_ida",
+        "lucnhan.ui.message_widgets",
+        "lucnhan.ui.input_area",
+        "lucnhan.ui.context_bar",
+        "lucnhan.ui.tool_widgets",
     ]
 )
 
-_styles_mod = sys.modules.get("rikugan.ui.styles")
+_styles_mod = sys.modules.get("lucnhan.ui.styles")
 if _styles_mod is not None:
     _styles_mod.maybe_host_stylesheet = lambda css: css
 
 # Ensure DEFAULT_OLLAMA_URL is a string on the stub (real module already has it)
-_ollama_mod = sys.modules.get("rikugan.providers.ollama_provider")
+_ollama_mod = sys.modules.get("lucnhan.providers.ollama_provider")
 if _ollama_mod is not None and not isinstance(getattr(_ollama_mod, "DEFAULT_OLLAMA_URL", None), str):
     _ollama_mod.DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 # Install real resolve_auth_cached logic on the stub so tests can exercise it
-_ac_stub = sys.modules["rikugan.providers.auth_cache"]
+_ac_stub = sys.modules["lucnhan.providers.auth_cache"]
 _ac_stub._cached_oauth = None
 _ac_stub.resolve_anthropic_auth = MagicMock(return_value=("tok", "api_key"))
 
@@ -144,7 +144,7 @@ def _resolve_auth_cached_impl(explicit_key=""):
 _ac_stub.resolve_auth_cached = _resolve_auth_cached_impl
 _ac_stub.invalidate_cache = MagicMock()
 
-from rikugan.ui.settings_dialog import _AddProviderDialog, _ModelFetcher
+from lucnhan.ui.settings_dialog import _AddProviderDialog, _ModelFetcher
 
 # ---------------------------------------------------------------------------
 # _ModelFetcher
@@ -329,7 +329,7 @@ class TestAddProviderDialogValidate(unittest.TestCase):
 
 
 def _import_dialog():
-    from rikugan.ui.settings_dialog import SettingsDialog
+    from lucnhan.ui.settings_dialog import SettingsDialog
 
     return SettingsDialog
 
@@ -506,10 +506,10 @@ def _install_tab_stubs() -> None:
         "ProfilesTab": _make_fake_tab,
     }
     for _name, _class_name in _tab_classes.items():
-        _mod = sys.modules.get(f"rikugan.ui.{_name}")
+        _mod = sys.modules.get(f"lucnhan.ui.{_name}")
         if _mod is None:
-            _mod = types.ModuleType(f"rikugan.ui.{_name}")
-            sys.modules[f"rikugan.ui.{_name}"] = _mod
+            _mod = types.ModuleType(f"lucnhan.ui.{_name}")
+            sys.modules[f"lucnhan.ui.{_name}"] = _mod
         # Provide the class the dialog imports inside _build_ui
         setattr(_mod, _class_name, _tab_factories[_class_name])
 
@@ -526,10 +526,10 @@ class _FakeService:
 
     def __init__(self, *_a, **_k):
         self._skills = MagicMock()
-        self._skills.rikugan = []
+        self._skills.lucnhan = []
         self._skills.external = {}
         self._mcp = MagicMock()
-        self._mcp.rikugan = []
+        self._mcp.lucnhan = []
         self._mcp.external = {}
         self._tools_by_category = {}
 
@@ -550,10 +550,10 @@ class _FakeService:
 
 
 def _install_real_config_module() -> None:
-    """Reinstall the real rikugan.core.config + rikugan.core.logging so
-    RikuganConfig() returns a real dataclass with theme_mode.
+    """Reinstall the real lucnhan.core.config + lucnhan.core.logging so
+    LucNhanConfig() returns a real dataclass with theme_mode.
 
-    Also reinstalls the real ``rikugan.ui.theme.*`` modules so the
+    Also reinstalls the real ``lucnhan.ui.theme.*`` modules so the
     appearance / bootstrap tests can exercise the production
     ``ThemeManager`` singleton.  The module-level stubs are
     necessary for the dialog-construction tests but get in the
@@ -561,33 +561,33 @@ def _install_real_config_module() -> None:
     """
     # Remove stubs so the real modules get imported on next access
     for _name in (
-        "rikugan.core.config",
-        "rikugan.core.logging",
-        "rikugan.core.types",
-        "rikugan.core.host",
-        "rikugan.ui.theme",
-        "rikugan.ui.theme.manager",
-        "rikugan.ui.theme.tokens",
-        "rikugan.ui.theme.palette_dark",
-        "rikugan.ui.theme.palette_light",
-        "rikugan.ui.theme.palette_ida",
-        "rikugan.ui.styles",
-        "rikugan.ui.markdown",
-        "rikugan.ui.message_widgets",
-        "rikugan.ui.chat_view",
-        "rikugan.ui.input_area",
-        "rikugan.ui.context_bar",
-        "rikugan.ui.tool_widgets",
-        "rikugan.ui.panel_core",
+        "lucnhan.core.config",
+        "lucnhan.core.logging",
+        "lucnhan.core.types",
+        "lucnhan.core.host",
+        "lucnhan.ui.theme",
+        "lucnhan.ui.theme.manager",
+        "lucnhan.ui.theme.tokens",
+        "lucnhan.ui.theme.palette_dark",
+        "lucnhan.ui.theme.palette_light",
+        "lucnhan.ui.theme.palette_ida",
+        "lucnhan.ui.styles",
+        "lucnhan.ui.markdown",
+        "lucnhan.ui.message_widgets",
+        "lucnhan.ui.chat_view",
+        "lucnhan.ui.input_area",
+        "lucnhan.ui.context_bar",
+        "lucnhan.ui.tool_widgets",
+        "lucnhan.ui.panel_core",
     ):
         sys.modules.pop(_name, None)
 
 
 class TestAppearanceTab(unittest.TestCase):
     def setUp(self):
-        # Make sure rikugan.core.config and rikugan.ui.theme.* are
+        # Make sure lucnhan.core.config and lucnhan.ui.theme.* are
         # the real modules so the dialog gets a real
-        # ``RikuganConfig`` instance and the production
+        # ``LucNhanConfig`` instance and the production
         # ``ThemeManager`` singleton.  The module-level stubs
         # installed at the top of this file are necessary for the
         # dialog-construction tests but get in the way of the
@@ -599,8 +599,8 @@ class TestAppearanceTab(unittest.TestCase):
         # Use the real ThemeManager (its tokens() / set_mode() / reset() /
         # instance() API is part of the contract we're testing). Reset so
         # state from earlier tests doesn't leak in.
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode, ThemeTokens  # noqa: F401
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode, ThemeTokens  # noqa: F401
 
         self._ThemeManager = ThemeManager
         self._ThemeMode = ThemeMode
@@ -610,11 +610,11 @@ class TestAppearanceTab(unittest.TestCase):
         self._ThemeManager.reset()
 
     def _build_dialog(self, config=None):
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         if config is None:
-            config = RikuganConfig()
+            config = LucNhanConfig()
         return SettingsDialog(config=config)
 
     def test_appearance_tab_in_dialog(self):
@@ -633,18 +633,18 @@ class TestAppearanceTab(unittest.TestCase):
         self.assertEqual(modes, ["auto", "dark", "light", "ida"])
 
     def test_theme_combo_reflects_config(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.theme = "light"
         dlg = self._build_dialog(config=config)
         idx = dlg._theme_combo.currentIndex()
         self.assertEqual(dlg._theme_combo.itemData(idx), "light")
 
     def test_changing_combo_updates_manager(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         dlg = self._build_dialog(config=config)
         for i in range(dlg._theme_combo.count()):
             if dlg._theme_combo.itemData(i) == "dark":
@@ -667,11 +667,11 @@ class TestAppearanceTab(unittest.TestCase):
     def test_combo_reflects_explicit_auto_in_config(self) -> None:
         """``config.theme = "auto"`` must round-trip through the
         dialog's theme combo (the review found that
-        ``RikuganConfig.load`` rejected "auto" as an unknown
+        ``LucNhanConfig.load`` rejected "auto" as an unknown
         value, silently rewriting it to "ida")."""
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.theme = "auto"
         dlg = self._build_dialog(config=config)
         idx = dlg._theme_combo.currentIndex()
@@ -682,11 +682,11 @@ class TestAppearanceTab(unittest.TestCase):
         ``config.theme`` so the next ``_on_accept`` /
         ``SettingsDialog._on_accept`` round-trip persists it to
         disk.  The legacy ``theme_mode`` field is *not* written
-        because it was never declared on ``RikuganConfig``.
+        because it was never declared on ``LucNhanConfig``.
         """
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         dlg = self._build_dialog(config=config)
         for i in range(dlg._theme_combo.count()):
             if dlg._theme_combo.itemData(i) == "light":
@@ -696,41 +696,41 @@ class TestAppearanceTab(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# RikuganConfig.load — must accept the "auto" theme value.
+# LucNhanConfig.load — must accept the "auto" theme value.
 # ---------------------------------------------------------------------------
 
 
 class TestConfigThemeNormalization(unittest.TestCase):
     """Regression coverage for the new ``"auto"`` theme value.
 
-    ``RikuganConfig.load`` used to normalize any unknown theme
+    ``LucNhanConfig.load`` used to normalize any unknown theme
     value to ``"ida"``.  The new theme system adds ``"auto"``
     as a first-class value, so loading a config that contains
     ``theme = "auto"`` must round-trip without rewriting it.
     """
 
     def _real_config(self):
-        """Return the *real* ``RikuganConfig`` class.
+        """Return the *real* ``LucNhanConfig`` class.
 
         The sibling test file's module-level stubbing installs
-        a MagicMock under ``rikugan.core.config``.  Force a
+        a MagicMock under ``lucnhan.core.config``.  Force a
         re-import so this test exercises the real class.
         """
         import sys as _sys
 
         for _name in list(_sys.modules):
-            if _name == "rikugan.core.config" or _name.startswith("rikugan.core.config."):
+            if _name == "lucnhan.core.config" or _name.startswith("lucnhan.core.config."):
                 _sys.modules.pop(_name, None)
-        import rikugan.core.config as _cfg
+        import lucnhan.core.config as _cfg
 
-        return _cfg.RikuganConfig
+        return _cfg.LucNhanConfig
 
     def test_load_preserves_auto(self) -> None:
         import json
         import tempfile
         from pathlib import Path
 
-        RikuganConfig = self._real_config()
+        LucNhanConfig = self._real_config()
 
         with tempfile.TemporaryDirectory() as tmp:
             # ``_config_dir`` is the field that backs the
@@ -747,7 +747,7 @@ class TestConfigThemeNormalization(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            config = RikuganConfig(_config_dir=str(tmp_path))
+            config = LucNhanConfig(_config_dir=str(tmp_path))
             config.load()
             self.assertEqual(config.theme, "auto")
 
@@ -757,7 +757,7 @@ class TestConfigThemeNormalization(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        RikuganConfig = self._real_config()
+        LucNhanConfig = self._real_config()
 
         for value in ("dark", "light", "ida"):
             with tempfile.TemporaryDirectory() as tmp:
@@ -771,7 +771,7 @@ class TestConfigThemeNormalization(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-                config = RikuganConfig(_config_dir=str(tmp_path))
+                config = LucNhanConfig(_config_dir=str(tmp_path))
                 config.load()
                 self.assertEqual(config.theme, value)
 
@@ -785,7 +785,7 @@ class TestConfigThemeNormalization(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        RikuganConfig = self._real_config()
+        LucNhanConfig = self._real_config()
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -798,24 +798,24 @@ class TestConfigThemeNormalization(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            config = RikuganConfig(_config_dir=str(tmp_path))
+            config = LucNhanConfig(_config_dir=str(tmp_path))
             config.load()
             self.assertEqual(config.theme, "auto")
 
 
 # ---------------------------------------------------------------------------
-# ThemeManager — initialized from RikuganConfig.theme at panel
+# ThemeManager — initialized from LucNhanConfig.theme at panel
 # construction time.  Pin the behaviour so a future refactor
 # doesn't drop the bootstrap call.
 # ---------------------------------------------------------------------------
 
 
 class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
-    """``RikuganPanelCore.__init__`` should set the
+    """``LucNhanPanelCore.__init__`` should set the
     ``ThemeManager`` mode to match the persisted
-    ``RikuganConfig.theme`` value.
+    ``LucNhanConfig.theme`` value.
 
-    The bootstrap lives in :meth:`RikuganPanelCore._apply_initial_theme_from_config`
+    The bootstrap lives in :meth:`LucNhanPanelCore._apply_initial_theme_from_config`
     (a static helper extracted from ``__init__``).  These tests
     drive that helper directly, which exercises the real code path
     that maps the persisted ``config.theme`` string to a
@@ -824,7 +824,7 @@ class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        # Make sure rikugan.ui.theme.* is the real module so we
+        # Make sure lucnhan.ui.theme.* is the real module so we
         # exercise the production ``ThemeManager`` singleton
         # (not the module-level stub installed at the top of
         # this test file).
@@ -833,8 +833,8 @@ class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
         # Use the real ThemeManager (its ``mode`` property is
         # what we are asserting on).  Reset the singleton so the
         # test starts from a known default mode (``AUTO``).
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         ThemeManager.reset()
         # Force the live mode to a value that is *not* the
@@ -851,16 +851,16 @@ class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
         self._ThemeManager.reset()
 
     def _import_helper(self):
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        return RikuganPanelCore._apply_initial_theme_from_config
+        return LucNhanPanelCore._apply_initial_theme_from_config
 
     def test_dark_string_sets_dark_mode(self) -> None:
         bootstrap = self._import_helper()
         config = MagicMock()
         config.theme = "dark"
         bootstrap(config)
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.assertEqual(self._ThemeManager.instance().mode, ThemeMode.DARK)
 
@@ -869,7 +869,7 @@ class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
         config = MagicMock()
         config.theme = "light"
         bootstrap(config)
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.assertEqual(self._ThemeManager.instance().mode, ThemeMode.LIGHT)
 
@@ -878,7 +878,7 @@ class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
         config = MagicMock()
         config.theme = "ida"
         bootstrap(config)
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.assertEqual(self._ThemeManager.instance().mode, ThemeMode.IDA_NATIVE)
 
@@ -887,7 +887,7 @@ class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
         config = MagicMock()
         config.theme = "auto"
         bootstrap(config)
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.assertEqual(self._ThemeManager.instance().mode, ThemeMode.AUTO)
 
@@ -903,7 +903,7 @@ class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
         # Mode is left at the LIVE mode (we set it to LIGHT in
         # setUp, and the unknown value didn't match any of the
         # four known modes, so the helper was a no-op).
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.assertEqual(self._ThemeManager.instance().mode, ThemeMode.LIGHT)
 
@@ -914,7 +914,7 @@ class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
         bootstrap = self._import_helper()
         config = MagicMock(spec=[])  # no ``theme`` attribute
         bootstrap(config)
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.assertEqual(self._ThemeManager.instance().mode, ThemeMode.IDA_NATIVE)
 
@@ -936,7 +936,7 @@ class TestSettingsDialogCancelReverts(unittest.TestCase):
     def setUp(self):
         _install_real_config_module()
         _install_tab_stubs()
-        from rikugan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.manager import ThemeManager
 
         self._ThemeManager = ThemeManager
         ThemeManager.reset()
@@ -945,17 +945,17 @@ class TestSettingsDialogCancelReverts(unittest.TestCase):
         self._ThemeManager.reset()
 
     def _build_dialog(self, config=None):
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         if config is None:
-            config = RikuganConfig()
+            config = LucNhanConfig()
         return config, SettingsDialog(config=config)
 
     def test_cancel_reverts_provider_switch(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "anthropic"
         config.provider.api_key = "sk-original-key"
         _, dlg = self._build_dialog(config=config)
@@ -969,7 +969,7 @@ class TestSettingsDialogCancelReverts(unittest.TestCase):
         self.assertNotEqual(config.provider.name, original_name)
 
         # ... then the user changes their mind and cancels the dialog.
-        from rikugan.ui.qt_compat import QDialog
+        from lucnhan.ui.qt_compat import QDialog
 
         dlg.done(QDialog.DialogCode.Rejected)
 
@@ -977,16 +977,16 @@ class TestSettingsDialogCancelReverts(unittest.TestCase):
         self.assertEqual(config.provider.api_key, original_key)
 
     def test_cancel_reverts_api_key_edit(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "anthropic"
         config.provider.api_key = "sk-original-key"
         _, dlg = self._build_dialog(config=config)
 
         # An in-dialog edit mutates the live config (the bug).
         config.provider.api_key = "sk-typo-wrong-key"
-        from rikugan.ui.qt_compat import QDialog
+        from lucnhan.ui.qt_compat import QDialog
 
         dlg.done(QDialog.DialogCode.Rejected)
 
@@ -995,15 +995,15 @@ class TestSettingsDialogCancelReverts(unittest.TestCase):
 
     def test_accept_still_persists_changes(self):
         # Guard: revert-on-reject must not also clobber the accept path.
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "anthropic"
         config.provider.api_key = "sk-original-key"
         _, dlg = self._build_dialog(config=config)
 
         config.switch_provider("gemini")
-        from rikugan.ui.qt_compat import QDialog
+        from lucnhan.ui.qt_compat import QDialog
 
         dlg.done(QDialog.DialogCode.Accepted)
 

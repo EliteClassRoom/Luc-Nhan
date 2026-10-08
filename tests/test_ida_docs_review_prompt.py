@@ -14,15 +14,17 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+
 
 class TestReviewerPromptPrefersTool(unittest.TestCase):
     def test_prompt_mentions_lookup_idapython_doc(self):
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         self.assertIn("lookup_idapython_doc", IDA_DOCS_REVIEWER_PROMPT)
 
     def test_prompt_demotes_web_fetch_to_fallback(self):
-        from rikugan.agent.agents.ida_docs_reviewer import (
+        from lucnhan.agent.agents.ida_docs_reviewer import (
             build_ida_docs_reviewer_addendum,
         )
 
@@ -37,7 +39,7 @@ class TestReviewerPromptPrefersTool(unittest.TestCase):
         self.assertLess(tool_idx, web_fetch_idx)
 
     def test_prompt_explains_fallback_reason(self):
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         # The fallback should mention "not in bundle" or similar
         lowered = IDA_DOCS_REVIEWER_PROMPT.lower()
@@ -48,7 +50,7 @@ class TestReviewerPromptPrefersTool(unittest.TestCase):
 
     def test_prompt_offline_first_priority(self):
         """Reviewer must explicitly say 'try offline FIRST' — not just 'prefer' it."""
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         # The prompt must make clear that offline is the first attempt, not just a preferred option
         self.assertIn(
@@ -65,7 +67,7 @@ class TestReviewerPromptPrefersTool(unittest.TestCase):
 
     def test_prompt_fallback_after_offline_fails(self):
         """Fallback trigger must be 'after offline fails', not just 'when module missing'."""
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         lowered = IDA_DOCS_REVIEWER_PROMPT.lower()
         # Must mention BOTH fallback scenarios:
@@ -90,7 +92,7 @@ class TestReviewerPostErrorRole(unittest.TestCase):
 
     def test_reviewer_prompt_describes_post_error_role(self):
         """Reviewer prompt must describe the post-error diagnostician role."""
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         # Phai nhac den runtime error / diagnose failure
         assert "diagnose" in IDA_DOCS_REVIEWER_PROMPT.lower() or "runtime" in IDA_DOCS_REVIEWER_PROMPT.lower()
@@ -99,7 +101,7 @@ class TestReviewerPostErrorRole(unittest.TestCase):
 
     def test_reviewer_prompt_keeps_verdict_contract(self):
         """Output contract (VERDICT/REASONS/API_NOTES/REWRITE_GUIDANCE) stays."""
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         assert "VERDICT:" in IDA_DOCS_REVIEWER_PROMPT
         assert "REASONS:" in IDA_DOCS_REVIEWER_PROMPT
@@ -109,7 +111,7 @@ class TestReviewerPostErrorRole(unittest.TestCase):
 
 class TestSkillPrefersTool(unittest.TestCase):
     SKILL_PATH = (
-        Path(__file__).resolve().parent.parent / "rikugan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"
+        Path(__file__).resolve().parent.parent / "lucnhan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"
     )
 
     def setUp(self):
@@ -127,7 +129,7 @@ class TestSkillPrefersTool(unittest.TestCase):
 
     def test_skill_frontmatter_allows_lookup_idapython_doc(self):
         # Frontmatter allowed_tools must include lookup_idapython_doc — otherwise
-        # rikugan/agent/loop.py:2058-2060 filters it out and the agent can't call it
+        # lucnhan/agent/loop.py:2058-2060 filters it out and the agent can't call it
         # even though the skill body recommends it.
         import yaml
 
@@ -203,6 +205,105 @@ class TestSkillPrefersTool(unittest.TestCase):
         self.assertIn("hasattr", self.body)
         self.assertIn("execute_python", self.body)
         self.assertIn("instead of", self.body.lower())
+
+
+# ---------------------------------------------------------------------------
+# Docs-fetch URL guidance
+#
+# The Sphinx docs site behind ``python.docs.hex-rays.com`` returns ``403
+# Forbidden`` for deep-link HTML pages (``/<module>/<func>.html``) — the
+# response is rejected by the site's bot protection.  Module index pages and
+# raw RST source files (``/_sources/<module>/index.rst.txt``) return ``200
+# OK``.  The bundled ``ida-scripting`` skill and the reviewer prompt must
+# steer the agent to the URL pattern that actually works; a failure here is
+# the primary regression guard against sending the LLM into a 403 loop.
+# ---------------------------------------------------------------------------
+
+
+class TestReviewerPromptUrlGuidance(unittest.TestCase):
+    """The reviewer system prompt must point to URLs that return 200 OK."""
+
+    def test_prompt_recommends_rst_source_format(self):
+        # /_sources/<module>/index.rst.txt is the only pattern that
+        # returns full module reference AND survives CDN bot protection.
+        self.assertIn(
+            "/_sources/",
+            IDA_DOCS_REVIEWER_PROMPT,
+            "Reviewer prompt must recommend the Sphinx raw RST source format (/_sources/<module>/index.rst.txt).",
+        )
+
+    def test_prompt_recommends_source_with_module_template(self):
+        # The reviewer must understand the <module> slot in the RST URL.
+        # The post-error prompt uses the generic <module> template rather
+        # than a concrete module example.
+        self.assertIn(
+            "_sources/<module>/index.rst.txt",
+            IDA_DOCS_REVIEWER_PROMPT,
+            "Reviewer prompt must show the RST source URL with a <module> slot.",
+        )
+
+    def test_prompt_warns_about_html_403(self):
+        # If the reviewer follows the broken HTML pattern, every deep
+        # link fetch returns 403 and burns a turn.  Pre-empt it.
+        self.assertIn(
+            "403",
+            IDA_DOCS_REVIEWER_PROMPT,
+            "Reviewer prompt must warn that HTML deep-link pages return 403 Forbidden (bot-protected).",
+        )
+
+    def test_prompt_demotes_html_pages_below_rst_source(self):
+        # The /<module>/<func>.html pattern should be clearly marked
+        # as unreliable, not as the primary online source.
+        # We accept the legacy pattern being present ONLY if the prompt
+        # also explicitly warns against it.
+        prompt = IDA_DOCS_REVIEWER_PROMPT
+        self.assertIn("DO NOT fetch HTML", prompt)
+
+    def test_prompt_lists_html_pattern_danger_zone(self):
+        # The exact broken pattern must be shown so the LLM recognizes
+        # it as something to avoid.
+        self.assertIn(
+            "ida_<module>/<func>.html",
+            IDA_DOCS_REVIEWER_PROMPT,
+            "Reviewer prompt must show the failing HTML pattern so the LLM can recognize and skip it.",
+        )
+
+    def test_prompt_has_documentation_sources_section(self):
+        # Sanity: the existing structure is preserved.
+        self.assertIn("Documentation sources", IDA_DOCS_REVIEWER_PROMPT)
+        self.assertIn("ida-scripting", IDA_DOCS_REVIEWER_PROMPT.lower())
+
+
+class TestIdaScriptingSkillUrlGuidance(unittest.TestCase):
+    """The bundled ``ida-scripting`` SKILL.md teaches the same lesson.
+
+    Otherwise, any agent that consults the skill (not just the docs
+    reviewer) will retry the broken HTML pattern.
+    """
+
+    SKILL_PATH = (
+        Path(__file__).resolve().parent.parent / "lucnhan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"
+    )
+
+    def setUp(self):
+        self.body = self.SKILL_PATH.read_text(encoding="utf-8")
+
+    def test_skill_recommends_rst_source_format(self):
+        self.assertIn(
+            "/_sources/",
+            self.body,
+            "ida-scripting SKILL.md must recommend the Sphinx raw RST source format (/_sources/<module>/index.rst.txt).",
+        )
+
+    def test_skill_warns_about_html_403(self):
+        self.assertIn(
+            "403",
+            self.body,
+            "ida-scripting SKILL.md must warn that HTML deep-link pages return 403 Forbidden (bot-protected).",
+        )
+
+    def test_skill_when_to_fetch_more_section_present(self):
+        self.assertIn("## When to fetch more", self.body)
 
 
 if __name__ == "__main__":

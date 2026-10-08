@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from rikugan.memory.bundle_schema import (
+from lucnhan.memory.bundle_schema import (
     ManifestFile,
     MemoryBundleManifest,
     validate_manifest,

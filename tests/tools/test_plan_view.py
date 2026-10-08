@@ -1,4 +1,4 @@
-"""Tests for rikugan.ui.plan_view — pure logic helpers."""
+"""Tests for lucnhan.ui.plan_view — pure logic helpers."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui.plan_view import PlanStepWidget, PlanView
+from lucnhan.ui.plan_view import PlanStepWidget, PlanView
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -117,12 +117,12 @@ class TestPlanStepSetStatus(unittest.TestCase):
 class TestPlanViewSetPlan(unittest.TestCase):
     def _patched_view(self):
         """Return a PlanView with PlanStepWidget patched to a MagicMock."""
-        from rikugan.ui import plan_view as _pv
+        from lucnhan.ui import plan_view as _pv
         mock_step_cls = MagicMock(side_effect=lambda i, t, **kw: MagicMock())
         return _make_view(), mock_step_cls, _pv
 
     def test_set_plan_adds_steps(self):
-        import rikugan.ui.plan_view as pv
+        import lucnhan.ui.plan_view as pv
         with unittest.mock.patch.object(pv, "PlanStepWidget", side_effect=lambda i, t: MagicMock()):
             view = _make_view()
             view.set_plan(["step A", "step B", "step C"])
@@ -134,7 +134,7 @@ class TestPlanViewSetPlan(unittest.TestCase):
         self.assertEqual(len(view._steps), 0)
 
     def test_set_plan_replaces_previous(self):
-        import rikugan.ui.plan_view as pv
+        import lucnhan.ui.plan_view as pv
         with unittest.mock.patch.object(pv, "PlanStepWidget", side_effect=lambda i, t: MagicMock()):
             view = _make_view()
             existing = MagicMock()
@@ -144,7 +144,7 @@ class TestPlanViewSetPlan(unittest.TestCase):
             self.assertEqual(len(view._steps), 1)
 
     def test_set_plan_adds_widgets_to_container(self):
-        import rikugan.ui.plan_view as pv
+        import lucnhan.ui.plan_view as pv
         with unittest.mock.patch.object(pv, "PlanStepWidget", side_effect=lambda i, t: MagicMock()):
             view = _make_view()
             view.set_plan(["a", "b"])

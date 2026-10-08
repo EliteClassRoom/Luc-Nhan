@@ -7,19 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.bundle_export import export_workspace
-from rikugan.memory.bundle_import import (
+from lucnhan.memory.bundle_export import export_workspace
+from lucnhan.memory.bundle_import import (
     BundleImportConflictError,
     import_workspace_bundle,
 )
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.schema import (
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.schema import (
     KnowledgeEntity,
     KnowledgeMemory,
     KnowledgeRelation,
 )
-from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _seed_and_export(tmp_path: Path) -> Path:

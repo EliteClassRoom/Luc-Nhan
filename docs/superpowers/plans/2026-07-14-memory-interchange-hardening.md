@@ -34,20 +34,20 @@
 
 | File | Action | Responsibility |
 |---|---|---|
-| `rikugan/memory/bundle_schema.py` | Create | Manifest/record envelope/schema limits and validation |
-| `rikugan/memory/bundle_export.py` | Create | Coherent binary/case ZIP export |
-| `rikugan/memory/bundle_import.py` | Create | Streaming validation, staging, ID remap, merge/restore commit |
-| `rikugan/memory/legacy.py` | Modify | Full group assignment, case-target migration, attachments/link preview |
-| `rikugan/memory/storage_guard.py` | Create | Local FS, containment, permissions, symlink, size and regular-file checks |
-| `rikugan/memory/recovery.py` | Create | Backup, corrupt DB degraded mode, registry reviewed recovery |
-| `rikugan/memory/backup.py` | Create | SQLite backup API and workspace backup manifests |
-| `rikugan/memory/sqlite_backend.py` | Modify | Read-only/newer-schema/local-WAL diagnostics and failure injection seam |
-| `rikugan/memory/markdown.py` | Modify | Harden replace/lock/recovery and size caps |
-| `rikugan/memory/notes.py` | Modify | Attachment-aware selected migration and unresolved-link report |
-| `rikugan/memory/service.py` | Modify | Export/import/recovery façade and structured status |
-| `rikugan/agent/loop_commands.py` | Modify | Final import/export/recovery command handlers |
-| `rikugan/ui/knowledge_panel.py`, `rikugan/ui/panel_core.py` | Modify | Bundle/migration/recovery preview and status UI |
-| `rikugan/cli/headless.py` | Modify | Explicit import/export/link flags and structured exits |
+| `lucnhan/memory/bundle_schema.py` | Create | Manifest/record envelope/schema limits and validation |
+| `lucnhan/memory/bundle_export.py` | Create | Coherent binary/case ZIP export |
+| `lucnhan/memory/bundle_import.py` | Create | Streaming validation, staging, ID remap, merge/restore commit |
+| `lucnhan/memory/legacy.py` | Modify | Full group assignment, case-target migration, attachments/link preview |
+| `lucnhan/memory/storage_guard.py` | Create | Local FS, containment, permissions, symlink, size and regular-file checks |
+| `lucnhan/memory/recovery.py` | Create | Backup, corrupt DB degraded mode, registry reviewed recovery |
+| `lucnhan/memory/backup.py` | Create | SQLite backup API and workspace backup manifests |
+| `lucnhan/memory/sqlite_backend.py` | Modify | Read-only/newer-schema/local-WAL diagnostics and failure injection seam |
+| `lucnhan/memory/markdown.py` | Modify | Harden replace/lock/recovery and size caps |
+| `lucnhan/memory/notes.py` | Modify | Attachment-aware selected migration and unresolved-link report |
+| `lucnhan/memory/service.py` | Modify | Export/import/recovery façade and structured status |
+| `lucnhan/agent/loop_commands.py` | Modify | Final import/export/recovery command handlers |
+| `lucnhan/ui/knowledge_panel.py`, `lucnhan/ui/panel_core.py` | Modify | Bundle/migration/recovery preview and status UI |
+| `lucnhan/cli/headless.py` | Modify | Explicit import/export/link flags and structured exits |
 | `scripts/validate_memory_bundle.py` | Create | Offline deterministic bundle validator |
 | `tests/memory/interchange/*.py` | Create | Schema/export/import/migration/security tests |
 | `tests/memory/recovery/*.py` | Create | Backup/corruption/registry/storage tests |
@@ -61,11 +61,11 @@
 ### Task 1: Central storage guard
 
 **Files:**
-- Create: `rikugan/memory/storage_guard.py`
+- Create: `lucnhan/memory/storage_guard.py`
 - Create: `tests/memory/recovery/test_storage_guard.py`
-- Modify: `rikugan/memory/sqlite_backend.py`
-- Modify: `rikugan/memory/markdown.py`
-- Modify: `rikugan/memory/notes.py`
+- Modify: `lucnhan/memory/sqlite_backend.py`
+- Modify: `lucnhan/memory/markdown.py`
+- Modify: `lucnhan/memory/notes.py`
 
 **Interfaces:**
 - Produces: `StoragePolicy`, `StorageUnavailable`, `validate_memory_root()`, `validate_regular_contained_path()`, `ensure_private_directory()`, `bounded_file_size()`.
@@ -124,7 +124,7 @@ Run: `uv run python -m pytest tests/memory/recovery/test_storage_guard.py tests/
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/storage_guard.py rikugan/memory/sqlite_backend.py rikugan/memory/markdown.py rikugan/memory/notes.py tests/memory/recovery/test_storage_guard.py
+git add lucnhan/memory/storage_guard.py lucnhan/memory/sqlite_backend.py lucnhan/memory/markdown.py lucnhan/memory/notes.py tests/memory/recovery/test_storage_guard.py
 git commit -m "security(memory): harden central storage paths"
 ```
 
@@ -133,7 +133,7 @@ git commit -m "security(memory): harden central storage paths"
 ### Task 2: Versioned bundle schema and offline validator
 
 **Files:**
-- Create: `rikugan/memory/bundle_schema.py`
+- Create: `lucnhan/memory/bundle_schema.py`
 - Create: `scripts/validate_memory_bundle.py`
 - Create: `tests/memory/interchange/test_bundle_schema.py`
 - Create: `tests/scripts/test_validate_memory_bundle.py`
@@ -217,7 +217,7 @@ Run: `uv run python -m pytest tests/memory/interchange/test_bundle_schema.py tes
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/bundle_schema.py scripts/validate_memory_bundle.py tests/memory/interchange/test_bundle_schema.py tests/scripts/test_validate_memory_bundle.py tests/fixtures/memory/valid-v1.zip tests/fixtures/memory/generate_valid_v1.py
+git add lucnhan/memory/bundle_schema.py scripts/validate_memory_bundle.py tests/memory/interchange/test_bundle_schema.py tests/scripts/test_validate_memory_bundle.py tests/fixtures/memory/valid-v1.zip tests/fixtures/memory/generate_valid_v1.py
 git commit -m "feat(memory): define portable bundle contract"
 ```
 
@@ -226,9 +226,9 @@ git commit -m "feat(memory): define portable bundle contract"
 ### Task 3: Coherent JSONL ZIP exporter
 
 **Files:**
-- Create: `rikugan/memory/bundle_export.py`
+- Create: `lucnhan/memory/bundle_export.py`
 - Create: `tests/memory/interchange/test_bundle_export.py`
-- Modify: `rikugan/memory/service.py`
+- Modify: `lucnhan/memory/service.py`
 
 **Interfaces:**
 - Consumes: bundle schema, workspace/case repositories, notes, projector state.
@@ -261,7 +261,7 @@ Run: `uv run python -m pytest tests/memory/interchange/test_bundle_export.py -v`
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/bundle_export.py rikugan/memory/service.py tests/memory/interchange/test_bundle_export.py
+git add lucnhan/memory/bundle_export.py lucnhan/memory/service.py tests/memory/interchange/test_bundle_export.py
 git commit -m "feat(memory): export portable memory bundles"
 ```
 
@@ -270,10 +270,10 @@ git commit -m "feat(memory): export portable memory bundles"
 ### Task 4: Staged importer with graph-wide ID remap
 
 **Files:**
-- Create: `rikugan/memory/bundle_import.py`
+- Create: `lucnhan/memory/bundle_import.py`
 - Create: `tests/memory/interchange/test_bundle_import.py`
-- Modify: `rikugan/memory/service.py`
-- Modify: `rikugan/memory/workspace_store.py`
+- Modify: `lucnhan/memory/service.py`
+- Modify: `lucnhan/memory/workspace_store.py`
 
 **Interfaces:**
 - Produces: `BundleImportMode`, `ImportPreview`, `ImportIdMap`, `MemoryBundleImporter.preview()`, `commit()`.
@@ -310,7 +310,7 @@ Run: `uv run python -m pytest tests/memory/interchange/test_bundle_import.py -v`
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/bundle_import.py rikugan/memory/service.py rikugan/memory/workspace_store.py tests/memory/interchange/test_bundle_import.py
+git add lucnhan/memory/bundle_import.py lucnhan/memory/service.py lucnhan/memory/workspace_store.py tests/memory/interchange/test_bundle_import.py
 git commit -m "feat(memory): import remapped memory bundles"
 ```
 
@@ -319,8 +319,8 @@ git commit -m "feat(memory): import remapped memory bundles"
 ### Task 5: Full legacy migration to binary or case targets
 
 **Files:**
-- Modify: `rikugan/memory/legacy.py`
-- Modify: `rikugan/memory/notes.py`
+- Modify: `lucnhan/memory/legacy.py`
+- Modify: `lucnhan/memory/notes.py`
 - Create: `tests/memory/interchange/test_legacy_full.py`
 - Modify: `tests/memory/test_legacy.py`
 
@@ -372,7 +372,7 @@ Run: `uv run python -m pytest tests/memory/interchange/test_legacy_full.py tests
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/legacy.py rikugan/memory/notes.py tests/memory/interchange/test_legacy_full.py tests/memory/test_legacy.py
+git add lucnhan/memory/legacy.py lucnhan/memory/notes.py tests/memory/interchange/test_legacy_full.py tests/memory/test_legacy.py
 git commit -m "feat(memory): migrate legacy multi-binary stores"
 ```
 
@@ -381,11 +381,11 @@ git commit -m "feat(memory): migrate legacy multi-binary stores"
 ### Task 6: Backup and workspace recovery
 
 **Files:**
-- Create: `rikugan/memory/backup.py`
-- Create: `rikugan/memory/recovery.py`
+- Create: `lucnhan/memory/backup.py`
+- Create: `lucnhan/memory/recovery.py`
 - Create: `tests/memory/recovery/test_backup.py`
 - Create: `tests/memory/recovery/test_workspace_recovery.py`
-- Modify: `rikugan/memory/service.py`
+- Modify: `lucnhan/memory/service.py`
 
 **Interfaces:**
 - Produces: `MemoryBackupService.create_backup()`, `list_backups()`, `restore_as_new()`.
@@ -435,7 +435,7 @@ Run: `uv run python -m pytest tests/memory/recovery/test_backup.py tests/memory/
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/backup.py rikugan/memory/recovery.py rikugan/memory/service.py tests/memory/recovery/test_backup.py tests/memory/recovery/test_workspace_recovery.py
+git add lucnhan/memory/backup.py lucnhan/memory/recovery.py lucnhan/memory/service.py tests/memory/recovery/test_backup.py tests/memory/recovery/test_workspace_recovery.py
 git commit -m "feat(memory): back up and recover workspaces"
 ```
 
@@ -444,10 +444,10 @@ git commit -m "feat(memory): back up and recover workspaces"
 ### Task 7: Import/export/recovery commands and UI
 
 **Files:**
-- Modify: `rikugan/agent/loop_commands.py`
-- Modify: `rikugan/ui/knowledge_panel.py`
-- Modify: `rikugan/ui/panel_core.py`
-- Modify: `rikugan/cli/headless.py`
+- Modify: `lucnhan/agent/loop_commands.py`
+- Modify: `lucnhan/ui/knowledge_panel.py`
+- Modify: `lucnhan/ui/panel_core.py`
+- Modify: `lucnhan/cli/headless.py`
 - Create: `tests/agent/test_memory_interchange_commands.py`
 - Create: `tests/ui/test_memory_recovery_ui.py`
 - Create: `tests/cli/test_memory_interchange_cli.py`
@@ -502,7 +502,7 @@ Run: `uv run python -m pytest tests/agent/test_memory_interchange_commands.py te
 Expected: PASS.
 
 ```bash
-git add rikugan/agent/loop_commands.py rikugan/ui/knowledge_panel.py rikugan/ui/panel_core.py rikugan/cli/headless.py tests/agent/test_memory_interchange_commands.py tests/ui/test_memory_recovery_ui.py tests/cli/test_memory_interchange_cli.py
+git add lucnhan/agent/loop_commands.py lucnhan/ui/knowledge_panel.py lucnhan/ui/panel_core.py lucnhan/cli/headless.py tests/agent/test_memory_interchange_commands.py tests/ui/test_memory_recovery_ui.py tests/cli/test_memory_interchange_cli.py
 git commit -m "feat(memory): expose interchange and recovery flows"
 ```
 
@@ -573,10 +573,10 @@ git commit -m "test(memory): stress multiprocess persistence"
 ### Task 9: Performance indexes and bounded-work gates
 
 **Files:**
-- Modify: `rikugan/memory/workspace_store.py`
-- Modify: `rikugan/memory/case_repository.py`
-- Modify: `rikugan/memory/peer_retrieval.py`
-- Modify: `rikugan/memory/bundle_import.py`
+- Modify: `lucnhan/memory/workspace_store.py`
+- Modify: `lucnhan/memory/case_repository.py`
+- Modify: `lucnhan/memory/peer_retrieval.py`
+- Modify: `lucnhan/memory/bundle_import.py`
 - Create: `tests/memory/stress/test_performance_bounds.py`
 
 **Interfaces:**
@@ -616,7 +616,7 @@ Run: `uv run python -m pytest tests/memory/stress/test_performance_bounds.py -v`
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/workspace_store.py rikugan/memory/case_repository.py rikugan/memory/peer_retrieval.py rikugan/memory/bundle_import.py tests/memory/stress/test_performance_bounds.py
+git add lucnhan/memory/workspace_store.py lucnhan/memory/case_repository.py lucnhan/memory/peer_retrieval.py lucnhan/memory/bundle_import.py tests/memory/stress/test_performance_bounds.py
 git commit -m "perf(memory): index workspace retrieval paths"
 ```
 
@@ -656,7 +656,7 @@ Release verification runs the same schema validator and ensures plugin archive c
 
 - [ ] **Step 2: Add coverage non-regression gate**
 
-Configure pytest coverage for `rikugan/memory` with an initial measured baseline committed after implementation and `fail_under` equal to that baseline; require ≥80% changed-code coverage in PR tooling or a documented diff-cover command. Do not claim global 80% until achieved.
+Configure pytest coverage for `lucnhan/memory` with an initial measured baseline committed after implementation and `fail_under` equal to that baseline; require ≥80% changed-code coverage in PR tooling or a documented diff-cover command. Do not claim global 80% until achieved.
 
 - [ ] **Step 3: Add lock/dependency consistency checks**
 
@@ -674,13 +674,13 @@ Document central IDs/evidence, SQLite authoritative model, `MEMORY.md`, JSONL ZI
 
 Run: `uv lock --check`
 
-Run: `uv run python -m pytest tests/ rikugan/tests/ -q`
+Run: `uv run python -m pytest tests/ lucnhan/tests/ -q`
 
-Run: `uvx ruff format --check rikugan/ tests/ scripts/`
+Run: `uvx ruff format --check lucnhan/ tests/ scripts/`
 
-Run: `uvx ruff check rikugan/ tests/ scripts/`
+Run: `uvx ruff check lucnhan/ tests/ scripts/`
 
-Run: `uvx mypy rikugan/core rikugan/providers --pretty`
+Run: `uvx mypy lucnhan/core lucnhan/providers --pretty`
 
 Run: `./ci-local.ps1` on Windows or `./ci-local.sh` on POSIX.
 

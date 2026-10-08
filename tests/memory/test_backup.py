@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.backup import (
+from lucnhan.memory.backup import (
     BackupResult,
     BackupVerificationError,
     create_backup,
@@ -15,8 +15,8 @@ from rikugan.memory.backup import (
     restore_from_backup,
     verify_backup,
 )
-from rikugan.memory.workspace import MemoryLocator, WorkspacePaths, new_memory_id, new_record_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.workspace import MemoryLocator, WorkspacePaths, new_memory_id, new_record_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _create_workspace(tmp_path: Path) -> tuple[WorkspaceStore, WorkspacePaths, str]:

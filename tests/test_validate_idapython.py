@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import unittest
 
-from rikugan.tools.validate_idapython import (
+from lucnhan.tools.validate_idapython import (
     BLOCKED_CALLS,
     BLOCKED_MODULES,
     WARNED_CALLS,

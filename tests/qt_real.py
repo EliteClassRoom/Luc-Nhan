@@ -55,7 +55,7 @@ requires_real_qt = unittest.skipUnless(real_qt_available(), _SKIP_REASON)
 def live_class(dotted: str) -> type:
     """Resolve ``dotted`` against the CURRENTLY-LOADED module, every call.
 
-    Several test files purge ``rikugan.ui.*`` from :data:`sys.modules`
+    Several test files purge ``lucnhan.ui.*`` from :data:`sys.modules`
     at import time (to drop a sibling's ``types.ModuleType`` stubs).
     When two such files are collected in one session the second purge
     triggers a genuine re-import, so the module object a test captured

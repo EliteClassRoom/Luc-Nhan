@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.case_schema import CaseRecord
-from rikugan.memory.registry import MemoryRegistry
-from rikugan.memory.workspace import MemoryLocator
+from lucnhan.memory.case_repository import CaseRepository
+from lucnhan.memory.case_schema import CaseRecord
+from lucnhan.memory.registry import MemoryRegistry
+from lucnhan.memory.workspace import MemoryLocator
 
 
 def _setup(tmp_path: Path) -> tuple[CaseRepository, MemoryRegistry, str]:

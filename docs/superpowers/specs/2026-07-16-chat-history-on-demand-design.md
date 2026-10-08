@@ -6,27 +6,27 @@
 
 ## 1. Problem Statement
 
-Rikugan persists chat sessions per IDB and currently restores them automatically when the panel opens. The current startup path is:
+Luc Nhan persists chat sessions per IDB and currently restores them automatically when the panel opens. The current startup path is:
 
 1. `SessionControllerBase` creates one empty `SessionState`.
-2. `RikuganPanelCore` creates a visible `New Chat` tab for that session.
-3. `RikuganPanelCore._try_restore_session()` reads `startup_restore_sessions`.
+2. `LucNhanPanelCore` creates a visible `New Chat` tab for that session.
+3. `LucNhanPanelCore._try_restore_session()` reads `startup_restore_sessions`.
 4. The default value, `"all"`, loads every saved session and replaces the empty tab with many historical tabs.
 
 The relevant code is currently located at:
 
-- `rikugan/ui/session_controller_base.py:127-130` — creates the initial empty session.
-- `rikugan/ui/panel_core.py:524` — creates the initial `New Chat` tab.
-- `rikugan/ui/panel_core.py:566-569` — invokes automatic restore during panel construction.
-- `rikugan/ui/panel_core.py:1584-1631` — restores all/latest sessions.
-- `rikugan/core/config.py:149-153` — defaults `startup_restore_sessions` to `"all"`.
-- `rikugan/ui/panel_core.py:1269-1317` — repeats automatic restore when the current IDB changes.
+- `lucnhan/ui/session_controller_base.py:127-130` — creates the initial empty session.
+- `lucnhan/ui/panel_core.py:524` — creates the initial `New Chat` tab.
+- `lucnhan/ui/panel_core.py:566-569` — invokes automatic restore during panel construction.
+- `lucnhan/ui/panel_core.py:1584-1631` — restores all/latest sessions.
+- `lucnhan/core/config.py:149-153` — defaults `startup_restore_sessions` to `"all"`.
+- `lucnhan/ui/panel_core.py:1269-1317` — repeats automatic restore when the current IDB changes.
 
-This produces an undesirable default experience: opening Rikugan floods the tab bar with previous work instead of presenting a fresh workspace.
+This produces an undesirable default experience: opening Luc Nhan floods the tab bar with previous work instead of presenting a fresh workspace.
 
 The required behavior is:
 
-- Opening Rikugan always starts with exactly one completely new, empty chat.
+- Opening Luc Nhan always starts with exactly one completely new, empty chat.
 - Switching to another IDB/binary always resets the panel to exactly one new, empty chat for that IDB.
 - Historical chats remain persisted but are not loaded or rendered automatically.
 - Historical chats become visible only after the user explicitly opens History.
@@ -41,7 +41,7 @@ The following decisions were explicitly approved during brainstorming.
 | Startup | Always show exactly one empty `New Chat`; never auto-restore history |
 | IDB change | Save chats belonging to the old IDB, then show exactly one empty `New Chat` for the new IDB |
 | Existing config | Enforce the new behavior for every user; legacy `all`/`latest` values no longer control startup |
-| History entry point | A right-side slide-out panel, following Rikugan's existing side-panel pattern |
+| History entry point | A right-side slide-out panel, following Luc Nhan's existing side-panel pattern |
 | History scope | Current IDB only |
 | Open semantics | Open the selected session as a normal, continuable tab |
 | Duplicate open | Focus the existing tab if the same persisted session is already open |
@@ -99,7 +99,7 @@ These features can be reconsidered after the on-demand flow is used in real IDA 
 
 ## 5. Research Findings
 
-### 5.1 Rikugan already has the correct storage shape
+### 5.1 Luc Nhan already has the correct storage shape
 
 `SessionHistory` already provides:
 
@@ -125,14 +125,14 @@ Verified open-source references included:
 
 The shared pattern is: **list cheap metadata first; load the complete conversation only after selection**.
 
-Rikugan already implements the persistence half of that pattern. Replacing JSON with SQLite, splitting payloads into JSONL, or introducing a new indexing service would add migration risk without solving the startup-tab problem.
+Luc Nhan already implements the persistence half of that pattern. Replacing JSON with SQLite, splitting payloads into JSONL, or introducing a new indexing service would add migration risk without solving the startup-tab problem.
 
 ## 6. Proposed Architecture
 
 ### 6.1 Component boundaries
 
 ```text
-RikuganPanelCore
+LucNhanPanelCore
 ├── QTabWidget
 │   └── ChatView × N
 ├── MutationLogPanel        (right-side panel, existing)
@@ -144,7 +144,7 @@ RikuganPanelCore
 HistoryPanel
     │ emits close / retry / selected session ID on the main thread
     ▼
-RikuganPanelCore history coordinator
+LucNhanPanelCore history coordinator
 ├── captures immutable HistoryScope
 ├── starts Python worker for list/load I/O
 ├── receives typed results through queue.Queue
@@ -169,13 +169,13 @@ SessionHistory
 Responsibilities remain separated:
 
 - **`HistoryPanel`** owns presentation, search, loading state, and main-thread selection/refresh events. It never starts threads and never performs file I/O.
-- **`RikuganPanelCore`** owns Qt composition, side-panel visibility, the history worker/queue/timer lifecycle, tab widget creation, and asynchronous message rendering. It uses a dedicated `_history_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rikugan-history")`; it must never submit history jobs to the process-wide `_SAVE_EXECUTOR` because history listing calls `flush_saves()` and would deadlock waiting on a sentinel queued behind itself.
+- **`LucNhanPanelCore`** owns Qt composition, side-panel visibility, the history worker/queue/timer lifecycle, tab widget creation, and asynchronous message rendering. It uses a dedicated `_history_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lucnhan-history")`; it must never submit history jobs to the process-wide `_SAVE_EXECUTOR` because history listing calls `flush_saves()` and would deadlock waiting on a sentinel queued behind itself.
 - **`SessionControllerBase`** owns immutable scope capture, current-IDB filtering, duplicate detection, security validation, and main-thread insertion of loaded `SessionState` objects into `_sessions`. Its worker-callable list/load methods are pure with respect to controller state.
 - **`SessionHistory`** remains the only component that reads or writes session files.
 
 ### 6.2 New immutable history DTO
 
-Add a frozen dataclass in `rikugan/state/history_types.py`:
+Add a frozen dataclass in `lucnhan/state/history_types.py`:
 
 ```python
 @dataclass(frozen=True)
@@ -195,7 +195,7 @@ The UI must not receive loose manifest dictionaries. The DTO gives the panel a s
 
 ### 6.3 `HistoryPanel`
 
-Create `rikugan/ui/history_panel.py`.
+Create `lucnhan/ui/history_panel.py`.
 
 The panel contains:
 
@@ -226,7 +226,7 @@ The Retry button is rendered only in the error state; clicking it always emits `
 
 ### 6.4 Side-panel integration
 
-`RikuganPanelCore._build_main_splitter()` currently adds the tab widget and `MutationLogPanel`. It will also add `HistoryPanel` as a hidden right-side widget.
+`LucNhanPanelCore._build_main_splitter()` currently adds the tab widget and `MutationLogPanel`. It will also add `HistoryPanel` as a hidden right-side widget.
 
 The action-button stack gets a checkable `History` button near `Mutations`/`Tools`.
 
@@ -250,7 +250,7 @@ The startup flow becomes:
 ```text
 SessionControllerBase.__init__
   → create one empty SessionState
-RikuganPanelCore._build_ui
+LucNhanPanelCore._build_ui
   → create one New Chat tab
   → finish; do not inspect SessionHistory
 ```
@@ -312,7 +312,7 @@ An empty `New Chat` is an in-memory draft, not a historical session.
 
 Existing save call sites already guard on `session.messages`. The design preserves and tests this invariant:
 
-- Opening and closing Rikugan without sending a message creates no history entry.
+- Opening and closing Luc Nhan without sending a message creates no history entry.
 - Creating multiple empty tabs creates no history entries.
 - Switching IDBs with an empty chat creates no history entry.
 - History filters out any legacy zero-message session that may already exist on disk.
@@ -397,7 +397,7 @@ The manifest already contains `description`, but existing save call sites do not
 For this feature, `description` becomes the session title:
 
 1. Find the first message whose role is `Role.USER` and whose content remains non-empty after sanitization and whitespace trimming.
-2. Strip injection-marker patterns using the existing sanitization seam in `rikugan/core/sanitize.py`.
+2. Strip injection-marker patterns using the existing sanitization seam in `lucnhan/core/sanitize.py`.
 3. Collapse whitespace and line breaks to single spaces, then trim again.
 4. Truncate to the named constant `HISTORY_TITLE_MAX_CHARS = 80`.
 5. Fall back to `Untitled chat` only when no usable user message exists.
@@ -536,7 +536,7 @@ Accepted IDs must match the concrete rule `^[A-Za-z0-9_-]{1,32}$`. In addition:
 - The constructed path is resolved with `os.path.realpath()`.
 - `os.path.commonpath()` must prove that the resolved path remains inside `os.path.realpath(self._dir)` before any existence check or open.
 
-One `_validate_session_id()` helper enforces the rule. It runs before path construction in every `SessionHistory` method that accepts a session ID (`load_session()` and `delete_session()`), before `_validate_manifest_entry()` constructs a path, before `_rebuild_manifest()` admits a JSON-derived ID, and before `list_sessions()` emits an existing manifest key. Invalid rebuild/list entries are skipped with `log_warning`; invalid direct calls return the method's not-found/no-op result without I/O. The current generator produces 12 lowercase hex characters, so all existing valid Rikugan IDs satisfy the new conservative superset. This prevents a corrupt/tampered manifest or future caller from turning a session ID into path traversal.
+One `_validate_session_id()` helper enforces the rule. It runs before path construction in every `SessionHistory` method that accepts a session ID (`load_session()` and `delete_session()`), before `_validate_manifest_entry()` constructs a path, before `_rebuild_manifest()` admits a JSON-derived ID, and before `list_sessions()` emits an existing manifest key. Invalid rebuild/list entries are skipped with `log_warning`; invalid direct calls return the method's not-found/no-op result without I/O. The current generator produces 12 lowercase hex characters, so all existing valid Luc Nhan IDs satisfy the new conservative superset. This prevents a corrupt/tampered manifest or future caller from turning a session ID into path traversal.
 
 ### 11.2 Current-IDB revalidation
 
@@ -569,7 +569,7 @@ The legacy `startup_restore_sessions` option no longer represents supported beha
 
 Implementation direction:
 
-- Remove it from the `RikuganConfig` dataclass.
+- Remove it from the `LucNhanConfig` dataclass.
 - Remove its validation and normalization branches.
 - Remove it from the load field list.
 - Ignore the key if it remains in an older config file.
@@ -649,7 +649,7 @@ Create or extend a focused core config test module:
 - `hasattr(config, "startup_restore_sessions")` is false; the obsolete key cannot change startup behavior.
 - Saving the loaded config omits `startup_restore_sessions` from serialized JSON.
 - Validation succeeds without the removed field.
-- A repository-source grep after implementation finds zero `startup_restore_sessions` references under `rikugan/`; historical plan/spec text is excluded from this audit.
+- A repository-source grep after implementation finds zero `startup_restore_sessions` references under `lucnhan/`; historical plan/spec text is excluded from this audit.
 
 ### 14.4 Panel/UI tests
 
@@ -671,7 +671,7 @@ Extend `tests/tools/test_panel_core.py` and add focused `HistoryPanel` tests:
 - An injected worker exception always leaves Loading and shows Retry; clicking Retry increments generation and submits exactly one replacement request.
 - Opening a large session and then switching IDB or closing its tab mid-render does not crash or render stale messages; existing `ChatView.shutdown()` generation cancellation is exercised.
 - Closing a tab before lazy restore removes its `_pending_restore_messages` entry.
-- Theme changes refresh the History panel in both IDA-native and Rikugan-owned themes.
+- Theme changes refresh the History panel in both IDA-native and Luc Nhan-owned themes.
 - `shutdown()` sets `_history_poll_timer` to `None`, non-blockingly closes `_history_executor`, drains result references, and prevents late widget/signal access.
 
 ### 14.5 Integration regression
@@ -705,11 +705,11 @@ Expected files:
 
 ### New
 
-- `rikugan/ui/history_panel.py`
+- `lucnhan/ui/history_panel.py`
   - `HistoryPanel` widget.
   - Presentation/search/loading/error states only; PanelCore owns queue-polled request state.
 
-- `rikugan/state/history_types.py`
+- `lucnhan/state/history_types.py`
   - Frozen `SessionHistoryEntry`, `HistoryScope`, list/load/attach status enums, and typed result dataclasses shared by persistence/controller/UI without importing Qt.
   - Search/filter and row rendering.
 
@@ -717,18 +717,18 @@ Expected files:
 
 ### Modified
 
-- `rikugan/state/history.py`
+- `lucnhan/state/history.py`
   - Safe session-ID validation at load/delete/validate/rebuild/list boundaries.
   - Title derivation/backfill.
   - `updated_at` projection.
   - Current-IDB filter predicate reuse.
   - Manifest version increment.
 
-- `rikugan/ui/session_controller_base.py`
+- `lucnhan/ui/session_controller_base.py`
   - List/open/deduplicate APIs for History.
   - Remove bulk startup-restore methods after call-site verification, or retain them only as deprecated compatibility APIs if an external obligation is found.
 
-- `rikugan/ui/panel_core.py`
+- `lucnhan/ui/panel_core.py`
   - Remove automatic restore from startup and IDB change.
   - Add History button/panel and right-panel coordinator.
   - Add dedicated history executor, bounded result queue, generation counter, and separate poll-timer lifecycle.
@@ -736,10 +736,10 @@ Expected files:
   - Reuse deferred async restore and clean pending payloads on tab close.
   - Invalidate History work during IDB change/shutdown.
 
-- `rikugan/core/config.py`
+- `lucnhan/core/config.py`
   - Remove obsolete `startup_restore_sessions` dataclass field, validation block, normalization branches, load-field entry, and load-time compatibility normalization; unknown legacy keys remain ignored by the normal loader.
 
-- `rikugan/ui/styles.py` or panel-local style helpers
+- `lucnhan/ui/styles.py` or panel-local style helpers
   - History panel styles consistent with current theme architecture.
 
 - Tests under `tests/agent/`, `tests/state/`, `tests/tools/`, or `tests/ui/` as appropriate.
@@ -765,7 +765,7 @@ Expected files:
 
 The feature is complete only when all of the following are true:
 
-1. Opening Rikugan with any amount of saved history shows exactly one empty `New Chat` tab.
+1. Opening Luc Nhan with any amount of saved history shows exactly one empty `New Chat` tab.
 2. No historical session payload is loaded during startup.
 3. Switching IDBs leaves exactly one empty `New Chat` for the new IDB.
 4. Chats for the previous IDB remain persisted.

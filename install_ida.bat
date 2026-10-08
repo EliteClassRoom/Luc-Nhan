@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: Rikugan installer for Windows
+:: Luc Nhan installer for Windows
 :: Usage: install.bat [IDA_USER_DIR]
 ::   IDA_USER_DIR  Optional path to IDA user directory (default: auto-detect)
 
@@ -11,13 +11,13 @@ if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
 :: ── Sanity checks ────────────────────────────────────────────────────
 
-if not exist "%SCRIPT_DIR%\rikugan_plugin.py" (
-    echo [-] rikugan_plugin.py not found in %SCRIPT_DIR% — run this from the repo root
+if not exist "%SCRIPT_DIR%\lucnhan_plugin.py" (
+    echo [-] lucnhan_plugin.py not found in %SCRIPT_DIR% — run this from the repo root
     exit /b 1
 )
 
-if not exist "%SCRIPT_DIR%\rikugan\" (
-    echo [-] rikugan\ package not found in %SCRIPT_DIR% — run this from the repo root
+if not exist "%SCRIPT_DIR%\lucnhan\" (
+    echo [-] lucnhan\ package not found in %SCRIPT_DIR% — run this from the repo root
     exit /b 1
 )
 
@@ -53,14 +53,25 @@ if not defined IDA_USER_DIR (
 )
 
 set "PLUGINS_DIR=%IDA_USER_DIR%\plugins"
-set "CONFIG_DIR=%IDA_USER_DIR%\rikugan"
+set "CONFIG_DIR=%IDA_USER_DIR%\lucnhan"
 
-:: ── Remove old "iris" installation (rebrand cleanup) ───────────────
+:: ── Remove old rebrand leftovers (iris, then rikugan) ───────────────
 if exist "%PLUGINS_DIR%\iris_plugin.py" (
     echo [!] Removing old iris_plugin.py
     del "%PLUGINS_DIR%\iris_plugin.py"
     echo [+] Old iris_plugin.py removed
 )
+
+:: Entry file only. IDA would load a stale rikugan_plugin.py as a second,
+:: competing copy of the plugin; the old rikugan\ package directory is left
+:: alone on purpose, because when this installer is run from the plugin
+:: directory itself that directory *is* the source tree.
+if exist "%PLUGINS_DIR%\rikugan_plugin.py" (
+    echo [!] Removing legacy rikugan_plugin.py
+    del "%PLUGINS_DIR%\rikugan_plugin.py"
+    echo [+] Legacy rikugan_plugin.py removed
+)
+
 set "OLD_IRIS=%PLUGINS_DIR%\iris"
 if exist "%OLD_IRIS%\" (
     fsutil reparsepoint query "%OLD_IRIS%" >nul 2>&1
@@ -151,7 +162,7 @@ if not exist "%CONFIG_DIR%\"  mkdir "%CONFIG_DIR%"
 :: ── Copy built-in skills ────────────────────────────────────────────
 
 set "SKILLS_DIR=%CONFIG_DIR%\skills"
-set "BUILTINS_SRC=%SCRIPT_DIR%\rikugan\skills\builtins"
+set "BUILTINS_SRC=%SCRIPT_DIR%\lucnhan\skills\builtins"
 
 if exist "%BUILTINS_SRC%\" (
     echo [*] Installing built-in skills into %SKILLS_DIR%...
@@ -171,45 +182,45 @@ if exist "%BUILTINS_SRC%\" (
 
 :: ── Install plugin (copy) ────────────────────────────────────────────
 
-echo [*] Installing Rikugan into %PLUGINS_DIR%...
+echo [*] Installing Luc Nhan into %PLUGINS_DIR%...
 
-:: rikugan_plugin.py
-if exist "%PLUGINS_DIR%\rikugan_plugin.py" (
-    del "%PLUGINS_DIR%\rikugan_plugin.py"
+:: lucnhan_plugin.py
+if exist "%PLUGINS_DIR%\lucnhan_plugin.py" (
+    del "%PLUGINS_DIR%\lucnhan_plugin.py"
 )
-copy "%SCRIPT_DIR%\rikugan_plugin.py" "%PLUGINS_DIR%\rikugan_plugin.py" >nul
+copy "%SCRIPT_DIR%\lucnhan_plugin.py" "%PLUGINS_DIR%\lucnhan_plugin.py" >nul
 if !errorlevel! equ 0 (
-    echo [+] rikugan_plugin.py -^> %PLUGINS_DIR%\rikugan_plugin.py
+    echo [+] lucnhan_plugin.py -^> %PLUGINS_DIR%\lucnhan_plugin.py
 ) else (
-    echo [-] Failed to copy rikugan_plugin.py
+    echo [-] Failed to copy lucnhan_plugin.py
     exit /b 1
 )
 
-:: rikugan/ package — use directory junction (symlink-like, no admin required)
-if exist "%PLUGINS_DIR%\rikugan\" (
+:: lucnhan/ package — use directory junction (symlink-like, no admin required)
+if exist "%PLUGINS_DIR%\lucnhan\" (
     :: Check if it's a junction
-    fsutil reparsepoint query "%PLUGINS_DIR%\rikugan" >nul 2>&1
+    fsutil reparsepoint query "%PLUGINS_DIR%\lucnhan" >nul 2>&1
     if !errorlevel! equ 0 (
-        rmdir "%PLUGINS_DIR%\rikugan"
+        rmdir "%PLUGINS_DIR%\lucnhan"
     ) else (
         :: Real directory — back it up
-        echo [!] Backing up existing rikugan\ to rikugan.bak\
-        if exist "%PLUGINS_DIR%\rikugan.bak\" rmdir /s /q "%PLUGINS_DIR%\rikugan.bak"
-        ren "%PLUGINS_DIR%\rikugan" "rikugan.bak"
+        echo [!] Backing up existing lucnhan\ to lucnhan.bak\
+        if exist "%PLUGINS_DIR%\lucnhan.bak\" rmdir /s /q "%PLUGINS_DIR%\lucnhan.bak"
+        ren "%PLUGINS_DIR%\lucnhan" "lucnhan.bak"
     )
 )
 
-mklink /J "%PLUGINS_DIR%\rikugan" "%SCRIPT_DIR%\rikugan" >nul 2>&1
+mklink /J "%PLUGINS_DIR%\lucnhan" "%SCRIPT_DIR%\lucnhan" >nul 2>&1
 if !errorlevel! equ 0 (
-    echo [+] rikugan\ -^> %PLUGINS_DIR%\rikugan  (junction^)
+    echo [+] lucnhan\ -^> %PLUGINS_DIR%\lucnhan  (junction^)
 ) else (
     :: Junction failed (rare), fall back to xcopy
     echo [*] Junction failed, falling back to copy...
-    xcopy "%SCRIPT_DIR%\rikugan" "%PLUGINS_DIR%\rikugan\" /E /I /Y /Q >nul
+    xcopy "%SCRIPT_DIR%\lucnhan" "%PLUGINS_DIR%\lucnhan\" /E /I /Y /Q >nul
     if !errorlevel! equ 0 (
-        echo [+] rikugan\ -^> %PLUGINS_DIR%\rikugan  (copied^)
+        echo [+] lucnhan\ -^> %PLUGINS_DIR%\lucnhan  (copied^)
     ) else (
-        echo [-] Failed to copy rikugan\ package
+        echo [-] Failed to copy lucnhan\ package
         exit /b 1
     )
 )
@@ -217,13 +228,13 @@ if !errorlevel! equ 0 (
 :: ── Done ─────────────────────────────────────────────────────────────
 
 echo.
-echo [+] Rikugan installed successfully!
-echo [*] Plugin:  %PLUGINS_DIR%\rikugan_plugin.py
-echo [*] Package: %PLUGINS_DIR%\rikugan
+echo [+] Luc Nhan installed successfully!
+echo [*] Plugin:  %PLUGINS_DIR%\lucnhan_plugin.py
+echo [*] Package: %PLUGINS_DIR%\lucnhan
 echo [*] Config:  %CONFIG_DIR%\
 echo [*] Skills:  %SKILLS_DIR%\
 echo.
-echo [*] Open IDA and press Ctrl+Shift+I to start Rikugan.
+echo [*] Open IDA and press Ctrl+Shift+I to start Luc Nhan.
 echo [*] First run: click Settings to configure your LLM provider and API key.
 
 endlocal

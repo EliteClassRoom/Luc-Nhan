@@ -1,6 +1,6 @@
 [project]
-name = "rikugan"
-version = "1.14.0"
+name = "lucnhan"
+version = "1.14.1"
 description = "Agentic LLM reverse-engineering companion embedded directly in IDA Pro."
 readme = "README.md"
 license = "MIT"
@@ -35,7 +35,7 @@ classifiers = [
 # IDA Pro installs these via pip when the plugin loads; listing them here also lets
 # ``uv sync`` provision a working dev environment for provider/agent tests.
 dependencies = [
-  "anthropic>=0.112.0",
+  "anthropic>=0.120.2",
   "openai>=2.0.0",
   "google-genai>=2.0.0",
   "mcp>=1.28.0",
@@ -45,24 +45,23 @@ dependencies = [
   "requests>=2.34.2",
   "html2text>=2025.4.15",
   "markdown-it-py>=3.0.0",
-  "portalocker>=3.2.0,<4",
-  "unicorn>=2.1.0,<3",
+  "portalocker>=4.1.0,<5",
+  "unicorn>=2.1.4,<3",
 ]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 120
 
-# ``tests/`` (top-level) is intentionally included in ruff's walk set.
-# ``rikugan/tests/`` is already covered by ``*.py`` default includes;
-# the top-level ``tests/`` lives outside ``rikugan/`` so it needs an
-# explicit ``extend-include`` so that ``ruff check`` (no args) and
-# ``ruff check .`` from the project root lint it alongside the package.
+# The whole suite lives under the top-level ``tests/`` tree, which sits
+# outside ``lucnhan/``; it needs an explicit ``extend-include`` so that
+# ``ruff check`` (no args) and ``ruff check .`` from the project root
+# lint it alongside the package.
 #
-# Note: the CI workflow currently invokes ``ruff check rikugan/``, which
+# Note: the CI workflow currently invokes ``ruff check lucnhan/``, which
 # passes an explicit path and bypasses the default include set.  To
 # gate the top-level ``tests/`` suite in CI, that command needs to
-# become ``ruff check .`` (or ``ruff check rikugan/ tests/``).  This
+# become ``ruff check .`` (or ``ruff check lucnhan/ tests/``).  This
 # config change is the prerequisite for that follow-up — without it,
 # widening the CI command would silently lint the repo's vendored
 # stubs and tooling scripts too.
@@ -73,21 +72,20 @@ select = ["E", "W", "F", "I", "UP", "B", "RUF"]
 ignore = ["E501", "B008", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
-"rikugan/ida/**" = ["F401"]
-"rikugan/core/sanitize.py" = ["RUF003"]
-"rikugan/ui/plan_view.py" = ["RUF001"]
+"lucnhan/ida/**" = ["F401"]
+"lucnhan/core/sanitize.py" = ["RUF003"]
+"lucnhan/ui/plan_view.py" = ["RUF001"]
 # The exploration-mode prompt embeds an en-dash (U+2013) in a numeric
 # range.  Test fixtures (``tests/ida/test_evidence_comment.py``) assert
 # on this exact glyph, so replacing it would break the contract.
-"rikugan/agent/exploration_mode.py" = ["RUF001"]
-# ``tests/**`` and ``rikugan/tests/**`` files intentionally bootstrap
-# ``sys.path`` and the IDA/Qt stub modules before importing the package
-# under test (see e.g. ``tests/a2a/test_dispatcher.py``).  The
-# resulting non-top-of-file imports are a structural requirement, not
-# a mistake — silencing E402 here avoids 160+ ``# noqa: E402`` lines
-# that would otherwise drown out the real E-rule violations.
+"lucnhan/agent/exploration_mode.py" = ["RUF001"]
+# ``tests/**`` files intentionally bootstrap ``sys.path`` and the IDA/Qt
+# stub modules before importing the package under test (see e.g.
+# ``tests/a2a/test_dispatcher.py``).  The resulting non-top-of-file
+# imports are a structural requirement, not a mistake — silencing E402
+# here avoids 160+ ``# noqa: E402`` lines that would otherwise drown out
+# the real E-rule violations.
 "tests/**" = ["E402"]
-"rikugan/tests/**" = ["E402"]
 # ``tests/core/test_sanitize.py`` is the homoglyph test fixture — it
 # embeds Cyrillic/Greek look-alike characters as **input data** that
 # ``sanitize()`` is expected to detect.  Ruff cannot distinguish
@@ -111,16 +109,16 @@ no_error_summary = true
 
 # Modules covered by `mypy` when invoked without explicit paths (e.g.
 # via ``./ci-local.sh`` or editor integration).  The GitHub Actions job
-# still pins ``mypy rikugan/core rikugan/providers`` for stability —
+# still pins ``mypy lucnhan/core lucnhan/providers`` for stability —
 # update that command alongside this list to actually gate these layers.
 files = [
-  "rikugan/memory",
-  "rikugan/ui",
+  "lucnhan/memory",
+  "lucnhan/ui",
 ]
 
 # Strict type checking for the security-critical core and provider layers.
 [[tool.mypy.overrides]]
-module = ["rikugan.core.*", "rikugan.providers.*"]
+module = ["lucnhan.core.*", "lucnhan.providers.*"]
 disallow_untyped_defs = true
 
 # Modules that depend on dynamic ``importlib.import_module`` of optional
@@ -136,23 +134,23 @@ disallow_untyped_defs = true
 # IDA type-inf / Hex-Rays APIs — loaded via ``importlib.import_module`` to
 # avoid Shiboken UAF (see core/thread_safety.py docstring).
 module = [
-  "rikugan.ida.tools.types_tools",
-  "rikugan.ida.tools.microcode_format",
-  "rikugan.ida.tools.microcode",
-  "rikugan.ida.tools.disassembly",
-  "rikugan.ida.tools.annotations",
-  "rikugan.ida.tools.xrefs",
-  "rikugan.ida.tools.decompiler",
-  "rikugan.ida.ui.panel",
-  "rikugan.ida.ui.actions",
-  "rikugan.ida.headless_bootstrap",
+  "lucnhan.ida.tools.types_tools",
+  "lucnhan.ida.tools.microcode_format",
+  "lucnhan.ida.tools.microcode",
+  "lucnhan.ida.tools.disassembly",
+  "lucnhan.ida.tools.annotations",
+  "lucnhan.ida.tools.xrefs",
+  "lucnhan.ida.tools.decompiler",
+  "lucnhan.ida.ui.panel",
+  "lucnhan.ida.ui.actions",
+  "lucnhan.ida.headless_bootstrap",
 ]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
 # PySide6 fallback layer — provides dummy classes when Qt is unavailable,
 # and re-exports symbol names that may shadow earlier imports.
-module = ["rikugan.ui.qt_compat", "rikugan.ui.message_widgets"]
+module = ["lucnhan.ui.qt_compat", "lucnhan.ui.message_widgets"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
@@ -163,36 +161,35 @@ ignore_errors = true
 # top-level window with no parent) and cannot be cleanly expressed
 # without ignoring the module.
 module = [
-  "rikugan.ui.chat_view",
-  "rikugan.ui.a2a_widget",
-  "rikugan.ui.session_controller_base",
-  "rikugan.ui.tool_widgets",
-  "rikugan.ui.panel_core",
-  "rikugan.ui.mutation_log_view",
-  "rikugan.ui.tools_panel",
-  "rikugan.ui.settings_dialog",
-  "rikugan.ui.plan_view",
-  "rikugan.ui.input_area",
-  "rikugan.ui.bulk_renamer",
-  "rikugan.ui.agent_tree",
-  "rikugan.ui.context_bar",
-  "rikugan.ui.theme.manager",
-  "rikugan.ui.theme.palette_ida",
-  "rikugan.ui.tabs.skills_tab",
-  "rikugan.ui.tabs.profiles_tab",
-  "rikugan.ui.tabs.mcp_tab",
-  "rikugan.ida.ui.tools_form",
-  "rikugan.ida.tools.registry",
-  "rikugan.tools.web_fetch",
-  "rikugan.tests.conftest",
+  "lucnhan.ui.chat_view",
+  "lucnhan.ui.a2a_widget",
+  "lucnhan.ui.session_controller_base",
+  "lucnhan.ui.tool_widgets",
+  "lucnhan.ui.panel_core",
+  "lucnhan.ui.mutation_log_view",
+  "lucnhan.ui.tools_panel",
+  "lucnhan.ui.settings_dialog",
+  "lucnhan.ui.plan_view",
+  "lucnhan.ui.input_area",
+  "lucnhan.ui.bulk_renamer",
+  "lucnhan.ui.agent_tree",
+  "lucnhan.ui.context_bar",
+  "lucnhan.ui.theme.manager",
+  "lucnhan.ui.theme.palette_ida",
+  "lucnhan.ui.tabs.skills_tab",
+  "lucnhan.ui.tabs.profiles_tab",
+  "lucnhan.ui.tabs.mcp_tab",
+  "lucnhan.ida.ui.tools_form",
+  "lucnhan.ida.tools.registry",
+  "lucnhan.tools.web_fetch",
   # NOTE (task-7 r1, against reviewer recommendation): both modules
   # DO surface errors when mypy follows imports into them — the
   # reviewer claim of "0 errors" was verified empirically as referring
   # to a ``--follow-imports=skip`` / isolated-file analysis, not the
-  # ``mypy rikugan/memory rikugan/ui`` invocation that the new
+  # ``mypy lucnhan/memory lucnhan/ui`` invocation that the new
   # ``[tool.mypy].files`` triggers.
   #
-  # ``rikugan.ui.knowledge_panel`` — 10 errors (mypy 2.3.1, default
+  # ``lucnhan.ui.knowledge_panel`` — 10 errors (mypy 2.3.1, default
   # ``--follow-imports=normal``):
   #   * 8× ``[attr-defined]`` on PySide6 enum-by-name accesses that
   #     the bundled stubs only expose via nested enum classes:
@@ -207,18 +204,18 @@ module = [
   # task-7 brief listed as warranting an ``ignore_errors`` override.
   # The union-attr is the same ``parent: QWidget | None = None``
   # idiom the existing block already addresses for the other
-  # ``rikugan.ui.*`` modules.
-  "rikugan.ui.knowledge_panel",
-  # ``rikugan.ui.history_panel`` — 2 errors:
+  # ``lucnhan.ui.*`` modules.
+  "lucnhan.ui.knowledge_panel",
+  # ``lucnhan.ui.history_panel`` — 2 errors:
   #   * ``[operator]`` ``object`` not callable (750) — mypy cannot
   #     resolve that the dynamic ``_announcements_sink`` attribute is
   #     a callable.
   #   * ``[attr-defined]`` ``QFrame`` has no attribute
   #     ``_announcements_sink`` (753) — the attribute is injected at
   #     runtime by the Qt compat layer / a ``TYPE_CHECKING`` shim.
-  # Same pattern as ``rikugan.tests.conftest`` (dynamic attribute
-  # injection on a Qt class) which is already in this override block.
-  "rikugan.ui.history_panel",
+  # Same pattern as the other Qt classes in this block: an attribute
+  # injected at runtime that mypy cannot see.
+  "lucnhan.ui.history_panel",
 ]
 ignore_errors = true
 
@@ -227,17 +224,11 @@ ignore_errors = true
 # user-supplied optimizer code via ``exec(compile(...))``.  The base
 # classes cannot be resolved statically because IDA APIs are loaded
 # via ``importlib.import_module``.
-module = ["rikugan.ida.tools.microcode_optim"]
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-# Lightweight test fixtures that intentionally re-use real Qt classes in
-# places where mypy cannot follow the dynamic attribute access pattern.
-module = ["rikugan.tests.test_settings_dialog_fixes"]
+module = ["lucnhan.ida.tools.microcode_optim"]
 ignore_errors = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "rikugan/tests"]
+testpaths = ["tests"]
 # Per-test timeout was the goal here (see task 7 brief:
 # ``test_height_cached_label`` mock-pollution flake is the canonical
 # case the timeout guards against).  ``--timeout=30`` with the
@@ -263,6 +254,6 @@ dev = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
   "ruff>=0.16.6",
-  "mypy>=1.10",
+  "mypy>=2.3.0",
   "pyyaml>=6.0.3",
 ]

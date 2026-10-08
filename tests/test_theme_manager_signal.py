@@ -1,4 +1,4 @@
-"""Regression tests for rikugan.ui.theme.manager.ThemeManager signal wiring.
+"""Regression tests for lucnhan.ui.theme.manager.ThemeManager signal wiring.
 
 The original bug: in real PySide6 mode, ``ThemeManager.__init__`` assigned
 ``self.themeChanged = Signal(object)`` (a fresh per-instance ``Signal``
@@ -40,14 +40,21 @@ from unittest.mock import MagicMock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
-def _purge_rikugan_theme_modules() -> None:
+def _purge_lucnhan_theme_modules() -> None:
     """Drop the manager and its friends from ``sys.modules``.
 
     Lets us re-import the real module under a controlled
     ``PySide6.QtCore.Signal`` / QObject presence.
     """
     for name in list(sys.modules):
-        if name == "rikugan.ui.theme" or name.startswith("rikugan.ui.theme."):
+        if (
+            name == "lucnhan.ui.theme"
+            or name.startswith("lucnhan.ui.theme.")
+            # qt_compat holds the QTimer binding it imported at first load;
+            # if that was the qt_stubs substitute, the debounce fires
+            # synchronously and set_mode applies twice in these tests.
+            or name == "lucnhan.ui.qt_compat"
+        ):
             del sys.modules[name]
 
 
@@ -68,8 +75,9 @@ class _RealQtSignalWiringTests(unittest.TestCase):
             for name in list(sys.modules)
             if name == "PySide6"
             or name.startswith("PySide6.")
-            or name == "rikugan.ui.theme"
-            or name.startswith("rikugan.ui.theme.")
+            or name == "lucnhan.ui.theme"
+            or name.startswith("lucnhan.ui.theme.")
+            or name == "lucnhan.ui.qt_compat"
         }
         sys.modules.pop("PySide6", None)
         sys.modules.pop("PySide6.QtCore", None)
@@ -77,8 +85,8 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         import PySide6.QtWidgets  # type: ignore[import-not-found]  # noqa: F401
 
         # Re-import the manager fresh.
-        _purge_rikugan_theme_modules()
-        from rikugan.ui.theme.manager import ThemeManager  # type: ignore[import-not-found]
+        _purge_lucnhan_theme_modules()
+        from lucnhan.ui.theme.manager import ThemeManager  # type: ignore[import-not-found]
 
         cls.ThemeManager = ThemeManager
 
@@ -95,8 +103,8 @@ class _RealQtSignalWiringTests(unittest.TestCase):
             if (
                 name == "PySide6"
                 or name.startswith("PySide6.")
-                or name == "rikugan.ui.theme"
-                or name.startswith("rikugan.ui.theme.")
+                or name == "lucnhan.ui.theme"
+                or name.startswith("lucnhan.ui.theme.")
             ):
                 if name not in cls._saved_modules:
                     sys.modules.pop(name, None)
@@ -129,7 +137,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         """Connecting a slot then changing mode must invoke the slot
         (with the new tokens) exactly once for that mode change."""
         tm = self.ThemeManager.instance()
-        from rikugan.ui.theme.tokens import ThemeMode  # type: ignore[import-not-found]
+        from lucnhan.ui.theme.tokens import ThemeMode  # type: ignore[import-not-found]
 
         observed: list = []
         tm.themeChanged.connect(lambda tokens: observed.append(tokens))
@@ -138,7 +146,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         tm._apply_now()  # synchronous in tests — bypass the debounce
 
         self.assertEqual(len(observed), 1)
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS  # type: ignore[import-not-found]
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS  # type: ignore[import-not-found]
 
         self.assertEqual(observed[0].base, LIGHT_TOKENS.base)
 
@@ -149,7 +157,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         from PySide6.QtWidgets import QApplication  # type: ignore[import-not-found]
 
         QApplication.instance() or QApplication([])
-        from rikugan.ui.message_widgets import (  # type: ignore[import-not-found]
+        from lucnhan.ui.message_widgets import (  # type: ignore[import-not-found]
             UserMessageWidget,
         )
 
@@ -157,7 +165,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         widget = UserMessageWidget("hello world")
         self.addCleanup(widget.deleteLater)
         # Sanity: a subscriber was actually attached.
-        from rikugan.ui.theme.manager import (  # type: ignore[import-not-found]
+        from lucnhan.ui.theme.manager import (  # type: ignore[import-not-found]
             ThemeManager,
         )
 
@@ -173,7 +181,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         from PySide6.QtWidgets import QApplication  # type: ignore[import-not-found]
 
         QApplication.instance() or QApplication([])
-        from rikugan.ui.message_widgets import (  # type: ignore[import-not-found]
+        from lucnhan.ui.message_widgets import (  # type: ignore[import-not-found]
             AssistantMessageWidget,
         )
 
@@ -211,8 +219,8 @@ class _DummySignalFallbackTests(unittest.TestCase):
         sys.modules["PySide6.QtCore"] = _BrokenPySide6Module()
         sys.modules["PySide6.QtWidgets"] = _BrokenPySide6Module()
 
-        _purge_rikugan_theme_modules()
-        from rikugan.ui.theme.manager import (  # type: ignore[import-not-found]
+        _purge_lucnhan_theme_modules()
+        from lucnhan.ui.theme.manager import (  # type: ignore[import-not-found]
             ThemeManager,
         )
 
@@ -225,9 +233,9 @@ class _DummySignalFallbackTests(unittest.TestCase):
                 del sys.modules[name]
         for name, mod in self._real_pyside6_modules.items():
             sys.modules[name] = mod
-        _purge_rikugan_theme_modules()
+        _purge_lucnhan_theme_modules()
         # Re-import the real manager so the rest of the suite is unaffected.
-        importlib.import_module("rikugan.ui.theme.manager")
+        importlib.import_module("lucnhan.ui.theme.manager")
 
     def test_dummy_signal_has_connect(self) -> None:
         self.ThemeManager.reset()

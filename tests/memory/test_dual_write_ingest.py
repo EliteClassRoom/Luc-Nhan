@@ -1,6 +1,6 @@
 """Tests for the dual-write behavior of ingest_exploration_finding.
 
-These tests verify that ``rikugan.memory.ingest.ingest_exploration_finding``
+These tests verify that ``lucnhan.memory.ingest.ingest_exploration_finding``
 honors the ``_LEGACY_JSONL_DUAL_WRITE`` module flag and the optional
 ``memory_service`` keyword argument:
 
@@ -11,7 +11,7 @@ honors the ``_LEGACY_JSONL_DUAL_WRITE`` module flag and the optional
 - A failure in one write path never blocks the other.
 - When ``memory_service`` is ``None``, the function falls back to the
   legacy JSONL-only behavior regardless of the flag (this is the path
-  exercised by ``rikugan/tests/knowledge/test_ingest.py``).
+  exercised by ``tests/knowledge/test_ingest.py``).
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from rikugan.memory import ingest
-from rikugan.memory.paths import KnowledgePaths, derive_binary_id
-from rikugan.memory.raw_store import KnowledgeRawStore
+from lucnhan.memory import ingest
+from lucnhan.memory.paths import KnowledgePaths, derive_binary_id
+from lucnhan.memory.raw_store import KnowledgeRawStore
 
 
 def _make_paths(tmp_path: Path) -> KnowledgePaths:

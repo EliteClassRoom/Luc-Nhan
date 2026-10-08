@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Unify naming conventions across Rikugan by defining a comprehensive PascalCase/snake_case standard, fixing the PascalCase-vs-snake_case inconsistency between the system prompt and bulk_renamer, and shipping a new `naming-convention` skill for edge cases.
+**Goal:** Unify naming conventions across Luc Nhan by defining a comprehensive PascalCase/snake_case standard, fixing the PascalCase-vs-snake_case inconsistency between the system prompt and bulk_renamer, and shipping a new `naming-convention` skill for edge cases.
 
-**Architecture:** Hybrid 3-tier — (1) expand the baseline `RENAMING_SECTION` in `rikugan/agent/prompts/base.py` from 3 naming rules to 6, (2) create a new `naming-convention` skill with the full standard + escalation ladder, (3) fix `bulk_renamer.py` prompts from snake_case to PascalCase. The skill is the single source of truth; the baseline and bulk_renamer hold summaries.
+**Architecture:** Hybrid 3-tier — (1) expand the baseline `RENAMING_SECTION` in `lucnhan/agent/prompts/base.py` from 3 naming rules to 6, (2) create a new `naming-convention` skill with the full standard + escalation ladder, (3) fix `bulk_renamer.py` prompts from snake_case to PascalCase. The skill is the single source of truth; the baseline and bulk_renamer hold summaries.
 
-**Tech Stack:** Python 3.11+, ruff, mypy, pytest, IDA Pro 9.x API, Rikugan skill loader (custom YAML frontmatter parser — no PyYAML).
+**Tech Stack:** Python 3.11+, ruff, mypy, pytest, IDA Pro 9.x API, Luc Nhan skill loader (custom YAML frontmatter parser — no PyYAML).
 
 **Spec:** `docs/superpowers/specs/2026-07-02-naming-convention-design.md`
 
@@ -31,12 +31,12 @@
 
 | File | Responsibility |
 |------|---------------|
-| `rikugan/skills/builtins/naming-convention/SKILL.md` | **NEW** — Full naming standard (7 sections) + frontmatter with triggers |
-| `rikugan/skills/builtins/naming-convention/references/naming-examples.md` | **NEW** — Before/after examples by scenario (lazy-loaded) |
-| `rikugan/agent/prompts/base.py` | **MODIFY** — Expand `RENAMING_SECTION` (lines 49-63) from 3 to 6 naming rules |
-| `rikugan/agent/bulk_renamer.py` | **MODIFY** — `QUICK_ANALYSIS_PROMPT` (line 24) + `DEEP_ANALYSIS_PROMPT` (line 49): snake_case → PascalCase |
-| `rikugan/skills/builtins/malware-analysis/SKILL.md` | **MODIFY** — Naming Conventions section (lines 88-92): expand to 6 rules |
-| `rikugan/skills/builtins/generic-re/SKILL.md` | **MODIFY** — Renaming Strategy naming line (line 52): expand to 6 rules |
+| `lucnhan/skills/builtins/naming-convention/SKILL.md` | **NEW** — Full naming standard (7 sections) + frontmatter with triggers |
+| `lucnhan/skills/builtins/naming-convention/references/naming-examples.md` | **NEW** — Before/after examples by scenario (lazy-loaded) |
+| `lucnhan/agent/prompts/base.py` | **MODIFY** — Expand `RENAMING_SECTION` (lines 49-63) from 3 to 6 naming rules |
+| `lucnhan/agent/bulk_renamer.py` | **MODIFY** — `QUICK_ANALYSIS_PROMPT` (line 24) + `DEEP_ANALYSIS_PROMPT` (line 49): snake_case → PascalCase |
+| `lucnhan/skills/builtins/malware-analysis/SKILL.md` | **MODIFY** — Naming Conventions section (lines 88-92): expand to 6 rules |
+| `lucnhan/skills/builtins/generic-re/SKILL.md` | **MODIFY** — Renaming Strategy naming line (line 52): expand to 6 rules |
 | `tests/agent/test_system_prompt.py` | **MODIFY** — Add 2 tests for expanded `RENAMING_SECTION` |
 | `tests/tools/test_skills.py` | **MODIFY** — Add test for `naming-convention` skill discovery + trigger isolation |
 | `tests/agent/test_bulk_renamer_prompts.py` | **NEW** — Regression test for PascalCase prompts |
@@ -47,8 +47,8 @@
 ## Task 1: Create the `naming-convention` skill (Tầng 2)
 
 **Files:**
-- Create: `rikugan/skills/builtins/naming-convention/SKILL.md`
-- Create: `rikugan/skills/builtins/naming-convention/references/naming-examples.md`
+- Create: `lucnhan/skills/builtins/naming-convention/SKILL.md`
+- Create: `lucnhan/skills/builtins/naming-convention/references/naming-examples.md`
 - Test: `tests/tools/test_skills.py`
 
 **Interfaces:**
@@ -112,14 +112,14 @@ Expected: FAIL with `naming-convention skill not discovered` (skill does not exi
 
 - [ ] **Step 3: Create the skill directory and SKILL.md**
 
-Create `rikugan/skills/builtins/naming-convention/SKILL.md`:
+Create `lucnhan/skills/builtins/naming-convention/SKILL.md`:
 
 ````markdown
 ---
 name: Naming Convention
 description: Comprehensive naming standard for IDA — functions, variables, globals, structs, enums, types. Covers edge cases (wrappers, mangling, Go/Rust, vtable) and confidence-based placeholders. Load before bulk rename or complex retyping.
 tags: [naming, convention, annotations, reverse-engineering]
-author: Rikugan
+author: Luc Nhan
 version: 1.0
 triggers:
   - naming convention
@@ -302,7 +302,7 @@ For the 50-70% confidence band, use `Unknown_<Hint>_<addr>`:
 
 - [ ] **Step 4: Create the references file**
 
-Create `rikugan/skills/builtins/naming-convention/references/naming-examples.md`:
+Create `lucnhan/skills/builtins/naming-convention/references/naming-examples.md`:
 
 ````markdown
 # Naming Examples — Before / After
@@ -367,7 +367,7 @@ Expected: All 3 new tests PASS. The existing `test_vuln_audit_still_wins_own_que
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/skills/builtins/naming-convention/SKILL.md rikugan/skills/builtins/naming-convention/references/naming-examples.md tests/tools/test_skills.py
+git add lucnhan/skills/builtins/naming-convention/SKILL.md lucnhan/skills/builtins/naming-convention/references/naming-examples.md tests/tools/test_skills.py
 git commit -m "feat(skills): add naming-convention skill with full standard + escalation ladder"
 ```
 
@@ -376,7 +376,7 @@ git commit -m "feat(skills): add naming-convention skill with full standard + es
 ## Task 2: Expand the baseline `RENAMING_SECTION` (Tầng 1)
 
 **Files:**
-- Modify: `rikugan/agent/prompts/base.py:49-63` (the `RENAMING_SECTION`)
+- Modify: `lucnhan/agent/prompts/base.py:49-63` (the `RENAMING_SECTION`)
 - Test: `tests/agent/test_system_prompt.py`
 
 **Interfaces:**
@@ -390,7 +390,7 @@ Add to `tests/agent/test_system_prompt.py`, inside `class TestBasePromptContent`
 ```python
     def test_renaming_section_covers_all_object_types(self):
         """Baseline RENAMING_SECTION must cover all 6 IDA object types."""
-        from rikugan.agent.prompts.base import RENAMING_SECTION
+        from lucnhan.agent.prompts.base import RENAMING_SECTION
         self.assertIn("PascalCase", RENAMING_SECTION)   # functions
         self.assertIn("snake_case", RENAMING_SECTION)   # variables
         self.assertIn("g_", RENAMING_SECTION)           # globals
@@ -399,14 +399,14 @@ Add to `tests/agent/test_system_prompt.py`, inside `class TestBasePromptContent`
 
     def test_renaming_section_references_naming_convention_skill(self):
         """Baseline must point to the naming-convention skill for edge cases."""
-        from rikugan.agent.prompts.base import RENAMING_SECTION
+        from lucnhan.agent.prompts.base import RENAMING_SECTION
         self.assertIn("naming-convention", RENAMING_SECTION)
         self.assertIn("Unknown_<Hint>", RENAMING_SECTION)
 
     def test_renaming_section_does_not_reference_ghost_tool(self):
         """Regression: rename_multi_variables is a ghost tool — must NOT be
         referenced as if it exists. See spec self-review round 2."""
-        from rikugan.agent.prompts.base import RENAMING_SECTION
+        from lucnhan.agent.prompts.base import RENAMING_SECTION
         # The phrase 'Use rename_multi_variables when available' must be gone.
         self.assertNotIn("Use rename_multi_variables", RENAMING_SECTION)
 ```
@@ -418,7 +418,7 @@ Expected: All 3 FAIL — `RENAMING_SECTION` currently only mentions PascalCase/g
 
 - [ ] **Step 3: Replace `RENAMING_SECTION`**
 
-In `rikugan/agent/prompts/base.py`, replace the entire `RENAMING_SECTION` block (currently lines 49-63):
+In `lucnhan/agent/prompts/base.py`, replace the entire `RENAMING_SECTION` block (currently lines 49-63):
 
 ```python
 RENAMING_SECTION = """\
@@ -457,7 +457,7 @@ Expected: All PASS — `assemble_system_prompt` still includes the renaming sect
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/agent/prompts/base.py tests/agent/test_system_prompt.py
+git add lucnhan/agent/prompts/base.py tests/agent/test_system_prompt.py
 git commit -m "feat(prompt): expand RENAMING_SECTION to 6 object types + skill reference"
 ```
 
@@ -466,8 +466,8 @@ git commit -m "feat(prompt): expand RENAMING_SECTION to 6 object types + skill r
 ## Task 3: Fix `bulk_renamer.py` prompts — snake_case → PascalCase (Tầng 3)
 
 **Files:**
-- Modify: `rikugan/agent/bulk_renamer.py:24-47` (`QUICK_ANALYSIS_PROMPT`)
-- Modify: `rikugan/agent/bulk_renamer.py:49-66` (`DEEP_ANALYSIS_PROMPT`)
+- Modify: `lucnhan/agent/bulk_renamer.py:24-47` (`QUICK_ANALYSIS_PROMPT`)
+- Modify: `lucnhan/agent/bulk_renamer.py:49-66` (`DEEP_ANALYSIS_PROMPT`)
 - Create: `tests/agent/test_bulk_renamer_prompts.py`
 
 **Interfaces:**
@@ -497,7 +497,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.bulk_renamer import DEEP_ANALYSIS_PROMPT, QUICK_ANALYSIS_PROMPT
+from lucnhan.agent.bulk_renamer import DEEP_ANALYSIS_PROMPT, QUICK_ANALYSIS_PROMPT
 
 
 class TestBulkRenamerPromptsUsePascalCase(unittest.TestCase):
@@ -549,7 +549,7 @@ Expected: FAIL — `test_quick_prompt_enforces_pascalcase` and friends fail beca
 
 - [ ] **Step 3: Replace `QUICK_ANALYSIS_PROMPT`**
 
-In `rikugan/agent/bulk_renamer.py`, replace the `QUICK_ANALYSIS_PROMPT` string (currently lines 24-47):
+In `lucnhan/agent/bulk_renamer.py`, replace the `QUICK_ANALYSIS_PROMPT` string (currently lines 24-47):
 
 ```python
 QUICK_ANALYSIS_PROMPT = """\
@@ -587,7 +587,7 @@ Functions to analyze:
 
 - [ ] **Step 4: Replace `DEEP_ANALYSIS_PROMPT`**
 
-In `rikugan/agent/bulk_renamer.py`, replace the `DEEP_ANALYSIS_PROMPT` string (currently lines 49-66):
+In `lucnhan/agent/bulk_renamer.py`, replace the `DEEP_ANALYSIS_PROMPT` string (currently lines 49-66):
 
 ```python
 DEEP_ANALYSIS_PROMPT = """\
@@ -625,13 +625,13 @@ Expected: ALL 7 tests PASS.
 Run: `python -m pytest tests/agent/ -v -k "bulk_renamer or system_prompt"`
 Expected: All PASS.
 
-Run: `grep -in "snake_case naming\|using snake_case" rikugan/agent/bulk_renamer.py`
+Run: `grep -in "snake_case naming\|using snake_case" lucnhan/agent/bulk_renamer.py`
 Expected: No output (empty).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/agent/bulk_renamer.py tests/agent/test_bulk_renamer_prompts.py
+git add lucnhan/agent/bulk_renamer.py tests/agent/test_bulk_renamer_prompts.py
 git commit -m "fix(bulk_renamer): switch Quick/Deep prompts from snake_case to PascalCase"
 ```
 
@@ -640,8 +640,8 @@ git commit -m "fix(bulk_renamer): switch Quick/Deep prompts from snake_case to P
 ## Task 4: Sync the naming sections in `malware-analysis` and `generic-re` skills (DRY cleanup)
 
 **Files:**
-- Modify: `rikugan/skills/builtins/malware-analysis/SKILL.md:88-92` (Naming Conventions section)
-- Modify: `rikugan/skills/builtins/generic-re/SKILL.md:52` (single naming line)
+- Modify: `lucnhan/skills/builtins/malware-analysis/SKILL.md:88-92` (Naming Conventions section)
+- Modify: `lucnhan/skills/builtins/generic-re/SKILL.md:52` (single naming line)
 - Test: `tests/tools/test_skills.py`
 
 **Interfaces:**
@@ -679,7 +679,7 @@ Expected: Both FAIL — current sections only cover 3 rules / 1 line.
 
 - [ ] **Step 3: Update `malware-analysis/SKILL.md`**
 
-In `rikugan/skills/builtins/malware-analysis/SKILL.md`, replace the `## Naming Conventions` block (currently lines 88-92):
+In `lucnhan/skills/builtins/malware-analysis/SKILL.md`, replace the `## Naming Conventions` block (currently lines 88-92):
 
 ```markdown
 ## Naming Conventions
@@ -694,7 +694,7 @@ In `rikugan/skills/builtins/malware-analysis/SKILL.md`, replace the `## Naming C
 
 - [ ] **Step 4: Update `generic-re/SKILL.md`**
 
-In `rikugan/skills/builtins/generic-re/SKILL.md`, replace the single naming line (currently line 52, `- Naming conventions: PascalCase for functions, g_ prefix for globals, PascalCase for structs`) with:
+In `lucnhan/skills/builtins/generic-re/SKILL.md`, replace the single naming line (currently line 52, `- Naming conventions: PascalCase for functions, g_ prefix for globals, PascalCase for structs`) with:
 
 ```markdown
 - Naming conventions:
@@ -714,7 +714,7 @@ Expected: ALL tests PASS (new + existing).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/skills/builtins/malware-analysis/SKILL.md rikugan/skills/builtins/generic-re/SKILL.md tests/tools/test_skills.py
+git add lucnhan/skills/builtins/malware-analysis/SKILL.md lucnhan/skills/builtins/generic-re/SKILL.md tests/tools/test_skills.py
 git commit -m "docs(skills): sync malware-analysis + generic-re naming sections to 6-rule standard"
 ```
 
@@ -735,7 +735,7 @@ git commit -m "docs(skills): sync malware-analysis + generic-re naming sections 
 In `CHANGELOG.md`, under the topmost `## [1.6.0] — 2026-07-02` section (or the next unreleased section if the version has moved), add inside `### Added`:
 
 ```markdown
-- `naming-convention` skill (`rikugan/skills/builtins/naming-convention/`) — comprehensive naming standard covering functions, variables, globals, structs, enums, and typedefs, plus edge cases (wrappers/thunks, C++ mangling, Go/Rust, vtable) and a confidence-based escalation ladder with `Unknown_<Hint>_<addr>` placeholders.
+- `naming-convention` skill (`lucnhan/skills/builtins/naming-convention/`) — comprehensive naming standard covering functions, variables, globals, structs, enums, and typedefs, plus edge cases (wrappers/thunks, C++ mangling, Go/Rust, vtable) and a confidence-based escalation ladder with `Unknown_<Hint>_<addr>` placeholders.
 ```
 
 And add a new `### Changed` subsection (create it if absent, after `### Added`) under the same version:
@@ -743,7 +743,7 @@ And add a new `### Changed` subsection (create it if absent, after `### Added`) 
 ```markdown
 ### Changed
 - **BREAKING (behavior):** `bulk_renamer` Quick and Deep prompts now generate PascalCase function names (`InitializeGlobals`) instead of snake_case (`initialize_globals`). This unifies bulk-rename output with the system prompt and the new `naming-convention` skill. Existing IDBs are NOT migrated — old snake_case names persist; only new renames follow the standard. If you relied on snake_case output from Bulk Rename, regenerate names for affected functions.
-- `RENAMING_SECTION` in the system prompt (`rikugan/agent/prompts/base.py`) expanded from 3 naming rules to 6 (now covers variables, enums, typedefs) and references the `/naming-convention` skill for edge cases. Also removes the ghost-tool reference to `rename_multi_variables` (which never existed).
+- `RENAMING_SECTION` in the system prompt (`lucnhan/agent/prompts/base.py`) expanded from 3 naming rules to 6 (now covers variables, enums, typedefs) and references the `/naming-convention` skill for edge cases. Also removes the ghost-tool reference to `rename_multi_variables` (which never existed).
 - `malware-analysis` and `generic-re` skills: naming sections expanded from 1-3 rules to the full 6-rule summary, cross-referencing `/naming-convention`.
 ```
 
@@ -771,9 +771,9 @@ git commit -m "docs(changelog): note naming-convention unification + bulk_rename
 Run these three checks; all must return no matches:
 
 ```bash
-grep -rn "Use snake_case naming convention" rikugan/
-grep -rn "using snake_case convention" rikugan/
-grep -rn "Use rename_multi_variables when available" rikugan/
+grep -rn "Use snake_case naming convention" lucnhan/
+grep -rn "using snake_case convention" lucnhan/
+grep -rn "Use rename_multi_variables when available" lucnhan/
 ```
 
 Expected: all three return nothing. If any returns a match, a prompt or skill was missed — fix it before considering the plan done.
@@ -793,6 +793,6 @@ Expected: all three return nothing. If any returns a match, a prompt or skill wa
 
 **2. Placeholder scan:** No TBD/TODO. Every code block is complete and copy-pasteable.
 
-**3. Type consistency:** All referenced tools (`rename_function`, `rename_variable`, `rename_address`, `decompile_function`, `xrefs_to`, `search_strings`, `search_imports`, `imports_by_module`, `function_xrefs`, `suggest_struct_from_accesses`, `get_decompiler_variables`, `create_struct`, `create_enum`, `set_comment`, `set_function_comment`, `save_memory`) verified to exist in `rikugan/ida/tools/`. `rename_multi_variables` confirmed NOT to exist — handled as a removal.
+**3. Type consistency:** All referenced tools (`rename_function`, `rename_variable`, `rename_address`, `decompile_function`, `xrefs_to`, `search_strings`, `search_imports`, `imports_by_module`, `function_xrefs`, `suggest_struct_from_accesses`, `get_decompiler_variables`, `create_struct`, `create_enum`, `set_comment`, `set_function_comment`, `save_memory`) verified to exist in `lucnhan/ida/tools/`. `rename_multi_variables` confirmed NOT to exist — handled as a removal.
 
 **4. Trigger isolation:** Task 1 includes `test_naming_convention_does_not_steal_analysis_queries` to prevent the new skill's triggers from hijacking generic-re / malware-analysis queries (the same regression class that `test_vuln_audit_still_wins_own_queries` guards).

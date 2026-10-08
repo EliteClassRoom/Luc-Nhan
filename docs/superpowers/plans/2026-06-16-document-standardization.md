@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Chuẩn hóa documentation Rikugan: sửa stale facts (skills/tools count, broken tools table), sửa cấu trúc thư mục sai trong AGENTS.md, dọn dẹp docs/ mâu thuẫn, đánh dấu status cho design spec chưa implement.
+**Goal:** Chuẩn hóa documentation Luc Nhan: sửa stale facts (skills/tools count, broken tools table), sửa cấu trúc thư mục sai trong AGENTS.md, dọn dẹp docs/ mâu thuẫn, đánh dấu status cho design spec chưa implement.
 
 **Architecture:** Pure-doc task — 7 file edit + 1 file delete, không chạm code. Mỗi task là một file/cluster độc lập, commit riêng. Verification bằng `grep` (không cần chạy test vì không đổi code).
 
-**Tech Stack:** Markdown (`AGENTS.md`, `ARCHITECTURE.md`, `llms.txt`, `docs/*.md`, `rikugan/plans/*.md`). Git.
+**Tech Stack:** Markdown (`AGENTS.md`, `ARCHITECTURE.md`, `llms.txt`, `docs/*.md`, `lucnhan/plans/*.md`). Git.
 
 **Reference spec:** `docs/superpowers/specs/2026-06-16-document-standardization-design.md`
 
@@ -16,12 +16,12 @@
 
 | Fact | Value |
 |------|-------|
-| Built-in skills | **12** (12 dir trong `rikugan/skills/builtins/` + `__init__.py`) |
+| Built-in skills | **12** (12 dir trong `lucnhan/skills/builtins/` + `__init__.py`) |
 | `@tool` defs | **73** |
-| IDA tool impls location | `rikugan/ida/tools/` (13 file) |
-| Framework + helpers location | `rikugan/tools/` (11 file: base, registry, coercion, cache, formatting, pagination, value_format, script_guard, web, web_fetch, xrefs) |
+| IDA tool impls location | `lucnhan/ida/tools/` (13 file) |
+| Framework + helpers location | `lucnhan/tools/` (11 file: base, registry, coercion, cache, formatting, pagination, value_format, script_guard, web, web_fetch, xrefs) |
 | 4 "broken tools" | **Tất cả đã fix** (migrate `ida_typeinf`) |
-| `rikugan/plans/web_researcher_*` | **Chưa implement** (0 hit `grep` trong `*.py`) |
+| `lucnhan/plans/web_researcher_*` | **Chưa implement** (0 hit `grep` trong `*.py`) |
 
 ---
 
@@ -68,13 +68,13 @@ git commit -m "docs: fix built-in skill count 10 → 12 in AGENTS.md"
 Edit `llms.txt`, thay:
 
 ```
-- **Tools**: 56+ tools for IDA. Defined with the `@tool` decorator in `rikugan/ida/tools/`. Categories: navigation, functions, strings, database, disassembly, decompiler, xrefs, annotations, types, scripting, microcode.
+- **Tools**: 56+ tools for IDA. Defined with the `@tool` decorator in `lucnhan/ida/tools/`. Categories: navigation, functions, strings, database, disassembly, decompiler, xrefs, annotations, types, scripting, microcode.
 ```
 
 bằng:
 
 ```
-- **Tools**: 60+ tools for IDA. Defined with the `@tool` decorator in `rikugan/ida/tools/`. Categories: navigation, functions, strings, database, disassembly, decompiler, xrefs, annotations, types, scripting, microcode.
+- **Tools**: 60+ tools for IDA. Defined with the `@tool` decorator in `lucnhan/ida/tools/`. Categories: navigation, functions, strings, database, disassembly, decompiler, xrefs, annotations, types, scripting, microcode.
 ```
 
 - [ ] **Step 2.2: Sửa skill count (line 10)**
@@ -82,13 +82,13 @@ bằng:
 Edit `llms.txt`, thay:
 
 ```
-- **Skills**: Markdown files with YAML frontmatter in `rikugan/skills/builtins/`. Activated with `/<slug>`. 10 built-in skills.
+- **Skills**: Markdown files with YAML frontmatter in `lucnhan/skills/builtins/`. Activated with `/<slug>`. 10 built-in skills.
 ```
 
 bằng:
 
 ```
-- **Skills**: Markdown files with YAML frontmatter in `rikugan/skills/builtins/`. Activated with `/<slug>`. 12 built-in skills.
+- **Skills**: Markdown files with YAML frontmatter in `lucnhan/skills/builtins/`. Activated with `/<slug>`. 12 built-in skills.
 ```
 
 - [ ] **Step 2.3: Sửa skill count trong File Layout (line 37)**
@@ -192,10 +192,10 @@ git commit -m "docs: update tool count to 60+ in ARCHITECTURE.md"
 
 ---
 
-## Task 4: Sửa cấu trúc thư mục `rikugan/tools/` trong AGENTS.md
+## Task 4: Sửa cấu trúc thư mục `lucnhan/tools/` trong AGENTS.md
 
 Đây là fix quan trọng nhất — AGENTS.md liệt kê IDA tool impls ở sai chỗ
-(nói `rikugan/tools/navigation.py` nhưng thực ra nằm ở `rikugan/ida/tools/`).
+(nói `lucnhan/tools/navigation.py` nhưng thực ra nằm ở `lucnhan/ida/tools/`).
 
 **Files:**
 - Modify: `AGENTS.md:38-60` (2 block: `ida/tools/` và `tools/`)
@@ -206,7 +206,7 @@ Edit `AGENTS.md`, thay:
 
 ```
 │   ├── tools/
-│   │   └── registry.py       # IDA create_default_registry() — imports rikugan.tools.*
+│   │   └── registry.py       # IDA create_default_registry() — imports lucnhan.tools.*
 │   └── ui/
 ```
 
@@ -214,7 +214,7 @@ bằng:
 
 ```
 │   ├── tools/                     # IDA tool implementations (host-specific)
-│   │   ├── registry.py            # IDA create_default_registry() — imports rikugan.tools.* lazily
+│   │   ├── registry.py            # IDA create_default_registry() — imports lucnhan.tools.* lazily
 │   │   ├── navigation.py          # IDA navigation tools (cursor, jump, name-at)
 │   │   ├── functions.py           # IDA function tools (list, search, info)
 │   │   ├── strings.py             # IDA string tools
@@ -342,7 +342,7 @@ git commit -m "docs: remove stale PROJECT_MODIFICATION_PLAN, fix cross-ref in FO
 Edit `docs/EVALUATION_WORKFLOW.md`, thay:
 
 ```
-## 9. Worked Example (Rikugan)
+## 9. Worked Example (Luc Nhan)
 
 ### 9.1 Project Context
 ```
@@ -350,7 +350,7 @@ Edit `docs/EVALUATION_WORKFLOW.md`, thay:
 bằng:
 
 ```
-## 9. Worked Example (Rikugan)
+## 9. Worked Example (Luc Nhan)
 
 > **Note**: §9 là **snapshot minh họa** từ đợt đánh giá 2026-06, KHÔNG phải state hiện hành
 > của project (LOC, số commit ahead, git state có thể đã đổi). Workflow (§1-8) vẫn chính xác
@@ -376,12 +376,12 @@ git commit -m "docs: mark EVALUATION_WORKFLOW §9 as snapshot, not current state
 ## Task 7: Thêm status note cho 2 design spec chưa implement
 
 **Files:**
-- Modify: `rikugan/plans/web_researcher_design.md:1-2`
-- Modify: `rikugan/plans/web_researcher_tools_design.md:1-2`
+- Modify: `lucnhan/plans/web_researcher_design.md:1-2`
+- Modify: `lucnhan/plans/web_researcher_tools_design.md:1-2`
 
 - [ ] **Step 7.1: Thêm status note vào web_researcher_design.md**
 
-Edit `rikugan/plans/web_researcher_design.md`, thay:
+Edit `lucnhan/plans/web_researcher_design.md`, thay:
 
 ```
 # Web Researcher Sub-Agent Architecture Design
@@ -396,14 +396,14 @@ bằng:
 
 > **Status**: Design spec — NOT YET IMPLEMENTED (reviewed 2026-06-16).
 > Đây là tài liệu thiết kế cho `web_researcher` sub-agent. Chưa có code
-> (`grep web_researcher rikugan/ --include="*.py"` → 0 hit). Tham khảo khi triển khai.
+> (`grep web_researcher lucnhan/ --include="*.py"` → 0 hit). Tham khảo khi triển khai.
 
 ## 1. Overview
 ```
 
 - [ ] **Step 7.2: Thêm status note vào web_researcher_tools_design.md**
 
-Edit `rikugan/plans/web_researcher_tools_design.md`, thay:
+Edit `lucnhan/plans/web_researcher_tools_design.md`, thay:
 
 ```
 # Web Researcher Tools Architecture Design
@@ -425,13 +425,13 @@ bằng:
 
 - [ ] **Step 7.3: Verify**
 
-Run: `grep -l "NOT YET IMPLEMENTED" rikugan/plans/web_researcher_*.md`
+Run: `grep -l "NOT YET IMPLEMENTED" lucnhan/plans/web_researcher_*.md`
 Expected: 2 file listed.
 
 - [ ] **Step 7.4: Commit**
 
 ```bash
-git add rikugan/plans/web_researcher_design.md rikugan/plans/web_researcher_tools_design.md
+git add lucnhan/plans/web_researcher_design.md lucnhan/plans/web_researcher_tools_design.md
 git commit -m "docs: mark web_researcher design specs as not-yet-implemented"
 ```
 
@@ -468,7 +468,7 @@ grep -c "PROJECT_MODIFICATION_PLAN.md](PROJECT_MODIFICATION_PLAN.md)" docs/FORK_
 # Expected: 0
 
 echo "=== D: plans have status marker ==="
-grep -l "NOT YET IMPLEMENTED" rikugan/plans/web_researcher_design.md rikugan/plans/web_researcher_tools_design.md
+grep -l "NOT YET IMPLEMENTED" lucnhan/plans/web_researcher_design.md lucnhan/plans/web_researcher_tools_design.md
 # Expected: both files
 ```
 
@@ -476,9 +476,9 @@ grep -l "NOT YET IMPLEMENTED" rikugan/plans/web_researcher_design.md rikugan/pla
 
 Run:
 ```bash
-git diff --stat master -- rikugan/ | tail -5
+git diff --stat master -- lucnhan/ | tail -5
 ```
-Expected: empty hoặc chỉ file `rikugan/plans/*.md` (docs only, không `.py`).
+Expected: empty hoặc chỉ file `lucnhan/plans/*.md` (docs only, không `.py`).
 
 > Nếu thấy file `.py` nào bị đổi → STOP, đó là lỗi (plan này không chạm code).
 

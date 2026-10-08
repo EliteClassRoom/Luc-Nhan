@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rikugan installer for Linux and macOS
+# Luc Nhan installer for Linux and macOS
 # Usage: ./install.sh [IDA_USER_DIR]
 #   IDA_USER_DIR  Optional path to IDA user directory (default: auto-detect)
 
@@ -64,10 +64,13 @@ else
 fi
 
 PLUGINS_DIR="$IDA_USER_DIR/plugins"
-CONFIG_DIR="$IDA_USER_DIR/rikugan"
+CONFIG_DIR="$IDA_USER_DIR/lucnhan"
 
-# ── Remove old "iris" installation (rebrand cleanup) ─────────────────
-for old_name in "iris_plugin.py" "iris"; do
+# ── Remove old rebrand leftovers (iris, then rikugan) ────────────────
+# ``rikugan_plugin.py`` only, never the ``rikugan`` package directory: when
+# this installer runs from the plugin directory itself, that directory *is*
+# the source tree.
+for old_name in "iris_plugin.py" "iris" "rikugan_plugin.py"; do
     OLD_PATH="$PLUGINS_DIR/$old_name"
     if [[ -L "$OLD_PATH" ]]; then
         warn "Removing old '$old_name' symlink: $OLD_PATH"
@@ -82,13 +85,13 @@ done
 
 # ── Sanity checks ─────────────────────────────────────────────────────
 
-if [[ ! -f "$SCRIPT_DIR/rikugan_plugin.py" ]]; then
-    err "rikugan_plugin.py not found in $SCRIPT_DIR — run this from the repo root"
+if [[ ! -f "$SCRIPT_DIR/lucnhan_plugin.py" ]]; then
+    err "lucnhan_plugin.py not found in $SCRIPT_DIR — run this from the repo root"
     exit 1
 fi
 
-if [[ ! -d "$SCRIPT_DIR/rikugan" ]]; then
-    err "rikugan/ package not found in $SCRIPT_DIR — run this from the repo root"
+if [[ ! -d "$SCRIPT_DIR/lucnhan" ]]; then
+    err "lucnhan/ package not found in $SCRIPT_DIR — run this from the repo root"
     exit 1
 fi
 
@@ -310,9 +313,9 @@ mkdir -p "$CONFIG_DIR"
 # ── Copy built-in skills ──────────────────────────────────────────────
 
 SKILLS_DIR="$CONFIG_DIR/skills"
-BUILTINS_SRC="$SCRIPT_DIR/rikugan/skills/builtins"
+BUILTINS_SRC="$SCRIPT_DIR/lucnhan/skills/builtins"
 
-# Built-in skills are loaded directly from rikugan/skills/builtins/ (via symlink).
+# Built-in skills are loaded directly from lucnhan/skills/builtins/ (via symlink).
 # The user skills directory is for user-created skills only.
 # Remove stale built-in copies that previous installs may have placed here.
 if [[ -d "$BUILTINS_SRC" ]] && [[ -d "$SKILLS_DIR" ]]; then
@@ -349,18 +352,18 @@ install_link() {
     ok "$name -> $dst"
 }
 
-info "Installing Rikugan into $PLUGINS_DIR..."
-install_link "$SCRIPT_DIR/rikugan_plugin.py" "$PLUGINS_DIR/rikugan_plugin.py" "rikugan_plugin.py"
-install_link "$SCRIPT_DIR/rikugan"        "$PLUGINS_DIR/rikugan"        "rikugan/"
+info "Installing Luc Nhan into $PLUGINS_DIR..."
+install_link "$SCRIPT_DIR/lucnhan_plugin.py" "$PLUGINS_DIR/lucnhan_plugin.py" "lucnhan_plugin.py"
+install_link "$SCRIPT_DIR/lucnhan"        "$PLUGINS_DIR/lucnhan"        "lucnhan/"
 
 # ── Done ──────────────────────────────────────────────────────────────
 
 echo ""
-ok "Rikugan installed successfully!"
-info "Plugin:  $PLUGINS_DIR/rikugan_plugin.py"
-info "Package: $PLUGINS_DIR/rikugan"
+ok "Luc Nhan installed successfully!"
+info "Plugin:  $PLUGINS_DIR/lucnhan_plugin.py"
+info "Package: $PLUGINS_DIR/lucnhan"
 info "Config:  $CONFIG_DIR/"
 info "Skills:  $SKILLS_DIR/"
 echo ""
-info "Open IDA and press Ctrl+Shift+I to start Rikugan."
+info "Open IDA and press Ctrl+Shift+I to start Luc Nhan."
 info "First run: click Settings to configure your LLM provider and API key."

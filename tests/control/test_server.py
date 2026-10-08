@@ -1,4 +1,4 @@
-"""Tests for rikugan.control.server.
+"""Tests for lucnhan.control.server.
 
 Uses unittest.mock.patch to intercept BaseHTTPRequestHandler.handle()
 so the handler can be constructed without triggering a request cycle.
@@ -136,7 +136,7 @@ class TestControlServerInit(unittest.TestCase):
     """Tests for ControlServer construction and defaults."""
 
     def test_default_token_generated(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         server = ControlServer(controller)
@@ -144,7 +144,7 @@ class TestControlServerInit(unittest.TestCase):
         self.assertEqual(len(server.token), 64)
 
     def test_custom_token_accepted(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         valid_hex_token = "a" * 64
@@ -152,77 +152,77 @@ class TestControlServerInit(unittest.TestCase):
         self.assertEqual(server.token, valid_hex_token)
 
     def test_rejects_short_token(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         with self.assertRaises(ValueError):
             ControlServer(controller, token="short")
 
     def test_rejects_non_hex_token(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         with self.assertRaises(ValueError):
             ControlServer(controller, token="my-secret-token")
 
     def test_rejects_token_with_special_chars(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         with self.assertRaises(ValueError):
             ControlServer(controller, token="x" * 63 + "!")
 
     def test_rejects_0_0_0_0(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         with self.assertRaises(ValueError):
             ControlServer(controller, host="0.0.0.0")
 
     def test_rejects_empty_host(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         with self.assertRaises(ValueError):
             ControlServer(controller, host="")
 
     def test_accepts_127_0_0_1(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         server = ControlServer(controller, host="127.0.0.1", port=0)
         self.assertEqual(server.host, "127.0.0.1")
 
     def test_accepts_localhost(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         server = ControlServer(controller, host="localhost", port=0)
         self.assertEqual(server.host, "localhost")
 
     def test_accepts_ipv6_loopback(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         server = ControlServer(controller, host="::1", port=0)
         self.assertEqual(server.host, "::1")
 
     def test_rejects_192_168_address(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         with self.assertRaises(ValueError):
             ControlServer(controller, host="192.168.1.10")
 
     def test_rejects_10_0_0_address(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         with self.assertRaises(ValueError):
             ControlServer(controller, host="10.0.0.5")
 
     def test_rejects_colon_colon(self):
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         with self.assertRaises(ValueError):
@@ -231,7 +231,7 @@ class TestControlServerInit(unittest.TestCase):
     def test_write_ready_file(self):
         import tempfile
 
-        from rikugan.control.server import ControlServer
+        from lucnhan.control.server import ControlServer
 
         controller = MagicMock()
         server = ControlServer(controller, host="127.0.0.1", port=9999, token="a" * 64)
@@ -253,7 +253,7 @@ class TestControlServerState(unittest.TestCase):
     """Tests for ControlServerState and RunState."""
 
     def test_run_state_sequence(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         state = RunState(run_id="abc")
         self.assertEqual(state.run_id, "abc")
@@ -262,7 +262,7 @@ class TestControlServerState(unittest.TestCase):
         self.assertEqual(state.final_text, "")
 
     def test_control_server_state_initial(self):
-        from rikugan.control.server import ControlServerState
+        from lucnhan.control.server import ControlServerState
 
         state = ControlServerState(token="tk")
         self.assertFalse(state.shutting_down)
@@ -270,13 +270,13 @@ class TestControlServerState(unittest.TestCase):
         self.assertTrue(state.is_idle)
 
     def test_is_idle_when_no_run(self):
-        from rikugan.control.server import ControlServerState
+        from lucnhan.control.server import ControlServerState
 
         state = ControlServerState(token="tk")
         self.assertTrue(state.is_idle)
 
     def test_is_idle_false_when_run_unfinished(self):
-        from rikugan.control.server import ControlServerState, RunState
+        from lucnhan.control.server import ControlServerState, RunState
 
         state = ControlServerState(token="tk")
         with state.lock:
@@ -285,7 +285,7 @@ class TestControlServerState(unittest.TestCase):
 
     def test_is_idle_true_when_run_finished(self):
         """Finished runs are considered idle (P2-3)."""
-        from rikugan.control.server import ControlServerState, RunState
+        from lucnhan.control.server import ControlServerState, RunState
 
         state = ControlServerState(token="tk")
         with state.lock:
@@ -298,7 +298,7 @@ class TestControlHandler(unittest.TestCase):
     """Tests for ControlHandler HTTP endpoints."""
 
     def setUp(self):
-        from rikugan.control.server import ControlServerState, _make_handler
+        from lucnhan.control.server import ControlServerState, _make_handler
 
         self.controller = MagicMock()
         self.controller.tool_registry = MagicMock()
@@ -394,7 +394,7 @@ class TestControlHandler(unittest.TestCase):
         self.assertIn("error", resp)
 
     def test_prompt_rejects_duplicate_run(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="existing")
@@ -405,7 +405,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_prompt_allows_when_previous_run_finished(self):
         """Finished runs are idle; a new prompt should be allowed (P2-3)."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="existing")
@@ -426,7 +426,7 @@ class TestControlHandler(unittest.TestCase):
         self.assertIn("error", resp)
 
     def test_cancel_with_active_run(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -437,7 +437,7 @@ class TestControlHandler(unittest.TestCase):
         self.controller.cancel.assert_called()
 
     def test_cancel_with_stale_run_id(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="active-run")
@@ -487,7 +487,7 @@ class TestControlHandler(unittest.TestCase):
     # -- answer (P0-3: requires run_id) -----------------------------------
 
     def test_answer_forwarded_to_agent_loop(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -506,7 +506,7 @@ class TestControlHandler(unittest.TestCase):
         agent_loop.submit_user_answer.assert_called_with("yes")
 
     def test_answer_with_run_id_mismatch(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="active-run")
@@ -543,7 +543,7 @@ class TestControlHandler(unittest.TestCase):
         self.assertIn("error", resp)
 
     def test_answer_finished_run_rejected(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -561,7 +561,7 @@ class TestControlHandler(unittest.TestCase):
     # -- tool-approval (P0-3: requires run_id) ----------------------------
 
     def test_tool_approval_forwarded(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -586,7 +586,7 @@ class TestControlHandler(unittest.TestCase):
         self.assertIn("error", resp)
 
     def test_tool_approval_finished_run_rejected(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -604,7 +604,7 @@ class TestControlHandler(unittest.TestCase):
     # -- approval (P0-3: requires run_id) ---------------------------------
 
     def test_approval_forwarded(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -629,7 +629,7 @@ class TestControlHandler(unittest.TestCase):
         self.assertIn("error", resp)
 
     def test_approval_finished_run_rejected(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -648,7 +648,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_tool_approval_missing_decision_400(self):
         """Empty body or no decision field returns 400 with no side effects."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -665,7 +665,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_tool_approval_conflicting_fields_400(self):
         """Both decision and approved fields → 400."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -684,7 +684,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_tool_approval_approved_not_bool_400(self):
         """approved must be a boolean, not a string."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -699,7 +699,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_tool_approval_bad_decision_400(self):
         """Unknown decision string → 400."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -714,7 +714,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_tool_approval_missing_decision_no_side_effects(self):
         """Missing decision must not call submit_tool_approval."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -734,7 +734,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_approval_missing_decision_400(self):
         """Empty body or no decision field returns 400 with no side effects."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -751,7 +751,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_approval_conflicting_fields_400(self):
         """Both decision and approved fields → 400."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -770,7 +770,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_approval_approved_not_bool_400(self):
         """approved must be a boolean, not a string."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -785,7 +785,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_approval_bad_decision_400(self):
         """Unknown decision string → 400."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -800,7 +800,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_approval_missing_decision_no_side_effects(self):
         """Missing decision must not call submit_approval."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -828,7 +828,7 @@ class TestControlHandler(unittest.TestCase):
         self.assertEqual(resp.get("events"), [])
 
     def test_events_with_active_run(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -920,7 +920,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_tools_uses_list_available_tools(self):
         """/tools must call list_available_tools() not list_tools()."""
-        from rikugan.control.server import ControlServerState, _make_handler
+        from lucnhan.control.server import ControlServerState, _make_handler
 
         controller = MagicMock()
         registry = MagicMock()
@@ -942,8 +942,8 @@ class TestControlHandler(unittest.TestCase):
 
     def test_tools_response_includes_tools_list_and_count(self):
         """/tools response must include 'tools' list and 'count'."""
-        from rikugan.control.server import ControlServerState, _make_handler
-        from rikugan.tools.base import ToolDefinition
+        from lucnhan.control.server import ControlServerState, _make_handler
+        from lucnhan.tools.base import ToolDefinition
 
         def make_def(name):
             return ToolDefinition(
@@ -1051,7 +1051,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_read_body_rejects_oversized_request(self):
         """_read_body returns HTTP 413 when Content-Length exceeds max."""
-        from rikugan.control.server import _MAX_REQUEST_BODY
+        from lucnhan.control.server import _MAX_REQUEST_BODY
 
         handler, _wfile = self._rh.request(
             "POST",
@@ -1086,7 +1086,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_approval_accepts_decision_field(self):
         """POST /approval with 'decision' field is canonical."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -1106,7 +1106,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_approval_rejects_invalid_decision(self):
         """POST /approval with invalid decision returns 400."""
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
@@ -1124,7 +1124,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_tools_parameters_are_json_objects(self):
         """/tools response must have parameters as JSON schema, not dataclass repr."""
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from lucnhan.tools.base import ParameterSchema, ToolDefinition
 
         tool = ToolDefinition(
             name="test_tool",
@@ -1152,7 +1152,7 @@ class TestShutdownDeadlock(unittest.TestCase):
     """P0-1: Prove shutdown does not deadlock with an active broker."""
 
     def test_shutdown_stops_broker_outside_lock(self):
-        from rikugan.control.server import (
+        from lucnhan.control.server import (
             ControlServerState,
             EventBroker,
             RunState,
@@ -1197,7 +1197,7 @@ class TestShutdownDeadlock(unittest.TestCase):
         # We can't fully construct a real ControlServer without a real
         # HeadlessSessionController, but we verify the pattern works.
         # The key property: calling broker.stop() outside the state lock.
-        from rikugan.control.server import ControlServerState, EventBroker, RunState
+        from lucnhan.control.server import ControlServerState, EventBroker, RunState
 
         controller = MagicMock()
         controller.cancel = MagicMock()
@@ -1229,7 +1229,7 @@ class TestShutdownDeadlock(unittest.TestCase):
 
     def test_event_broker_mark_finished_drains_outside_lock(self):
         """_mark_finished() drains runner events outside state.lock (P2-1)."""
-        from rikugan.control.server import ControlServerState, EventBroker, RunState
+        from lucnhan.control.server import ControlServerState, EventBroker, RunState
 
         lock_order: list[str] = []  # noqa: F841
 
@@ -1260,7 +1260,7 @@ class TestShutdownCallback(unittest.TestCase):
     """P1-1: Simplified ShutdownCallback."""
 
     def test_trigger_signals_event(self):
-        from rikugan.control.server import ShutdownCallback
+        from lucnhan.control.server import ShutdownCallback
 
         cb = ShutdownCallback(lambda: None)
         self.assertFalse(cb.signalled.is_set())
@@ -1268,7 +1268,7 @@ class TestShutdownCallback(unittest.TestCase):
         self.assertTrue(cb.signalled.is_set())
 
     def test_trigger_idempotent(self):
-        from rikugan.control.server import ShutdownCallback
+        from lucnhan.control.server import ShutdownCallback
 
         called = []
         cb = ShutdownCallback(lambda: called.append(1))
@@ -1279,7 +1279,7 @@ class TestShutdownCallback(unittest.TestCase):
         self.assertTrue(cb.signalled.is_set())
 
     def test_trigger_swallows_exceptions(self):
-        from rikugan.control.server import ShutdownCallback
+        from lucnhan.control.server import ShutdownCallback
 
         def raiser():
             raise RuntimeError("boom")
@@ -1294,7 +1294,7 @@ class TestRunIdSideEffects(unittest.TestCase):
     """P1-3: Strict run_id no-side-effect tests."""
 
     def setUp(self):
-        from rikugan.control.server import ControlServerState, _make_handler
+        from lucnhan.control.server import ControlServerState, _make_handler
 
         self.controller = MagicMock()
         self.controller.tool_registry = MagicMock()
@@ -1326,7 +1326,7 @@ class TestRunIdSideEffects(unittest.TestCase):
     # -- /answer side-effect guards ---------------------------------------
 
     def test_answer_stale_run_id_no_side_effect(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -1347,7 +1347,7 @@ class TestRunIdSideEffects(unittest.TestCase):
         agent_loop.submit_user_answer.assert_not_called()
 
     def test_answer_finished_run_no_side_effect(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -1388,7 +1388,7 @@ class TestRunIdSideEffects(unittest.TestCase):
     # -- /tool-approval side-effect guards --------------------------------
 
     def test_tool_approval_stale_run_id_no_side_effect(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -1409,7 +1409,7 @@ class TestRunIdSideEffects(unittest.TestCase):
         agent_loop.submit_tool_approval.assert_not_called()
 
     def test_tool_approval_finished_run_no_side_effect(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -1433,7 +1433,7 @@ class TestRunIdSideEffects(unittest.TestCase):
     # -- /approval side-effect guards -------------------------------------
 
     def test_approval_stale_run_id_no_side_effect(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -1454,7 +1454,7 @@ class TestRunIdSideEffects(unittest.TestCase):
         agent_loop.submit_approval.assert_not_called()
 
     def test_approval_finished_run_no_side_effect(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         agent_loop = MagicMock()
         runner = MagicMock()
@@ -1478,7 +1478,7 @@ class TestRunIdSideEffects(unittest.TestCase):
     # -- /cancel side-effect guards ---------------------------------------
 
     def test_cancel_stale_run_id_no_side_effect(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="active-run")
@@ -1494,7 +1494,7 @@ class TestRunIdSideEffects(unittest.TestCase):
         self.controller.cancel.assert_not_called()
 
     def test_cancel_finished_run_no_side_effect(self):
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         with self.state.lock:
             self.state.run = RunState(run_id="finished-run")
@@ -1588,7 +1588,7 @@ class TestEventsRunReplacementRace(unittest.TestCase):
     """P1-4: /events long-poll run replacement race."""
 
     def setUp(self):
-        from rikugan.control.server import ControlServerState, _make_handler
+        from lucnhan.control.server import ControlServerState, _make_handler
 
         self.controller = MagicMock()
         self.controller.tool_registry = MagicMock()
@@ -1621,7 +1621,7 @@ class TestEventsRunReplacementRace(unittest.TestCase):
         """Old run long-poll returns empty finished when run replaced."""
         import threading
 
-        from rikugan.control.server import RunState
+        from lucnhan.control.server import RunState
 
         # Set up "old" run with a broker and seed events in event_buffer
         with self.state.lock:
@@ -1672,7 +1672,7 @@ class TestShutdownProductionPath(unittest.TestCase):
 
     def test_shutdown_sets_shutting_down_and_notifies(self):
         """shutdown() sets flag and notifies waiters."""
-        from rikugan.control.server import ControlServer, RunState
+        from lucnhan.control.server import ControlServer, RunState
 
         server = ControlServer(self.controller, host="127.0.0.1", port=0)
 
@@ -1693,7 +1693,7 @@ class TestShutdownProductionPath(unittest.TestCase):
 
     def test_shutdown_called_idempotently(self):
         """Multiple shutdown() calls are safe."""
-        from rikugan.control.server import ControlServer, RunState
+        from lucnhan.control.server import ControlServer, RunState
 
         server = ControlServer(self.controller, host="127.0.0.1", port=0)
 
@@ -1709,7 +1709,7 @@ class TestShutdownProductionPath(unittest.TestCase):
 
     def test_shutdown_stops_broker(self):
         """shutdown() calls broker.stop() on the active run."""
-        from rikugan.control.server import ControlServer, RunState
+        from lucnhan.control.server import ControlServer, RunState
 
         server = ControlServer(self.controller, host="127.0.0.1", port=0)
 
@@ -1727,7 +1727,7 @@ class TestShutdownProductionPath(unittest.TestCase):
         shutdown_complete is set within a bounded time (P1-3)."""
         import threading
 
-        from rikugan.control.server import ControlServer, EventBroker, RunState
+        from lucnhan.control.server import ControlServer, EventBroker, RunState
 
         server = ControlServer(self.controller, host="127.0.0.1", port=0)
 
@@ -1766,7 +1766,7 @@ class TestProtocolSerialization(unittest.TestCase):
 
     def test_make_json_response_rejects_non_serializable(self):
         """Non-serializable values must raise TypeError, not stringify."""
-        from rikugan.control.protocol import make_json_response
+        from lucnhan.control.protocol import make_json_response
 
         class NonSerializable:
             pass
@@ -1775,7 +1775,7 @@ class TestProtocolSerialization(unittest.TestCase):
             make_json_response({"value": NonSerializable()})
 
     def test_make_json_response_accepts_normal_types(self):
-        from rikugan.control.protocol import make_json_response
+        from lucnhan.control.protocol import make_json_response
 
         status, headers, body = make_json_response(
             {"key": "value", "num": 42, "bool": True, "none": None, "list": [1, 2, 3]}
@@ -1786,7 +1786,7 @@ class TestProtocolSerialization(unittest.TestCase):
         self.assertIn('"value"', body)
 
     def test_make_error_json_accepts_standard(self):
-        from rikugan.control.protocol import make_error_json
+        from lucnhan.control.protocol import make_error_json
 
         status, _headers, body = make_error_json("Something went wrong", status=500, detail="extra")
         self.assertEqual(status, 500)
@@ -1830,7 +1830,7 @@ class TestEventBrokerReasoningPassThrough(unittest.TestCase):
 
     def _drain_broker(self, events: list):
         """Run the EventBroker against *events* and return the final RunState."""
-        from rikugan.control.server import (
+        from lucnhan.control.server import (
             ControlServerState,
             EventBroker,
             RunState,
@@ -1870,7 +1870,7 @@ class TestEventBrokerReasoningPassThrough(unittest.TestCase):
             return state.run
 
     def test_reasoning_and_recovery_events_enter_buffer_without_mutating_status(self):
-        from rikugan.agent.turn import TurnEvent
+        from lucnhan.agent.turn import TurnEvent
 
         run = self._drain_broker(
             [
@@ -1894,7 +1894,7 @@ class TestEventBrokerReasoningPassThrough(unittest.TestCase):
         self.assertIn("recovery_start", event_types)
 
     def test_tool_call_discarded_enters_buffer_without_mutating_status(self):
-        from rikugan.agent.turn import TurnEvent
+        from lucnhan.agent.turn import TurnEvent
 
         run = self._drain_broker(
             [
@@ -1911,7 +1911,7 @@ class TestEventBrokerReasoningPassThrough(unittest.TestCase):
 
     def test_recovery_failure_error_sets_exit_code(self):
         """Recovery failure ERROR is a real failure — exit_code must change."""
-        from rikugan.agent.turn import TurnEvent
+        from lucnhan.agent.turn import TurnEvent
 
         run = self._drain_broker(
             [

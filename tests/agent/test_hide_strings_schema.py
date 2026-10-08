@@ -26,8 +26,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import ToolCall
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import ToolCall
 
 HIDDEN_TOOLS = ("list_strings", "search_strings")
 
@@ -38,12 +38,12 @@ def _make_loop(tools: list[dict[str, Any]], hide_strings: bool):
     Reuses the real `_build_tools_schema` logic by patching only the
     surface it reads (`session.metadata`, `config`, `tools`, `skills`).
     """
-    from rikugan.agent.loop import AgentLoop
+    from lucnhan.agent.loop import AgentLoop
 
     loop = AgentLoop.__new__(AgentLoop)
     loop.session = MagicMock()
     loop.session.metadata = {}
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg.hide_strings = hide_strings
     loop.config = cfg
     loop.skills = None
@@ -110,10 +110,10 @@ class TestHideStringsDirectCallGuard(unittest.TestCase):
     """
 
     def _build_loop(self, hide_strings: bool):
-        from rikugan.agent.loop import AgentLoop
+        from lucnhan.agent.loop import AgentLoop
 
         loop = AgentLoop.__new__(AgentLoop)
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.hide_strings = hide_strings
         loop.config = cfg
         loop._unattended = False  # read surface of _execute_single_tool
@@ -131,10 +131,10 @@ class TestHideStringsDirectCallGuard(unittest.TestCase):
 
 class TestOrchestraSchemaFilter(unittest.TestCase):
     def test_orchestra_filters_hidden_string_tools(self) -> None:
-        from rikugan.agent.orchestra.main_agent import OrchestraMainAgent
+        from lucnhan.agent.orchestra.main_agent import OrchestraMainAgent
 
         agent = OrchestraMainAgent.__new__(OrchestraMainAgent)
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.hide_strings = True
         agent.config = cfg
         agent.tools = MagicMock()

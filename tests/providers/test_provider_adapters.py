@@ -16,7 +16,7 @@ class TestBuiltinModels(unittest.TestCase):
     """All providers must declare non-empty builtin model lists."""
 
     def test_anthropic_builtin_models(self):
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
         p = AnthropicProvider(api_key="test", model="test")
         models = p._builtin_models()
         self.assertTrue(len(models) > 0)
@@ -25,7 +25,7 @@ class TestBuiltinModels(unittest.TestCase):
             self.assertTrue(m.context_window > 0)
 
     def test_openai_builtin_models(self):
-        from rikugan.providers.openai_provider import OpenAIProvider
+        from lucnhan.providers.openai_provider import OpenAIProvider
         p = OpenAIProvider(api_key="test", model="test")
         models = p._builtin_models()
         self.assertTrue(len(models) > 0)
@@ -33,7 +33,7 @@ class TestBuiltinModels(unittest.TestCase):
             self.assertEqual(m.provider, "openai")
 
     def test_gemini_builtin_models(self):
-        from rikugan.providers.gemini_provider import GeminiProvider
+        from lucnhan.providers.gemini_provider import GeminiProvider
         models = GeminiProvider._builtin_models()
         self.assertTrue(len(models) > 0)
         for m in models:
@@ -45,7 +45,7 @@ class TestProviderCapabilities(unittest.TestCase):
     """All providers must declare streaming and tool_use capabilities."""
 
     def test_anthropic_capabilities(self):
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
         p = AnthropicProvider(api_key="test", model="test")
         caps = p.capabilities
         self.assertTrue(caps.streaming)
@@ -53,14 +53,14 @@ class TestProviderCapabilities(unittest.TestCase):
         self.assertTrue(caps.vision)
 
     def test_openai_capabilities(self):
-        from rikugan.providers.openai_provider import OpenAIProvider
+        from lucnhan.providers.openai_provider import OpenAIProvider
         p = OpenAIProvider(api_key="test", model="test")
         caps = p.capabilities
         self.assertTrue(caps.streaming)
         self.assertTrue(caps.tool_use)
 
     def test_gemini_capabilities(self):
-        from rikugan.providers.gemini_provider import GeminiProvider
+        from lucnhan.providers.gemini_provider import GeminiProvider
         p = GeminiProvider(api_key="test", model="test")
         caps = p.capabilities
         self.assertTrue(caps.streaming)

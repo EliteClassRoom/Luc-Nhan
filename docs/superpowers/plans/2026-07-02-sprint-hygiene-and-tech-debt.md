@@ -13,7 +13,7 @@
 - **IDAPython imports**: Mọi `import ida_*` PHẢI đi qua `importlib.import_module()` trong `try/except ImportError` (Shiboken UAF guard).
 - **Thread safety**: Mọi IDA API call chạy trên main thread; tool mutating phải có `@idasync`.
 - **immutable patterns**: KHÔNG mutate dataclass instances; dùng `dataclasses.replace()`.
-- **Version sync**: Bất kỳ thay đổi nào về behavior phải cập nhật đồng thời `pyproject.toml` + `ida-plugin.json` + `rikugan/constants.py` (nếu bump version).
+- **Version sync**: Bất kỳ thay đổi nào về behavior phải cập nhật đồng thời `pyproject.toml` + `ida-plugin.json` + `lucnhan/constants.py` (nếu bump version).
 - **Local CI required**: Chạy `./ci-local.sh` trước mỗi commit; push lên `master` không trigger CI upstream (workflow chỉ chạy `[main, dev]`).
 - **Test coverage**: Không giảm coverage dưới mức hiện tại (theo desloppify: Test health 100.0% / strict 67.4%).
 - **Commit style**: `<type>(scope): description` — types: feat, fix, refactor, docs, test, chore, perf, ci.
@@ -27,16 +27,16 @@
 - `CHANGELOG.md` — thêm v1.6.0 entry
 - `.github/workflows/ci.yml` — xóa `--ignore=tests/ui/test_a2a_widget.py`
 - `tests/ui/test_a2a_widget.py` — rewrite theo new threading model
-- `rikugan/agent/loop.py` — import + remove inline `DELEGATE_EXTERNAL_TASK_SCHEMA`
-- `rikugan/ida/tools/functions.py` — wire 3 fork helpers
-- `rikugan/agent/bulk_renamer.py` — Q-007: tách `_run_quick` còn lại
-- `rikugan/ui/tool_widgets.py` — Q-009: verify/fill dict-of-handlers
-- `pyproject.toml`, `ida-plugin.json`, `rikugan/constants.py` — bump version v1.6.1 (nếu release)
+- `lucnhan/agent/loop.py` — import + remove inline `DELEGATE_EXTERNAL_TASK_SCHEMA`
+- `lucnhan/ida/tools/functions.py` — wire 3 fork helpers
+- `lucnhan/agent/bulk_renamer.py` — Q-007: tách `_run_quick` còn lại
+- `lucnhan/ui/tool_widgets.py` — Q-009: verify/fill dict-of-handlers
+- `pyproject.toml`, `ida-plugin.json`, `lucnhan/constants.py` — bump version v1.6.1 (nếu release)
 
 ### Reference (đọc, không sửa trừ khi cần)
-- `rikugan/agent/pseudo_tool_schemas.py` — schema definitions
-- `rikugan/ui/a2a_widget.py` — new threading model API
-- `rikugan/tools/formatting.py`, `rikugan/tools/pagination.py`, `rikugan/tools/value_format.py` — fork helpers đã port
+- `lucnhan/agent/pseudo_tool_schemas.py` — schema definitions
+- `lucnhan/ui/a2a_widget.py` — new threading model API
+- `lucnhan/tools/formatting.py`, `lucnhan/tools/pagination.py`, `lucnhan/tools/value_format.py` — fork helpers đã port
 - `docs/FORK_MIGRATION_ASSESSMENT.md` — assessment lịch sử (đã stale một phần)
 
 ### Create
@@ -60,8 +60,8 @@
 ## [1.6.0] — 2026-07-02
 
 ### Added
-- `set_runtime_config` wiring in `rikugan/web/__init__.py` (fixes silent `getattr` no-op; security-constant-real-bug step 2).
-- `EXECUTE_PYTHON_TOOL_NAME` constant in `rikugan/constants.py` (security-constant-real-bug step 1).
+- `set_runtime_config` wiring in `lucnhan/web/__init__.py` (fixes silent `getattr` no-op; security-constant-real-bug step 2).
+- `EXECUTE_PYTHON_TOOL_NAME` constant in `lucnhan/constants.py` (security-constant-real-bug step 1).
 
 ### Fixed
 - CI: master trigger + push hook + concurrency + Python 3.12 matrix (`f191722`).
@@ -72,7 +72,7 @@
 - `a2a_widget` threading model refactored from `QThread`/`_A2AWorker(QObject)` to `threading.Thread` + `queue.Queue` + `QTimer` polling.
 
 ### Refactor / Quality
-- Pseudo tool schemas extracted to `rikugan/agent/pseudo_tool_schemas.py` (6 of 7 schemas imported into `loop.py`; `DELEGATE_EXTERNAL_TASK_SCHEMA` import pending — see Phase 2).
+- Pseudo tool schemas extracted to `lucnhan/agent/pseudo_tool_schemas.py` (6 of 7 schemas imported into `loop.py`; `DELEGATE_EXTERNAL_TASK_SCHEMA` import pending — see Phase 2).
 - Purged IDA 8.x `ida_struct` paths from `types_tools.py` (step 8 of dead-code-purge).
 - Removed duplicate `completed_tool_call_ids.add()` at `loop.py:775` (step 7).
 - Removed 58 empty legacy `{dark:'', light:''}` dict constants (step 6).
@@ -100,7 +100,7 @@
 - PR #2: `dependabot/pip/html2text-gte-2025.4.15` → `master` (html2text bump)
 
 **Steps:**
-- [ ] **Step 1:** Mở https://github.com/EliteClassRoom/rikugan/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot
+- [ ] **Step 1:** Mở https://github.com/EliteClassRoom/Luc-Nhan/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot
 - [ ] **Step 2:** Cho PR #1: review changelog, click "Approve" → "Merge pull request" (button click)
 - [ ] **Step 3:** Cho PR #2: review changelog, click "Approve" → "Merge pull request" (button click)
 - [ ] **Step 4:** `git pull origin master` local
@@ -133,8 +133,8 @@
 ### Task 1.1: Map new a2a_widget threading model
 
 **Files:**
-- Read: `rikugan/ui/a2a_widget.py:88-250` (full `_A2ATaskRunner` + event types)
-- Read: `rikugan/ui/a2a_widget.py:302-907` (`A2ABridgeWidget` + methods)
+- Read: `lucnhan/ui/a2a_widget.py:88-250` (full `_A2ATaskRunner` + event types)
+- Read: `lucnhan/ui/a2a_widget.py:302-907` (`A2ABridgeWidget` + methods)
 - Read: `tests/ui/test_a2a_widget.py:1-50` (current skip mark + helper setup)
 
 **Context:** Cần hiểu API mới trước khi viết tests. Threading model mới:
@@ -145,12 +145,12 @@
 - Shutdown: `runner.is_alive()` + `runner.join(timeout)` (daemon threads)
 
 **Steps:**
-- [ ] **Step 1:** Đọc `rikugan/ui/a2a_widget.py:88-250`, list ra:
+- [ ] **Step 1:** Đọc `lucnhan/ui/a2a_widget.py:88-250`, list ra:
   - `_A2ARunnerEventType` enum values
   - `_A2ATaskEvent` dataclass fields
   - `_A2ATaskRunner.__init__` signature + public attrs (`queue`, `_cancel_event`)
   - `_A2ATaskRunner.start/cancel/is_alive/join` signatures
-- [ ] **Step 2:** Đọc `rikugan/ui/a2a_widget.py:302-907`, list ra:
+- [ ] **Step 2:** Đọc `lucnhan/ui/a2a_widget.py:302-907`, list ra:
   - `A2ABridgeWidget.__init__` params + public signal/slot names
   - Method `_on_send_clicked` (tạo runner + start)
   - Method `_poll_queue` (nếu có) — drains queue, route to UI
@@ -243,12 +243,12 @@
 ### Task 2.1: Verify DELEGATE_EXTERNAL_TASK_SCHEMA exists
 
 **Files:**
-- Read: `rikugan/agent/pseudo_tool_schemas.py` (full file, ~13KB)
+- Read: `lucnhan/agent/pseudo_tool_schemas.py` (full file, ~13KB)
 
 **Context:** `loop.py:66-73` import 6 schemas (ASK_USER, EXPLORATION_REPORT, PHASE_TRANSITION, RESEARCH_NOTE, SAVE_MEMORY, SPAWN_SUBAGENT). Assessment cho rằng có 32 inline schemas — verify thực tế chỉ còn 2 (`grep -cE '^\s+"description":'` returned 2, một cho delegate_external_task, một có thể là pseudo khác). Cần xác nhận schema tồn tại trong `pseudo_tool_schemas.py`.
 
 **Steps:**
-- [ ] **Step 1:** `grep -n "DELEGATE_EXTERNAL_TASK" rikugan/agent/pseudo_tool_schemas.py` — confirm defined
+- [ ] **Step 1:** `grep -n "DELEGATE_EXTERNAL_TASK" lucnhan/agent/pseudo_tool_schemas.py` — confirm defined
 - [ ] **Step 2:** Nếu KHÔNG có, cần define thêm trong file (xem file hiện tại để bám sát style)
 - [ ] **Step 3:** Verify các schema tương tự (delegation, A2A, external task) đã có trong `loop.py` chưa
 
@@ -257,12 +257,12 @@
 ### Task 2.2: Add DELEGATE_EXTERNAL_TASK_SCHEMA to loop.py import
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:66-73` (thêm 1 dòng vào import block)
+- Modify: `lucnhan/agent/loop.py:66-73` (thêm 1 dòng vào import block)
 
 **Steps:**
 - [ ] **Step 1:** Edit import block, thêm `DELEGATE_EXTERNAL_TASK_SCHEMA,` (giữ alphabetical order)
-- [ ] **Step 2:** Chạy `python3 -c "from rikugan.agent.loop import DELEGATE_EXTERNAL_TASK_SCHEMA"` — confirm import OK
-- [ ] **Step 3:** Commit: `git add rikugan/agent/loop.py && git commit -m "refactor(agent): import DELEGATE_EXTERNAL_TASK_SCHEMA from pseudo_tool_schemas"`
+- [ ] **Step 2:** Chạy `python3 -c "from lucnhan.agent.loop import DELEGATE_EXTERNAL_TASK_SCHEMA"` — confirm import OK
+- [ ] **Step 3:** Commit: `git add lucnhan/agent/loop.py && git commit -m "refactor(agent): import DELEGATE_EXTERNAL_TASK_SCHEMA from pseudo_tool_schemas"`
 - [ ] **Step 4:** Push: `git push origin master`
 
 ---
@@ -270,20 +270,20 @@
 ### Task 2.3: Remove inline DELEGATE_EXTERNAL_TASK schema from loop.py
 
 **Files:**
-- Modify: `rikugan/agent/loop.py` (tìm inline schema literal cho delegate_external_task, thay bằng reference đến imported constant)
+- Modify: `lucnhan/agent/loop.py` (tìm inline schema literal cho delegate_external_task, thay bằng reference đến imported constant)
 
 **Context:** Có 1 inline schema literal cho delegate_external_task tool. Sau Task 2.2, constant đã available — chỉ cần thay tham chiếu.
 
 **Steps:**
-- [ ] **Step 1:** `grep -nE 'delegate_external_task' rikugan/agent/loop.py` — tìm vị trí inline schema
+- [ ] **Step 1:** `grep -nE 'delegate_external_task' lucnhan/agent/loop.py` — tìm vị trí inline schema
 - [ ] **Step 2:** Đọc context (50 dòng quanh), xác nhận schema shape
 - [ ] **Step 3:** Thay inline dict literal bằng reference: `DELEGATE_EXTERNAL_TASK_SCHEMA` (giữ tên biến consistent với inline literal cũ)
 - [ ] **Step 4:** Chạy: `python3 -m pytest tests/agent/test_agent_loop.py -v` — confirm pass
-- [ ] **Step 5:** Chạy: `python3 -m mypy rikugan/core rikugan/providers rikugan/agent` — confirm no error
-- [ ] **Step 6:** Commit: `git add rikugan/agent/loop.py && git commit -m "refactor(agent): replace inline delegate_external_task schema with imported constant (C.4 final step)"`
+- [ ] **Step 5:** Chạy: `python3 -m mypy lucnhan/core lucnhan/providers lucnhan/agent` — confirm no error
+- [ ] **Step 6:** Commit: `git add lucnhan/agent/loop.py && git commit -m "refactor(agent): replace inline delegate_external_task schema with imported constant (C.4 final step)"`
 - [ ] **Step 7:** Push: `git push origin master`
 
-**Acceptance:** `grep -cE '^\s+"description":' rikugan/agent/loop.py` returns 0 (hoặc giảm 1).
+**Acceptance:** `grep -cE '^\s+"description":' lucnhan/agent/loop.py` returns 0 (hoặc giảm 1).
 
 ---
 
@@ -294,10 +294,10 @@
 ### Task 3.1: Identify inline duplicates in functions.py
 
 **Files:**
-- Read: `rikugan/ida/tools/functions.py` (full file, 186 lines)
-- Read: `rikugan/tools/formatting.py` (`format_function_summary`, `format_callers_callees`)
-- Read: `rikugan/tools/pagination.py` (`normalize_page`, `format_page`)
-- Read: `rikugan/tools/value_format.py` (`format_global_value`, `normalize_type_hint`, `bytes_needed_for_type`)
+- Read: `lucnhan/ida/tools/functions.py` (full file, 186 lines)
+- Read: `lucnhan/tools/formatting.py` (`format_function_summary`, `format_callers_callees`)
+- Read: `lucnhan/tools/pagination.py` (`normalize_page`, `format_page`)
+- Read: `lucnhan/tools/value_format.py` (`format_global_value`, `normalize_type_hint`, `bytes_needed_for_type`)
 
 **Steps:**
 - [ ] **Step 1:** Đọc `functions.py` end-to-end, note từng function dùng inline formatting
@@ -314,49 +314,49 @@
 ### Task 3.2: Wire format_function_summary
 
 **Files:**
-- Modify: `rikugan/ida/tools/functions.py` (thay inline formatting bằng `from rikugan.tools.formatting import format_function_summary`)
+- Modify: `lucnhan/ida/tools/functions.py` (thay inline formatting bằng `from lucnhan.tools.formatting import format_function_summary`)
 
 **Context:** Chỉ wire nếu Task 3.1 xác nhận có duplicate. Nếu không có, skip task này.
 
 **Steps:**
-- [ ] **Step 1:** Thêm import: `from rikugan.tools.formatting import format_function_summary`
+- [ ] **Step 1:** Thêm import: `from lucnhan.tools.formatting import format_function_summary`
 - [ ] **Step 2:** Replace inline code → `format_function_summary(...)` call
 - [ ] **Step 3:** Chạy: `python3 -m pytest tests/tools/ -k "functions" -v` — confirm pass
-- [ ] **Step 4:** Chạy: `python3 -m mypy rikugan/ida/tools/functions.py` — confirm no error
-- [ ] **Step 5:** Commit: `git add rikugan/ida/tools/functions.py && git commit -m "refactor(tools): use format_function_summary from rikugan.tools.formatting"`
+- [ ] **Step 4:** Chạy: `python3 -m mypy lucnhan/ida/tools/functions.py` — confirm no error
+- [ ] **Step 5:** Commit: `git add lucnhan/ida/tools/functions.py && git commit -m "refactor(tools): use format_function_summary from lucnhan.tools.formatting"`
 
 ---
 
 ### Task 3.3: Wire format_global_value + normalize_type_hint
 
 **Files:**
-- Modify: `rikugan/ida/tools/functions.py` (tương tự Task 3.2 với value helpers)
+- Modify: `lucnhan/ida/tools/functions.py` (tương tự Task 3.2 với value helpers)
 
 **Steps:**
-- [ ] **Step 1:** Thêm imports: `from rikugan.tools.value_format import format_global_value, normalize_type_hint`
+- [ ] **Step 1:** Thêm imports: `from lucnhan.tools.value_format import format_global_value, normalize_type_hint`
 - [ ] **Step 2:** Replace inline value formatting
 - [ ] **Step 3:** Chạy: `python3 -m pytest tests/tools/ -k "functions or value" -v` — confirm pass
-- [ ] **Step 4:** Commit: `git add rikugan/ida/tools/functions.py && git commit -m "refactor(tools): use format_global_value from rikugan.tools.value_format"`
+- [ ] **Step 4:** Commit: `git add lucnhan/ida/tools/functions.py && git commit -m "refactor(tools): use format_global_value from lucnhan.tools.value_format"`
 
 ---
 
 ### Task 3.4: Wire pagination helpers
 
 **Files:**
-- Modify: `rikugan/ida/tools/functions.py` (nếu có pagination logic inline)
+- Modify: `lucnhan/ida/tools/functions.py` (nếu có pagination logic inline)
 
 **Steps:**
-- [ ] **Step 1:** Thêm imports: `from rikugan.tools.pagination import normalize_page, format_page`
+- [ ] **Step 1:** Thêm imports: `from lucnhan.tools.pagination import normalize_page, format_page`
 - [ ] **Step 2:** Replace inline pagination arithmetic
 - [ ] **Step 3:** Chạy: `python3 -m pytest tests/tools/ -v` — confirm pass
-- [ ] **Step 4:** Commit: `git add rikugan/ida/tools/functions.py && git commit -m "refactor(tools): use normalize_page/format_page from rikugan.tools.pagination"`
+- [ ] **Step 4:** Commit: `git add lucnhan/ida/tools/functions.py && git commit -m "refactor(tools): use normalize_page/format_page from lucnhan.tools.pagination"`
 
 ---
 
 ### Task 3.5: Verify LOC reduction + run full CI
 
 **Steps:**
-- [ ] **Step 1:** `wc -l rikugan/ida/tools/functions.py` — verify LOC giảm
+- [ ] **Step 1:** `wc -l lucnhan/ida/tools/functions.py` — verify LOC giảm
 - [ ] **Step 2:** Chạy `./ci-local.sh` — confirm pass sạch
 - [ ] **Step 3:** `desloppify scan` — verify score cải thiện (mục tiêu: +0.3 strict)
 - [ ] **Step 4:** Nếu cần, push commits tích lũy: `git push origin master`
@@ -372,8 +372,8 @@
 ### Task 4.1: Q-007 — Complete _run_quick refactor in bulk_renamer.py
 
 **Files:**
-- Read: `rikugan/agent/bulk_renamer.py:405-600` (current `_run_quick` + helpers)
-- Modify: `rikugan/agent/bulk_renamer.py:407-?` (split into `_quick_decompile_jobs` + `_quick_split_batches` + `_quick_run_batch`)
+- Read: `lucnhan/agent/bulk_renamer.py:405-600` (current `_run_quick` + helpers)
+- Modify: `lucnhan/agent/bulk_renamer.py:407-?` (split into `_quick_decompile_jobs` + `_quick_split_batches` + `_quick_run_batch`)
 
 **Context:** Assessment gốc nói `_run_quick` 197 dòng. Hiện tại đã partial refactor: có `_quick_decompile_jobs` + `_quick_split_batches` helpers (thấy ở signature). Cần verify xem còn phần "Phase 3" (parallel sub-batches) inline hay đã extract.
 
@@ -382,7 +382,7 @@
 - [ ] **Step 2:** Nếu Phase 3 (parallel run) còn > 30 dòng, extract thành `_quick_run_batch(sub_batch)` method
 - [ ] **Step 3:** Đảm bảo `_run_quick` chỉ còn orchestration logic (< 50 dòng)
 - [ ] **Step 4:** Chạy: `python3 -m pytest tests/agent/ -k "bulk" -v` — confirm pass
-- [ ] **Step 5:** Commit: `git add rikugan/agent/bulk_renamer.py && git commit -m "refactor(bulk_renamer): extract _quick_run_batch from _run_quick (Q-007)"`
+- [ ] **Step 5:** Commit: `git add lucnhan/agent/bulk_renamer.py && git commit -m "refactor(bulk_renamer): extract _quick_run_batch from _run_quick (Q-007)"`
 - [ ] **Step 6:** Push: `git push origin master`
 
 **Acceptance:** `_run_quick` method < 50 dòng, tất cả sub-steps đã extract.
@@ -392,8 +392,8 @@
 ### Task 4.2: Q-009 — Verify/fill _format_tool_summary in tool_widgets.py
 
 **Files:**
-- Read: `rikugan/ui/tool_widgets.py:342-?` (current implementation)
-- Modify: `rikugan/ui/tool_widgets.py:344-?` (nếu còn if/elif chain)
+- Read: `lucnhan/ui/tool_widgets.py:342-?` (current implementation)
+- Modify: `lucnhan/ui/tool_widgets.py:344-?` (nếu còn if/elif chain)
 
 **Context:** Code hiện đã dùng `_TOOL_SUMMARY_FORMATTERS.get(short_name)` pattern (dict-of-handlers). Cần verify:
 - (a) Dict đã cover hết tools chưa (không còn fallback if/elif)
@@ -404,7 +404,7 @@
 - [ ] **Step 2:** Nếu có tools phổ biến (vd `decompile_function`, `rename_function`, `list_functions`) chưa có handler, thêm vào dict
 - [ ] **Step 3:** Nếu có fallback logic `else: return str(args)` → giữ nguyên (acceptable)
 - [ ] **Step 4:** Chạy: `python3 -m pytest tests/ui/test_tool_widgets.py -v` — confirm pass (nếu test file tồn tại)
-- [ ] **Step 5:** Commit (nếu có thay đổi): `git add rikugan/ui/tool_widgets.py && git commit -m "refactor(tool_widgets): fill missing _TOOL_SUMMARY_FORMATTERS entries (Q-009)"`
+- [ ] **Step 5:** Commit (nếu có thay đổi): `git add lucnhan/ui/tool_widgets.py && git commit -m "refactor(tool_widgets): fill missing _TOOL_SUMMARY_FORMATTERS entries (Q-009)"`
 - [ ] **Step 6:** Push: `git push origin master`
 
 **Acceptance:** `_format_tool_summary` < 50 dòng hoặc đã fully dict-driven.
@@ -490,7 +490,7 @@
 - [ ] **Step 2:** `desloppify status` — strict ≥ 85.0, overall ≥ 87.0
 - [ ] **Step 3:** `git log --oneline master -20` — review tất cả commits sprint này
 - [ ] **Step 4:** `pytest tests/ -v` — full test suite pass (1772+ tests)
-- [ ] **Step 5:** Nếu có behavior changes đáng kể → bump version v1.6.1 (sync 3 nguồn: `pyproject.toml`, `ida-plugin.json`, `rikugan/constants.py`)
+- [ ] **Step 5:** Nếu có behavior changes đáng kể → bump version v1.6.1 (sync 3 nguồn: `pyproject.toml`, `ida-plugin.json`, `lucnhan/constants.py`)
 - [ ] **Step 6:** Nếu bump version: commit `chore(release): bump version to 1.6.1`, push, tag
 
 ---

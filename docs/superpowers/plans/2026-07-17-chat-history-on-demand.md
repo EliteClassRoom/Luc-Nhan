@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Mở Rikugan hoặc đổi IDB luôn tạo đúng một `New Chat` trống, đồng thời cung cấp panel History bên phải để tìm và mở lại chat của IDB hiện tại theo yêu cầu.
+**Goal:** Mở Luc Nhan hoặc đổi IDB luôn tạo đúng một `New Chat` trống, đồng thời cung cấp panel History bên phải để tìm và mở lại chat của IDB hiện tại theo yêu cầu.
 
-**Architecture:** Giữ nguyên per-session JSON và manifest index. `SessionHistory` sở hữu persistence/hardening, `SessionControllerBase` cung cấp các API list/load/attach không phụ thuộc Qt, `HistoryPanel` chỉ trình bày metadata, còn `RikuganPanelCore` điều phối một executor riêng, queue, generation counter và QTimer main-thread để tránh I/O hoặc Qt xuyên thread.
+**Architecture:** Giữ nguyên per-session JSON và manifest index. `SessionHistory` sở hữu persistence/hardening, `SessionControllerBase` cung cấp các API list/load/attach không phụ thuộc Qt, `HistoryPanel` chỉ trình bày metadata, còn `LucNhanPanelCore` điều phối một executor riêng, queue, generation counter và QTimer main-thread để tránh I/O hoặc Qt xuyên thread.
 
-**Tech Stack:** Python 3.11, dataclasses/Enum, `concurrent.futures.ThreadPoolExecutor`, `queue.Queue`, PySide6 qua `rikugan.ui.qt_compat`, pytest/unittest, ruff, mypy.
+**Tech Stack:** Python 3.11, dataclasses/Enum, `concurrent.futures.ThreadPoolExecutor`, `queue.Queue`, PySide6 qua `lucnhan.ui.qt_compat`, pytest/unittest, ruff, mypy.
 
 ## Global Constraints
 
-- IDA Pro ≥ 9.0; Qt binding chỉ dùng PySide6 qua `rikugan/ui/qt_compat.py`.
+- IDA Pro ≥ 9.0; Qt binding chỉ dùng PySide6 qua `lucnhan/ui/qt_compat.py`.
 - Không import `ida_*` hoặc PySide6 mới ngoài import seam; không phát Qt signal từ worker thread.
 - Mọi mutation widget/tab chạy trên Qt main thread; worker chỉ làm Python file I/O và tạo immutable DTO.
 - `_history_executor` là single-worker executor riêng, không bao giờ là `_SAVE_EXECUTOR`.
@@ -28,8 +28,8 @@
 
 ### Tạo mới
 
-- `rikugan/state/history_types.py` — immutable DTO/status contracts dùng chung, không import Qt.
-- `rikugan/ui/history_panel.py` — widget History thụ động: states, metadata rows, search và main-thread signals.
+- `lucnhan/state/history_types.py` — immutable DTO/status contracts dùng chung, không import Qt.
+- `lucnhan/ui/history_panel.py` — widget History thụ động: states, metadata rows, search và main-thread signals.
 - `tests/state/test_history_on_demand.py` — validation, title, manifest v2, filter và storage safety.
 - `tests/core/test_config_history.py` — tương thích config cũ và loại bỏ auto-restore key.
 - `tests/ui/test_history_panel.py` — states/search/signals/plain-text/theme của widget.
@@ -37,13 +37,13 @@
 
 ### Sửa
 
-- `rikugan/constants.py` — thêm `HISTORY_TITLE_MAX_CHARS = 80`; không thêm sentinel không cần thiết.
-- `rikugan/state/history.py` — ID validation/path containment, title derivation, manifest v2, `updated_at`, predicate Current-IDB dùng chung.
-- `rikugan/core/config.py` — xóa `startup_restore_sessions` và các validation/load branches.
-- `rikugan/ui/session_controller_base.py` — scope/list/load/attach/dedupe APIs; async save khi đổi IDB; shared tab-title helper; bỏ legacy restore APIs sau audit.
-- `rikugan/ui/panel_core.py` — bỏ auto-restore; thêm History button/panel, right-panel coordinator, worker/queue/timer/generation, IDB/shutdown cleanup và open-session flow.
-- `rikugan/ui/theme/widgets_common.py` — style getters dành riêng cho History panel/rows.
-- `rikugan/ui/styles.py` — re-export style getters mới.
+- `lucnhan/constants.py` — thêm `HISTORY_TITLE_MAX_CHARS = 80`; không thêm sentinel không cần thiết.
+- `lucnhan/state/history.py` — ID validation/path containment, title derivation, manifest v2, `updated_at`, predicate Current-IDB dùng chung.
+- `lucnhan/core/config.py` — xóa `startup_restore_sessions` và các validation/load branches.
+- `lucnhan/ui/session_controller_base.py` — scope/list/load/attach/dedupe APIs; async save khi đổi IDB; shared tab-title helper; bỏ legacy restore APIs sau audit.
+- `lucnhan/ui/panel_core.py` — bỏ auto-restore; thêm History button/panel, right-panel coordinator, worker/queue/timer/generation, IDB/shutdown cleanup và open-session flow.
+- `lucnhan/ui/theme/widgets_common.py` — style getters dành riêng cho History panel/rows.
+- `lucnhan/ui/styles.py` — re-export style getters mới.
 - `tests/agent/test_state.py` — test manifest backfill/non-destructive migration nếu fixture hiện có phù hợp.
 - `tests/agent/test_session_controller.py` — rewrite legacy restore tests và thêm APIs/races mới.
 - `tests/tools/test_panel_core.py` — lifecycle/concurrency/right-panel/startup regression.
@@ -55,8 +55,8 @@
 ### Task 1: Shared History Contracts
 
 **Files:**
-- Create: `rikugan/state/history_types.py`
-- Modify: `rikugan/constants.py`
+- Create: `lucnhan/state/history_types.py`
+- Modify: `lucnhan/constants.py`
 - Create: `tests/state/test_history_on_demand.py`
 
 **Interfaces:**
@@ -71,7 +71,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from rikugan.state.history_types import (
+from lucnhan.state.history_types import (
     HistoryAttachResult,
     HistoryAttachStatus,
     HistoryLoadResult,
@@ -110,12 +110,12 @@ Run:
 python -m pytest tests/state/test_history_on_demand.py -v
 ```
 
-Expected: FAIL during import because `rikugan.state.history_types` does not exist.
+Expected: FAIL during import because `lucnhan.state.history_types` does not exist.
 
 - [ ] **Step 3: Add the minimal type module and constant**
 
 ```python
-# rikugan/state/history_types.py
+# lucnhan/state/history_types.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -175,7 +175,7 @@ class HistoryAttachResult:
     session: SessionState | None = None
 ```
 
-Add to `rikugan/constants.py`:
+Add to `lucnhan/constants.py`:
 
 ```python
 HISTORY_TITLE_MAX_CHARS = 80
@@ -187,7 +187,7 @@ Run:
 
 ```bash
 python -m pytest tests/state/test_history_on_demand.py -v
-python -m ruff check rikugan/state/history_types.py tests/state/test_history_on_demand.py
+python -m ruff check lucnhan/state/history_types.py tests/state/test_history_on_demand.py
 ```
 
 Expected: PASS; ruff exits 0.
@@ -197,7 +197,7 @@ Expected: PASS; ruff exits 0.
 ### Task 2: Session ID Validation and Path Containment
 
 **Files:**
-- Modify: `rikugan/state/history.py:34-41, 204-277, 362-444, 581-587`
+- Modify: `lucnhan/state/history.py:34-41, 204-277, 362-444, 581-587`
 - Extend: `tests/state/test_history_on_demand.py`
 
 **Interfaces:**
@@ -211,12 +211,12 @@ Expected: PASS; ruff exits 0.
 import json
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
-from rikugan.state.history import SessionHistory
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.state.history import SessionHistory
 
 
 def _history(tmp_path: Path) -> SessionHistory:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     return SessionHistory(config)
 
@@ -258,7 +258,7 @@ Expected: at least one invalid ID reaches the filesystem or tampered entry survi
 - [ ] **Step 3: Implement one validation/path helper and call it at every boundary**
 
 ```python
-# rikugan/state/history.py
+# lucnhan/state/history.py
 import re
 
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
@@ -326,8 +326,8 @@ Expected: PASS; existing save/load/delete tests remain green.
 ### Task 3: Shared Title Derivation and Manifest v2
 
 **Files:**
-- Modify: `rikugan/state/history.py:34-35, 140-188, 221-331, 446-571`
-- Modify: `rikugan/constants.py`
+- Modify: `lucnhan/state/history.py:34-35, 140-188, 221-331, 446-571`
+- Modify: `lucnhan/constants.py`
 - Extend: `tests/state/test_history_on_demand.py`
 - Extend: `tests/agent/test_state.py`
 
@@ -339,9 +339,9 @@ Expected: PASS; existing save/load/delete tests remain green.
 
 ```python
 # tests/state/test_history_on_demand.py
-from rikugan.core.types import Message, Role
-from rikugan.state.history import derive_history_title
-from rikugan.state.session import SessionState
+from lucnhan.core.types import Message, Role
+from lucnhan.state.history import derive_history_title
+from lucnhan.state.session import SessionState
 
 
 def test_title_uses_first_sanitized_user_message() -> None:
@@ -392,7 +392,7 @@ Expected: import failure for `derive_history_title`, manifest remains version 1/
 - [ ] **Step 3: Implement the shared helper and schema fields**
 
 ```python
-# rikugan/state/history.py
+# lucnhan/state/history.py
 from collections.abc import Sequence
 
 from ..constants import HISTORY_TITLE_MAX_CHARS
@@ -463,7 +463,7 @@ Run:
 
 ```bash
 python -m pytest tests/state/test_history_on_demand.py tests/agent/test_state.py tests/state/test_history_async.py -v
-python -m ruff check rikugan/state/history.py tests/state/test_history_on_demand.py
+python -m ruff check lucnhan/state/history.py tests/state/test_history_on_demand.py
 ```
 
 Expected: PASS, including non-destructive v1→v2 rebuild and legacy filter fallback.
@@ -473,11 +473,11 @@ Expected: PASS, including non-destructive v1→v2 rebuild and legacy filter fall
 ### Task 4: Remove Legacy Startup Restore Configuration
 
 **Files:**
-- Modify: `rikugan/core/config.py:149-153, 210-211, 236-238, 315-356`
+- Modify: `lucnhan/core/config.py:149-153, 210-211, 236-238, 315-356`
 - Create: `tests/core/test_config_history.py`
 
 **Interfaces:**
-- Produces: `RikuganConfig` without `startup_restore_sessions`; legacy JSON key ignored.
+- Produces: `LucNhanConfig` without `startup_restore_sessions`; legacy JSON key ignored.
 - Consumed by: Task 8 startup cleanup.
 
 - [ ] **Step 1: Write failing compatibility tests**
@@ -487,11 +487,11 @@ Expected: PASS, including non-destructive v1→v2 rebuild and legacy filter fall
 import json
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
+from lucnhan.core.config import LucNhanConfig
 
 
 def test_legacy_startup_restore_key_is_ignored_and_not_resaved(tmp_path: Path) -> None:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     Path(config.config_path).write_text(
         json.dumps({"startup_restore_sessions": "all"}),
@@ -519,7 +519,7 @@ Expected: FAIL because the dataclass still has `startup_restore_sessions` and sa
 
 - [ ] **Step 3: Remove all five production references**
 
-Delete from `rikugan/core/config.py`:
+Delete from `lucnhan/core/config.py`:
 
 ```python
 startup_restore_sessions: str = "all"
@@ -533,7 +533,7 @@ Run:
 
 ```bash
 python -m pytest tests/core/test_config_history.py tests/core -v
-python -c "from pathlib import Path; hits=[p for p in Path('rikugan').rglob('*.py') if 'startup_restore_sessions' in p.read_text(encoding='utf-8')]; assert not hits, hits"
+python -c "from pathlib import Path; hits=[p for p in Path('lucnhan').rglob('*.py') if 'startup_restore_sessions' in p.read_text(encoding='utf-8')]; assert not hits, hits"
 ```
 
 Expected: PASS; source audit prints nothing.
@@ -543,7 +543,7 @@ Expected: PASS; source audit prints nothing.
 ### Task 5: Controller History Scope, List, Load, Attach, and Async IDB Save
 
 **Files:**
-- Modify: `rikugan/ui/session_controller_base.py:27-41, 212-298, 597-727`
+- Modify: `lucnhan/ui/session_controller_base.py:27-41, 212-298, 597-727`
 - Modify: `tests/agent/test_session_controller.py:22-169`
 
 **Interfaces:**
@@ -708,7 +708,7 @@ Run:
 
 ```bash
 python -m pytest tests/agent/test_session_controller.py tests/state/test_history_on_demand.py -v
-python -m mypy rikugan/core rikugan/providers
+python -m mypy lucnhan/core lucnhan/providers
 ```
 
 Expected: PASS. Mypy remains green for configured scopes.
@@ -718,9 +718,9 @@ Expected: PASS. Mypy remains green for configured scopes.
 ### Task 6: Isolated HistoryPanel Widget
 
 **Files:**
-- Create: `rikugan/ui/history_panel.py`
-- Modify: `rikugan/ui/theme/widgets_common.py:229-249`
-- Modify: `rikugan/ui/styles.py:108-130`
+- Create: `lucnhan/ui/history_panel.py`
+- Modify: `lucnhan/ui/theme/widgets_common.py:229-249`
+- Modify: `lucnhan/ui/styles.py:108-130`
 - Create: `tests/ui/test_history_panel.py`
 
 **Interfaces:**
@@ -808,7 +808,7 @@ Run:
 
 ```bash
 python -m pytest tests/ui/test_history_panel.py -v
-python -m ruff check rikugan/ui/history_panel.py rikugan/ui/theme/widgets_common.py tests/ui/test_history_panel.py
+python -m ruff check lucnhan/ui/history_panel.py lucnhan/ui/theme/widgets_common.py tests/ui/test_history_panel.py
 ```
 
 Expected: PASS.
@@ -818,9 +818,9 @@ Expected: PASS.
 ### Task 7: Fresh-by-Default Startup and Legacy Restore Removal
 
 **Files:**
-- Modify: `rikugan/ui/panel_core.py:465-573, 1269-1317, 1584-1631`
-- Modify: `rikugan/ui/session_controller_base.py:654-711`
-- Modify: `rikugan/state/history.py:573-579`
+- Modify: `lucnhan/ui/panel_core.py:465-573, 1269-1317, 1584-1631`
+- Modify: `lucnhan/ui/session_controller_base.py:654-711`
+- Modify: `lucnhan/state/history.py:573-579`
 - Extend: `tests/tools/test_panel_core.py`
 - Extend: `tests/agent/test_session_controller.py`
 
@@ -839,7 +839,7 @@ def test_build_ui_does_not_restore_or_read_history(monkeypatch) -> None:
     restore = MagicMock()
     panel._ctrl.restore_sessions = restore
     # Build with existing Qt stubs/fixtures.
-    RikuganPanelCore._build_ui(panel)
+    LucNhanPanelCore._build_ui(panel)
     restore.assert_not_called()
     assert panel._pending_restore_messages == {}
 ```
@@ -863,7 +863,7 @@ Delete `_try_restore_session()` calls from `_build_ui()` and `on_database_change
 Audit:
 
 ```bash
-python -c "from pathlib import Path; hits=[(p,n+1,l) for p in Path('rikugan').rglob('*.py') for n,l in enumerate(p.read_text(encoding='utf-8').splitlines()) if '_try_restore_session' in l]; assert not hits, hits"
+python -c "from pathlib import Path; hits=[(p,n+1,l) for p in Path('lucnhan').rglob('*.py') for n,l in enumerate(p.read_text(encoding='utf-8').splitlines()) if '_try_restore_session' in l]; assert not hits, hits"
 ```
 
 - [ ] **Step 4: Remove dead legacy restore APIs after grep**
@@ -871,7 +871,7 @@ python -c "from pathlib import Path; hits=[(p,n+1,l) for p in Path('rikugan').rg
 Run:
 
 ```bash
-python -c "from pathlib import Path; print([(str(p),n+1,l) for p in Path('rikugan').rglob('*.py') for n,l in enumerate(p.read_text(encoding='utf-8').splitlines()) if 'restore_session' in l])"
+python -c "from pathlib import Path; print([(str(p),n+1,l) for p in Path('lucnhan').rglob('*.py') for n,l in enumerate(p.read_text(encoding='utf-8').splitlines()) if 'restore_session' in l])"
 ```
 
 If only `SessionControllerBase.restore_sessions`, `restore_session`, and `SessionHistory.get_latest_session` remain, remove all three. Keep the rewritten data-integrity tests from Task 5; do not delete them.
@@ -891,7 +891,7 @@ Expected: PASS; startup has one empty tab and no persistence call.
 ### Task 8: PanelCore Right-Panel Coordinator and History Listing Worker
 
 **Files:**
-- Modify: `rikugan/ui/panel_core.py:184-241, 591-768, 1156-1317, 1652-1659`
+- Modify: `lucnhan/ui/panel_core.py:184-241, 591-768, 1156-1317, 1652-1659`
 - Extend: `tests/tools/test_panel_core.py`
 
 **Interfaces:**
@@ -968,10 +968,10 @@ Connect close/retry/open signals, and route `_on_toggle_mutation_log()` through 
 Create `_history_executor` lazily as:
 
 ```python
-ThreadPoolExecutor(max_workers=1, thread_name_prefix="rikugan-history")
+ThreadPoolExecutor(max_workers=1, thread_name_prefix="lucnhan-history")
 ```
 
-It must be distinct from `rikugan.state.history._SAVE_EXECUTOR`. Permit one pending request at a time. List worker behavior:
+It must be distinct from `lucnhan.state.history._SAVE_EXECUTOR`. Permit one pending request at a time. List worker behavior:
 
 ```python
 def _history_list_worker(self, scope: HistoryScope) -> None:
@@ -1032,7 +1032,7 @@ Expected: PASS. Include a deterministic test asserting `_history_executor is not
 ### Task 9: Open Historical Sessions, Dedupe, and Deferred Async Restore
 
 **Files:**
-- Modify: `rikugan/ui/panel_core.py:776-878, 987-1023`
+- Modify: `lucnhan/ui/panel_core.py:776-878, 987-1023`
 - Extend: `tests/tools/test_panel_core.py`
 - Extend: `tests/ui/test_chat_view_restore.py`
 
@@ -1107,7 +1107,7 @@ Expected: PASS, including close/IDB-switch mid-render safety.
 ### Task 10: IDB Change and Shutdown Invalidation
 
 **Files:**
-- Modify: `rikugan/ui/panel_core.py:1156-1317`
+- Modify: `lucnhan/ui/panel_core.py:1156-1317`
 - Extend: `tests/tools/test_panel_core.py`
 
 **Interfaces:**
@@ -1235,16 +1235,16 @@ Expected before final fixes: failures pinpoint missing fixture/wiring; after fix
 
 ```markdown
 ### Changed
-- Chat history is now on demand. Opening Rikugan or switching IDBs starts with one empty `New Chat`; use History to reopen chats for the current IDB.
+- Chat history is now on demand. Opening Luc Nhan or switching IDBs starts with one empty `New Chat`; use History to reopen chats for the current IDB.
 
 ### Removed
-- Removed `startup_restore_sessions`. Older config files may retain the key, but Rikugan ignores it and omits it on the next save.
+- Removed `startup_restore_sessions`. Older config files may retain the key, but Luc Nhan ignores it and omits it on the next save.
 ```
 
 Update `AGENTS.md` and `CLAUDE.md` with these invariants:
 
 ```text
-HistoryPanel owns presentation only. RikuganPanelCore owns the dedicated
+HistoryPanel owns presentation only. LucNhanPanelCore owns the dedicated
 history executor, bounded queue, main-thread poll timer, and generation.
 History never auto-restores and never uses _SAVE_EXECUTOR.
 ```
@@ -1254,9 +1254,9 @@ Search `DEVELOPMENT.md` for `restore_session`, `restore sessions`, and startup t
 - [ ] **Step 4: Run targeted full suite and static checks**
 
 ```bash
-python -m ruff format rikugan/ tests/
-python -m ruff check rikugan/ tests/
-python -m mypy rikugan/core rikugan/providers
+python -m ruff format lucnhan/ tests/
+python -m ruff check lucnhan/ tests/
+python -m mypy lucnhan/core lucnhan/providers
 python -m pytest tests/state/test_history_on_demand.py tests/core/test_config_history.py tests/agent/test_session_controller.py tests/ui/test_history_panel.py tests/tools/test_panel_core.py tests/integration/test_history_on_demand.py -v
 ```
 
@@ -1265,8 +1265,8 @@ Expected: all PASS.
 - [ ] **Step 5: Run repository audits**
 
 ```bash
-python -c "from pathlib import Path; hits=[p for p in Path('rikugan').rglob('*.py') if 'startup_restore_sessions' in p.read_text(encoding='utf-8')]; assert not hits, hits"
-python -c "from pathlib import Path; hits=[(p,n+1,l) for p in Path('rikugan').rglob('*.py') for n,l in enumerate(p.read_text(encoding='utf-8').splitlines()) if '_try_restore_session' in l]; assert not hits, hits"
+python -c "from pathlib import Path; hits=[p for p in Path('lucnhan').rglob('*.py') if 'startup_restore_sessions' in p.read_text(encoding='utf-8')]; assert not hits, hits"
+python -c "from pathlib import Path; hits=[(p,n+1,l) for p in Path('lucnhan').rglob('*.py') for n,l in enumerate(p.read_text(encoding='utf-8').splitlines()) if '_try_restore_session' in l]; assert not hits, hits"
 ```
 
 Expected: no production hits.
@@ -1287,7 +1287,7 @@ Manual IDA checklist:
 4. Open a 200+ message chat → UI stays responsive and session can continue.
 5. Open the same session again → existing tab focuses.
 6. Switch IDB during history list/load/restore → no stale rows/messages; exactly one new chat.
-7. Close/reopen Rikugan → again exactly one new chat; history remains on disk.
+7. Close/reopen Luc Nhan → again exactly one new chat; history remains on disk.
 
 ---
 

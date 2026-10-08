@@ -5,9 +5,9 @@ Background
 ``SessionState`` carries two cumulative counters that drive the UI:
 
   * ``last_prompt_tokens`` — the prompt size at the last turn, used by
-    :class:`rikugan.ui.context_bar.ContextBar` to paint the context
+    :class:`lucnhan.ui.context_bar.ContextBar` to paint the context
     window usage percentage on every turn.
-  * ``total_usage`` — a :class:`rikugan.core.types.TokenUsage` aggregate
+  * ``total_usage`` — a :class:`lucnhan.core.types.TokenUsage` aggregate
     that drives cumulative spend / cost reporting across a session's
     lifetime.
 
@@ -32,10 +32,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role, TokenUsage
-from rikugan.state.history import SessionHistory
-from rikugan.state.session import SessionState
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import Message, Role, TokenUsage
+from lucnhan.state.history import SessionHistory
+from lucnhan.state.session import SessionState
 
 
 # ---------------------------------------------------------------------------
@@ -47,12 +47,12 @@ def _history(tmp_path: Path) -> SessionHistory:
     """Build a SessionHistory whose storage dir is rooted in *tmp_path*.
 
     Mirrors the convention in ``tests/state/test_history_on_demand.py``
-    and ``rikugan/tests/test_session_restore_sanitization.py``: assign
-    ``_config_dir`` on a default ``RikuganConfig`` and then construct
-    the history. ``RikuganConfig.checkpoints_dir`` is a computed
+    and ``tests/agent/test_session_restore_sanitization.py``: assign
+    ``_config_dir`` on a default ``LucNhanConfig`` and then construct
+    the history. ``LucNhanConfig.checkpoints_dir`` is a computed
     property so we cannot assign it directly.
     """
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     return SessionHistory(config)
 
@@ -61,7 +61,7 @@ def _base_payload(session_id: str, messages: list[dict], **extra: object) -> dic
     """Build a minimal valid session JSON payload.
 
     Mirrors ``_base_payload`` in
-    ``rikugan/tests/test_session_restore_sanitization.py`` so the
+    ``tests/agent/test_session_restore_sanitization.py`` so the
     hand-forged legacy / hostile cases below match the shape
     ``save_session`` would write, minus the fields under test.
     """

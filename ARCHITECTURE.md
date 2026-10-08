@@ -1,6 +1,6 @@
-# ARCHITECTURE.md — Rikugan Agent Internals
+# ARCHITECTURE.md — Luc Nhan Agent Internals
 
-This document describes the internal architecture of the Rikugan agent in full technical detail. It is intended for engineers who need to understand, modify, or extend the system.
+This document describes the internal architecture of the Luc Nhan agent in full technical detail. It is intended for engineers who need to understand, modify, or extend the system.
 
 ---
 
@@ -33,7 +33,7 @@ This document describes the internal architecture of the Rikugan agent in full t
 
 ## High-Level Overview
 
-Rikugan is a **generator-based agentic loop** embedded inside IDA Pro. The agent runs in a background thread and communicates with the Qt UI via a stream of `TurnEvent` objects. All IDA API calls are marshalled to the main thread via `@idasync`.
+Luc Nhan is a **generator-based agentic loop** embedded inside IDA Pro. The agent runs in a background thread and communicates with the Qt UI via a stream of `TurnEvent` objects. All IDA API calls are marshalled to the main thread via `@idasync`.
 
 ```
 User Input
@@ -63,18 +63,18 @@ User Input
 
 Key files:
 
-- `rikugan/agent/loop.py` — `AgentLoop` + `BackgroundAgentRunner`
-- `rikugan/agent/turn.py` — `TurnEvent` / `TurnEventType`
-- `rikugan/tools/base.py` — `@tool` decorator, `ToolDefinition`
-- `rikugan/tools/registry.py` — `ToolRegistry`
-- `rikugan/ui/panel_core.py` — `RikuganPanelCore` (Qt UI)
-- `rikugan/ui/session_controller_base.py` — `SessionControllerBase`
+- `lucnhan/agent/loop.py` — `AgentLoop` + `BackgroundAgentRunner`
+- `lucnhan/agent/turn.py` — `TurnEvent` / `TurnEventType`
+- `lucnhan/tools/base.py` — `@tool` decorator, `ToolDefinition`
+- `lucnhan/tools/registry.py` — `ToolRegistry`
+- `lucnhan/ui/panel_core.py` — `LucNhanPanelCore` (Qt UI)
+- `lucnhan/ui/session_controller_base.py` — `SessionControllerBase`
 
 ---
 
 ## The Agentic Loop
 
-**File**: `rikugan/agent/loop.py`
+**File**: `lucnhan/agent/loop.py`
 
 ### `AgentLoop.run(user_message) -> Generator[TurnEvent]`
 
@@ -158,7 +158,7 @@ class BackgroundAgentRunner:
 
 ## TurnEvent System
 
-**File**: `rikugan/agent/turn.py`
+**File**: `lucnhan/agent/turn.py`
 
 All communication from the agent loop to the UI goes through `TurnEvent` objects. Each event has a `type` (enum) and optional payload fields.
 
@@ -197,7 +197,7 @@ Each event type has a static factory method on `TurnEvent` for clean constructio
 
 ## Tool Framework
 
-**Files**: `rikugan/tools/base.py`, `rikugan/tools/registry.py`
+**Files**: `lucnhan/tools/base.py`, `lucnhan/tools/registry.py`
 
 ### `@tool` Decorator
 
@@ -330,7 +330,7 @@ Creates an isolated `SubagentRunner` with its own `SessionState`:
 
 ## Skill System
 
-**Files**: `rikugan/skills/loader.py`, `rikugan/skills/registry.py`
+**Files**: `lucnhan/skills/loader.py`, `lucnhan/skills/registry.py`
 
 ### Skill Format
 
@@ -364,8 +364,8 @@ Task: Analyze this binary as potential malware.
 
 `SkillRegistry.discover()` scans:
 
-1. Built-in skills: `rikugan/skills/builtins/*/SKILL.md`
-2. User skills: `~/.idapro/rikugan/skills/*/SKILL.md`
+1. Built-in skills: `lucnhan/skills/builtins/*/SKILL.md`
+2. User skills: `~/.idapro/lucnhan/skills/*/SKILL.md`
 
 Reference files in `references/*.md` subdirectories are automatically appended to the skill body.
 
@@ -397,7 +397,7 @@ When a user types `/<slug>`, `_resolve_skill()` in `loop.py`:
 
 ## Exploration Mode
 
-**Files**: `rikugan/agent/exploration_mode.py`, `rikugan/agent/loop.py` (`_run_exploration_mode()`)
+**Files**: `lucnhan/agent/exploration_mode.py`, `lucnhan/agent/loop.py` (`_run_exploration_mode()`)
 
 Exploration mode is a **4-phase autonomous agent flow** for binary modification:
 
@@ -491,7 +491,7 @@ class ExplorationState:
 
 ## Plan Mode
 
-**Files**: `rikugan/agent/plan_mode.py`, `rikugan/agent/loop.py`
+**Files**: `lucnhan/agent/plan_mode.py`, `lucnhan/agent/loop.py`
 
 Plan mode is a simpler two-step workflow: **plan first, then execute**.
 
@@ -513,7 +513,7 @@ Plan mode is orthogonal to exploration mode. `/plan` does not enter exploration 
 
 ## Subagents
 
-**File**: `rikugan/agent/subagent.py`
+**File**: `lucnhan/agent/subagent.py`
 
 Subagents are isolated `AgentLoop` instances with their own `SessionState`. They keep the parent's context window clean from verbose tool output.
 
@@ -559,19 +559,19 @@ When a subagent running in explore mode finishes:
 
 ## Orchestra Mode (temporarily disabled)
 
-**File**: `rikugan/agent/modes/orchestra.py`, `rikugan/agent/orchestra/`
+**File**: `lucnhan/agent/modes/orchestra.py`, `lucnhan/agent/orchestra/`
 
 **Status**: Experimental — temporarily disabled pending shared execution-policy and context-isolation hardening.
 
-The `/orchestra <message>` command remains recognized by `_parse_user_command()` so users receive a precise disabled message instead of an unknown-command error. `AgentLoop.run()` checks `_ORCHESTRA_ENABLED` (`rikugan.agent.loop`) immediately after direct-command handling and before skill resolution, session append, prompt/schema construction, retrieval, provider call, tool execution, or child agent. When disabled, the gate yields one `TurnEvent.text_done()` with the disabled message and returns.
+The `/orchestra <message>` command remains recognized by `_parse_user_command()` so users receive a precise disabled message instead of an unknown-command error. `AgentLoop.run()` checks `_ORCHESTRA_ENABLED` (`lucnhan.agent.loop`) immediately after direct-command handling and before skill resolution, session append, prompt/schema construction, retrieval, provider call, tool execution, or child agent. When disabled, the gate yields one `TurnEvent.text_done()` with the disabled message and returns.
 
-The implementation files (`rikugan/agent/modes/orchestra.py` and `rikugan/agent/orchestra/`) are retained unchanged so focused legacy tests can override the constant with `monkeypatch.setattr(rikugan.agent.loop, "_ORCHESTRA_ENABLED", True)` inside the test process. A2A remains available because it is a distinct execution path.
+The implementation files (`lucnhan/agent/modes/orchestra.py` and `lucnhan/agent/orchestra/`) are retained unchanged so focused legacy tests can override the constant with `monkeypatch.setattr(lucnhan.agent.loop, "_ORCHESTRA_ENABLED", True)` inside the test process. A2A remains available because it is a distinct execution path.
 
 ---
 
 ## Mutation Tracking and Undo
 
-**File**: `rikugan/agent/mutation.py`
+**File**: `lucnhan/agent/mutation.py`
 
 Every mutating tool call (`defn.mutating=True`) is recorded in `AgentLoop._mutation_log` for undo support.
 
@@ -626,7 +626,7 @@ The `/undo` command:
 
 ### UI Integration
 
-- `MUTATION_RECORDED` events flow to `RikuganPanelCore._on_mutation_recorded()`
+- `MUTATION_RECORDED` events flow to `LucNhanPanelCore._on_mutation_recorded()`
 - A `MutationLogPanel` (in a horizontal `QSplitter` alongside the chat) shows the mutation history
 - "Mutations" toggle button appears after the first mutation
 - "Undo Last" button submits `/undo 1` through the agent loop
@@ -635,7 +635,7 @@ The `/undo` command:
 
 ## Context Window Management
 
-**File**: `rikugan/agent/context_window.py`
+**File**: `lucnhan/agent/context_window.py`
 
 ### `ContextWindowManager`
 
@@ -676,13 +676,13 @@ if self._context_manager.should_compact():
 
 ## Persistent Memory
 
-**Files**: `rikugan/agent/system_prompt.py`, `rikugan/agent/loop.py`
+**Files**: `lucnhan/agent/system_prompt.py`, `lucnhan/agent/loop.py`
 
 ### Central Memory Workspace
 
 Per-binary SQLite-backed memory (`memory.db`) plus a deterministic `MEMORY.md` projection with managed/unmanaged region separation. Always-on; acts as cross-session memory.
 
-- **Location**: `<rikugan_config_dir>/memory/binaries/<workspace-id>/` — `memory.db` (SQLite) + `MEMORY.md` (projection). The workspace ID (`mem-<hex>`) is resolved from the binary's filesystem identity, not its path.
+- **Location**: `<lucnhan_config_dir>/memory/binaries/<workspace-id>/` — `memory.db` (SQLite) + `MEMORY.md` (projection). The workspace ID (`mem-<hex>`) is resolved from the binary's filesystem identity, not its path.
 - **Loading**: Structured facts from SQLite + manual notes from `MEMORY.md` (unmanaged region) injected into the system prompt at the start of every session
 - **Writing**: Via the `save_memory` pseudo-tool, plan persistence, or direct SQLite writes via `BinaryMemoryService`
 
@@ -708,7 +708,7 @@ Shows the current contents of central memory (structured facts + `MEMORY.md` man
 
 ## Session Management
 
-**Files**: `rikugan/state/session.py`, `rikugan/state/history.py`, `rikugan/ui/session_controller_base.py`
+**Files**: `lucnhan/state/session.py`, `lucnhan/state/history.py`, `lucnhan/ui/session_controller_base.py`
 
 ### `SessionState`
 
@@ -759,7 +759,7 @@ class SessionControllerBase:
 
 `SessionHistory` handles save/restore:
 
-- Sessions are JSON-serialized to `<config_dir>/rikugan/sessions/`
+- Sessions are JSON-serialized to `<config_dir>/lucnhan/sessions/`
 - Auto-saved after each agent turn (if `checkpoint_auto_save` is enabled)
 - Restored per-file when the same IDB is reopened
 - Full round-trip: messages, token usage, tool calls, tool results all preserved
@@ -768,7 +768,7 @@ class SessionControllerBase:
 
 ## MCP Integration
 
-**Files**: `rikugan/mcp/client.py`, `rikugan/mcp/bridge.py`, `rikugan/mcp/manager.py`
+**Files**: `lucnhan/mcp/client.py`, `lucnhan/mcp/bridge.py`, `lucnhan/mcp/manager.py`
 
 ### Architecture
 
@@ -801,7 +801,7 @@ Shows the health status of all configured MCP servers (running, healthy, tool co
 
 ## Provider Layer
 
-**Files**: `rikugan/providers/base.py`, `rikugan/providers/registry.py`, `rikugan/providers/*.py`
+**Files**: `lucnhan/providers/base.py`, `lucnhan/providers/registry.py`, `lucnhan/providers/*.py`
 
 ### `LLMProvider` ABC
 
@@ -844,7 +844,7 @@ In `_stream_llm_turn()`:
 
 ## System Prompt Architecture
 
-**Files**: `rikugan/agent/system_prompt.py`, `rikugan/agent/prompts/`
+**Files**: `lucnhan/agent/system_prompt.py`, `lucnhan/agent/prompts/`
 
 ### Prompt Structure
 
@@ -881,9 +881,9 @@ In `_stream_llm_turn()`:
 
 ## UI Layer
 
-**Files**: `rikugan/ui/panel_core.py`, `rikugan/ui/chat_view.py`, `rikugan/ui/message_widgets.py`
+**Files**: `lucnhan/ui/panel_core.py`, `lucnhan/ui/chat_view.py`, `lucnhan/ui/message_widgets.py`
 
-### `RikuganPanelCore`
+### `LucNhanPanelCore`
 
 The main Qt widget. Layout:
 
@@ -970,7 +970,7 @@ The agent waits with `queue.get(timeout=0.5)` in a loop, checking for cancellati
 ### Exception Hierarchy (`core/errors.py`)
 
 ```
-RikuganError
+LucNhanError
 ├── AgentError          — loop-level errors
 ├── CancellationError   — user cancelled
 ├── ProviderError       — LLM API errors
@@ -1006,16 +1006,16 @@ for attempt in range(max_retries):
 
 ## Logging
 
-**File**: `rikugan/core/logging.py`
+**File**: `lucnhan/core/logging.py`
 
 ### Log Outputs
 
-1. **IDA Output Window** — `IDAHandler`, INFO level, `[Rikugan] LEVEL: message`
+1. **IDA Output Window** — `IDAHandler`, INFO level, `[Luc Nhan] LEVEL: message`
 2. **Debug File** — `_FlushFileHandler`, DEBUG level, flushed + fsynced after every write
-   - Location: `<config_dir>/rikugan/rikugan_debug.log`
+   - Location: `<config_dir>/lucnhan/lucnhan_debug.log`
    - Survives crashes (fsync)
 3. **Structured JSON** — `_JSONFormatter`, INFO level, JSONL format
-   - Location: `<config_dir>/rikugan/rikugan_structured.jsonl`
+   - Location: `<config_dir>/lucnhan/lucnhan_structured.jsonl`
    - Append mode, machine-parseable
 
 ### JSON Log Format
@@ -1127,9 +1127,9 @@ User "/undo"
 │  User / External Client                                  │
 │    │                                                      │
 │    ▼                                                      │
-│  rikugan-headless (CLI outside IDA)                      │
+│  lucnhan-headless (CLI outside IDA)                      │
 │    │                                                      │
-│    │  Launches: idat.exe -A -S<rikugan/ida/headless_    │
+│    │  Launches: idat.exe -A -S<lucnhan/ida/headless_    │
 │    │                          bootstrap.py> <binary>       │
 │    ▼                                                      │
 │  ┌─────────────────────────────────────────────────┐     │
@@ -1138,7 +1138,7 @@ User "/undo"
 │  │  Main Thread                                       │     │
 │  │    │                                               │     │
 │  │    ├─ headless_bootstrap.main()                   │     │
-│  │    │    ├─ RIKUGAN_HEADLESS=1                     │     │
+│  │    │    ├─ LUCNHAN_HEADLESS=1                     │     │
 │  │    │    ├─ ida_auto.auto_wait()                   │     │
 │  │    │    ├─ IdaHeadlessDispatcher()                │     │
 │  │    │    ├─ HeadlessSessionController()            │     │
@@ -1162,15 +1162,15 @@ User "/undo"
 ### One-Shot Mode Sequence
 
 ```
-User: rikugan-headless ask sample.exe "summarize metadata"
+User: lucnhan-headless ask sample.exe "summarize metadata"
   → CLI discovers IDA executable
   → Writes bootstrap JSON to temp file
-  → Sets RIKUGAN_HEADLESS_BOOTSTRAP=<tempfile>
-  → Spawns: idat.exe -A -S<rikugan/ida/headless_bootstrap.py> sample.exe
+  → Sets LUCNHAN_HEADLESS_BOOTSTRAP=<tempfile>
+  → Spawns: idat.exe -A -S<lucnhan/ida/headless_bootstrap.py> sample.exe
   → headless_bootstrap.main()
-     → RIKUGAN_HEADLESS=1
+     → LUCNHAN_HEADLESS=1
      → ida_auto.auto_wait()
-     → Load RikuganConfig
+     → Load LucNhanConfig
      → Create IdaHeadlessDispatcher
      → Create HeadlessSessionController(dispatcher, ida_ui=False)
      → bg_thread: run_prompt(controller, "summarize metadata")
@@ -1183,7 +1183,7 @@ User: rikugan-headless ask sample.exe "summarize metadata"
 ### Server Mode Sequence
 
 ```
-User: rikugan-headless serve sample.exe --ready-file rikugan-ready.json
+User: lucnhan-headless serve sample.exe --ready-file lucnhan-ready.json
   → (same IDA launch as one-shot)
   → headless_bootstrap.main()
      → ...

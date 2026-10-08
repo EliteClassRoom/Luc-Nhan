@@ -28,22 +28,22 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan import constants
-from rikugan.agent.loop import AgentLoop
-from rikugan.agent.mutation import MutationRecord
-from rikugan.agent.subagent import SubagentRunner
-from rikugan.agent.turn import TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import (
+from lucnhan import constants
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.agent.mutation import MutationRecord
+from lucnhan.agent.subagent import SubagentRunner
+from lucnhan.agent.turn import TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import (
     ModelInfo,
     ProviderCapabilities,
     StreamChunk,
     TokenUsage,
 )
-from rikugan.providers.base import LLMProvider
-from rikugan.state.session import SessionState
-from rikugan.tools.base import ParameterSchema, ToolDefinition
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.providers.base import LLMProvider
+from lucnhan.state.session import SessionState
+from lucnhan.tools.base import ParameterSchema, ToolDefinition
+from lucnhan.tools.registry import ToolRegistry
 
 #: Wall-clock budget for a child run. Unattended + interactive tool used to
 #: deadlock forever in _wait_for_queue; the budget turns that hang into a
@@ -182,8 +182,8 @@ def _rename_registry(state: dict) -> ToolRegistry:
     return registry
 
 
-def _config() -> RikuganConfig:
-    config = RikuganConfig()
+def _config() -> LucNhanConfig:
+    config = LucNhanConfig()
     config.auto_context = False  # Skip IDA API calls
     return config
 

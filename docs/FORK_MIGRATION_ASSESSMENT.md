@@ -1,6 +1,6 @@
-# FORK_MIGRATION_ASSESSMENT.md — Rikugan MAIN vs FORK
+# FORK_MIGRATION_ASSESSMENT.md — Luc Nhan MAIN vs FORK
 
-> Đánh giá toàn diện (2026-06-14) giữa **MAIN** (`D:/re_dev_projects/vibe-clone/rikugan`, v1.2) và **FORK** (`D:/re_dev_projects/Rikugan`, v1.3.1).
+> Đánh giá toàn diện (2026-06-14) giữa **MAIN** (`D:/re_dev_projects/vibe-clone/lucnhan`, v1.2) và **FORK** (`D:/re_dev_projects/Luc Nhan`, v1.3.1).
 > Mục tiêu: xác định "tốt nhất của FORK" để port sang MAIN, đồng thời sửa các vấn đề tồn đọng của MAIN.
 > Supersedes plan cũ (PROJECT_MODIFICATION_PLAN.md, 2026-06-13) — file đó đã xóa vì lạc hậu so với git history.
 

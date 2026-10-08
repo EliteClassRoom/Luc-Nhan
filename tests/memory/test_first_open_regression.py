@@ -9,17 +9,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.manager import MemoryWorkspaceManager
-from rikugan.memory.workspace import (
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.manager import MemoryWorkspaceManager
+from lucnhan.memory.workspace import (
     FilesystemIdentity,
     IdentityRequest,
     MemoryLocator,
     new_memory_id,
     new_record_id,
 )
-from rikugan.memory.workspace_open import open_workspace_for_write
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.workspace_open import open_workspace_for_write
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 class TestFirstOpenCreatesDb:
@@ -27,7 +27,7 @@ class TestFirstOpenCreatesDb:
 
     def test_bind_then_open_missing_db_creates_it(self, tmp_path: Path) -> None:
         """Simulates controller _wire_central_memory on first agent run."""
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config._config_dir = str(tmp_path)
 
         manager = MemoryWorkspaceManager(config)
@@ -68,7 +68,7 @@ class TestFirstOpenCreatesDb:
 
     def test_reopen_existing_db_uses_open_not_create(self, tmp_path: Path) -> None:
         """Second agent run: DB already exists, open() succeeds via the helper."""
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config._config_dir = str(tmp_path)
 
         manager = MemoryWorkspaceManager(config)
@@ -95,12 +95,12 @@ class TestFirstOpenCreatesDb:
 
     def test_save_fact_through_service_on_first_open(self, tmp_path: Path) -> None:
         """Full end-to-end: bind → create DB → save_fact → MEMORY.md projected."""
-        from rikugan.memory.authority import MemoryAuthorityIssuer
-        from rikugan.memory.markdown import MemoryProjector
-        from rikugan.memory.repository import SQLiteKnowledgeRepository
-        from rikugan.memory.service import BinaryMemoryService
+        from lucnhan.memory.authority import MemoryAuthorityIssuer
+        from lucnhan.memory.markdown import MemoryProjector
+        from lucnhan.memory.repository import SQLiteKnowledgeRepository
+        from lucnhan.memory.service import BinaryMemoryService
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config._config_dir = str(tmp_path)
 
         manager = MemoryWorkspaceManager(config)
@@ -148,13 +148,13 @@ class TestFirstOpenCreatesDb:
         assert paths.markdown.exists()
         content = paths.markdown.read_text(encoding="utf-8")
         assert "Uses RC4" in content
-        assert "rikugan:managed:start" in content
+        assert "lucnhan:managed:start" in content
         store.close()
 
 
 def test_existing_binary_workspace_uses_backup_aware_open(tmp_path, monkeypatch) -> None:
     """Direct call to open_workspace_for_write must be the writable path used."""
-    from rikugan.memory import workspace_open
+    from lucnhan.memory import workspace_open
 
     owner = new_memory_id()
     locator = MemoryLocator(tmp_path / "memory")

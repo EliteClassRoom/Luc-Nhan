@@ -22,10 +22,10 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan import constants
-from rikugan.core.config import RikuganConfig
-from rikugan.tools.base import ToolDefinition
-from rikugan.tools.registry import ToolRegistry
+from lucnhan import constants
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.tools.base import ToolDefinition
+from lucnhan.tools.registry import ToolRegistry
 
 
 def _tool_call_chunk(call_id: str, name: str, args: str = "{}") -> SimpleNamespace:
@@ -74,14 +74,14 @@ class TestOrchestraApprovalRefusal(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         # tests/tools/test_chat_view.py leaves a MagicMock stub module for
-        # rikugan.agent.turn in sys.modules; any module imported after it —
+        # lucnhan.agent.turn in sys.modules; any module imported after it —
         # this test module and main_agent itself — would bind stub
         # TurnEvent factories. Pop the stub and re-import the real modules
         # (same recovery pattern as test_chat_view.TestExecutePythonRouting).
-        for mod_name in ("rikugan.agent.turn", "rikugan.agent.orchestra.main_agent"):
+        for mod_name in ("lucnhan.agent.turn", "lucnhan.agent.orchestra.main_agent"):
             sys.modules.pop(mod_name, None)
-        from rikugan.agent.orchestra.main_agent import OrchestraMainAgent
-        from rikugan.agent.turn import TurnEventType
+        from lucnhan.agent.orchestra.main_agent import OrchestraMainAgent
+        from lucnhan.agent.turn import TurnEventType
 
         cls.OrchestraMainAgent = OrchestraMainAgent
         cls.TurnEventType = TurnEventType
@@ -94,7 +94,7 @@ class TestOrchestraApprovalRefusal(unittest.TestCase):
         agent = self.OrchestraMainAgent.__new__(self.OrchestraMainAgent)
         agent.provider = provider
         agent.tools = registry
-        agent.config = RikuganConfig()
+        agent.config = LucNhanConfig()
         agent.session = MagicMock()
         agent.session.get_messages_for_provider.return_value = []
         agent._build_system_prompt = lambda: "system"  # type: ignore[method-assign]

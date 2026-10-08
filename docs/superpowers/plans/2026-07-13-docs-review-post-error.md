@@ -12,10 +12,10 @@
 
 - Mọi module bắt đầu bằng `from __future__ import annotations`.
 - Type hints ở mọi signature. Tool params dùng `typing.Annotated[type, "description"]`.
-- Cross-package imports absolute: `from rikugan.tools.base import tool`.
+- Cross-package imports absolute: `from lucnhan.tools.base import tool`.
 - Host API imports (`ida_*`) dùng `importlib.import_module()` trong `try/except ImportError` — KHÔNG import ở module level.
 - `execute_python` LUÔN cần user approval — KHÔNG bao giờ auto-approve (security invariant, CLAUDE.md §4).
-- Tên tool `execute_python` phải dùng `rikugan.constants.EXECUTE_PYTHON_TOOL_NAME` — KHÔNG hardcode string.
+- Tên tool `execute_python` phải dùng `lucnhan.constants.EXECUTE_PYTHON_TOOL_NAME` — KHÔNG hardcode string.
 - f-string cho format, hex address `f"0x{ea:x}"`. Không mutation, không bare `except:`, không magic numbers.
 - `./ci-local.sh` phải pass trước khi commit (format + lint + mypy + pytest + desloppify).
 - Commit format: `type(scope): description` (conventional commits).
@@ -28,13 +28,13 @@
 
 | File | Action | Responsibility |
 |------|--------|----------------|
-| `rikugan/tools/traceback_classifier.py` | Create | Pure function: parse traceback → verdict API-shaped + extract modules từ script AST |
-| `rikugan/core/config.py` | Modify | Thay `require_ida_docs_for_complex_scripts: bool` bằng `docs_review_mode: Literal["on_error","off"]` + migration trong `load()` |
-| `rikugan/agent/prompts/base.py` | Modify | Thêm `IDA_API_MODULE_REFERENCE_SECTION` + rewrite "Docs-review gate" section trong `IDA_API_DISCIPLINE_SECTION` |
-| `rikugan/agent/prompts/ida.py` | Modify | Wire `IDA_API_MODULE_REFERENCE_SECTION` vào `assemble_system_prompt()` |
-| `rikugan/agent/agents/ida_docs_reviewer.py` | Modify | Update prompt: reviewer giờ là post-error diagnostician, input có traceback |
-| `rikugan/agent/loop.py` | Modify | Xóa reviewer pre-execute, thêm reviewer post-error trong `_execute_single_tool` (2 vị trí), thêm `_review_failed_script` + `_build_reference_injection`, thêm flag `_docs_reviewer_invoked` |
-| `rikugan/ui/settings_dialog.py` | Modify | Thay checkbox boolean bằng combobox enum `docs_review_mode` |
+| `lucnhan/tools/traceback_classifier.py` | Create | Pure function: parse traceback → verdict API-shaped + extract modules từ script AST |
+| `lucnhan/core/config.py` | Modify | Thay `require_ida_docs_for_complex_scripts: bool` bằng `docs_review_mode: Literal["on_error","off"]` + migration trong `load()` |
+| `lucnhan/agent/prompts/base.py` | Modify | Thêm `IDA_API_MODULE_REFERENCE_SECTION` + rewrite "Docs-review gate" section trong `IDA_API_DISCIPLINE_SECTION` |
+| `lucnhan/agent/prompts/ida.py` | Modify | Wire `IDA_API_MODULE_REFERENCE_SECTION` vào `assemble_system_prompt()` |
+| `lucnhan/agent/agents/ida_docs_reviewer.py` | Modify | Update prompt: reviewer giờ là post-error diagnostician, input có traceback |
+| `lucnhan/agent/loop.py` | Modify | Xóa reviewer pre-execute, thêm reviewer post-error trong `_execute_single_tool` (2 vị trí), thêm `_review_failed_script` + `_build_reference_injection`, thêm flag `_docs_reviewer_invoked` |
+| `lucnhan/ui/settings_dialog.py` | Modify | Thay checkbox boolean bằng combobox enum `docs_review_mode` |
 | `tests/tools/test_traceback_classifier.py` | Create | Unit tests cho `classify_traceback` + helpers |
 | `tests/test_idapython_docs_gate.py` | Modify | Rewrite tests cho `_review_failed_script` (thay `_review_complex_idapython_script`), cập nhật config test cho `docs_review_mode` |
 | `tests/agent/test_system_prompt.py` | Modify | Assert `IDA_API_MODULE_REFERENCE_SECTION` có trong system prompt |
@@ -44,7 +44,7 @@
 ## Task 1: Module `traceback_classifier.py` (TDD)
 
 **Files:**
-- Create: `rikugan/tools/traceback_classifier.py`
+- Create: `lucnhan/tools/traceback_classifier.py`
 - Test: `tests/tools/test_traceback_classifier.py`
 
 **Interfaces:**
@@ -61,7 +61,7 @@ from __future__ import annotations
 
 import unittest
 
-from rikugan.tools.traceback_classifier import (
+from lucnhan.tools.traceback_classifier import (
     TracebackClassification,
     classify_traceback,
 )
@@ -188,11 +188,11 @@ if __name__ == "__main__":
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/tools/test_traceback_classifier.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'rikugan.tools.traceback_classifier'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'lucnhan.tools.traceback_classifier'`
 
 - [ ] **Step 3: Write minimal implementation**
 
-Tạo file `rikugan/tools/traceback_classifier.py`:
+Tạo file `lucnhan/tools/traceback_classifier.py`:
 
 ```python
 """Phân loại traceback của execute_python để quyết định có spawn reviewer không.
@@ -332,16 +332,16 @@ Expected: PASS — all 15 tests green.
 
 Run:
 ```bash
-python3 -m ruff format rikugan/tools/traceback_classifier.py tests/tools/test_traceback_classifier.py
-python3 -m ruff check rikugan/tools/traceback_classifier.py --fix
-python3 -m mypy rikugan/tools/traceback_classifier.py
+python3 -m ruff format lucnhan/tools/traceback_classifier.py tests/tools/test_traceback_classifier.py
+python3 -m ruff check lucnhan/tools/traceback_classifier.py --fix
+python3 -m mypy lucnhan/tools/traceback_classifier.py
 ```
 Expected: clean.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/tools/traceback_classifier.py tests/tools/test_traceback_classifier.py
+git add lucnhan/tools/traceback_classifier.py tests/tools/test_traceback_classifier.py
 git commit -m "feat(tools): add traceback_classifier for post-error docs gate
 
 Pure function phân loại traceback của execute_python: verdict API-shaped
@@ -354,11 +354,11 @@ cho reference injection."
 ## Task 2: Config field `docs_review_mode` + migration
 
 **Files:**
-- Modify: `rikugan/core/config.py:22` (import Literal), `:86` (field), `:290-342` (load migration)
+- Modify: `lucnhan/core/config.py:22` (import Literal), `:86` (field), `:290-342` (load migration)
 - Test: `tests/test_idapython_docs_gate.py` (class `TestConfigField`)
 
 **Interfaces:**
-- Produces: `RikuganConfig.docs_review_mode: Literal["on_error", "off"]` (default `"on_error"`)
+- Produces: `LucNhanConfig.docs_review_mode: Literal["on_error", "off"]` (default `"on_error"`)
 - Migration: legacy `require_ida_docs_for_complex_scripts: False` → `docs_review_mode = "off"`
 
 - [ ] **Step 1: Write the failing test**
@@ -368,24 +368,24 @@ Trong `tests/test_idapython_docs_gate.py`, **thay thế** class `TestConfigField
 ```python
 class TestConfigField(unittest.TestCase):
     def test_default_is_on_error(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         self.assertEqual(cfg.docs_review_mode, "on_error")
 
     def test_round_trip_through_dict(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.docs_review_mode = "off"
         cfg.save = MagicMock()  # avoid disk side effects
         cfg.load = MagicMock()
         from dataclasses import asdict
 
         d = asdict(cfg)
-        cfg2 = RikuganConfig()
+        cfg2 = LucNhanConfig()
         cfg2.docs_review_mode = d["docs_review_mode"]
         self.assertEqual(cfg2.docs_review_mode, "off")
 
     def test_legacy_false_migrates_to_off(self):
         """Legacy config require_ida_docs_for_complex_scripts=False → off."""
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         # Simulate load() with legacy field present
         legacy_data = {"require_ida_docs_for_complex_scripts": False}
         cfg._apply_loaded_config(legacy_data)
@@ -393,24 +393,24 @@ class TestConfigField(unittest.TestCase):
 
     def test_legacy_true_migrates_to_on_error(self):
         """Legacy config require_ida_docs_for_complex_scripts=True → on_error."""
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         legacy_data = {"require_ida_docs_for_complex_scripts": True}
         cfg._apply_loaded_config(legacy_data)
         self.assertEqual(cfg.docs_review_mode, "on_error")
 
     def test_legacy_missing_defaults_to_on_error(self):
         """No legacy field → on_error default."""
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._apply_loaded_config({})
         self.assertEqual(cfg.docs_review_mode, "on_error")
 
     def test_explicit_off_round_trips(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._apply_loaded_config({"docs_review_mode": "off"})
         self.assertEqual(cfg.docs_review_mode, "off")
 
     def test_invalid_value_defaults_to_on_error(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._apply_loaded_config({"docs_review_mode": "bogus"})
         self.assertEqual(cfg.docs_review_mode, "on_error")
 ```
@@ -418,11 +418,11 @@ class TestConfigField(unittest.TestCase):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/test_idapython_docs_gate.py::TestConfigField -v`
-Expected: FAIL — `AttributeError: 'RikuganConfig' object has no attribute 'docs_review_mode'` hoặc `_apply_loaded_config` not found.
+Expected: FAIL — `AttributeError: 'LucNhanConfig' object has no attribute 'docs_review_mode'` hoặc `_apply_loaded_config` not found.
 
 - [ ] **Step 3: Modify config.py — imports + field**
 
-Trong `rikugan/core/config.py`:
+Trong `lucnhan/core/config.py`:
 
 **Dòng 22**, thay:
 ```python
@@ -554,16 +554,16 @@ Expected: Tests khác trong file có thể fail (vì `_review_complex_idapython_
 
 Run:
 ```bash
-python3 -m ruff format rikugan/core/config.py
-python3 -m ruff check rikugan/core/config.py --fix
-python3 -m mypy rikugan/core/config.py
+python3 -m ruff format lucnhan/core/config.py
+python3 -m ruff check lucnhan/core/config.py --fix
+python3 -m mypy lucnhan/core/config.py
 ```
 Expected: clean.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add rikugan/core/config.py tests/test_idapython_docs_gate.py
+git add lucnhan/core/config.py tests/test_idapython_docs_gate.py
 git commit -m "refactor(config): replace require_ida_docs_for_complex_scripts with docs_review_mode enum
 
 Field mới docs_review_mode: Literal[\"on_error\",\"off\"] thay boolean cũ.
@@ -576,8 +576,8 @@ Extract _apply_loaded_config helper từ load() để test được migration."
 ## Task 3: System prompt — `IDA_API_MODULE_REFERENCE_SECTION`
 
 **Files:**
-- Modify: `rikugan/agent/prompts/base.py` (thêm section mới + rewrite Docs-review gate section)
-- Modify: `rikugan/agent/prompts/ida.py:70-75` (wire section vào assemble)
+- Modify: `lucnhan/agent/prompts/base.py` (thêm section mới + rewrite Docs-review gate section)
+- Modify: `lucnhan/agent/prompts/ida.py:70-75` (wire section vào assemble)
 - Test: `tests/agent/test_system_prompt.py`
 
 **Interfaces:**
@@ -590,7 +590,7 @@ Trong `tests/agent/test_system_prompt.py`, **thêm** test:
 ```python
 def test_ida_base_prompt_contains_module_reference():
     """Module Quick Reference section phải có trong system prompt."""
-    from rikugan.agent.prompts.ida import IDA_BASE_PROMPT
+    from lucnhan.agent.prompts.ida import IDA_BASE_PROMPT
 
     assert "IDAPython Module Quick Reference" in IDA_BASE_PROMPT
     assert "ida_bytes" in IDA_BASE_PROMPT
@@ -600,7 +600,7 @@ def test_ida_base_prompt_contains_module_reference():
 
 def test_ida_base_prompt_docs_review_section_updated():
     """Docs-review gate section phải mô tả post-error behavior, không phải pre-execute."""
-    from rikugan.agent.prompts.ida import IDA_BASE_PROMPT
+    from lucnhan.agent.prompts.ida import IDA_BASE_PROMPT
 
     # Phải nhắc đến post-error / runtime error
     assert "runtime error" in IDA_BASE_PROMPT.lower() or "post-error" in IDA_BASE_PROMPT.lower()
@@ -617,7 +617,7 @@ Expected: FAIL — `"IDAPython Module Quick Reference" not found in IDA_BASE_PRO
 
 - [ ] **Step 3: Add `IDA_API_MODULE_REFERENCE_SECTION` to base.py**
 
-Trong `rikugan/agent/prompts/base.py`, **thêm** (sau `IDA_API_DISCIPLINE_SECTION`, trước hàm `assemble_system_prompt` hoặc ngay sau `IDA_API_DISCIPLINE_SECTION`):
+Trong `lucnhan/agent/prompts/base.py`, **thêm** (sau `IDA_API_DISCIPLINE_SECTION`, trước hàm `assemble_system_prompt` hoặc ngay sau `IDA_API_DISCIPLINE_SECTION`):
 
 ```python
 IDA_API_MODULE_REFERENCE_SECTION = """\
@@ -695,7 +695,7 @@ from the bundled offline docs (54 modules, no network).
 
 - [ ] **Step 4: Rewrite "Docs-review gate" section in `IDA_API_DISCIPLINE_SECTION`**
 
-Trong `rikugan/agent/prompts/base.py`, **tìm** block "Docs-review gate" trong `IDA_API_DISCIPLINE_SECTION` (dòng ~322-332 hiện tại, bắt đầu bằng `**Docs-review gate.**`). **Thay thế** block đó bằng:
+Trong `lucnhan/agent/prompts/base.py`, **tìm** block "Docs-review gate" trong `IDA_API_DISCIPLINE_SECTION` (dòng ~322-332 hiện tại, bắt đầu bằng `**Docs-review gate.**`). **Thay thế** block đó bằng:
 
 ```python
 **Docs-review gate (post-error).** When an `execute_python` script fails at
@@ -709,7 +709,7 @@ call `lookup_idapython_doc(module="<module>")` before writing the script.
 
 - [ ] **Step 5: Wire section into ida.py**
 
-Trong `rikugan/agent/prompts/ida.py`, **cập nhật** import (dòng 5-9) và `assemble_system_prompt` call (dòng 70-75):
+Trong `lucnhan/agent/prompts/ida.py`, **cập nhật** import (dòng 5-9) và `assemble_system_prompt` call (dòng 70-75):
 
 ```python
 from .base import (
@@ -739,15 +739,15 @@ Expected: PASS.
 
 Run:
 ```bash
-python3 -m ruff format rikugan/agent/prompts/base.py rikugan/agent/prompts/ida.py
-python3 -m ruff check rikugan/agent/prompts/ --fix
+python3 -m ruff format lucnhan/agent/prompts/base.py lucnhan/agent/prompts/ida.py
+python3 -m ruff check lucnhan/agent/prompts/ --fix
 ```
 Expected: clean.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add rikugan/agent/prompts/base.py rikugan/agent/prompts/ida.py tests/agent/test_system_prompt.py
+git add lucnhan/agent/prompts/base.py lucnhan/agent/prompts/ida.py tests/agent/test_system_prompt.py
 git commit -m "feat(prompts): add IDA API Module Quick Reference to system prompt
 
 Preload Module Router + Core Patterns compact vào main agent system prompt
@@ -760,7 +760,7 @@ post-error behavior thay vì pre-execute."
 ## Task 4: Reviewer prompt update — post-error diagnostician
 
 **Files:**
-- Modify: `rikugan/agent/agents/ida_docs_reviewer.py:29-184` (IDA_DOCS_REVIEWER_PROMPT)
+- Modify: `lucnhan/agent/agents/ida_docs_reviewer.py:29-184` (IDA_DOCS_REVIEWER_PROMPT)
 - Test: `tests/test_ida_docs_review_prompt.py`
 
 **Interfaces:**
@@ -778,7 +778,7 @@ Ghi nhận test nào pass hiện tại — sẽ cần update chúng.
 ```python
 def test_reviewer_prompt_describes_post_error_role():
     """Reviewer prompt phải mô tả role post-error diagnostician."""
-    from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+    from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
     # Phải nhắc đến runtime error / diagnose failure
     assert "diagnose" in IDA_DOCS_REVIEWER_PROMPT.lower() or "runtime" in IDA_DOCS_REVIEWER_PROMPT.lower()
@@ -788,7 +788,7 @@ def test_reviewer_prompt_describes_post_error_role():
 
 def test_reviewer_prompt_keeps_verdict_contract():
     """Output contract (VERDICT/REASONS/API_NOTES/REWRITE_GUIDANCE) giữ nguyên."""
-    from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+    from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
     assert "VERDICT:" in IDA_DOCS_REVIEWER_PROMPT
     assert "REASONS:" in IDA_DOCS_REVIEWER_PROMPT
@@ -803,7 +803,7 @@ Expected: FAIL — "diagnose" / "traceback" not found in prompt.
 
 - [ ] **Step 4: Update `IDA_DOCS_REVIEWER_PROMPT`**
 
-Trong `rikugan/agent/agents/ida_docs_reviewer.py`, **thay thế** toàn bộ `IDA_DOCS_REVIEWER_PROMPT` (dòng 29-184) bằng:
+Trong `lucnhan/agent/agents/ida_docs_reviewer.py`, **thay thế** toàn bộ `IDA_DOCS_REVIEWER_PROMPT` (dòng 29-184) bằng:
 
 ```python
 IDA_DOCS_REVIEWER_PROMPT = """\
@@ -958,15 +958,15 @@ Expected: PASS — tất cả test (cũ + mới) green. Nếu test cũ fail vì 
 
 Run:
 ```bash
-python3 -m ruff format rikugan/agent/agents/ida_docs_reviewer.py
-python3 -m ruff check rikugan/agent/agents/ida_docs_reviewer.py --fix
+python3 -m ruff format lucnhan/agent/agents/ida_docs_reviewer.py
+python3 -m ruff check lucnhan/agent/agents/ida_docs_reviewer.py --fix
 ```
 Expected: clean.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/agent/agents/ida_docs_reviewer.py tests/test_ida_docs_review_prompt.py
+git add lucnhan/agent/agents/ida_docs_reviewer.py tests/test_ida_docs_review_prompt.py
 git commit -m "feat(reviewer): update docs-reviewer prompt for post-error role
 
 Reviewer giờ là post-error diagnostician: input có traceback + exception
@@ -980,7 +980,7 @@ block/unblock vì script đã chạy rồi."
 ## Task 5: Loop — xóa reviewer pre-execute, thêm post-error logic
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:323` (init flag), `:2147` (reset flag), `:1252-1294` + `:1891-1930` (xóa pre-execute reviewer, 2 vị trí), `:1364-1368` + `:2001-2006` (thêm post-error reviewer, 2 vị trí)
+- Modify: `lucnhan/agent/loop.py:323` (init flag), `:2147` (reset flag), `:1252-1294` + `:1891-1930` (xóa pre-execute reviewer, 2 vị trí), `:1364-1368` + `:2001-2006` (thêm post-error reviewer, 2 vị trí)
 - Add method: `_review_failed_script`, `_build_reference_injection` (thay `_review_complex_idapython_script`)
 - Test: `tests/test_idapython_docs_gate.py` (rewrite `TestDocsGate`, `TestDocsGateStatusEmission`)
 
@@ -995,16 +995,16 @@ Trong `tests/test_idapython_docs_gate.py`, **thay thế** `TestDocsGate` và `Te
 ```python
 def _make_loop(*, gate_enabled: bool, runner: _FakeRunner | None = None):
     """Construct an AgentLoop with the bare minimum wiring for gate tests."""
-    from rikugan.agent.loop import AgentLoop
+    from lucnhan.agent.loop import AgentLoop
 
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg.docs_review_mode = "on_error" if gate_enabled else "off"
 
     loop = AgentLoop.__new__(AgentLoop)
     loop.provider = _FakeProvider()
     loop.tools = _FakeToolRegistry()
     loop.config = cfg
-    from rikugan.state.session import SessionState
+    from lucnhan.state.session import SessionState
 
     loop.session = SessionState()
     loop.skills = None
@@ -1059,12 +1059,12 @@ class TestPostErrorReviewGate(unittest.TestCase):
         )
 
     def test_api_shaped_error_triggers_reviewer(self):
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
         runner = _FakeRunner(final_text="VERDICT: REWRITE_REQUIRED\nAPI_NOTES:\n- x")
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -1083,8 +1083,8 @@ class TestPostErrorReviewGate(unittest.TestCase):
 
     def test_second_api_error_skips_reviewer(self):
         """Flag đã set → reviewer không spawn lần 2."""
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
         loop._docs_reviewer_invoked = True  # đã invoke
@@ -1107,12 +1107,12 @@ class TestPostErrorReviewGate(unittest.TestCase):
 
     def test_reviewer_crash_returns_traceback(self):
         """Reviewer crash → emit failed event, return traceback (không augment)."""
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
         runner = _FakeRunner(raise_on_run=RuntimeError("provider down"))
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -1143,8 +1143,8 @@ class TestPostErrorReviewGate(unittest.TestCase):
 
     def test_docs_review_mode_off_skips_reviewer(self):
         """docs_review_mode='off' → không bao giờ spawn reviewer."""
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=False)
         self.assertEqual(loop.config.docs_review_mode, "off")
@@ -1153,13 +1153,13 @@ class TestPostErrorReviewGate(unittest.TestCase):
 
     def test_reviewed_state_emitted(self):
         """Post-error reviewer emit DOCS_GATE_STATUS running + reviewed."""
-        from rikugan.agent.turn import TurnEventType
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.agent.turn import TurnEventType
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
         runner = _FakeRunner(final_text="VERDICT: APPROVED\nLooks good.")
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -1200,7 +1200,7 @@ Expected: FAIL — `AttributeError: 'AgentLoop' object has no attribute '_review
 
 - [ ] **Step 3: Add flag to `__init__`**
 
-Trong `rikugan/agent/loop.py`, ở `__init__` (sau dòng 335 `self.plan_mode = False`), **thêm**:
+Trong `lucnhan/agent/loop.py`, ở `__init__` (sau dòng 335 `self.plan_mode = False`), **thêm**:
 
 ```python
         # Post-error docs-review: max 1 reviewer call per user message.
@@ -1210,7 +1210,7 @@ Trong `rikugan/agent/loop.py`, ở `__init__` (sau dòng 335 `self.plan_mode = F
 
 - [ ] **Step 4: Reset flag in `run()`**
 
-Trong `rikugan/agent/loop.py:2147` (đầu method `run()`, sau `self._cancelled.clear()`), **thêm**:
+Trong `lucnhan/agent/loop.py:2147` (đầu method `run()`, sau `self._cancelled.clear()`), **thêm**:
 
 ```python
         self._docs_reviewer_invoked = False
@@ -1218,7 +1218,7 @@ Trong `rikugan/agent/loop.py:2147` (đầu method `run()`, sau `self._cancelled.
 
 - [ ] **Step 5: Add `_build_reference_injection` method**
 
-Trong `rikugan/agent/loop.py`, **thêm method** (đặt gần `_review_complex_idapython_script` hiện tại, ~dòng 1117):
+Trong `lucnhan/agent/loop.py`, **thêm method** (đặt gần `_review_complex_idapython_script` hiện tại, ~dòng 1117):
 
 ```python
     def _build_reference_injection(self, modules: tuple[str, ...]) -> str:
@@ -1247,7 +1247,7 @@ Trong `rikugan/agent/loop.py`, **thêm method** (đặt gần `_review_complex_i
 
 - [ ] **Step 6: Add `_review_failed_script` method (thay `_review_complex_idapython_script`)**
 
-Trong `rikugan/agent/loop.py`, **thay thế** toàn bộ method `_review_complex_idapython_script` (dòng 1117-1237) bằng:
+Trong `lucnhan/agent/loop.py`, **thay thế** toàn bộ method `_review_complex_idapython_script` (dòng 1117-1237) bằng:
 
 ```python
     def _review_failed_script(
@@ -1357,7 +1357,7 @@ Trong `rikugan/agent/loop.py`, **thay thế** toàn bộ method `_review_complex
 
 - [ ] **Step 7: Remove pre-execute reviewer logic (2 vị trí)**
 
-Trong `rikugan/agent/loop.py`, **tìm** block reviewer pre-execute đầu tiên (~dòng 1252-1294, trong `_execute_single_tool`). Block bắt đầu bằng:
+Trong `lucnhan/agent/loop.py`, **tìm** block reviewer pre-execute đầu tiên (~dòng 1252-1294, trong `_execute_single_tool`). Block bắt đầu bằng:
 
 ```python
         # execute_python always requires explicit approval
@@ -1403,7 +1403,7 @@ Trong `rikugan/agent/loop.py`, **tìm** block reviewer pre-execute đầu tiên 
 
 - [ ] **Step 8: Add post-error reviewer logic in except block (2 vị trí)**
 
-Trong `rikugan/agent/loop.py`, **tìm** block `except Exception as e:` đầu tiên (~dòng 1364-1368). Hiện tại:
+Trong `lucnhan/agent/loop.py`, **tìm** block `except Exception as e:` đầu tiên (~dòng 1364-1368). Hiện tại:
 
 ```python
         except Exception as e:
@@ -1459,16 +1459,16 @@ Expected: PASS. Nếu có test khác reference `_review_complex_idapython_script
 
 Run:
 ```bash
-python3 -m ruff format rikugan/agent/loop.py
-python3 -m ruff check rikugan/agent/loop.py --fix
-python3 -m mypy rikugan/core rikugan/providers rikugan/agent/loop.py
+python3 -m ruff format lucnhan/agent/loop.py
+python3 -m ruff check lucnhan/agent/loop.py --fix
+python3 -m mypy lucnhan/core lucnhan/providers lucnhan/agent/loop.py
 ```
 Expected: clean (mypy config theo pyproject.toml).
 
 - [ ] **Step 12: Commit**
 
 ```bash
-git add rikugan/agent/loop.py tests/test_idapython_docs_gate.py
+git add lucnhan/agent/loop.py tests/test_idapython_docs_gate.py
 git commit -m "feat(loop): move docs-reviewer from pre-execute to post-error
 
 Xóa reviewer pre-execute (trigger khi complex). Thêm reviewer post-error:
@@ -1482,7 +1482,7 @@ vào tool result. Static validator vẫn block hallucinated APIs pre-execute."
 ## Task 6: Settings dialog — combobox for `docs_review_mode`
 
 **Files:**
-- Modify: `rikugan/ui/settings_dialog.py:628-640` (build), `:1417-1418` (accept)
+- Modify: `lucnhan/ui/settings_dialog.py:628-640` (build), `:1417-1418` (accept)
 - Test: manual verify (Qt UI, không có unit test hiện có cho dialog)
 
 **Interfaces:**
@@ -1490,11 +1490,11 @@ vào tool result. Static validator vẫn block hallucinated APIs pre-execute."
 
 - [ ] **Step 1: Read current checkbox code**
 
-Read `rikugan/ui/settings_dialog.py:627-640` và `:1416-1419` để xác nhận code hiện tại.
+Read `lucnhan/ui/settings_dialog.py:627-640` và `:1416-1419` để xác nhận code hiện tại.
 
 - [ ] **Step 2: Replace checkbox with combobox (build section)**
 
-Trong `rikugan/ui/settings_dialog.py`, **thay thế** block (dòng ~627-640):
+Trong `lucnhan/ui/settings_dialog.py`, **thay thế** block (dòng ~627-640):
 
 ```python
         # --- IDAPython docs-review gate ---
@@ -1538,7 +1538,7 @@ bằng:
 
 - [ ] **Step 3: Update accept handler**
 
-Trong `rikugan/ui/settings_dialog.py`, **thay thế** block (dòng ~1417-1418):
+Trong `lucnhan/ui/settings_dialog.py`, **thay thế** block (dòng ~1417-1418):
 
 ```python
         if hasattr(self, "_docs_gate_cb"):
@@ -1554,15 +1554,15 @@ bằng:
 
 - [ ] **Step 4: Grep for any remaining references to old field**
 
-Run: `grep -rn "require_ida_docs_for_complex_scripts\|_docs_gate_cb" rikugan/`
+Run: `grep -rn "require_ida_docs_for_complex_scripts\|_docs_gate_cb" lucnhan/`
 Expected: không còn reference nào (ngoài trừ comment migration nếu có).
 
 - [ ] **Step 5: Run lint + format**
 
 Run:
 ```bash
-python3 -m ruff format rikugan/ui/settings_dialog.py
-python3 -m ruff check rikugan/ui/settings_dialog.py --fix
+python3 -m ruff format lucnhan/ui/settings_dialog.py
+python3 -m ruff check lucnhan/ui/settings_dialog.py --fix
 ```
 Expected: clean.
 
@@ -1574,7 +1574,7 @@ Expected: PASS. Nếu có test reference `_docs_gate_cb` hoặc `require_ida_doc
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/ui/settings_dialog.py
+git add lucnhan/ui/settings_dialog.py
 git commit -m "feat(ui): replace docs-gate checkbox with docs_review_mode combobox
 
 Combobox enum (on_error/off) thay checkbox boolean. Tooltip mô tả post-error
@@ -1592,15 +1592,15 @@ behavior mới: reviewer chỉ chạy khi script fail với API-shaped exception
 
 Run:
 ```bash
-grep -rn "require_ida_docs_for_complex_scripts" rikugan/ tests/
-grep -rn "_review_complex_idapython_script" rikugan/ tests/
-grep -rn "_docs_gate_cb" rikugan/ tests/
+grep -rn "require_ida_docs_for_complex_scripts" lucnhan/ tests/
+grep -rn "_review_complex_idapython_script" lucnhan/ tests/
+grep -rn "_docs_gate_cb" lucnhan/ tests/
 ```
 Expected: không còn reference nào (trừ spec/plan docs). Nếu có, fix.
 
 - [ ] **Step 2: Verify `classify_idapython_script` still imported but unused-for-trigger**
 
-Run: `grep -rn "classify_idapython_script" rikugan/agent/loop.py`
+Run: `grep -rn "classify_idapython_script" lucnhan/agent/loop.py`
 Expected: import có thể bị remove nếu không còn dùng. Nếu `classify_idapython_script` không còn được gọi trong loop.py, **xóa import** (dòng 37: `from ..tools.idapython_complexity import classify_idapython_script`). Module `idapython_complexity.py` giữ nguyên (không xóa — cho analytics tiềm năng).
 
 - [ ] **Step 3: Run full local CI**
@@ -1619,7 +1619,7 @@ Expected: PASS — toàn bộ test green.
 
 - [ ] **Step 6: Manual smoke test (nếu có IDA Pro)**
 
-Khởi động IDA Pro + Rikugan. Test:
+Khởi động IDA Pro + Luc Nhan. Test:
 1. Gọi `execute_python` với script đơn giản (`print(idaapi.get_inf_structure())`) → chạy ngay, không reviewer.
 2. Gọi `execute_python` với script sai API (`print(idaapi.get_operands(0x401000))`) → static validator block pre-execute (không chạy).
 3. Gọi `execute_python` với script dùng API tồn tại nhưng sai signature (vd `ida_bytes.get_bytes()` không args) → chạy, fail runtime `TypeError` → **không** spawn reviewer (logic bug).

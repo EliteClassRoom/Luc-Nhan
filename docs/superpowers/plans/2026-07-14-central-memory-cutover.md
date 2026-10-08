@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Atomically chuyển mọi binary-memory reader/writer từ folder-scoped `RIKUGAN.md`, `.rikugan-kb/`, và `notes/` sang central per-binary workspace, bật feature sau khi explicit legacy import khả dụng, và không duy trì dual-write/fallback.
+**Goal:** Atomically chuyển mọi binary-memory reader/writer từ folder-scoped `RIKUGAN.md`, `.lucnhan-kb/`, và `notes/` sang central per-binary workspace, bật feature sau khi explicit legacy import khả dụng, và không duy trì dual-write/fallback.
 
 **Architecture:** Một `BinaryMemoryService` duy nhất sở hữu prompt read, structured retrieval, fact/note/report writes và projection. `AgentLoop` nhận frozen `MemoryRunContext` cùng non-serializable main-agent `MemoryWriteAuthority`; commands và UI chỉ dùng service/repository, không derive IDB-directory paths. Activation chỉ xảy ra sau khi mọi consumer và minimal legacy importer đã cut over trong cùng release.
 
@@ -12,7 +12,7 @@
 
 - Prerequisite: hoàn tất `docs/superpowers/plans/2026-07-14-central-memory-foundation.md`.
 - Spec authority: `docs/superpowers/specs/2026-07-14-central-memory-workspaces-design.md`.
-- Không runtime read/write `RIKUGAN.md`, `.rikugan-kb/*.jsonl`, hoặc folder-level `notes/` sau activation.
+- Không runtime read/write `RIKUGAN.md`, `.lucnhan-kb/*.jsonl`, hoặc folder-level `notes/` sau activation.
 - Không dual-write và không transparent fallback.
 - `MEMORY.md` managed facts đến từ SQLite; prompt chỉ đọc phần unmanaged Markdown như `manual_notes`.
 - `save_memory`, approved plans, exploration reports, research notes, reports và auto-ingestion đều cần `MemoryWriteAuthority` từ main controller/UI.
@@ -32,30 +32,30 @@
 
 | File | Action | Responsibility |
 |---|---|---|
-| `rikugan/memory/authority.py` | Create | Non-serializable write authority và candidate events |
-| `rikugan/memory/service.py` | Create | Binary-memory façade cho prompt/retrieval/write/note/report |
-| `rikugan/memory/repository.py` | Create | Adapter query/write giữa current knowledge dataclasses và SQLite workspace |
-| `rikugan/memory/legacy.py` | Create | Detect, inventory, fingerprint, preview và minimal explicit import |
-| `rikugan/memory/context.py` | Modify | Repository protocol thay `KnowledgeRawStore`; managed/unmanaged split |
-| `rikugan/memory/retrieve.py` | Modify | Repository protocol và SQLite-safe read behavior |
-| `rikugan/memory/ingest.py` | Modify | Authority-bound service writes; bỏ runtime `make_store(idb_path)` |
-| `rikugan/memory/notes.py` | Modify | Workspace paths, locked atomic writes và index metadata |
-| `rikugan/memory/report.py` | Modify | Workspace service/report index, no path derivation |
-| `rikugan/memory/raw_store.py` | Modify | Legacy/interchange-only marker; không runtime export |
-| `rikugan/memory/paths.py` | Modify | Giữ entity-ID helpers; retire folder layout functions |
-| `rikugan/memory/__init__.py` | Modify | Export central runtime API, không export raw store runtime |
-| `rikugan/agent/system_prompt.py` | Modify | Load unmanaged `MEMORY.md` and structured binary context |
-| `rikugan/agent/loop.py` | Modify | Frozen service/context/authority; replace all memory pseudo-tool handlers |
-| `rikugan/agent/loop_commands.py` | Modify | `/memory`, `/knowledge`, `/report`, `/memory sync/import-legacy` |
-| `rikugan/agent/modes/plan.py` | Modify | Approved plan persistence through service |
-| `rikugan/agent/modes/research.py` | Modify | Workspace notes and candidate-only subagent behavior |
-| `rikugan/agent/pseudo_tool_schemas.py` | Modify | `MEMORY.md` terminology and capability exposure |
-| `rikugan/agent/subagent.py` | Modify | Read snapshot only; no write authority/schema |
-| `rikugan/agent/bulk_renamer.py` | Modify | Candidate events only |
-| `rikugan/ui/session_controller_base.py` | Modify | Construct service/authority and activate feature |
-| `rikugan/ui/panel_core.py` | Modify | Workspace-aware Knowledge panel, legacy banner, cache clearing |
-| `rikugan/ui/knowledge_panel.py` | Modify | Status, import/sync/conflict UI and central rows |
-| `rikugan/core/config.py` | Modify | Enable cutover, explicit migration/sync settings |
+| `lucnhan/memory/authority.py` | Create | Non-serializable write authority và candidate events |
+| `lucnhan/memory/service.py` | Create | Binary-memory façade cho prompt/retrieval/write/note/report |
+| `lucnhan/memory/repository.py` | Create | Adapter query/write giữa current knowledge dataclasses và SQLite workspace |
+| `lucnhan/memory/legacy.py` | Create | Detect, inventory, fingerprint, preview và minimal explicit import |
+| `lucnhan/memory/context.py` | Modify | Repository protocol thay `KnowledgeRawStore`; managed/unmanaged split |
+| `lucnhan/memory/retrieve.py` | Modify | Repository protocol và SQLite-safe read behavior |
+| `lucnhan/memory/ingest.py` | Modify | Authority-bound service writes; bỏ runtime `make_store(idb_path)` |
+| `lucnhan/memory/notes.py` | Modify | Workspace paths, locked atomic writes và index metadata |
+| `lucnhan/memory/report.py` | Modify | Workspace service/report index, no path derivation |
+| `lucnhan/memory/raw_store.py` | Modify | Legacy/interchange-only marker; không runtime export |
+| `lucnhan/memory/paths.py` | Modify | Giữ entity-ID helpers; retire folder layout functions |
+| `lucnhan/memory/__init__.py` | Modify | Export central runtime API, không export raw store runtime |
+| `lucnhan/agent/system_prompt.py` | Modify | Load unmanaged `MEMORY.md` and structured binary context |
+| `lucnhan/agent/loop.py` | Modify | Frozen service/context/authority; replace all memory pseudo-tool handlers |
+| `lucnhan/agent/loop_commands.py` | Modify | `/memory`, `/knowledge`, `/report`, `/memory sync/import-legacy` |
+| `lucnhan/agent/modes/plan.py` | Modify | Approved plan persistence through service |
+| `lucnhan/agent/modes/research.py` | Modify | Workspace notes and candidate-only subagent behavior |
+| `lucnhan/agent/pseudo_tool_schemas.py` | Modify | `MEMORY.md` terminology and capability exposure |
+| `lucnhan/agent/subagent.py` | Modify | Read snapshot only; no write authority/schema |
+| `lucnhan/agent/bulk_renamer.py` | Modify | Candidate events only |
+| `lucnhan/ui/session_controller_base.py` | Modify | Construct service/authority and activate feature |
+| `lucnhan/ui/panel_core.py` | Modify | Workspace-aware Knowledge panel, legacy banner, cache clearing |
+| `lucnhan/ui/knowledge_panel.py` | Modify | Status, import/sync/conflict UI and central rows |
+| `lucnhan/core/config.py` | Modify | Enable cutover, explicit migration/sync settings |
 | `README.md`, `ARCHITECTURE.md`, `AGENTS.md`, `CLAUDE.md`, `llms.txt` | Modify | New canonical contract |
 | `tests/memory/test_authority.py` | Create | Main-agent-only write enforcement |
 | `tests/memory/test_repository.py` | Create | SQLite adapter retrieval/write parity |
@@ -70,7 +70,7 @@
 ### Task 1: Main-agent write authority and candidate protocol
 
 **Files:**
-- Create: `rikugan/memory/authority.py`
+- Create: `lucnhan/memory/authority.py`
 - Create: `tests/memory/test_authority.py`
 
 **Interfaces:**
@@ -87,8 +87,8 @@ import pickle
 
 import pytest
 
-from rikugan.memory.authority import MemoryAuthorityIssuer, MemoryWriteDenied
-from rikugan.memory.workspace import MemoryRunContext, new_memory_id
+from lucnhan.memory.authority import MemoryAuthorityIssuer, MemoryWriteDenied
+from lucnhan.memory.workspace import MemoryRunContext, new_memory_id
 
 
 def _context() -> MemoryRunContext:
@@ -204,7 +204,7 @@ Run: `uv run python -m pytest tests/memory/test_authority.py -v`
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/authority.py tests/memory/test_authority.py
+git add lucnhan/memory/authority.py tests/memory/test_authority.py
 git commit -m "feat(memory): enforce main-agent write authority"
 ```
 
@@ -213,9 +213,9 @@ git commit -m "feat(memory): enforce main-agent write authority"
 ### Task 2: SQLite repository adapter for current knowledge contracts
 
 **Files:**
-- Create: `rikugan/memory/repository.py`
+- Create: `lucnhan/memory/repository.py`
 - Create: `tests/memory/test_repository.py`
-- Modify: `rikugan/memory/schema.py`
+- Modify: `lucnhan/memory/schema.py`
 
 **Interfaces:**
 - Consumes: `WorkspaceStore`, legacy `KnowledgeMemory/Entity/Relation/Observation` contracts.
@@ -231,10 +231,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.schema import KnowledgeEntity, KnowledgeMemory, KnowledgeRelation
-from rikugan.memory.workspace import MemoryLocator, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.schema import KnowledgeEntity, KnowledgeMemory, KnowledgeRelation
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def test_repository_round_trips_current_knowledge_shapes(tmp_path: Path) -> None:
@@ -280,7 +280,7 @@ Expected: FAIL because repository and `owner_memory_id` do not exist.
 
 - [ ] **Step 3: Rename trust-bearing record field**
 
-In `rikugan/memory/schema.py`, replace `binary_id` with `owner_memory_id` in all structured dataclasses and serialization. Add a legacy loader helper:
+In `lucnhan/memory/schema.py`, replace `binary_id` with `owner_memory_id` in all structured dataclasses and serialization. Add a legacy loader helper:
 
 ```python
 @classmethod
@@ -362,7 +362,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/memory/repository.py rikugan/memory/schema.py tests/memory/test_repository.py
+git add lucnhan/memory/repository.py lucnhan/memory/schema.py tests/memory/test_repository.py
 git commit -m "feat(memory): adapt knowledge records to sqlite"
 ```
 
@@ -371,12 +371,12 @@ git commit -m "feat(memory): adapt knowledge records to sqlite"
 ### Task 3: Retrieval/context decoupling and `BinaryMemoryService`
 
 **Files:**
-- Create: `rikugan/memory/service.py`
-- Modify: `rikugan/memory/retrieve.py:20-38,168-281`
-- Modify: `rikugan/memory/context.py:19-32,75-189`
-- Modify: `rikugan/memory/markdown.py`
+- Create: `lucnhan/memory/service.py`
+- Modify: `lucnhan/memory/retrieve.py:20-38,168-281`
+- Modify: `lucnhan/memory/context.py:19-32,75-189`
+- Modify: `lucnhan/memory/markdown.py`
 - Create: `tests/memory/test_service.py`
-- Modify: `rikugan/tests/knowledge/test_retrieve_context.py` and move/copy coverage to `tests/memory/test_retrieve_context.py`
+- Modify: `lucnhan/tests/knowledge/test_retrieve_context.py` and move/copy coverage to `tests/memory/test_retrieve_context.py`
 
 **Interfaces:**
 - Consumes: repository, projector, authority, run context, config budgets. `BinaryMemoryService` receives the controller-owned `MemoryAuthorityIssuer` by dependency injection; the issuer itself never enters `AgentLoop` or subagents.
@@ -391,10 +391,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.memory.authority import MemoryAuthorityIssuer
-from rikugan.memory.service import BinaryMemoryService
-from rikugan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.authority import MemoryAuthorityIssuer
+from lucnhan.memory.service import BinaryMemoryService
+from lucnhan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def test_prompt_uses_sqlite_managed_facts_and_markdown_unmanaged_notes(tmp_path: Path) -> None:
@@ -427,7 +427,7 @@ def test_prompt_uses_sqlite_managed_facts_and_markdown_unmanaged_notes(tmp_path:
     assert "Uses RC4" in structured
     assert "Check key schedule" not in structured
     assert "Check key schedule" in manual
-    assert "rikugan:record" not in manual
+    assert "lucnhan:record" not in manual
 ```
 
 - [ ] **Step 2: Run and verify missing service**
@@ -494,7 +494,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/memory/service.py rikugan/memory/retrieve.py rikugan/memory/context.py rikugan/memory/markdown.py tests/memory/test_service.py tests/memory/test_retrieve_context.py rikugan/tests/knowledge/test_retrieve_context.py
+git add lucnhan/memory/service.py lucnhan/memory/retrieve.py lucnhan/memory/context.py lucnhan/memory/markdown.py tests/memory/test_service.py tests/memory/test_retrieve_context.py lucnhan/tests/knowledge/test_retrieve_context.py
 git commit -m "feat(memory): centralize binary memory service"
 ```
 
@@ -503,12 +503,12 @@ git commit -m "feat(memory): centralize binary memory service"
 ### Task 4: Workspace notes and reports
 
 **Files:**
-- Modify: `rikugan/memory/notes.py:1-268`
-- Modify: `rikugan/memory/report.py:299-550`
-- Modify: `rikugan/memory/workspace_store.py`
-- Modify: `rikugan/memory/service.py`
+- Modify: `lucnhan/memory/notes.py:1-268`
+- Modify: `lucnhan/memory/report.py:299-550`
+- Modify: `lucnhan/memory/workspace_store.py`
+- Modify: `lucnhan/memory/service.py`
 - Create: `tests/memory/test_notes_reports.py`
-- Modify/Move: `rikugan/tests/knowledge/test_notes.py`, `rikugan/tests/knowledge/test_report.py`
+- Modify/Move: `lucnhan/tests/knowledge/test_notes.py`, `lucnhan/tests/knowledge/test_report.py`
 
 **Interfaces:**
 - Consumes: service authority/context, `WorkspacePaths.notes/reports`, workspace lock.
@@ -564,7 +564,7 @@ Run: `uv run python -m pytest tests/memory/test_notes_reports.py tests/memory/te
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/notes.py rikugan/memory/report.py rikugan/memory/workspace_store.py rikugan/memory/service.py tests/memory/test_notes_reports.py rikugan/tests/knowledge/test_notes.py rikugan/tests/knowledge/test_report.py
+git add lucnhan/memory/notes.py lucnhan/memory/report.py lucnhan/memory/workspace_store.py lucnhan/memory/service.py tests/memory/test_notes_reports.py lucnhan/tests/knowledge/test_notes.py lucnhan/tests/knowledge/test_report.py
 git commit -m "feat(memory): isolate workspace notes and reports"
 ```
 
@@ -573,11 +573,11 @@ git commit -m "feat(memory): isolate workspace notes and reports"
 ### Task 5: Minimal explicit legacy inventory and import
 
 **Files:**
-- Create: `rikugan/memory/legacy.py`
+- Create: `lucnhan/memory/legacy.py`
 - Create: `tests/memory/test_legacy.py`
-- Modify: `rikugan/memory/service.py`
-- Modify: `rikugan/memory/workspace_store.py`
-- Modify: `rikugan/memory/registry.py`
+- Modify: `lucnhan/memory/service.py`
+- Modify: `lucnhan/memory/workspace_store.py`
+- Modify: `lucnhan/memory/registry.py`
 
 **Interfaces:**
 - Produces: `LegacySource`, `LegacyInventory`, `LegacyImportItem`, `LegacyImportSelection`, `LegacyImportReceipt`, `LegacyImportGraph`, `LegacyImportResult`, `detect_legacy_sources(idb_path)`, `inventory_legacy_sources()`, `import_legacy_selection()`.
@@ -591,19 +591,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.memory.legacy import detect_legacy_sources
+from lucnhan.memory.legacy import detect_legacy_sources
 
 
 def test_detects_legacy_sources_without_reading_them_into_context(tmp_path: Path) -> None:
     idb = tmp_path / "a.i64"
     idb.write_bytes(b"idb")
     (tmp_path / "RIKUGAN.md").write_text("legacy secret", encoding="utf-8")
-    (tmp_path / ".rikugan-kb").mkdir()
+    (tmp_path / ".lucnhan-kb").mkdir()
     (tmp_path / "notes").mkdir()
 
     sources = detect_legacy_sources(str(idb))
 
-    assert {source.kind for source in sources} == {"rikugan_markdown", "jsonl_store", "notes_tree"}
+    assert {source.kind for source in sources} == {"lucnhan_markdown", "jsonl_store", "notes_tree"}
     assert all(source.content is None for source in sources)
 ```
 
@@ -674,7 +674,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/memory/legacy.py rikugan/memory/service.py rikugan/memory/workspace_store.py rikugan/memory/registry.py tests/memory/test_legacy.py
+git add lucnhan/memory/legacy.py lucnhan/memory/service.py lucnhan/memory/workspace_store.py lucnhan/memory/registry.py tests/memory/test_legacy.py
 git commit -m "feat(memory): add explicit legacy memory import"
 ```
 
@@ -683,12 +683,12 @@ git commit -m "feat(memory): add explicit legacy memory import"
 ### Task 6: Agent prompt, `save_memory`, approved plans, and commands cutover
 
 **Files:**
-- Modify: `rikugan/agent/system_prompt.py:20-96,104-183`
-- Modify: `rikugan/agent/loop.py:84-88,248-289,441-566,1454-1647,2081-2092`
-- Modify: `rikugan/agent/loop_commands.py:48-124,211-369`
-- Modify: `rikugan/agent/modes/plan.py:109-128`
-- Modify: `rikugan/agent/pseudo_tool_schemas.py:24-220`
-- Modify: `rikugan/ui/session_controller_base.py`
+- Modify: `lucnhan/agent/system_prompt.py:20-96,104-183`
+- Modify: `lucnhan/agent/loop.py:84-88,248-289,441-566,1454-1647,2081-2092`
+- Modify: `lucnhan/agent/loop_commands.py:48-124,211-369`
+- Modify: `lucnhan/agent/modes/plan.py:109-128`
+- Modify: `lucnhan/agent/pseudo_tool_schemas.py:24-220`
+- Modify: `lucnhan/ui/session_controller_base.py`
 - Create: `tests/agent/test_memory_cutover.py`
 - Modify: `tests/agent/test_system_prompt.py`
 
@@ -735,7 +735,7 @@ Remove only `idb_dir` plus `_load_persistent_memory(idb_dir)` and its path cache
 
 - [ ] **Step 5: Remove raw append helper and delegate pseudo-tools**
 
-Add canonical pseudo-tool name constants in `rikugan/constants.py` for binary persistence and later case promotion; schema construction and dispatch compare only those constants. Delete `_MEMORY_HEADER` and `append_to_memory_file()`. `_handle_save_memory_tool()` calls:
+Add canonical pseudo-tool name constants in `lucnhan/constants.py` for binary persistence and later case promotion; schema construction and dispatch compare only those constants. Delete `_MEMORY_HEADER` and `append_to_memory_file()`. `_handle_save_memory_tool()` calls:
 
 ```python
 result = self.memory_service.save_fact(
@@ -760,14 +760,14 @@ Expected: PASS.
 
 - [ ] **Step 8: Assert no agent runtime legacy reads/writes**
 
-Run: `git grep -n "RIKUGAN.md\|append_to_memory_file\|make_store(self.session.idb_path)" -- rikugan/agent`
+Run: `git grep -n "RIKUGAN.md\|append_to_memory_file\|make_store(self.session.idb_path)" -- lucnhan/agent`
 
-Expected: no runtime matches; migration detection strings may exist only under `rikugan/memory/legacy.py`.
+Expected: no runtime matches; migration detection strings may exist only under `lucnhan/memory/legacy.py`.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add rikugan/constants.py rikugan/agent/system_prompt.py rikugan/agent/loop.py rikugan/agent/loop_commands.py rikugan/agent/modes/plan.py rikugan/agent/pseudo_tool_schemas.py rikugan/ui/session_controller_base.py tests/agent/test_memory_cutover.py tests/agent/test_system_prompt.py
+git add lucnhan/constants.py lucnhan/agent/system_prompt.py lucnhan/agent/loop.py lucnhan/agent/loop_commands.py lucnhan/agent/modes/plan.py lucnhan/agent/pseudo_tool_schemas.py lucnhan/ui/session_controller_base.py tests/agent/test_memory_cutover.py tests/agent/test_system_prompt.py
 git commit -m "feat(memory): cut agent memory over atomically"
 ```
 
@@ -776,10 +776,10 @@ git commit -m "feat(memory): cut agent memory over atomically"
 ### Task 7: Research mode, subagents, and Bulk Renamer write ownership
 
 **Files:**
-- Modify: `rikugan/agent/modes/research.py:43-104,130-240,351-526`
-- Modify: `rikugan/agent/subagent.py:72-103,137-168,194-228`
-- Modify: `rikugan/agent/bulk_renamer.py`
-- Modify: `rikugan/agent/loop.py`
+- Modify: `lucnhan/agent/modes/research.py:43-104,130-240,351-526`
+- Modify: `lucnhan/agent/subagent.py:72-103,137-168,194-228`
+- Modify: `lucnhan/agent/bulk_renamer.py`
+- Modify: `lucnhan/agent/loop.py`
 - Create: `tests/agent/test_memory_write_ownership.py`
 
 **Interfaces:**
@@ -847,7 +847,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/agent/modes/research.py rikugan/agent/subagent.py rikugan/agent/bulk_renamer.py rikugan/agent/loop.py tests/agent/test_memory_write_ownership.py
+git add lucnhan/agent/modes/research.py lucnhan/agent/subagent.py lucnhan/agent/bulk_renamer.py lucnhan/agent/loop.py tests/agent/test_memory_write_ownership.py
 git commit -m "fix(memory): restrict persistence to main agent"
 ```
 
@@ -856,9 +856,9 @@ git commit -m "fix(memory): restrict persistence to main agent"
 ### Task 8: Knowledge UI, database switching, sync and legacy import UX
 
 **Files:**
-- Modify: `rikugan/ui/knowledge_panel.py:58-301`
-- Modify: `rikugan/ui/panel_core.py:1269-1317,1490-1500,1933-1967,2464-2528`
-- Modify: `rikugan/ui/session_controller_base.py`
+- Modify: `lucnhan/ui/knowledge_panel.py:58-301`
+- Modify: `lucnhan/ui/panel_core.py:1269-1317,1490-1500,1933-1967,2464-2528`
+- Modify: `lucnhan/ui/session_controller_base.py`
 - Create: `tests/ui/test_memory_workspace_ui.py`
 - Modify: `tests/tools/test_panel_core.py`
 
@@ -922,7 +922,7 @@ Run: `uv run python -m pytest tests/ui/test_memory_workspace_ui.py tests/tools/t
 Expected: PASS.
 
 ```bash
-git add rikugan/ui/knowledge_panel.py rikugan/ui/panel_core.py rikugan/ui/session_controller_base.py tests/ui/test_memory_workspace_ui.py tests/tools/test_panel_core.py
+git add lucnhan/ui/knowledge_panel.py lucnhan/ui/panel_core.py lucnhan/ui/session_controller_base.py tests/ui/test_memory_workspace_ui.py tests/tools/test_panel_core.py
 git commit -m "feat(memory): bind knowledge ui to workspaces"
 ```
 
@@ -931,11 +931,11 @@ git commit -m "feat(memory): bind knowledge ui to workspaces"
 ### Task 9: Retire runtime JSONL/folder APIs and move coverage into CI root
 
 **Files:**
-- Modify: `rikugan/memory/raw_store.py`
-- Modify: `rikugan/memory/paths.py`
-- Modify: `rikugan/memory/ingest.py`
-- Modify: `rikugan/memory/__init__.py`
-- Move/Rewrite: `rikugan/tests/knowledge/*.py` → `tests/memory/legacy_knowledge/*.py`
+- Modify: `lucnhan/memory/raw_store.py`
+- Modify: `lucnhan/memory/paths.py`
+- Modify: `lucnhan/memory/ingest.py`
+- Modify: `lucnhan/memory/__init__.py`
+- Move/Rewrite: `lucnhan/tests/knowledge/*.py` → `tests/memory/legacy_knowledge/*.py`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `.github/workflows/release.yml`
 - Modify: `ci-local.sh`
@@ -952,13 +952,13 @@ git commit -m "feat(memory): bind knowledge ui to workspaces"
 ```python
 def test_runtime_modules_do_not_import_raw_store() -> None:
     forbidden = {
-        "rikugan.agent.loop",
-        "rikugan.agent.loop_commands",
-        "rikugan.agent.system_prompt",
-        "rikugan.ui.panel_core",
-        "rikugan.memory.context",
-        "rikugan.memory.retrieve",
-        "rikugan.memory.report",
+        "lucnhan.agent.loop",
+        "lucnhan.agent.loop_commands",
+        "lucnhan.agent.system_prompt",
+        "lucnhan.ui.panel_core",
+        "lucnhan.memory.context",
+        "lucnhan.memory.retrieve",
+        "lucnhan.memory.report",
     }
     for module_name in forbidden:
         source = inspect.getsource(importlib.import_module(module_name))
@@ -985,10 +985,10 @@ Move and rewrite the nested suite to exercise `SQLiteKnowledgeRepository`, `Bina
 Even after migration, change CI/release/local commands to:
 
 ```bash
-python -m pytest tests/ rikugan/tests/ -v --tb=short
+python -m pytest tests/ lucnhan/tests/ -v --tb=short
 ```
 
-until `rikugan/tests/` is empty and deleted in a later cleanup commit. Add pytest `testpaths = ["tests", "rikugan/tests"]` in `pyproject.toml` to prevent a third hidden tree.
+until `lucnhan/tests/` is empty and deleted in a later cleanup commit. Add pytest `testpaths = ["tests", "lucnhan/tests"]` in `pyproject.toml` to prevent a third hidden tree.
 
 - [ ] **Step 6: Run discipline and complete test inventory**
 
@@ -996,14 +996,14 @@ Run: `uv run python -m pytest tests/memory/test_runtime_import_discipline.py tes
 
 Expected: PASS.
 
-Run: `uv run python -m pytest --collect-only -q tests/ rikugan/tests/`
+Run: `uv run python -m pytest --collect-only -q tests/ lucnhan/tests/`
 
 Expected: collection includes all remaining tests and no duplicate module-name errors.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/memory/raw_store.py rikugan/memory/paths.py rikugan/memory/ingest.py rikugan/memory/__init__.py tests/memory rikugan/tests/knowledge pyproject.toml .github/workflows/ci.yml .github/workflows/release.yml ci-local.sh ci-local.ps1 DEVELOPMENT.md
+git add lucnhan/memory/raw_store.py lucnhan/memory/paths.py lucnhan/memory/ingest.py lucnhan/memory/__init__.py tests/memory lucnhan/tests/knowledge pyproject.toml .github/workflows/ci.yml .github/workflows/release.yml ci-local.sh ci-local.ps1 DEVELOPMENT.md
 git commit -m "refactor(memory): retire runtime jsonl storage"
 ```
 
@@ -1012,13 +1012,13 @@ git commit -m "refactor(memory): retire runtime jsonl storage"
 ### Task 10: Activate central memory and update documentation atomically
 
 **Files:**
-- Modify: `rikugan/core/config.py`
+- Modify: `lucnhan/core/config.py`
 - Modify: `README.md`
 - Modify: `ARCHITECTURE.md`
 - Modify: `AGENTS.md`
 - Modify: `CLAUDE.md`
 - Modify: `llms.txt`
-- Modify: `rikugan/memory/__init__.py`
+- Modify: `lucnhan/memory/__init__.py`
 - Modify: `tests/memory/test_config.py`
 - Create: `tests/memory/test_atomic_cutover.py`
 
@@ -1031,24 +1031,24 @@ git commit -m "refactor(memory): retire runtime jsonl storage"
 ```python
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
+from lucnhan.core.config import LucNhanConfig
 
 
 def test_cutover_defaults_to_central_memory_without_legacy_fallback(tmp_path: Path) -> None:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path / "config")
     assert config.memory_workspaces_enabled is True
 
     source_files = [
-        Path("rikugan/agent/loop.py"),
-        Path("rikugan/agent/system_prompt.py"),
-        Path("rikugan/agent/loop_commands.py"),
-        Path("rikugan/ui/panel_core.py"),
+        Path("lucnhan/agent/loop.py"),
+        Path("lucnhan/agent/system_prompt.py"),
+        Path("lucnhan/agent/loop_commands.py"),
+        Path("lucnhan/ui/panel_core.py"),
     ]
     for source_file in source_files:
         source = source_file.read_text(encoding="utf-8")
         assert "RIKUGAN.md" not in source
-        assert ".rikugan-kb" not in source
+        assert ".lucnhan-kb" not in source
 ```
 
 - [ ] **Step 2: Run and verify default is still dark**
@@ -1083,13 +1083,13 @@ Expected: PASS.
 
 - [ ] **Step 6: Run full repository gates**
 
-Run: `uv run python -m pytest tests/ rikugan/tests/ -q`
+Run: `uv run python -m pytest tests/ lucnhan/tests/ -q`
 
-Run: `uvx ruff format --check rikugan/ tests/`
+Run: `uvx ruff format --check lucnhan/ tests/`
 
-Run: `uvx ruff check rikugan/ tests/`
+Run: `uvx ruff check lucnhan/ tests/`
 
-Run: `uvx mypy rikugan/core rikugan/providers --pretty`
+Run: `uvx mypy lucnhan/core lucnhan/providers --pretty`
 
 Run: `uv lock --check`
 
@@ -1097,14 +1097,14 @@ Expected: PASS. Regenerate and commit `uv.lock` if dependency/version metadata c
 
 - [ ] **Step 7: Search for forbidden runtime paths**
 
-Run: `git grep -n "RIKUGAN.md\|\.rikugan-kb\|dirname(.*idb" -- rikugan ':!rikugan/memory/legacy.py' ':!rikugan/memory/raw_store.py'`
+Run: `git grep -n "RIKUGAN.md\|\.lucnhan-kb\|dirname(.*idb" -- lucnhan ':!lucnhan/memory/legacy.py' ':!lucnhan/memory/raw_store.py'`
 
 Expected: no runtime matches. Documentation may mention `RIKUGAN.md` only as legacy import source.
 
 - [ ] **Step 8: Commit activation**
 
 ```bash
-git add rikugan/core/config.py README.md ARCHITECTURE.md AGENTS.md CLAUDE.md llms.txt rikugan/memory/__init__.py tests/memory/test_config.py tests/memory/test_atomic_cutover.py uv.lock
+git add lucnhan/core/config.py README.md ARCHITECTURE.md AGENTS.md CLAUDE.md llms.txt lucnhan/memory/__init__.py tests/memory/test_config.py tests/memory/test_atomic_cutover.py uv.lock
 git commit -m "feat(memory): activate central binary workspaces"
 ```
 
@@ -1113,7 +1113,7 @@ git commit -m "feat(memory): activate central binary workspaces"
 ## Atomic Cutover Exit Checklist
 
 - [ ] Every runtime memory consumer uses `BinaryMemoryService`/workspace repository.
-- [ ] No runtime `RIKUGAN.md`, folder `.rikugan-kb`, or folder `notes/` read/write remains.
+- [ ] No runtime `RIKUGAN.md`, folder `.lucnhan-kb`, or folder `notes/` read/write remains.
 - [ ] Managed facts come from SQLite; unmanaged Markdown is labeled/sanitized separately.
 - [ ] Approved plans, research notes, reports and pseudo-tools honor write authority.
 - [ ] Subagents/Bulk Renamer only emit candidates.

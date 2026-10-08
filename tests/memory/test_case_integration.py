@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.case_schema import (
+from lucnhan.memory.case_repository import CaseRepository
+from lucnhan.memory.case_schema import (
     CaseRelationType,
     canonicalize_relation_endpoints,
 )
-from rikugan.memory.registry import MemoryRegistry
-from rikugan.memory.workspace import MemoryLocator
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.registry import MemoryRegistry
+from lucnhan.memory.workspace import MemoryLocator
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _setup_registry(tmp_path: Path) -> tuple[CaseRepository, MemoryRegistry, MemoryLocator]:
@@ -57,7 +57,7 @@ class TestCaseEndToEnd:
         store = WorkspaceStore.create(case_paths, owner_memory_id=case.case_id, workspace_kind="case")
 
         # Case workspace can hold facts independently from binary workspaces
-        from rikugan.memory.workspace import new_record_id
+        from lucnhan.memory.workspace import new_record_id
 
         fid = new_record_id("fact")
         store.put_fact(fid, "shared", "Finding", "Cross-binary finding", 0.9, expected_revision=0)

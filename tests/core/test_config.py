@@ -1,4 +1,4 @@
-"""Tests for RikuganConfig encryption semantics around save()/load().
+"""Tests for LucNhanConfig encryption semantics around save()/load().
 
 Pins the password-less save() contract: when ``encrypt_api_keys`` is on, a
 ``save()`` without a password must never write plaintext API keys to disk nor
@@ -12,19 +12,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import rikugan.core.config as config_module
-from rikugan.core.config import RikuganConfig
+import lucnhan.core.config as config_module
+from lucnhan.core.config import LucNhanConfig
 
 CONFIG_FILE = "config.json"
 
 
-def _config(tmp_path: Path) -> RikuganConfig:
-    cfg = RikuganConfig()
+def _config(tmp_path: Path) -> LucNhanConfig:
+    cfg = LucNhanConfig()
     cfg._config_dir = str(tmp_path)
     return cfg
 
 
-def _encrypted_config(tmp_path: Path, password: str = "pw123") -> RikuganConfig:
+def _encrypted_config(tmp_path: Path, password: str = "pw123") -> LucNhanConfig:
     """Create a config with one encrypted key on disk and return it."""
     cfg = _config(tmp_path)
     cfg.provider.api_key = "sk-secret"
@@ -33,7 +33,7 @@ def _encrypted_config(tmp_path: Path, password: str = "pw123") -> RikuganConfig:
     return cfg
 
 
-def _decrypt_like_session_start(cfg: RikuganConfig, password: str = "pw123") -> None:
+def _decrypt_like_session_start(cfg: LucNhanConfig, password: str = "pw123") -> None:
     """Mimic panel_core.py:239 → _prompt_decryption_password()."""
     assert cfg.has_encrypted_keys() is True
     assert cfg.decrypt_stored_keys(password) is True
@@ -172,32 +172,32 @@ def test_blob_round_trips_through_load_and_save(tmp_path: Path) -> None:
 
 
 def test_truthy_string_does_not_enable_oauth_consent() -> None:
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._apply_loaded_config({"oauth_consent_accepted": "yes"})
     assert cfg.oauth_consent_accepted is False
 
 
 def test_truthy_string_does_not_enable_preserve_context() -> None:
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._apply_loaded_config({"preserve_context": "true"})
     assert cfg.preserve_context is False
 
 
 def test_truthy_string_does_not_disable_a2a_auto_discover() -> None:
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._apply_loaded_config({"a2a_auto_discover": "0"})
     assert cfg.a2a_auto_discover is True  # default preserved
 
 
 def test_truthy_string_does_not_enable_encrypt_api_keys() -> None:
     # Security-critical gate: must never silently flip from a truthy string.
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._apply_loaded_config({"encrypt_api_keys": "yes"})
     assert cfg.encrypt_api_keys is False
 
 
 def test_real_bool_oauth_consent_is_accepted() -> None:
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._apply_loaded_config({"oauth_consent_accepted": True})
     assert cfg.oauth_consent_accepted is True
 
@@ -206,7 +206,7 @@ def test_string_temperature_loads_and_validate_returns_errors_not_raises() -> No
     # Hand-edited config: temperature arrived as a JSON string.
     # _apply_loaded_config must coerce-or-skip so validate() never sees a
     # non-numeric temperature (which would raise TypeError on "<=").
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._apply_loaded_config({
         "provider": {
             "name": "anthropic",
@@ -220,28 +220,28 @@ def test_string_temperature_loads_and_validate_returns_errors_not_raises() -> No
     assert isinstance(errors, list)
 
 def test_garbage_temperature_is_rejected_not_loaded() -> None:
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._apply_loaded_config({
         "provider": {"temperature": "not-a-number"}
     })
     # Bad value skipped; default temperature is preserved.
-    from rikugan.constants import DEFAULT_TEMPERATURE
+    from lucnhan.constants import DEFAULT_TEMPERATURE
     assert cfg.provider.temperature == DEFAULT_TEMPERATURE
 
 
 def test_garbage_max_tokens_is_rejected_not_loaded() -> None:
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._apply_loaded_config({
         "provider": {"max_tokens": "lots"}
     })
-    from rikugan.constants import DEFAULT_MAX_TOKENS
+    from lucnhan.constants import DEFAULT_MAX_TOKENS
     assert cfg.provider.max_tokens == DEFAULT_MAX_TOKENS
 
 
 def test_garbage_context_window_is_rejected_not_loaded() -> None:
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._apply_loaded_config({
         "provider": {"context_window": "huge"}
     })
-    from rikugan.constants import DEFAULT_CONTEXT_WINDOW
+    from lucnhan.constants import DEFAULT_CONTEXT_WINDOW
     assert cfg.provider.context_window == DEFAULT_CONTEXT_WINDOW

@@ -19,7 +19,7 @@
 - No dual write, no `RIKUGAN.md` fallback, no live JSONL authority.
 - Do not begin Plan 3 until all binary-memory consumers are cut over.
 - Do not begin Plan 4 until case schema/promotion/source-drift semantics are stable.
-- All newly added tests live under root `tests/`; both `tests/` and `rikugan/tests/` run at every phase gate.
+- All newly added tests live under root `tests/`; both `tests/` and `lucnhan/tests/` run at every phase gate.
 - Never commit `.cocoindex_code/`, temporary DBs, bundles, lock files or user memory artifacts.
 
 ---
@@ -98,16 +98,16 @@ These files recur across plans and must be edited sequentially:
 
 | Shared file | Owning sequence |
 |---|---|
-| `rikugan/memory/workspace_store.py` | Foundation T6 → Cutover T4/T5 → Cases T4/T6 → Hardening T4/T9 |
-| `rikugan/memory/registry.py` | Foundation T3/T4 → Cutover T5 → Cases T2 → Hardening T6 |
-| `rikugan/memory/manager.py` | Foundation T8 → Cases T3 |
-| `rikugan/memory/markdown.py` | Foundation T7 → Cutover T3 → Hardening T1/T8 |
-| `rikugan/memory/service.py` | Cutover T3–T5 → Hardening T3–T7 |
-| `rikugan/agent/loop.py` | Cutover T6/T7 → Cases T7/T8 |
-| `rikugan/agent/loop_commands.py` | Cutover T6 → Cases T8 → Hardening T7 |
-| `rikugan/ui/session_controller_base.py` | Foundation T8 → Cutover T8 → Cases T3/T9 |
-| `rikugan/ui/knowledge_panel.py` and `panel_core.py` | Cutover T8 → Cases T9 → Hardening T7 |
-| `rikugan/core/config.py` | Foundation T1 → Cutover T10 → Cases T7 |
+| `lucnhan/memory/workspace_store.py` | Foundation T6 → Cutover T4/T5 → Cases T4/T6 → Hardening T4/T9 |
+| `lucnhan/memory/registry.py` | Foundation T3/T4 → Cutover T5 → Cases T2 → Hardening T6 |
+| `lucnhan/memory/manager.py` | Foundation T8 → Cases T3 |
+| `lucnhan/memory/markdown.py` | Foundation T7 → Cutover T3 → Hardening T1/T8 |
+| `lucnhan/memory/service.py` | Cutover T3–T5 → Hardening T3–T7 |
+| `lucnhan/agent/loop.py` | Cutover T6/T7 → Cases T7/T8 |
+| `lucnhan/agent/loop_commands.py` | Cutover T6 → Cases T8 → Hardening T7 |
+| `lucnhan/ui/session_controller_base.py` | Foundation T8 → Cutover T8 → Cases T3/T9 |
+| `lucnhan/ui/knowledge_panel.py` and `panel_core.py` | Cutover T8 → Cases T9 → Hardening T7 |
+| `lucnhan/core/config.py` | Foundation T1 → Cutover T10 → Cases T7 |
 | CI/docs/manifests | Foundation T1 → Cutover T9/T10 → Hardening T10/T11 |
 
 Do not dispatch tasks touching the same row concurrently. Independent new test-only tasks may run in parallel only after their production prerequisites are committed.
@@ -122,10 +122,10 @@ Run:
 
 ```bash
 uv run python -m pytest tests/memory tests/state/test_memory_binding.py tests/cli/test_headless_memory_identity.py tests/ida/test_headless_bootstrap.py tests/agent/test_session_controller.py -v
-uv run python -m pytest tests/ rikugan/tests/ -q
-uvx ruff format --check rikugan/ tests/
-uvx ruff check rikugan/ tests/
-uvx mypy rikugan/core rikugan/providers --pretty
+uv run python -m pytest tests/ lucnhan/tests/ -q
+uvx ruff format --check lucnhan/ tests/
+uvx ruff check lucnhan/ tests/
+uvx mypy lucnhan/core lucnhan/providers --pretty
 ```
 
 Required state:
@@ -141,9 +141,9 @@ Run:
 
 ```bash
 uv run python -m pytest tests/memory tests/agent/test_memory_cutover.py tests/agent/test_memory_write_ownership.py tests/ui/test_memory_workspace_ui.py -v
-uv run python -m pytest tests/ rikugan/tests/ -q
+uv run python -m pytest tests/ lucnhan/tests/ -q
 uv lock --check
-git grep -n "RIKUGAN.md\|\.rikugan-kb" -- rikugan ':!rikugan/memory/legacy.py' ':!rikugan/memory/raw_store.py'
+git grep -n "RIKUGAN.md\|\.lucnhan-kb" -- lucnhan ':!lucnhan/memory/legacy.py' ':!lucnhan/memory/raw_store.py'
 ```
 
 Required state:
@@ -160,7 +160,7 @@ Run:
 
 ```bash
 uv run python -m pytest tests/memory/cases tests/agent/test_case_context.py tests/agent/test_case_commands.py tests/ui/test_case_memory_ui.py -v
-uv run python -m pytest tests/ rikugan/tests/ -q
+uv run python -m pytest tests/ lucnhan/tests/ -q
 ```
 
 Required state:
@@ -177,11 +177,11 @@ Run:
 
 ```bash
 uv run python -m pytest tests/memory/interchange tests/memory/recovery tests/memory/stress -v
-uv run python -m pytest tests/ rikugan/tests/ -q
+uv run python -m pytest tests/ lucnhan/tests/ -q
 uv lock --check
-uvx ruff format --check rikugan/ tests/ scripts/
-uvx ruff check rikugan/ tests/ scripts/
-uvx mypy rikugan/core rikugan/providers --pretty
+uvx ruff format --check lucnhan/ tests/ scripts/
+uvx ruff check lucnhan/ tests/ scripts/
+uvx mypy lucnhan/core lucnhan/providers --pretty
 ```
 
 Required state:

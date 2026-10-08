@@ -20,8 +20,15 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui import message_widgets as _mw
-from rikugan.ui.message_widgets import (
+# A sibling file collected first (tests/tools/test_panel_core.py) installs
+# _StubModule fakes for lucnhan.ui.*; without this purge the imports below
+# bind MagicMocks and every assertion becomes mock arithmetic.
+from tests import purge_lucnhan_stubs
+
+purge_lucnhan_stubs()
+
+from lucnhan.ui import message_widgets as _mw
+from lucnhan.ui.message_widgets import (
     AssistantMessageWidget,
     _HeightCachedLabel,
 )
@@ -215,7 +222,7 @@ class TestThinkingBlockUsesCachedLabel(unittest.TestCase):
         # QLabel base class is resolved at import time and differs between
         # the stubbed and real-Qt test environments. The contract that
         # actually matters for performance is the protocol opt-out.
-        from rikugan.ui.message_widgets import _ThinkingBlock
+        from lucnhan.ui.message_widgets import _ThinkingBlock
 
         block = _ThinkingBlock()
         self.assertFalse(
@@ -237,7 +244,7 @@ class TestToolCallWidgetUsesCachedLabel(unittest.TestCase):
     """
 
     def test_tool_call_labels_opt_out_of_height_for_width(self):
-        from rikugan.ui.tool_widgets import ToolCallWidget
+        from lucnhan.ui.tool_widgets import ToolCallWidget
 
         widget = ToolCallWidget("get_function_info", "tc_1")
         for attr in ("_preview_label", "_args_label", "_result_label"):

@@ -25,14 +25,14 @@ from tests.qt_stubs import ensure_pyside6_stubs
 ensure_pyside6_stubs()
 
 # Ensure the real module is loaded even if a sibling test stubbed it.
-sys.modules.pop("rikugan.ui.history_panel", None)
+sys.modules.pop("lucnhan.ui.history_panel", None)
 
-from rikugan.ui.history_panel import (
+from lucnhan.ui.history_panel import (
     HISTORY_PANEL_CONTENT_MAX_WIDTH,
     HistoryPanel,
     HistoryRowWidget,
 )
-from rikugan.ui.qt_compat import Qt
+from lucnhan.ui.qt_compat import Qt
 
 
 @dataclass(frozen=True)
@@ -287,7 +287,7 @@ class TestSignals(unittest.TestCase):
         attribute set in ``__init__``. Instance-assigned callables
         bypass PySide6's Shiboken dispatch path and can be silently
         masked by a class-level override in a future refactor."""
-        from rikugan.ui.history_panel import HistoryRowWidget
+        from lucnhan.ui.history_panel import HistoryRowWidget
 
         self.assertIn("mouseReleaseEvent", vars(HistoryRowWidget))
         # The descriptor is a function, not a per-instance bound method.
@@ -505,7 +505,7 @@ class TestAccessibility(unittest.TestCase):
         it on display. The stub captures each announcement into a
         thread-local list so the assertion can inspect it.
         """
-        from rikugan.ui.qt_compat import QAccessibleAnnouncementEvent
+        from lucnhan.ui.qt_compat import QAccessibleAnnouncementEvent
 
         panel = HistoryPanel()
         panel.set_entries([_entry("a", "Title")])
@@ -711,7 +711,7 @@ class TestNoForbiddenImports(unittest.TestCase):
         import pathlib
         import re
 
-        source = (pathlib.Path(__file__).parents[2] / "rikugan/ui/history_panel.py").read_text(encoding="utf-8")
+        source = (pathlib.Path(__file__).parents[2] / "lucnhan/ui/history_panel.py").read_text(encoding="utf-8")
         # Word-boundary match so "SessionHistory" inside
         # "SessionHistoryEntry" or comments referring to the DTO class
         # does not trip the assertion. ``SessionHistory`` is the

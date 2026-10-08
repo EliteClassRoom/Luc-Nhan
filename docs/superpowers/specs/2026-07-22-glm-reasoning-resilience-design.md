@@ -27,7 +27,7 @@ A production session using custom provider `glm-coding` and model `glm-5.2` prod
 
 The response repeatedly stated that it was about to call `read_bytes` and `get_pseudocode`, but the upstream stream never emitted a valid `delta.tool_calls` entry. The six tool calls and six tool results immediately preceding the incident had matching IDs, which excludes an orphaned-result failure for this turn.
 
-The direct failure is model-side reasoning degeneration until `finish_reason=length`. Rikugan contributes to the risk because it currently:
+The direct failure is model-side reasoning degeneration until `finish_reason=length`. Luc Nhan contributes to the risk because it currently:
 
 1. routes GLM through the generic OpenAI-compatible adapter;
 2. folds `delta.reasoning_content` into visible `Message.content` using literal `<think>` tags;
@@ -75,7 +75,7 @@ The internal boundaries should remain narrow enough to extract a generic reasoni
 
 ### 6.1 Dedicated GLM provider
 
-Create `rikugan/providers/glm_provider.py` with `GLMProvider(OpenAIProvider)`.
+Create `lucnhan/providers/glm_provider.py` with `GLMProvider(OpenAIProvider)`.
 
 It reuses:
 
@@ -518,7 +518,7 @@ Invalid configuration fails validation with a user-facing field path; it never s
 
 ### 12.3 Persistence fix
 
-`RikuganConfig._snapshot_current_provider()` must retain a deep copy of `provider.extra`; provider switching must restore a deep copy. `_apply_loaded_config()` already restores the active provider's top-level `extra`, so the confirmed defect is switching/snapshot persistence rather than initial disk load.
+`LucNhanConfig._snapshot_current_provider()` must retain a deep copy of `provider.extra`; provider switching must restore a deep copy. `_apply_loaded_config()` already restores the active provider's top-level `extra`, so the confirmed defect is switching/snapshot persistence rather than initial disk load.
 
 This behavior correction applies to all providers that use `extra`, not only GLM. Tests cover aliasing so editing one provider's nested options cannot mutate another snapshot.
 
@@ -529,7 +529,7 @@ API-key handling remains unchanged. Migration must not copy, log, or expose cred
 Add the built-in registry entry:
 
 ```python
-"glm": "rikugan.providers.glm_provider:GLMProvider"
+"glm": "lucnhan.providers.glm_provider:GLMProvider"
 ```
 
 Custom-provider creation selects `GLMProvider` when the saved profile's deep-copied `extra.dialect` is `glm`; otherwise it preserves the existing `OpenAICompatProvider` path. The factory passes `api_key`, `api_base`, `model`, profile name, and validated GLM options explicitly.
@@ -540,7 +540,7 @@ Streaming-tool support is model-specific. `GLMProvider` owns a model-metadata lo
 
 A custom provider is migrated to GLM dialect only when one of these explicit conditions holds:
 
-- its saved provider name is the known `glm-coding` entry created by Rikugan's migration;
+- its saved provider name is the known `glm-coding` entry created by Luc Nhan's migration;
 - its custom-provider configuration already declares `dialect: "glm"`;
 - the user accepts the Settings migration prompt or selects GLM dialect.
 
@@ -600,7 +600,7 @@ Context compaction treats `reasoning_content` as auxiliary assistant context. It
 
 ## 15. Telemetry and diagnostics
 
-Emit one structured record per attempt through the existing `rikugan_structured.jsonl` JSON logging sink; do not add a new sink. Extend `_JSONFormatter` to copy one allowlisted `rikugan_event` dictionary from `LogRecord` into the JSON object. Add `log_structured(event: dict[str, JSONScalar])`, which calls the existing logger with a constant message such as `agent_attempt` and `extra={"rikugan_event": sanitized_event}`. One log record can contain exactly one `rikugan_event`; duplicate assignment is rejected by the helper.
+Emit one structured record per attempt through the existing `lucnhan_structured.jsonl` JSON logging sink; do not add a new sink. Extend `_JSONFormatter` to copy one allowlisted `lucnhan_event` dictionary from `LogRecord` into the JSON object. Add `log_structured(event: dict[str, JSONScalar])`, which calls the existing logger with a constant message such as `agent_attempt` and `extra={"lucnhan_event": sanitized_event}`. One log record can contain exactly one `lucnhan_event`; duplicate assignment is rejected by the helper.
 
 The helper uses an allowlist rather than a heuristic blocklist. Allowed keys are exactly:
 
@@ -614,7 +614,7 @@ guard_trigger, repetition_ratio_millis, recovery_result,
 discarded_attempt
 ```
 
-Values are JSON scalars only. No arbitrary nested dictionaries or extra keys are accepted. Therefore `content`, `reasoning_content`, `text`, `tool_args`, `tool_results`, `raw_parts`, `messages`, `request`, `response`, `authorization`, `api_key`, `error`, and exception strings cannot enter `rikugan_event`. Every allowed string value still passes through `strip_injection_markers()` and `strip_lone_surrogates()` before serialization. The human-readable debug log receives only a compact one-line disposition summary built from the same safe scalar fields, without repetition samples or generated content.
+Values are JSON scalars only. No arbitrary nested dictionaries or extra keys are accepted. Therefore `content`, `reasoning_content`, `text`, `tool_args`, `tool_results`, `raw_parts`, `messages`, `request`, `response`, `authorization`, `api_key`, `error`, and exception strings cannot enter `lucnhan_event`. Every allowed string value still passes through `strip_injection_markers()` and `strip_lone_surrogates()` before serialization. The human-readable debug log receives only a compact one-line disposition summary built from the same safe scalar fields, without repetition samples or generated content.
 
 Emit the structured record without storing reasoning text:
 
@@ -764,20 +764,20 @@ If live recovery proves incompatible with an endpoint, disabling the GLM degener
 
 The implementation plan must account for these concrete surfaces:
 
-- `rikugan/core/types.py`: add `Message.reasoning_content: str = ""`, `StreamChunk.reasoning_delta: str | None = None`, `ProviderCapabilities.reasoning_content/streaming_tool_calls/reasoning_effort: bool = False`, immutable `LLMRequestContext`, and `AttemptUsage` provenance, plus serialization and persisted-reasoning sanitization;
-- `rikugan/core/config.py`: nested GLM validation and deep-copy snapshot/restore in both `_snapshot_current_provider()` and `switch_provider()`;
-- `rikugan/providers/glm_provider.py`: GLM transport dialect;
-- `rikugan/providers/registry.py`: built-in/custom dialect selection and metadata;
-- `rikugan/agent/turn.py`: `REASONING_DELTA`/`RECOVERY_START`, a dedicated reasoning payload field and constructors, and `to_dict()` serialization;
-- `rikugan/agent/loop.py`: `TurnOutcome`, stream accumulation, attempt telemetry;
-- `rikugan/agent/modes/turn_helpers.py`: recovery transaction and durable commit boundary;
-- `rikugan/state/session.py`: `record_usage()` for non-persisted attempts without double counting successful messages;
+- `lucnhan/core/types.py`: add `Message.reasoning_content: str = ""`, `StreamChunk.reasoning_delta: str | None = None`, `ProviderCapabilities.reasoning_content/streaming_tool_calls/reasoning_effort: bool = False`, immutable `LLMRequestContext`, and `AttemptUsage` provenance, plus serialization and persisted-reasoning sanitization;
+- `lucnhan/core/config.py`: nested GLM validation and deep-copy snapshot/restore in both `_snapshot_current_provider()` and `switch_provider()`;
+- `lucnhan/providers/glm_provider.py`: GLM transport dialect;
+- `lucnhan/providers/registry.py`: built-in/custom dialect selection and metadata;
+- `lucnhan/agent/turn.py`: `REASONING_DELTA`/`RECOVERY_START`, a dedicated reasoning payload field and constructors, and `to_dict()` serialization;
+- `lucnhan/agent/loop.py`: `TurnOutcome`, stream accumulation, attempt telemetry;
+- `lucnhan/agent/modes/turn_helpers.py`: recovery transaction and durable commit boundary;
+- `lucnhan/state/session.py`: `record_usage()` for non-persisted attempts without double counting successful messages;
 - direct `_stream_llm_turn()` consumers: plan generation plus the shared `execute_single_turn()` wrapper; exploration remains an indirect `execute_single_turn()` consumer;
-- `rikugan/ui/chat_view.py` and runner queue: separate transient reasoning and recovery boundary;
+- `lucnhan/ui/chat_view.py` and runner queue: separate transient reasoning and recovery boundary;
 - headless/control/A2A event serializers: tolerate and expose new events as specified;
 - Settings dialog/provider controls: GLM-only options and opt-in migration;
 - session history and context compaction: new reasoning field without unresolved tool-pair damage;
-- `rikugan/core/log_sinks.py` and logging facade: allowlisted `rikugan_event` JSON records in the existing sink;
+- `lucnhan/core/log_sinks.py` and logging facade: allowlisted `lucnhan_event` JSON records in the existing sink;
 - provider, agent-loop, config, checkpoint, UI, headless, and cross-provider tests.
 
 The implementation plan must enumerate every direct `_stream_llm_turn()` and `execute_single_turn()` consumer discovered at planning time rather than assuming the current list remains static. At spec-review time, direct `_stream_llm_turn()` consumers are `execute_single_turn()` and plan generation only.

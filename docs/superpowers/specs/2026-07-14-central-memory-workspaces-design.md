@@ -6,9 +6,9 @@
 
 ## 1. Summary
 
-Rikugan currently derives `RIKUGAN.md`, `notes/`, and `.rikugan-kb/` from the parent directory of the active IDB. Multiple IDBs in one directory consequently read and mutate the same persistent artifacts. Structured records carry a `binary_id`, but the physical store and retrieval path are shared, and deterministic IDs such as `func:0x401000` can overwrite records belonging to another binary.
+Luc Nhan currently derives `RIKUGAN.md`, `notes/`, and `.lucnhan-kb/` from the parent directory of the active IDB. Multiple IDBs in one directory consequently read and mutate the same persistent artifacts. Structured records carry a `binary_id`, but the physical store and retrieval path are shared, and deterministic IDs such as `func:0x401000` can overwrite records belonging to another binary.
 
-This design replaces folder-scoped persistence with central, identity-aware workspaces under the Rikugan configuration directory. Each binary has an isolated workspace. Related binaries may be explicitly grouped into one or more analysis cases, each with its own shared memory and cross-binary relation graph. Cross-binary retrieval is controlled, cited, read-only, and bounded.
+This design replaces folder-scoped persistence with central, identity-aware workspaces under the Luc Nhan configuration directory. Each binary has an isolated workspace. Related binaries may be explicitly grouped into one or more analysis cases, each with its own shared memory and cross-binary relation graph. Cross-binary retrieval is controlled, cited, read-only, and bounded.
 
 SQLite is the authoritative structured store. `MEMORY.md` is the human-readable narrative and managed projection. JSONL is used only for validated import/export. Legacy `RIKUGAN.md` and folder-level knowledge stores are never loaded automatically; users import them explicitly.
 
@@ -48,7 +48,7 @@ The current layout is effectively:
 ```text
 <idb_dir>/
 ├── RIKUGAN.md
-├── .rikugan-kb/
+├── .lucnhan-kb/
 └── notes/
     └── reports/
 ```
@@ -81,7 +81,7 @@ System-prompt building, pseudo-tool handlers, commands, research mode, reports, 
 
 ## 5. High-level architecture
 
-The canonical memory root is `RikuganConfig.memory_dir`, resolved as `<RikuganConfig._config_dir>/memory`. UI, headless bootstrap, tests, import/export, and repositories receive this resolved path through configuration. They must not independently call host config-directory helpers or derive a path beside the IDB. If the root is unavailable, persistence enters a visible disabled/degraded state and never falls back to folder-level storage.
+The canonical memory root is `LucNhanConfig.memory_dir`, resolved as `<LucNhanConfig._config_dir>/memory`. UI, headless bootstrap, tests, import/export, and repositories receive this resolved path through configuration. They must not independently call host config-directory helpers or derive a path beside the IDB. If the root is unavailable, persistence enters a visible disabled/degraded state and never falls back to folder-level storage.
 
 All path and identity decisions flow through three components:
 
@@ -122,7 +122,7 @@ Directory components are generated identifiers. User-provided names, paths, hash
 
 ### 5.2 Immutable run binding
 
-At the start of an agent run, Rikugan freezes:
+At the start of an agent run, Luc Nhan freezes:
 
 ```text
 binary_memory_id
@@ -250,7 +250,7 @@ Binary facts do not automatically become case facts. Promotion is explicit and c
 
 ### 8.3 Case membership
 
-Users create/select cases and add or remove binaries explicitly. Rikugan may suggest membership based on:
+Users create/select cases and add or remove binaries explicitly. Luc Nhan may suggest membership based on:
 
 - shared directory;
 - embedded payload hashes;
@@ -387,7 +387,7 @@ PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 ```
 
-The memory root must be on a local filesystem supporting SQLite locking and atomic replacement. If WAL/locking cannot be enabled reliably, Rikugan enters a visible single-writer/degraded mode or rejects persistent writes rather than claiming multiprocess safety. Writes are short `BEGIN IMMEDIATE` transactions with bounded retry. No provider or IDA API call occurs while a transaction is open. Databases use `PRAGMA user_version`; transactional migrations reject or open read-only any newer unsupported schema.
+The memory root must be on a local filesystem supporting SQLite locking and atomic replacement. If WAL/locking cannot be enabled reliably, Luc Nhan enters a visible single-writer/degraded mode or rejects persistent writes rather than claiming multiprocess safety. Writes are short `BEGIN IMMEDIATE` transactions with bounded retry. No provider or IDA API call occurs while a transaction is open. Databases use `PRAGMA user_version`; transactional migrations reject or open read-only any newer unsupported schema.
 
 ### 11.2 `MEMORY.md`
 
@@ -396,7 +396,7 @@ The memory root must be on a local filesystem supporting SQLite locking and atom
 ```markdown
 # Memory
 
-<!-- rikugan:managed:start -->
+<!-- lucnhan:managed:start -->
 ## Confirmed Facts
 
 - [protocol] Uses RC4 for C2 traffic.
@@ -404,18 +404,18 @@ The memory root must be on a local filesystem supporting SQLite locking and atom
 ## Current Understanding
 
 Generated summary of structured memory.
-<!-- rikugan:managed:end -->
+<!-- lucnhan:managed:end -->
 
 ## User Notes
 
 Free-form user content.
 ```
 
-Rikugan regenerates only the managed region. Projection is deterministic and local: it invokes no provider, embedding service, MCP server, or IDA API. Any LLM-generated summary is a separate explicit main-agent write. Every managed entry carries a hidden stable record ID and revision marker so reordering and duplicate text can be reconciled safely. Content outside the managed region is preserved. Manual unmanaged edits are sanitized and immediately readable by the prompt loader, but they affect structured SQLite data only through explicit Sync/Import with a preview.
+Luc Nhan regenerates only the managed region. Projection is deterministic and local: it invokes no provider, embedding service, MCP server, or IDA API. Any LLM-generated summary is a separate explicit main-agent write. Every managed entry carries a hidden stable record ID and revision marker so reordering and duplicate text can be reconciled safely. Content outside the managed region is preserved. Manual unmanaged edits are sanitized and immediately readable by the prompt loader, but they affect structured SQLite data only through explicit Sync/Import with a preview.
 
 Prompt assembly reads authoritative managed facts from SQLite only and reads only content outside the managed region from `MEMORY.md`, labeling it `manual_notes`. Unsynced edits inside the managed region are previewable but do not enter prompt context as authoritative facts. Duplicate, missing, reversed, or nested managed delimiters set `projection_conflict` and prohibit automatic regeneration.
 
-If the managed region was edited concurrently, Rikugan reports a projection conflict and does not overwrite it.
+If the managed region was edited concurrently, Luc Nhan reports a projection conflict and does not overwrite it.
 
 ### 11.3 Projection flow
 
@@ -490,7 +490,7 @@ Legacy sources are:
 
 ```text
 <idb_dir>/RIKUGAN.md
-<idb_dir>/.rikugan-kb/
+<idb_dir>/.lucnhan-kb/
 <idb_dir>/notes/
 ```
 
@@ -501,7 +501,7 @@ Runtime never reads them automatically and never falls back to them when `MEMORY
 When legacy sources are detected, UI offers:
 
 ```text
-Legacy Rikugan memory detected
+Legacy Luc Nhan memory detected
 [Inspect] [Import…] [Dismiss]
 ```
 

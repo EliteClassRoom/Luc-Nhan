@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.authority import MemoryAuthorityIssuer
-from rikugan.memory.case_commands import dispatch_case_command, parse_case_command
-from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.case_service import CaseMemoryService
-from rikugan.memory.manager import MemoryWorkspaceManager
-from rikugan.memory.workspace import (
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.authority import MemoryAuthorityIssuer
+from lucnhan.memory.case_commands import dispatch_case_command, parse_case_command
+from lucnhan.memory.case_repository import CaseRepository
+from lucnhan.memory.case_service import CaseMemoryService
+from lucnhan.memory.manager import MemoryWorkspaceManager
+from lucnhan.memory.workspace import (
     FilesystemIdentity,
     IdentityRequest,
 )
@@ -48,7 +48,7 @@ class TestParseCaseCommand:
 
 class TestDispatchCaseCommand:
     def _setup(self, tmp_path: Path):
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config._config_dir = str(tmp_path)
         manager = MemoryWorkspaceManager(config)
         manager.bind(

@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import sqlite3
 
-from rikugan.memory.backup import BackupVerificationError
-from rikugan.memory.workspace import MemoryLocator, new_memory_id
-from rikugan.memory.workspace_open import open_workspace_for_write, restore_v1_backup_offline
+from lucnhan.memory.backup import BackupVerificationError
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+from lucnhan.memory.workspace_open import open_workspace_for_write, restore_v1_backup_offline
 
 from .test_workspace_migration_v2 import _create_v1_database
 
@@ -28,7 +28,8 @@ def test_writable_v1_open_creates_verified_backup_before_migration(tmp_path) -> 
     with sqlite3.connect(backups[0]) as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == 1
         assert backup.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    # Migrated past v3; head version not pinned (later migrations may follow).
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] >= 3
     store.close()
 
 
@@ -38,7 +39,7 @@ def test_backup_failure_aborts_before_migration(tmp_path, monkeypatch) -> None:
     paths = locator.binary(owner)
     _create_v1_database(paths.database, owner)
     monkeypatch.setattr(
-        "rikugan.memory.workspace_open.create_backup",
+        "lucnhan.memory.workspace_open.create_backup",
         lambda *a, **k: (_ for _ in ()).throw(BackupVerificationError("boom")),
     )
     try:

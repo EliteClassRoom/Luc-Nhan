@@ -34,11 +34,11 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from tests import purge_rikugan_stubs
+from tests import purge_lucnhan_stubs
 
-purge_rikugan_stubs()
+purge_lucnhan_stubs()
 
-from rikugan.core.types import (
+from lucnhan.core.types import (
     LLMRequestContext,
     Message,
     Role,
@@ -54,7 +54,7 @@ def test_glm_replays_reasoning_content_without_think_tags():
     """GLM must send ``reasoning_content`` as its own wire field, never
     inlined into ``content`` with ``<think>`` tags.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", api_base="https://api.z.ai/api/paas/v4", model="glm-5.2")
     message = Message(
@@ -76,7 +76,7 @@ def test_glm_recovery_request_disables_thinking():
     emit ``extra_body.thinking.type = "disabled"`` and
     ``extra_body.reasoning_effort = "none"``.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2", extra={"dialect": "glm"})
     context = LLMRequestContext(
@@ -99,7 +99,7 @@ def test_unknown_glm_model_omits_tool_stream_and_reasoning_effort():
     ``reasoning_effort`` from the wire payload because the upstream endpoint
     may reject unsupported parameters.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-experimental", extra={"dialect": "glm"})
     context = LLMRequestContext(streaming=True)
@@ -115,7 +115,7 @@ def test_glm_known_model_includes_tool_stream_and_reasoning_effort():
     """Known GLM model IDs (``glm-5.2``) include ``tool_stream`` and
     ``reasoning_effort`` when streaming with tools.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2", extra={"dialect": "glm"})
     context = LLMRequestContext(streaming=True)
@@ -133,7 +133,7 @@ def test_glm_known_model_includes_tool_stream_and_reasoning_effort():
 
 def test_glm_5_3_sends_its_configured_effort():
     """A model with a level-table entry carries the user's level on the wire."""
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(
         api_key="test",
@@ -149,7 +149,7 @@ def test_glm_5_3_sends_its_configured_effort():
 def test_unknown_glm_model_omits_effort_even_with_a_saved_level():
     """The table is the capability source: an unknown ID gets no
     ``reasoning_effort`` at all, whatever the config says."""
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(
         api_key="test",
@@ -166,7 +166,7 @@ def test_disabled_thinking_omits_effort():
     """Thinking off means ``thinking.type = "disabled"`` and no effort
     field — GLM's effort enum has no "disabled" member, so sending the
     stored level alongside a disabled thinking block is wrong."""
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(
         api_key="test",
@@ -189,7 +189,7 @@ def test_tool_stream_uses_exact_wire_key_not_streaming_tool_calls():
     """The wire key under ``extra_body`` must be exactly ``tool_stream``,
     never ``streaming_tool_calls``.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2", extra={"dialect": "glm"})
     context = LLMRequestContext(streaming=True)
@@ -205,7 +205,7 @@ def test_tool_stream_omitted_when_not_streaming():
     """``tool_stream`` must NOT be sent on non-streaming ``chat()`` calls.
     The upstream endpoint rejects this parameter outside streaming mode.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2", extra={"dialect": "glm"})
     # Non-streaming context (streaming defaults to False).
@@ -220,7 +220,7 @@ def test_tool_stream_omitted_when_no_context():
     """Without a request context (direct ``_build_request_kwargs`` call,
     e.g. from ``chat()``), ``tool_stream`` must not appear.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2", extra={"dialect": "glm"})
 
@@ -233,7 +233,7 @@ def test_tool_stream_omitted_when_tools_empty():
     """``tool_stream`` must NOT be sent when ``tools`` is empty, even in
     streaming mode.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2", extra={"dialect": "glm"})
     context = LLMRequestContext(streaming=True)
@@ -248,7 +248,7 @@ def test_non_streaming_request_has_no_tool_stream_but_has_thinking():
     ``reasoning_effort`` (those are transport-independent) but must NOT
     carry ``tool_stream`` (transport-only).
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2", extra={"dialect": "glm"})
 
@@ -269,7 +269,7 @@ def test_thinking_clear_thinking_is_inverse_of_preserve():
     """When ``preserve=True`` (default), ``clear_thinking`` must be False.
     When ``preserve=False``, ``clear_thinking`` must be True.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     # Default config: preserve=True -> clear_thinking=False
     provider_default = GLMProvider(api_key="test", model="glm-5.2", extra={"dialect": "glm"})
@@ -288,7 +288,7 @@ def test_thinking_clear_thinking_is_inverse_of_preserve():
 
 def test_thinking_wire_body_has_no_preserve_key():
     """The wire body must use ``clear_thinking``, never ``preserve``."""
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2", extra={"dialect": "glm"})
     kwargs = provider._build_request_kwargs([], [], 0.3, 4096, "")
@@ -307,7 +307,7 @@ def test_glm_normalize_response_separates_reasoning_from_content():
     ``Message.reasoning_content`` and keep visible text in
     ``Message.content`` — no ``<think>`` tags inlined.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2")
     response = SimpleNamespace(
@@ -333,7 +333,7 @@ def test_glm_normalize_response_separates_reasoning_from_content():
 def test_glm_normalize_response_no_reasoning():
     """When the response has no ``reasoning_content``, the message's
     ``reasoning_content`` field stays empty (no ``<think>`` wrapping)."""
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2")
     response = SimpleNamespace(
@@ -357,7 +357,7 @@ def test_glm_normalize_response_no_reasoning():
 
 def test_glm_provider_name_is_glm():
     """The built-in GLM provider advertises ``name == "glm"``."""
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2")
     assert provider.name == "glm"
@@ -365,7 +365,7 @@ def test_glm_provider_name_is_glm():
 
 def test_glm_custom_provider_name_preserved():
     """A custom GLM-dialect provider preserves its custom name."""
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(
         api_key="test",
@@ -381,7 +381,7 @@ def test_glm_capabilities_advertise_reasoning_content():
     parser yields ``reasoning_delta`` chunks instead of inlining
     ``<think>`` tags.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2")
     caps = provider.capabilities
@@ -413,7 +413,7 @@ def test_glm_stream_yields_reasoning_delta():
     """GLM provider yields ``reasoning_delta`` chunks for reasoning content
     — never inline ``<think>`` tags.
     """
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     provider = GLMProvider(api_key="test", model="glm-5.2")
     chunks = [
@@ -435,7 +435,7 @@ def test_openai_stream_still_yields_inline_think_tags():
     must still inline reasoning content as ``<think>`` tags so existing
     OpenAI o-series behavior is unchanged.
     """
-    from rikugan.providers.openai_provider import OpenAIProvider
+    from lucnhan.providers.openai_provider import OpenAIProvider
 
     provider = OpenAIProvider(api_key="test", model="o3-mini")
     assert provider.capabilities.reasoning_content is False
@@ -459,8 +459,8 @@ def test_openai_stream_still_yields_inline_think_tags():
 
 def test_builtin_glm_resolves_glm_provider():
     """The built-in ``glm`` entry resolves to a GLMProvider instance."""
-    from rikugan.providers.glm_provider import GLMProvider
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.registry import ProviderRegistry
 
     provider = ProviderRegistry().new_instance("glm", api_key="test", model="glm-5.2")
     assert isinstance(provider, GLMProvider)
@@ -470,8 +470,8 @@ def test_custom_glm_dialect_resolves_glm_provider():
     """A custom provider name whose dialect is ``"glm"`` must resolve to a
     GLMProvider instance with the custom name preserved.
     """
-    from rikugan.providers.glm_provider import GLMProvider
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     registry.register_custom_providers(["glm-coding"], dialects={"glm-coding": "glm"})
@@ -484,8 +484,8 @@ def test_custom_openai_compat_dialect_unaffected_by_glm_routing():
     """Custom providers without a ``"glm"`` dialect must still resolve to
     OpenAICompatProvider.
     """
-    from rikugan.providers.openai_compat import OpenAICompatProvider
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     registry.register_custom_providers(["my-llm"], dialects={"my-llm": ""})
@@ -497,8 +497,8 @@ def test_register_custom_providers_preserves_glm_dialect_on_re_register():
     """Re-registering the same custom GLM provider name keeps the dialect
     association stable across calls.
     """
-    from rikugan.providers.glm_provider import GLMProvider
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     registry.register_custom_providers(["glm-coding"], dialects={"glm-coding": "glm"})
@@ -509,8 +509,8 @@ def test_register_custom_providers_preserves_glm_dialect_on_re_register():
 
 def test_unregister_removes_glm_dialect_association():
     """Unregistering a custom GLM provider removes its dialect association."""
-    from rikugan.providers.openai_compat import OpenAICompatProvider
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     registry.register_custom_providers(["glm-coding"], dialects={"glm-coding": "glm"})
@@ -530,8 +530,8 @@ def test_cache_refreshes_when_extra_changes():
     even if credentials are identical, because GLM thinking/guard settings
     are parsed at construction time.
     """
-    from rikugan.providers.glm_provider import GLMProvider
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     extra1 = {"dialect": "glm", "thinking": {"reasoning_effort": "max"}}
@@ -550,7 +550,7 @@ def test_cache_reuses_when_extra_unchanged():
     """``get_or_create`` must return the same instance when extra is
     identical (deep-equal), even for GLM providers.
     """
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     extra = {"dialect": "glm", "thinking": {"reasoning_effort": "high"}}
@@ -568,8 +568,8 @@ def test_cache_reuses_non_glm_provider_without_extra():
     credential-only cache behavior — the ``extra`` comparison should not
     break existing providers.
     """
-    from rikugan.providers.openai_provider import OpenAIProvider
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.openai_provider import OpenAIProvider
+    from lucnhan.providers.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     p1 = registry.get_or_create("openai", api_key="test", model="gpt-4o")
@@ -583,9 +583,9 @@ def test_glm_to_compat_dialect_flip_after_class_resolution():
     and then re-registered as compat, the registry must route to
     OpenAICompatProvider, not the stale resolved GLMProvider class.
     """
-    from rikugan.providers.glm_provider import GLMProvider
-    from rikugan.providers.openai_compat import OpenAICompatProvider
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     # Register as GLM and resolve (forces class caching).
@@ -601,9 +601,9 @@ def test_glm_to_compat_dialect_flip_after_class_resolution():
 
 def test_compat_to_glm_dialect_flip_after_class_resolution():
     """Reverse direction: compat -> GLM flip after class resolution."""
-    from rikugan.providers.glm_provider import GLMProvider
-    from rikugan.providers.openai_compat import OpenAICompatProvider
-    from rikugan.providers.registry import ProviderRegistry
+    from lucnhan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     # Register as compat and resolve (forces class caching).

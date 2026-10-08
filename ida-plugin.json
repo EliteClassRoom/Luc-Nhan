@@ -2,8 +2,8 @@
   "IDAMetadataDescriptorVersion": 1,
   "plugin": {
     "name": "Luc Nhan",
-    "entryPoint": "rikugan_plugin.py",
-    "version": "1.14.0",
+    "entryPoint": "lucnhan_plugin.py",
+    "version": "1.14.1",
     "description": "Agentic LLM reverse-engineering companion embedded directly in IDA Pro. Supports multi-provider LLMs (Anthropic, OpenAI, Google Gemini, Ollama), 60+ native tools, exploration mode with parallel subagents, natural-language binary patching, skills, and MCP server integration.",
     "license": "MIT",
     "categories": [
@@ -18,18 +18,18 @@
     ],
     "idaVersions": [">=9.0"],
     "pythonDependencies": [
-      "anthropic>=0.112.0",
+      "anthropic>=0.120.2",
       "openai>=2.0.0",
       "google-genai>=2.0.0",
       "mcp>=1.28.0",
       "ida-domain>=0.5.0",
-      "tomli>=2.4.0",
+      "tomli>=2.4.1",
       "cryptography>=49.0.0",
-      "requests>=2.31.0",
+      "requests>=2.34.2",
       "html2text>=2025.4.15",
       "markdown-it-py>=3.0.0",
-      "portalocker>=3.0.0,<4",
-      "unicorn>=2.1.0,<3"
+      "portalocker>=4.1.0,<5",
+      "unicorn>=2.1.4,<3"
     ],
     "keywords": [
       "ai",
@@ -45,7 +45,7 @@
       "automation"
     ],
     "urls": {
-      "repository": "https://github.com/EliteClassRoom/rikugan"
+      "repository": "https://github.com/EliteClassRoom/Luc-Nhan"
     },
     "authors": [
       {

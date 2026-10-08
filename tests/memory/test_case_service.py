@@ -6,15 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.authority import MemoryAuthorityIssuer
-from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.case_service import CaseMembershipError, CaseMemoryService
-from rikugan.memory.markdown import MemoryProjector
-from rikugan.memory.registry import MemoryRegistry
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.service import BinaryMemoryService
-from rikugan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.authority import MemoryAuthorityIssuer
+from lucnhan.memory.case_repository import CaseRepository
+from lucnhan.memory.case_service import CaseMembershipError, CaseMemoryService
+from lucnhan.memory.markdown import MemoryProjector
+from lucnhan.memory.registry import MemoryRegistry
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.service import BinaryMemoryService
+from lucnhan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 from .test_workspace_migration_v2 import _create_v1_database
 
@@ -103,7 +103,7 @@ class TestSourceDrift:
     def test_source_not_member(self, tmp_path: Path) -> None:
         case_service, _, _, _, _, case_id, _memory_id = _setup_service(tmp_path)
 
-        from rikugan.memory.case_schema import PromotionSource
+        from lucnhan.memory.case_schema import PromotionSource
 
         source = PromotionSource(
             source_memory_id="mem-nonexistent",

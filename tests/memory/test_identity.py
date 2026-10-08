@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.identity import (
+from lucnhan.memory.identity import (
     IdentityChoice,
     MemoryIdentityResolver,
     ResolutionStatus,
     get_filesystem_identity,
     hash_raw_binary,
 )
-from rikugan.memory.registry import MemoryRegistry
-from rikugan.memory.workspace import FilesystemIdentity, IdentityRequest
+from lucnhan.memory.registry import MemoryRegistry
+from lucnhan.memory.workspace import FilesystemIdentity, IdentityRequest
 
 
 def _idb(

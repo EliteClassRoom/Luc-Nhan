@@ -2,7 +2,7 @@
 
 After the Bulk Renamer tab was removed from the visible Tools surface,
 the Send-to-Bulk-Rename right-click action must also be gone.  These
-tests exercise ``RikuganUIHooks._register_actions`` under the
+tests exercise ``LucNhanUIHooks._register_actions`` under the
 established IDA mock harness and assert that only the Open Tools
 action (plus the core context-menu actions) gets registered.
 """
@@ -25,14 +25,14 @@ install_ida_mocks()
 # actually defined in the namespace.  Pre-registering the module
 # in ``sys.modules`` keeps ``setattr(_sys.modules[__name__], ...)``
 # inside ``_ensure_ida`` from failing under the mock harness.
-_mod_placeholder = _types.ModuleType("rikugan.ida.ui.actions")
-sys.modules.setdefault("rikugan.ida.ui.actions", _mod_placeholder)
+_mod_placeholder = _types.ModuleType("lucnhan.ida.ui.actions")
+sys.modules.setdefault("lucnhan.ida.ui.actions", _mod_placeholder)
 
 for _name in list(sys.modules):
-    if _name.startswith("rikugan.ida.ui.actions") or _name.startswith("rikugan.ui.action_handlers"):
+    if _name.startswith("lucnhan.ida.ui.actions") or _name.startswith("lucnhan.ui.action_handlers"):
         sys.modules.pop(_name, None)
 
-actions_mod = importlib.import_module("rikugan.ida.ui.actions")
+actions_mod = importlib.import_module("lucnhan.ida.ui.actions")
 
 
 class TestSendToBulkRenameRemoved(unittest.TestCase):
@@ -44,7 +44,7 @@ class TestSendToBulkRenameRemoved(unittest.TestCase):
 
     - The legacy handler class is no longer present in the actions
       module.
-    - The action id ``rikugan:send_to_bulk_rename`` does not appear
+    - The action id ``lucnhan:send_to_bulk_rename`` does not appear
       anywhere in the module source, so a future re-add is caught by
       a code-level grep rather than by a runtime mock exercise.
     """
@@ -57,14 +57,14 @@ class TestSendToBulkRenameRemoved(unittest.TestCase):
         )
 
     def test_no_send_to_bulk_rename_action_id_in_source(self):
-        """The action id ``rikugan:send_to_bulk_rename`` must not be re-introduced."""
+        """The action id ``lucnhan:send_to_bulk_rename`` must not be re-introduced."""
         import inspect
 
         source = inspect.getsource(actions_mod)
         self.assertNotIn(
-            "rikugan:send_to_bulk_rename",
+            "lucnhan:send_to_bulk_rename",
             source,
-            "Action id rikugan:send_to_bulk_rename reappeared in actions.py",
+            "Action id lucnhan:send_to_bulk_rename reappeared in actions.py",
         )
 
     def test_no_bulk_rename_phrase_in_source(self):
@@ -84,7 +84,7 @@ class TestSendToBulkRenameRemoved(unittest.TestCase):
 
         source = inspect.getsource(actions_mod)
         self.assertIn(
-            "rikugan:open_tools",
+            "lucnhan:open_tools",
             source,
             "Open Tools action id is missing; the panel cannot be reached.",
         )

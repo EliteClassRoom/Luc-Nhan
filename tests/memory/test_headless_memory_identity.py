@@ -10,9 +10,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from rikugan.cli.headless import _build_memory_source
-from rikugan.ida.headless_bootstrap import validate_bootstrap_memory_source
-from rikugan.memory.workspace import IdentityRequest
+from lucnhan.cli.headless import _build_memory_source
+from lucnhan.ida.headless_bootstrap import validate_bootstrap_memory_source
+from lucnhan.memory.workspace import IdentityRequest
 
 
 class TestBuildMemorySource:

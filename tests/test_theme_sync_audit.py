@@ -3,7 +3,7 @@
 Covers:
 - ``ThemeManager._apply_now`` syncs the legacy ``styles._current_theme``
   / ``_effective_theme`` so helpers like ``is_dark_theme()`` flip with
-  the live mode (without relying on ``RikuganPanelCore.set_theme``).
+  the live mode (without relying on ``LucNhanPanelCore.set_theme``).
 - ``ToolCallWidget`` / ``ToolBatchWidget`` refresh child label colours
   (not just the card) on a theme switch.
 - ``ToolApprovalWidget`` keeps the disabled-state style on already
@@ -29,28 +29,28 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 def _purge_rk_theme_modules() -> None:
-    """Drop rikugan theme modules so the tests get the real implementations."""
+    """Drop lucnhan theme modules so the tests get the real implementations."""
     for name in list(sys.modules):
-        if name == "rikugan.ui.theme" or name.startswith("rikugan.ui.theme."):
+        if name == "lucnhan.ui.theme" or name.startswith("lucnhan.ui.theme."):
             del sys.modules[name]
 
 
 def _purge_rk_ui_modules() -> None:
-    """Drop rikugan.ui + rikugan.ui.styles so the tests get the real impls.
+    """Drop lucnhan.ui + lucnhan.ui.styles so the tests get the real impls.
 
-    We must purge ``rikugan.ui`` itself — not just its submodules —
-    because Python's ``from rikugan.ui import styles`` first looks
-    up ``styles`` as an attribute on the ``rikugan.ui`` package
+    We must purge ``lucnhan.ui`` itself — not just its submodules —
+    because Python's ``from lucnhan.ui import styles`` first looks
+    up ``styles`` as an attribute on the ``lucnhan.ui`` package
     object.  When a previous test imported styles via this idiom,
     the package cached the submodule reference as an attribute.
-    Purging only ``rikugan.ui.styles`` from :data:`sys.modules`
+    Purging only ``lucnhan.ui.styles`` from :data:`sys.modules`
     leaves the *cached attribute* on the parent package, so the
-    next ``from rikugan.ui import styles`` returns the stale
+    next ``from lucnhan.ui import styles`` returns the stale
     module instance — and the manager's helper ends up mutating a
     different copy of ``_current_theme`` than the test asserts on.
     """
     for name in list(sys.modules):
-        if name == "rikugan.ui" or name.startswith("rikugan.ui."):
+        if name == "lucnhan.ui" or name.startswith("lucnhan.ui."):
             del sys.modules[name]
 
 
@@ -88,18 +88,18 @@ _IDA_MOCK_NAMES = (
 
 
 def _purge_ida_mocks() -> None:
-    """Strip IDA mock modules and force ``rikugan.core.host`` to re-detect.
+    """Strip IDA mock modules and force ``lucnhan.core.host`` to re-detect.
 
     ``install_ida_mocks()`` registers ``idaapi`` and friends in
     :data:`sys.modules`.  Once those stubs exist, the next import
-    of :mod:`rikugan.core.host` will see IDA as the active host.
+    of :mod:`lucnhan.core.host` will see IDA as the active host.
     We don't want that for our theme tests, which are host-agnostic
     and rely on ``is_ida()`` returning False so the manager's
     ``__init__`` skips the ``palette_ida`` import.
     """
     for name in _IDA_MOCK_NAMES:
         sys.modules.pop(name, None)
-    sys.modules.pop("rikugan.core.host", None)
+    sys.modules.pop("lucnhan.core.host", None)
 
 
 # Qt classes that the lightweight ``tests.qt_stubs`` replaces
@@ -157,12 +157,12 @@ class TestThemeManagerLegacySync(unittest.TestCase):
         # ``from ..styles import set_current_theme`` binds to the
         # same module object we hold in ``self.styles``.  Doing the
         # imports in the opposite order yields two distinct
-        # ``rikugan.ui.styles`` modules (Python allows that), and
+        # ``lucnhan.ui.styles`` modules (Python allows that), and
         # the manager's helper then mutates a different copy of
         # ``_current_theme`` than the test asserts on.
-        from rikugan.ui import styles as _styles
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui import styles as _styles
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         ThemeManager.reset()
         self.styles = _styles
@@ -181,7 +181,7 @@ class TestThemeManagerLegacySync(unittest.TestCase):
         self.addCleanup(ThemeManager.reset)
 
     def test_set_mode_to_light_flips_legacy_helpers(self) -> None:
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.tm.set_mode(ThemeMode.LIGHT)
         self.tm._apply_now()
@@ -193,7 +193,7 @@ class TestThemeManagerLegacySync(unittest.TestCase):
 
     def test_set_mode_to_dark_flips_legacy_helpers(self) -> None:
         # Start light
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.tm.set_mode(ThemeMode.LIGHT)
         self.tm._apply_now()
@@ -205,7 +205,7 @@ class TestThemeManagerLegacySync(unittest.TestCase):
         self.assertTrue(self.styles.is_dark_theme())
 
     def test_set_mode_to_ida_native_marks_host_theme(self) -> None:
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.tm.set_mode(ThemeMode.IDA_NATIVE)
         # Force synchronous emit so we don't depend on the timer.
@@ -220,8 +220,8 @@ class TestThemeManagerLegacySync(unittest.TestCase):
     def test_tool_colors_track_dark_mode(self) -> None:
         """``get_tool_colors()`` is branch-keyed off ``is_dark_theme()`` —
         flipping the manager must flip the dict."""
-        from rikugan.ui.styles import get_tool_colors
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.styles import get_tool_colors
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         self.tm.set_mode(ThemeMode.LIGHT)
         self.tm._apply_now()
@@ -237,8 +237,8 @@ class TestBindThemeHelper(unittest.TestCase):
 
     def setUp(self) -> None:
         _purge_rk_theme_modules()
-        from rikugan.ui.theme.applicator import bind_theme, disconnect_theme
-        from rikugan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.applicator import bind_theme, disconnect_theme
+        from lucnhan.ui.theme.manager import ThemeManager
 
         ThemeManager.reset()
         self.bind_theme = bind_theme
@@ -279,7 +279,7 @@ class TestBindThemeHelper(unittest.TestCase):
     def test_zero_arg_callback_compatible_with_emit(self) -> None:
         """Zero-arg apply callbacks (e.g. ``apply_theme``) must not
         miscount the emitted token argument."""
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         widget = MagicMock()
         calls: list[int] = []
@@ -316,9 +316,9 @@ class TestToolCallWidgetThemeRefresh(unittest.TestCase):
     def test_child_label_qss_changes_on_theme_switch(self) -> None:
         from unittest.mock import MagicMock
 
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
-        from rikugan.ui.tool_widgets import ToolCallWidget
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.tool_widgets import ToolCallWidget
 
         ThemeManager.reset()
         tm = ThemeManager.instance()
@@ -385,9 +385,9 @@ class TestToolApprovalWidgetDisabledState(unittest.TestCase):
     def test_disabled_buttons_stay_disabled_styled(self) -> None:
         from unittest.mock import MagicMock
 
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
-        from rikugan.ui.tool_widgets import ToolApprovalWidget
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.tool_widgets import ToolApprovalWidget
 
         ThemeManager.reset()
         tm = ThemeManager.instance()
@@ -417,7 +417,7 @@ class TestToolApprovalWidgetDisabledState(unittest.TestCase):
         # The disabled allow button must have its setStyleSheet
         # called with the disabled (muted_text) style, not the
         # active (success) style.
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
 
         applied = widget._allow_btn.setStyleSheet.call_args.args[0]
         self.assertIn(
@@ -447,8 +447,8 @@ class TestToolApprovalWidgetDisabledState(unittest.TestCase):
         # blend by checking the blended colour token (the manager
         # reuses the success token via blend_hex for the
         # always-allow button background).
-        from rikugan.ui.theme.manager import blend_hex
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
+        from lucnhan.ui.theme.manager import blend_hex
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
 
         expected_blend = blend_hex(LIGHT_TOKENS.success, LIGHT_TOKENS.dark, 0.45)
         self.assertIn(
@@ -469,9 +469,9 @@ class TestPlanViewTokenDriven(unittest.TestCase):
     def test_plan_view_buttons_repaint_on_theme_change(self) -> None:
         from unittest.mock import MagicMock
 
-        from rikugan.ui.plan_view import PlanView
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.plan_view import PlanView
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         ThemeManager.reset()
         tm = ThemeManager.instance()
@@ -505,9 +505,9 @@ class TestPlanViewTokenDriven(unittest.TestCase):
     def test_plan_step_widget_recolors_on_theme_change(self) -> None:
         from unittest.mock import MagicMock
 
-        from rikugan.ui.plan_view import PlanStepWidget
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.plan_view import PlanStepWidget
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         ThemeManager.reset()
         tm = ThemeManager.instance()
@@ -547,8 +547,8 @@ class TestSettingsDialogSubscribesInInit(unittest.TestCase):
     def test_settings_dialog_connects_in_init(self) -> None:
         from unittest.mock import MagicMock
 
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         ThemeManager.reset()
         tm = ThemeManager.instance()
@@ -597,20 +597,20 @@ class TestBulkRenamerRowColorsRefresh(unittest.TestCase):
 
     def test_status_cell_color_changes_with_theme(self) -> None:
 
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         ThemeManager.reset()
         tm = ThemeManager.instance()
         tm.set_mode(ThemeMode.DARK)
         tm._apply_now()
-        from rikugan.ui.bulk_renamer import BulkRenamerWidget
+        from lucnhan.ui.bulk_renamer import BulkRenamerWidget
 
         widget = BulkRenamerWidget.__new__(BulkRenamerWidget)
         # Stub the bits ``_refresh_row_status_colors`` reads.  We
         # only need one row to confirm the colour flips on theme
         # change.
-        from rikugan.ui.qt_compat import QColor
+        from lucnhan.ui.qt_compat import QColor
 
         class _StubBrush:
             """Mimic ``QBrush`` so ``.color().name()`` returns a hex string."""
@@ -681,9 +681,9 @@ class TestExecutePythonWidgetThemeRefresh(unittest.TestCase):
     def test_child_label_qss_changes_on_theme_switch(self) -> None:
         from unittest.mock import MagicMock
 
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
-        from rikugan.ui.tool_widgets import ExecutePythonWidget
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.tool_widgets import ExecutePythonWidget
 
         ThemeManager.reset()
         tm = ThemeManager.instance()

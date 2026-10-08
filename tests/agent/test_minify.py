@@ -1,9 +1,9 @@
-"""Tests for rikugan.agent.minify."""
+"""Tests for lucnhan.agent.minify."""
 
 from __future__ import annotations
 
-from rikugan.agent.minify import minify_messages, minify_text
-from rikugan.core.types import Message, ToolResult
+from lucnhan.agent.minify import minify_messages, minify_text
+from lucnhan.core.types import Message, ToolResult
 
 
 class TestMinifyText:
@@ -80,8 +80,8 @@ class TestCompactionReasoningRule:
     """
 
     def test_summary_omits_old_reasoning_content(self):
-        from rikugan.agent.context_window import ContextWindowManager
-        from rikugan.core.types import Message, Role
+        from lucnhan.agent.context_window import ContextWindowManager
+        from lucnhan.core.types import Message, Role
 
         manager = ContextWindowManager()
         # 1 system + 6 middle + 4 tail = 11 messages (> 6 threshold).
@@ -108,8 +108,8 @@ class TestCompactionReasoningRule:
         assert "SECRET_REASONING_MUST_NOT_APPEAR" not in summary_text
 
     def test_tail_messages_retain_reasoning_content(self):
-        from rikugan.agent.context_window import ContextWindowManager
-        from rikugan.core.types import Message, Role
+        from lucnhan.agent.context_window import ContextWindowManager
+        from lucnhan.core.types import Message, Role
 
         manager = ContextWindowManager()
         messages: list[Message] = [Message(role=Role.SYSTEM, content="system")]

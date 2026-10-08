@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.sqlite_backend import (
+from lucnhan.memory.sqlite_backend import (
     SchemaMigrationRequired,
     UnsupportedSchemaError,
     begin_immediate_with_retry,

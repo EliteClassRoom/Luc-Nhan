@@ -1,1 +1,1 @@
-"""Build scripts for Rikugan release pipeline."""
+"""Build scripts for Luc Nhan release pipeline."""

@@ -13,8 +13,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.providers.ollama_provider import DEFAULT_OLLAMA_URL, OllamaProvider
-from rikugan.providers.openai_compat import OpenAICompatProvider
+from lucnhan.providers.ollama_provider import DEFAULT_OLLAMA_URL, OllamaProvider
+from lucnhan.providers.openai_compat import OpenAICompatProvider
 
 # ---------------------------------------------------------------------------
 # OllamaProvider
@@ -148,7 +148,7 @@ class TestOpenAICompatProvider(unittest.TestCase):
         assert models == []
 
     def test_get_client_raises_without_openai(self):
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
         p = OpenAICompatProvider(api_key="k", api_base="http://localhost/v1")
         with patch("importlib.import_module", side_effect=ImportError("no openai")):
             with self.assertRaises(ProviderError):

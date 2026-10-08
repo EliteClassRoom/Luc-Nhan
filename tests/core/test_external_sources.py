@@ -1,4 +1,4 @@
-"""Tests for rikugan.core.external_sources — external skill/MCP discovery."""
+"""Tests for lucnhan.core.external_sources — external skill/MCP discovery."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.external_sources import (
+from lucnhan.core.external_sources import (
     _get_claude_managed_mcp_path,
     _load_codex_mcp_toml,
     _load_mcp_json,
@@ -61,22 +61,22 @@ class TestPathResolution(unittest.TestCase):
 
 class TestManagedPaths(unittest.TestCase):
     def test_managed_macos(self):
-        with patch("rikugan.core.external_sources.platform.system", return_value="Darwin"):
+        with patch("lucnhan.core.external_sources.platform.system", return_value="Darwin"):
             path = _get_claude_managed_mcp_path()
             self.assertEqual(path, Path("/Library/Application Support/ClaudeCode/managed-mcp.json"))
 
     def test_managed_linux(self):
-        with patch("rikugan.core.external_sources.platform.system", return_value="Linux"):
+        with patch("lucnhan.core.external_sources.platform.system", return_value="Linux"):
             path = _get_claude_managed_mcp_path()
             self.assertEqual(path, Path("/etc/claude-code/managed-mcp.json"))
 
     def test_managed_windows(self):
-        with patch("rikugan.core.external_sources.platform.system", return_value="Windows"):
+        with patch("lucnhan.core.external_sources.platform.system", return_value="Windows"):
             path = _get_claude_managed_mcp_path()
             self.assertEqual(path, Path(r"C:\Program Files\ClaudeCode\managed-mcp.json"))
 
     def test_managed_unknown(self):
-        with patch("rikugan.core.external_sources.platform.system", return_value="FreeBSD"):
+        with patch("lucnhan.core.external_sources.platform.system", return_value="FreeBSD"):
             path = _get_claude_managed_mcp_path()
             self.assertIsNone(path)
 
@@ -92,27 +92,27 @@ class TestSkillDiscovery(unittest.TestCase):
             with open(os.path.join(skill_dir, "SKILL.md"), "w") as f:
                 f.write("---\nname: Test Skill\ndescription: A test skill\n---\nBody content.\n")
 
-            with patch("rikugan.core.external_sources.get_claude_code_base", return_value=Path(tmpdir)):
+            with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=Path(tmpdir)):
                 skills = discover_claude_skills()
                 self.assertEqual(len(skills), 1)
                 self.assertEqual(skills[0].name, "Test Skill")
 
     def test_discover_missing_dir(self):
         """Missing skills directory returns empty list."""
-        with patch("rikugan.core.external_sources.get_claude_code_base", return_value=Path("/nonexistent")):
+        with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=Path("/nonexistent")):
             skills = discover_claude_skills()
             self.assertEqual(skills, [])
 
     def test_discover_codex_skills(self):
         """Codex skills discovery works the same way."""
-        with patch("rikugan.core.external_sources.get_codex_base", return_value=Path("/nonexistent")):
+        with patch("lucnhan.core.external_sources.get_codex_base", return_value=Path("/nonexistent")):
             skills = discover_codex_skills()
             self.assertEqual(skills, [])
 
     def test_discover_all_external_skills(self):
         """Aggregate discovery returns dict with both sources."""
-        with patch("rikugan.core.external_sources.get_claude_code_base", return_value=Path("/nonexistent")):
-            with patch("rikugan.core.external_sources.get_codex_base", return_value=Path("/nonexistent")):
+        with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=Path("/nonexistent")):
+            with patch("lucnhan.core.external_sources.get_codex_base", return_value=Path("/nonexistent")):
                 result = discover_all_external_skills()
                 self.assertIn("claude", result)
                 self.assertIn("codex", result)
@@ -268,7 +268,7 @@ class TestMCPDiscoveryTOML(unittest.TestCase):
             with open(json_path, "w") as f:
                 json.dump({"mcpServers": {"json_srv": {"command": "python"}}}, f)
 
-            with patch("rikugan.core.external_sources.get_codex_base", return_value=base):
+            with patch("lucnhan.core.external_sources.get_codex_base", return_value=base):
                 servers = load_codex_mcp()
                 self.assertEqual(len(servers), 1)
                 self.assertEqual(servers[0].name, "toml_srv")
@@ -286,8 +286,8 @@ class TestClaudeMCPMerge(unittest.TestCase):
             with open(fallback, "w") as f:
                 json.dump({"mcpServers": {"fallback": {"command": "python"}}}, f)
 
-            with patch("rikugan.core.external_sources.get_claude_code_base", return_value=base):
-                with patch("rikugan.core.external_sources.Path.home", return_value=base):
+            with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=base):
+                with patch("lucnhan.core.external_sources.Path.home", return_value=base):
                     servers = load_claude_mcp()
                     self.assertEqual(len(servers), 2)
                     names = {s.name for s in servers}
@@ -305,8 +305,8 @@ class TestClaudeMCPMerge(unittest.TestCase):
             with open(fallback, "w") as f:
                 json.dump({"mcpServers": {"srv": {"command": "python"}}}, f)
 
-            with patch("rikugan.core.external_sources.get_claude_code_base", return_value=base):
-                with patch("rikugan.core.external_sources.Path.home", return_value=base):
+            with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=base):
+                with patch("lucnhan.core.external_sources.Path.home", return_value=base):
                     servers = load_claude_mcp()
                     self.assertEqual(len(servers), 1)
                     self.assertEqual(servers[0].name, "srv")
@@ -320,8 +320,8 @@ class TestClaudeMCPMerge(unittest.TestCase):
             with open(fallback, "w") as f:
                 json.dump({"mcpServers": {"fallback": {"command": "python"}}}, f)
 
-            with patch("rikugan.core.external_sources.get_claude_code_base", return_value=base):
-                with patch("rikugan.core.external_sources.Path.home", return_value=base):
+            with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=base):
+                with patch("lucnhan.core.external_sources.Path.home", return_value=base):
                     servers = load_claude_mcp()
                     self.assertEqual(len(servers), 1)
                     self.assertEqual(servers[0].name, "fallback")
@@ -334,8 +334,8 @@ class TestClaudeMCPMerge(unittest.TestCase):
             with open(global_cfg, "w") as f:
                 json.dump({"mcpServers": {"global-srv": {"command": "node", "args": ["srv.js"]}}}, f)
 
-            with patch("rikugan.core.external_sources.get_claude_code_base", return_value=base):
-                with patch("rikugan.core.external_sources.Path.home", return_value=base):
+            with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=base):
+                with patch("lucnhan.core.external_sources.Path.home", return_value=base):
                     servers = load_claude_mcp()
                     self.assertEqual(len(servers), 1)
                     self.assertEqual(servers[0].name, "global-srv")
@@ -348,9 +348,9 @@ class TestClaudeMCPMerge(unittest.TestCase):
             with open(managed_path, "w") as f:
                 json.dump({"mcpServers": {"managed-srv": {"command": "node"}}}, f)
 
-            with patch("rikugan.core.external_sources.get_claude_code_base", return_value=base):
-                with patch("rikugan.core.external_sources.Path.home", return_value=base):
-                    with patch("rikugan.core.external_sources._get_claude_managed_mcp_path", return_value=managed_path):
+            with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=base):
+                with patch("lucnhan.core.external_sources.Path.home", return_value=base):
+                    with patch("lucnhan.core.external_sources._get_claude_managed_mcp_path", return_value=managed_path):
                         servers = load_claude_mcp()
                         self.assertEqual(len(servers), 1)
                         self.assertEqual(servers[0].name, "managed-srv")
@@ -377,9 +377,9 @@ class TestClaudeMCPMerge(unittest.TestCase):
                 {"mcpServers": {"s4": {"command": "d"}}}
             ))
 
-            with patch("rikugan.core.external_sources.get_claude_code_base", return_value=base):
-                with patch("rikugan.core.external_sources.Path.home", return_value=base):
-                    with patch("rikugan.core.external_sources._get_claude_managed_mcp_path", return_value=managed_path):
+            with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=base):
+                with patch("lucnhan.core.external_sources.Path.home", return_value=base):
+                    with patch("lucnhan.core.external_sources._get_claude_managed_mcp_path", return_value=managed_path):
                         servers = load_claude_mcp()
                         names = {s.name for s in servers}
                         self.assertEqual(names, {"s1", "s2", "s3", "s4", "dup"})
@@ -391,9 +391,9 @@ class TestClaudeMCPMerge(unittest.TestCase):
 class TestAggregateDiscovery(unittest.TestCase):
     def test_discover_all_external_mcp(self):
         """Aggregate MCP discovery returns dict with both sources."""
-        with patch("rikugan.core.external_sources.get_claude_code_base", return_value=Path("/nonexistent")):
-            with patch("rikugan.core.external_sources.get_codex_base", return_value=Path("/nonexistent")):
-                with patch("rikugan.core.external_sources.Path.home", return_value=Path("/nonexistent")):
+        with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=Path("/nonexistent")):
+            with patch("lucnhan.core.external_sources.get_codex_base", return_value=Path("/nonexistent")):
+                with patch("lucnhan.core.external_sources.Path.home", return_value=Path("/nonexistent")):
                     result = discover_all_external_mcp()
                     self.assertIn("claude", result)
                     self.assertIn("codex", result)

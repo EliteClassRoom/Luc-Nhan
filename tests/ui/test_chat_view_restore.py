@@ -1,10 +1,10 @@
-"""Tests for rikugan.ui.chat_view — restore worker, dataclasses, and helpers.
+"""Tests for lucnhan.ui.chat_view — restore worker, dataclasses, and helpers.
 
 The tests exercise the real ``chat_view`` module (including the
 real ``RestoreWorker`` / ``MessageSpec`` / ``ToolSpec`` dataclasses)
-so they do not stub ``rikugan.ui.*`` modules.  Doing so keeps the
+so they do not stub ``lucnhan.ui.*`` modules.  Doing so keeps the
 test file isolated from sibling tests: leaving bare
-``types.ModuleType`` stubs in ``sys.modules`` for ``rikugan.ui.*``
+``types.ModuleType`` stubs in ``sys.modules`` for ``lucnhan.ui.*``
 would break the async-restore test that runs after this one
 (which imports the real modules for its real ``QApplication``).
 """
@@ -23,39 +23,38 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # Re-import safety: if a sibling test file installed
-# ``types.ModuleType`` stubs for any of the ``rikugan.ui.*`` /
-# ``rikugan.core.types`` / ``rikugan.agent.turn`` modules this
+# ``types.ModuleType`` stubs for any of the ``lucnhan.ui.*`` /
+# ``lucnhan.core.types`` / ``lucnhan.agent.turn`` modules this
 # file imports, drop them so the imports below resolve to the
 # *real* modules.
 #
 # We deliberately do NOT touch ``PySide6.*`` here: the real
-# PySide6 modules may already be loaded by sibling conftests
-# (e.g. ``rikugan/tests/conftest.py`` imports real
-# ``rikugan.ui.qt_compat``), and dropping + re-importing the
+# PySide6 modules may already be loaded by a sibling test module
+# that imports ``lucnhan.ui.qt_compat``, and dropping + re-importing the
 # PySide6 C extensions can recurse into the Shiboken loader
 # (observed stack overflow on PySide6 6.7+ when several test
 # files in the same session each purge and reload PySide6).
 # Real PySide6 stays in ``sys.modules`` throughout this file
-# — that is what the real ``rikugan.ui.chat_view`` import
+# — that is what the real ``lucnhan.ui.chat_view`` import
 # chain expects.
 _STUB_TARGETS = (
-    "rikugan.core.types",
-    "rikugan.agent.turn",
-    "rikugan.ui.chat_view",
-    "rikugan.ui.styles",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.ui.markdown",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.plan_view",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.qt_compat",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
+    "lucnhan.core.types",
+    "lucnhan.agent.turn",
+    "lucnhan.ui.chat_view",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.markdown",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.plan_view",
+    "lucnhan.ui.tool_widgets",
+    "lucnhan.ui.qt_compat",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
 )
 for _name in list(sys.modules):
     if _name in _STUB_TARGETS:
@@ -82,9 +81,9 @@ except ImportError:
     pass
 
 
-from rikugan import constants
-from rikugan.core.types import Message, Role, ToolCall, ToolResult
-from rikugan.ui.chat_view import (
+from lucnhan import constants
+from lucnhan.core.types import Message, Role, ToolCall, ToolResult
+from lucnhan.ui.chat_view import (
     _RESTORE_CHUNK_SIZE,
     ChatView,
     MessageSpec,
@@ -96,11 +95,11 @@ from rikugan.ui.chat_view import (
     _is_hidden_system_user_message,
     _RenderedChunk,
 )
-from rikugan.ui.tool_widgets import (
+from lucnhan.ui.tool_widgets import (
     ExecutePythonWidget,
     ToolCallWidget,
 )
-from rikugan.ui.message_widgets import (
+from lucnhan.ui.message_widgets import (
     AssistantMessageWidget,
     UserMessageWidget,
 )
@@ -409,6 +408,7 @@ class WorkerRunTests(unittest.TestCase):
         self.assertEqual(len(chunks[0].specs), _RESTORE_CHUNK_SIZE)
         self.assertTrue(finished)
 
+
 class WorkerQueueTests(unittest.TestCase):
     """RestoreWorker pushes (kind, payload) tuples to a queue.Queue.
 
@@ -449,6 +449,7 @@ class WorkerQueueTests(unittest.TestCase):
     def test_worker_has_queue_attribute(self) -> None:
         worker = RestoreWorker([])
         import queue as _queue
+
         self.assertIsInstance(worker.queue, _queue.Queue)
 
     def test_worker_run_populates_queue_with_chunks_and_finished(self) -> None:
@@ -464,6 +465,7 @@ class WorkerQueueTests(unittest.TestCase):
         self.assertEqual(len(chunks[0].specs), _RESTORE_CHUNK_SIZE)
         self.assertEqual(len(chunks[1].specs), 5)
         self.assertEqual(sum(len(c.specs) for c in chunks), n)
+
     def test_worker_run_no_chunk_ready_or_finished_ok_signal(self) -> None:
         """The Qt-signal interface must be GONE — clean cutover.
 
@@ -535,8 +537,7 @@ class WorkerQueueTests(unittest.TestCase):
         self.assertEqual(
             [role for _tid, role in factory_calls],
             ["a", "b", "c", "FINISHED"],
-            "drain must dispatch every chunk spec in order, then the "
-            "finished sentinel",
+            "drain must dispatch every chunk spec in order, then the finished sentinel",
         )
         drain_tid = factory_calls[0][0]
         self.assertEqual(
@@ -568,6 +569,7 @@ class WorkerQueueTests(unittest.TestCase):
         self.assertEqual(chunks, [])
         self.assertTrue(finished)
 
+
 class PlaceholderTests(unittest.TestCase):
     """``MessagePlaceholder`` is a tiny ``QFrame`` used during async
     restore to reserve vertical space until the real message widget
@@ -586,14 +588,14 @@ class PlaceholderTests(unittest.TestCase):
         cls._qapp = QApplication.instance() or QApplication([])
 
     def test_placeholder_constructs_with_msg_id(self) -> None:
-        from rikugan.ui.chat_view import MessagePlaceholder
+        from lucnhan.ui.chat_view import MessagePlaceholder
 
         ph = MessagePlaceholder(estimated_height=123, msg_id="m1")
         self.addCleanup(ph.deleteLater)
         self.assertEqual(ph.msg_id, "m1")
 
     def test_placeholder_height_matches_estimate(self) -> None:
-        from rikugan.ui.chat_view import MessagePlaceholder
+        from lucnhan.ui.chat_view import MessagePlaceholder
 
         ph = MessagePlaceholder(estimated_height=123, msg_id="m1")
         self.addCleanup(ph.deleteLater)
@@ -606,7 +608,7 @@ class PlaceholderTests(unittest.TestCase):
         """An estimate of e.g. 4 px must still produce a placeholder
         that is at least 16 px tall — otherwise the layout collapses
         and the scrollbar geometry becomes wrong during restore."""
-        from rikugan.ui.chat_view import MessagePlaceholder
+        from lucnhan.ui.chat_view import MessagePlaceholder
 
         for tiny in (0, 1, 4, 15):
             ph = MessagePlaceholder(estimated_height=tiny, msg_id=f"m{tiny}")
@@ -751,7 +753,11 @@ class AsyncRestoreEndToEndTests(unittest.TestCase):
         while time.monotonic() < deadline:
             last_user = len(self.view.findChildren(UserMessageWidget))
             last_assistant = len(self.view.findChildren(AssistantMessageWidget))
-            if last_user >= expected_min_user and last_assistant >= expected_min_assistant and not self.view._in_restore:
+            if (
+                last_user >= expected_min_user
+                and last_assistant >= expected_min_assistant
+                and not self.view._in_restore
+            ):
                 # Spin a few more turns to flush any late queue items.
                 for _ in range(10):
                     self._qapp.processEvents()
@@ -771,9 +777,7 @@ class AsyncRestoreEndToEndTests(unittest.TestCase):
     def test_two_message_session_paints_user_and_assistant(self) -> None:
         """The minimal repro: a 2-message session must yield both
         a ``UserMessageWidget`` and an ``AssistantMessageWidget``."""
-        self.view.restore_from_messages_async(
-            [self._user("hello", "u1"), self._assistant("hi", "a1")]
-        )
+        self.view.restore_from_messages_async([self._user("hello", "u1"), self._assistant("hi", "a1")])
         self._pump_until_done(expected_min_user=1, expected_min_assistant=1)
         # Clean terminal flags.
         self.assertFalse(self.view._in_restore)
@@ -803,7 +807,7 @@ class AsyncRestoreEndToEndTests(unittest.TestCase):
         default cap so the first restore leaves placeholders, then
         re-render with a grown cap and confirm more widgets land.
         """
-        from rikugan.ui.chat_view import _RESTORE_DEFAULT_MAX_RENDERED
+        from lucnhan.ui.chat_view import _RESTORE_DEFAULT_MAX_RENDERED
 
         total = _RESTORE_DEFAULT_MAX_RENDERED + 50
         messages: list[Message] = []
@@ -825,9 +829,7 @@ class AsyncRestoreEndToEndTests(unittest.TestCase):
             expected_min_assistant=_RESTORE_DEFAULT_MAX_RENDERED // 2,
         )
         # Cap grew.
-        self.assertGreater(
-            self.view._restore_max_rendered, _RESTORE_DEFAULT_MAX_RENDERED
-        )
+        self.assertGreater(self.view._restore_max_rendered, _RESTORE_DEFAULT_MAX_RENDERED)
 
     def test_cancel_tears_down_timer_and_clears_state(self) -> None:
         """``_cancel_restore`` must stop the drain timer and clear

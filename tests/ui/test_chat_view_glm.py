@@ -17,23 +17,23 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # Re-import safety: drop sibling stubs that may clobber real modules.
 _STUB_TARGETS = (
-    "rikugan.core.types",
-    "rikugan.agent.turn",
-    "rikugan.ui.chat_view",
-    "rikugan.ui.styles",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.ui.markdown",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.plan_view",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.qt_compat",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
+    "lucnhan.core.types",
+    "lucnhan.agent.turn",
+    "lucnhan.ui.chat_view",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.markdown",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.plan_view",
+    "lucnhan.ui.tool_widgets",
+    "lucnhan.ui.qt_compat",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
 )
 for _name in list(sys.modules):
     if _name in _STUB_TARGETS:
@@ -51,9 +51,18 @@ try:
 except ImportError:
     pass
 
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.types import Message, Role
-from rikugan.ui.chat_view import ChatView, MessageSpec, RestoreWorker
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.types import Message, Role
+from lucnhan.ui.chat_view import ChatView, MessageSpec, RestoreWorker
+from tests.qt_real import live_class
+
+
+def _chat_view_cls() -> type:
+    """Live ``ChatView`` class — a sibling test module's purge can
+    leave the module-level import above pointing at a dead module
+    object, so the harness must build the view from the class the
+    live ``lucnhan.ui.tool_widgets`` / layout tree actually uses."""
+    return live_class("lucnhan.ui.chat_view.ChatView")
 
 
 class _ChatViewHarness:
@@ -68,7 +77,17 @@ class _ChatViewHarness:
     def make() -> ChatView:
         from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-        view = ChatView.__new__(ChatView)
+        chat_view_cls = _chat_view_cls()
+        # ``handle_event`` dispatches on the ``TurnEventType`` names in
+        # its own module globals.  A sibling test module installs
+        # MagicMock stubs for ``lucnhan.agent.turn`` and then purges it,
+        # so the live ``chat_view`` can end up re-imported against the
+        # mock — every event then silently matches no branch.  Rebind
+        # the real classes these tests construct their events with.
+        globals_ = chat_view_cls.handle_event.__globals__
+        globals_["TurnEvent"] = TurnEvent
+        globals_["TurnEventType"] = TurnEventType
+        view = chat_view_cls.__new__(chat_view_cls)
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.addStretch()
@@ -239,7 +258,7 @@ class TestToolCallDiscarded(unittest.TestCase):
         self._view = _ChatViewHarness.make()
 
     def test_tool_call_discarded_stops_spinner(self):
-        from rikugan.ui.tool_widgets import ToolCallWidget
+        from lucnhan.ui.tool_widgets import ToolCallWidget
 
         # Simulate a prior TOOL_CALL_START that registered a widget
         self._view.handle_event(TurnEvent.tool_call_start("call_1", "decompile_function"))
@@ -255,12 +274,16 @@ class TestToolCallDiscarded(unittest.TestCase):
 
     def test_execute_python_mark_discarded_stops_lifecycle(self):
         """ExecutePythonWidget.mark_discarded sets a neutral terminal glyph."""
-        from rikugan import constants
-        from rikugan.ui.tool_widgets import ExecutePythonWidget
+        from lucnhan import constants
+
+        # Live class: the widget above was built by the live
+        # ``chat_view`` module, which imports ``tool_widgets`` — a
+        # module-level import here can name a different object.
+        execute_python_widget_cls = live_class("lucnhan.ui.tool_widgets.ExecutePythonWidget")
 
         self._view.handle_event(TurnEvent.tool_call_start("ep_call", constants.EXECUTE_PYTHON_TOOL_NAME))
         tw = self._view._tool_widgets.get("ep_call")
-        assert isinstance(tw, ExecutePythonWidget)
+        assert isinstance(tw, execute_python_widget_cls)
         self._view.handle_event(
             TurnEvent.tool_call_discarded("ep_call", constants.EXECUTE_PYTHON_TOOL_NAME, "truncated_args")
         )
@@ -413,6 +436,7 @@ class TestReasoningResetBetweenTurns(unittest.TestCase):
         assert self._view._think_buffer == ""
         assert self._view._waiting_think_close is False
 
+
 class TestPlanStepDoneStatus(unittest.TestCase):
     """``PLAN_STEP_DONE`` carries outcome text
     (``completed``/``turn_limit``/``error``) that the UI must map to
@@ -433,7 +457,7 @@ class TestPlanStepDoneStatus(unittest.TestCase):
         # Stub plan_view so handle_event can record the calls without
         # needing a real PlanView (the harness already sets _plan_view
         # to None).
-        from rikugan.ui import plan_view as _pv
+        from lucnhan.ui import plan_view as _pv
 
         self._pv = _pv
         recorded = []
@@ -476,7 +500,7 @@ class TestPlanStepDoneStatus(unittest.TestCase):
 
     def test_helper_direct(self) -> None:
         """Pin the mapping helper itself."""
-        from rikugan.ui.chat_view import _plan_step_done_status
+        from lucnhan.ui.chat_view import _plan_step_done_status
 
         assert _plan_step_done_status("completed") == "done"
         assert _plan_step_done_status("turn_limit") == "turn_limit"

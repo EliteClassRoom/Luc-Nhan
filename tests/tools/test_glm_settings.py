@@ -5,7 +5,7 @@ and the one-time explicit ``api.z.ai`` migration prompt.
 
 GLM controls must be visible only when the active provider has
 ``extra["dialect"] == "glm"``, and must persist the exact typed schema
-from ``rikugan.core.glm_config``.  The Z.AI migration is explicit-only:
+from ``lucnhan.core.glm_config``.  The Z.AI migration is explicit-only:
 it prompts when the hostname is exactly ``api.z.ai`` and the provider
 has no dialect saved, and records a durable marker so decline is not
 re-prompted.
@@ -17,7 +17,7 @@ import unittest
 from unittest.mock import patch
 
 # Install the lightweight ``PySide6`` stubs BEFORE importing any
-# rikugan module.
+# lucnhan module.
 from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
@@ -35,23 +35,23 @@ class _StubModule(types.ModuleType):
 
 
 for _mod_name in [
-    "rikugan.core.host",
-    "rikugan.providers.anthropic_provider",
-    "rikugan.providers.auth_cache",
-    "rikugan.providers.ollama_provider",
-    "rikugan.providers.registry",
-    "rikugan.ui.styles",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.applicator",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
-    "rikugan.ui.tool_widgets",
+    "lucnhan.core.host",
+    "lucnhan.providers.anthropic_provider",
+    "lucnhan.providers.auth_cache",
+    "lucnhan.providers.ollama_provider",
+    "lucnhan.providers.registry",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.applicator",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
+    "lucnhan.ui.tool_widgets",
 ]:
     _stub = _StubModule(_mod_name)
     for _attr in [
@@ -77,17 +77,17 @@ for _mod_name in [
         setattr(_stub, _attr, MagicMock())
     sys.modules[_mod_name] = _stub
 
-_ollama_mod = sys.modules.get("rikugan.providers.ollama_provider")
+_ollama_mod = sys.modules.get("lucnhan.providers.ollama_provider")
 if _ollama_mod is not None and not isinstance(getattr(_ollama_mod, "DEFAULT_OLLAMA_URL", None), str):
     _ollama_mod.DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
-_ac_stub = sys.modules["rikugan.providers.auth_cache"]
+_ac_stub = sys.modules["lucnhan.providers.auth_cache"]
 _ac_stub._cached_oauth = None
 _ac_stub.resolve_anthropic_auth = MagicMock(return_value=("tok", "api_key"))
 _ac_stub.invalidate_cache = MagicMock()
 _ac_stub.set_keychain_consent = MagicMock()
 
-from rikugan.core.config import RikuganConfig
+from lucnhan.core.config import LucNhanConfig
 
 # Stub tab service / tabs so _build_ui does not touch the filesystem.
 _FakeService = type("_FakeService", (), {"__init__": lambda self, *a, **k: None})
@@ -105,40 +105,40 @@ for _name, _cls_name in [
     ("tabs.mcp_tab", "MCPTab"),
     ("tabs.profiles_tab", "ProfilesTab"),
 ]:
-    _mod = sys.modules.get(f"rikugan.ui.{_name}")
+    _mod = sys.modules.get(f"lucnhan.ui.{_name}")
     if _mod is None:
-        _mod = types.ModuleType(f"rikugan.ui.{_name}")
-        sys.modules[f"rikugan.ui.{_name}"] = _mod
+        _mod = types.ModuleType(f"lucnhan.ui.{_name}")
+        sys.modules[f"lucnhan.ui.{_name}"] = _mod
     setattr(_mod, _cls_name, _make_fake_tab)
 
-sys.modules["rikugan.ui.settings_service"].SettingsService = _FakeService
+sys.modules["lucnhan.ui.settings_service"].SettingsService = _FakeService
 
 
 def _ensure_qapplication():
-    from rikugan.ui.qt_compat import QApplication
+    from lucnhan.ui.qt_compat import QApplication
 
     return QApplication.instance() or QApplication([])
 
 
 _STUBBED_BY_THIS_MODULE = frozenset(
     [
-        "rikugan.core.host",
-        "rikugan.providers.anthropic_provider",
-        "rikugan.providers.auth_cache",
-        "rikugan.providers.ollama_provider",
-        "rikugan.providers.registry",
-        "rikugan.ui.styles",
-        "rikugan.ui.theme",
-        "rikugan.ui.theme.applicator",
-        "rikugan.ui.theme.manager",
-        "rikugan.ui.theme.tokens",
-        "rikugan.ui.theme.palette_dark",
-        "rikugan.ui.theme.palette_light",
-        "rikugan.ui.theme.palette_ida",
-        "rikugan.ui.message_widgets",
-        "rikugan.ui.input_area",
-        "rikugan.ui.context_bar",
-        "rikugan.ui.tool_widgets",
+        "lucnhan.core.host",
+        "lucnhan.providers.anthropic_provider",
+        "lucnhan.providers.auth_cache",
+        "lucnhan.providers.ollama_provider",
+        "lucnhan.providers.registry",
+        "lucnhan.ui.styles",
+        "lucnhan.ui.theme",
+        "lucnhan.ui.theme.applicator",
+        "lucnhan.ui.theme.manager",
+        "lucnhan.ui.theme.tokens",
+        "lucnhan.ui.theme.palette_dark",
+        "lucnhan.ui.theme.palette_light",
+        "lucnhan.ui.theme.palette_ida",
+        "lucnhan.ui.message_widgets",
+        "lucnhan.ui.input_area",
+        "lucnhan.ui.context_bar",
+        "lucnhan.ui.tool_widgets",
     ]
 )
 
@@ -155,10 +155,10 @@ class TestGLMControlsVisibility(unittest.TestCase):
         _ensure_qapplication()
 
     def _build_dialog(self, config=None):
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         if config is None:
-            config = RikuganConfig()
+            config = LucNhanConfig()
         return SettingsDialog(config), config
 
     def test_glm_group_exists(self) -> None:
@@ -213,9 +213,9 @@ class TestGLMControlsPersistence(unittest.TestCase):
         _ensure_qapplication()
 
     def _build_dialog(self):
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.extra = {"dialect": "glm"}
         return SettingsDialog(config), config
 
@@ -342,9 +342,9 @@ class TestGLMEndpointType(unittest.TestCase):
         _ensure_qapplication()
 
     def _build_dialog(self):
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.extra = {"dialect": "glm"}
         return SettingsDialog(config), config
 
@@ -357,9 +357,9 @@ class TestGLMEndpointType(unittest.TestCase):
 
     def test_endpoint_round_trips(self) -> None:
         """Endpoint saved to extra loads back into the combo."""
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.extra = {"dialect": "glm", "endpoint_type": "coding_plan"}
         dlg = SettingsDialog(config)
         try:
@@ -370,10 +370,10 @@ class TestGLMEndpointType(unittest.TestCase):
     def test_endpoint_change_updates_base_url(self) -> None:
         """Switching to Coding Plan updates api_base from the standard URL
         to the coding-plan URL."""
-        from rikugan.core.glm_config import GLM_ENDPOINT_BASE_URLS
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.glm_config import GLM_ENDPOINT_BASE_URLS
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.extra = {"dialect": "glm"}
         config.provider.api_base = GLM_ENDPOINT_BASE_URLS["standard"]
         dlg = SettingsDialog(config)
@@ -411,14 +411,14 @@ class TestGLMZaiMigration(unittest.TestCase):
         _ensure_qapplication()
 
     def _build_dialog(self, config=None):
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         if config is None:
-            config = RikuganConfig()
+            config = LucNhanConfig()
         return SettingsDialog(config), config
 
     def test_migration_accept_sets_dialect_glm(self) -> None:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.add_custom_provider("zai-glm")
         config.provider.name = "zai-glm"
         config.provider.api_base = "https://api.z.ai/api/paas/v4/"
@@ -426,7 +426,7 @@ class TestGLMZaiMigration(unittest.TestCase):
 
         dlg, _ = self._build_dialog(config)
         try:
-            with patch("rikugan.ui.settings_dialog._prompt_zai_migration", return_value=True):
+            with patch("lucnhan.ui.settings_dialog._prompt_zai_migration", return_value=True):
                 dlg._maybe_prompt_zai_migration()
 
             self.assertEqual(config.provider.extra.get("dialect"), "glm")
@@ -435,7 +435,7 @@ class TestGLMZaiMigration(unittest.TestCase):
             dlg.done(0)
 
     def test_migration_decline_leaves_extra_untouched(self) -> None:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.add_custom_provider("zai-glm")
         config.provider.name = "zai-glm"
         config.provider.api_base = "https://api.z.ai/api/paas/v4/"
@@ -443,7 +443,7 @@ class TestGLMZaiMigration(unittest.TestCase):
 
         dlg, _ = self._build_dialog(config)
         try:
-            with patch("rikugan.ui.settings_dialog._prompt_zai_migration", return_value=False):
+            with patch("lucnhan.ui.settings_dialog._prompt_zai_migration", return_value=False):
                 dlg._maybe_prompt_zai_migration()
 
             self.assertNotIn("dialect", config.provider.extra)
@@ -452,7 +452,7 @@ class TestGLMZaiMigration(unittest.TestCase):
             dlg.done(0)
 
     def test_migration_not_prompted_for_non_zai_host(self) -> None:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.add_custom_provider("other")
         config.provider.name = "other"
         config.provider.api_base = "https://api.other.com/v1"
@@ -460,7 +460,7 @@ class TestGLMZaiMigration(unittest.TestCase):
 
         dlg, _ = self._build_dialog(config)
         try:
-            with patch("rikugan.ui.settings_dialog._prompt_zai_migration", return_value=True) as m:
+            with patch("lucnhan.ui.settings_dialog._prompt_zai_migration", return_value=True) as m:
                 dlg._maybe_prompt_zai_migration()
                 m.assert_not_called()
             self.assertNotIn("dialect", config.provider.extra)
@@ -468,7 +468,7 @@ class TestGLMZaiMigration(unittest.TestCase):
             dlg.done(0)
 
     def test_migration_not_prompted_when_dialect_already_saved(self) -> None:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.add_custom_provider("zai-glm")
         config.provider.name = "zai-glm"
         config.provider.api_base = "https://api.z.ai/api/paas/v4/"
@@ -477,14 +477,14 @@ class TestGLMZaiMigration(unittest.TestCase):
 
         dlg, _ = self._build_dialog(config)
         try:
-            with patch("rikugan.ui.settings_dialog._prompt_zai_migration", return_value=True) as m:
+            with patch("lucnhan.ui.settings_dialog._prompt_zai_migration", return_value=True) as m:
                 dlg._maybe_prompt_zai_migration()
                 m.assert_not_called()
         finally:
             dlg.done(0)
 
     def test_migration_not_prompted_when_already_prompted(self) -> None:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.add_custom_provider("zai-glm")
         config.custom_providers["zai-glm"]["glm_migration_prompted"] = True
         config.provider.name = "zai-glm"
@@ -493,21 +493,21 @@ class TestGLMZaiMigration(unittest.TestCase):
 
         dlg, _ = self._build_dialog(config)
         try:
-            with patch("rikugan.ui.settings_dialog._prompt_zai_migration", return_value=True) as m:
+            with patch("lucnhan.ui.settings_dialog._prompt_zai_migration", return_value=True) as m:
                 dlg._maybe_prompt_zai_migration()
                 m.assert_not_called()
         finally:
             dlg.done(0)
 
     def test_migration_not_prompted_for_builtin_provider(self) -> None:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "anthropic"
         config.provider.api_base = "https://api.z.ai/"
         config.provider.model = "claude-3"
 
         dlg, _ = self._build_dialog(config)
         try:
-            with patch("rikugan.ui.settings_dialog._prompt_zai_migration", return_value=True) as m:
+            with patch("lucnhan.ui.settings_dialog._prompt_zai_migration", return_value=True) as m:
                 dlg._maybe_prompt_zai_migration()
                 m.assert_not_called()
         finally:
@@ -519,7 +519,7 @@ class TestGLMZaiMigration(unittest.TestCase):
         """Decline then Cancel must: keep the marker (no re-prompt on
         reopen) and leave no dialect on the active provider."""
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.add_custom_provider("zai-glm")
         config.provider.name = "zai-glm"
         config.provider.api_base = "https://api.z.ai/api/paas/v4/"
@@ -527,7 +527,7 @@ class TestGLMZaiMigration(unittest.TestCase):
 
         dlg, _ = self._build_dialog(config)
         try:
-            with patch("rikugan.ui.settings_dialog._prompt_zai_migration", return_value=False):
+            with patch("lucnhan.ui.settings_dialog._prompt_zai_migration", return_value=False):
                 dlg._maybe_prompt_zai_migration()
 
             # Before Cancel: marker set, no dialect.
@@ -560,7 +560,7 @@ class TestGLMZaiMigration(unittest.TestCase):
         pre-dialog state.
         """
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.add_custom_provider("zai-glm")
         config.provider.name = "zai-glm"
         config.provider.api_base = "https://api.z.ai/api/paas/v4/"
@@ -568,7 +568,7 @@ class TestGLMZaiMigration(unittest.TestCase):
 
         dlg, _ = self._build_dialog(config)
         try:
-            with patch("rikugan.ui.settings_dialog._prompt_zai_migration", return_value=True):
+            with patch("lucnhan.ui.settings_dialog._prompt_zai_migration", return_value=True):
                 dlg._maybe_prompt_zai_migration()
 
             # Before Cancel: marker set, dialect=glm.
@@ -602,9 +602,9 @@ class TestThinkingCombo(unittest.TestCase):
         _ensure_qapplication()
 
     def _build_dialog(self, model: str = "gpt-test", extra=None):
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "openai"
         config.provider.model = model
         if extra is not None:
@@ -644,7 +644,7 @@ class TestThinkingCombo(unittest.TestCase):
             dlg.done(0)
 
     def test_unknown_model_offers_the_full_default_range(self) -> None:
-        from rikugan.core.thinking import DEFAULT_THINKING_LEVELS
+        from lucnhan.core.thinking import DEFAULT_THINKING_LEVELS
 
         dlg, _ = self._build_dialog()
         try:
@@ -743,9 +743,9 @@ class TestThinkingCombo(unittest.TestCase):
 
     def test_saved_level_is_restored_on_reopen(self) -> None:
         """A saved level round-trips back into the combo on the next open."""
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "openai"
         config.provider.model = "glm-5.3"
         config.provider.extra = {"thinking": {"enabled": True, "reasoning_effort": "max", "preserve": True}}
@@ -758,9 +758,9 @@ class TestThinkingCombo(unittest.TestCase):
     def test_saved_level_unsupported_by_model_falls_back_instead_of_being_injected(self) -> None:
         """A stale saved level (e.g. "ultra" saved for another model) must
         not be spliced into the combo as an out-of-list item."""
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "openai"
         config.provider.model = "glm-5.3"
         config.provider.extra = {"thinking": {"enabled": True, "reasoning_effort": "ultra", "preserve": True}}

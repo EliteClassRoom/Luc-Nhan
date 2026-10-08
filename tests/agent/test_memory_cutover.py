@@ -5,17 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from rikugan.agent.loop import AgentLoop
-from rikugan.agent.turn import TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import ToolCall
-from rikugan.memory.authority import MemoryAuthorityIssuer
-from rikugan.memory.markdown import MemoryProjector
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.service import BinaryMemoryService
-from rikugan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
-from rikugan.state.session import SessionState
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.agent.turn import TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import ToolCall
+from lucnhan.memory.authority import MemoryAuthorityIssuer
+from lucnhan.memory.markdown import MemoryProjector
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.service import BinaryMemoryService
+from lucnhan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
+from lucnhan.state.session import SessionState
 
 
 def _make_loop_with_central_memory(tmp_path: Path) -> tuple[AgentLoop, BinaryMemoryService]:
@@ -35,7 +35,7 @@ def _make_loop_with_central_memory(tmp_path: Path) -> tuple[AgentLoop, BinaryMem
         authority_issuer=issuer,
     )
 
-    config = RikuganConfig()
+    config = LucNhanConfig()
     session = SessionState(idb_path=str(tmp_path / "test.i64"))
     provider = MagicMock()
     tools = MagicMock()
@@ -73,7 +73,7 @@ class TestSaveMemoryCentralDispatch:
 
     def test_save_memory_without_service_returns_error(self, tmp_path: Path) -> None:
         """When memory_service is None (identity failure), save_memory reports unavailable."""
-        config = RikuganConfig()
+        config = LucNhanConfig()
         session = SessionState(idb_path=str(tmp_path / "test.i64"))
         provider = MagicMock()
         tools = MagicMock()

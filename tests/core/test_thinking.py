@@ -1,6 +1,6 @@
 """Tests for the provider-neutral thinking-level registry.
 
-``rikugan.core.thinking`` is the single source of truth for which
+``lucnhan.core.thinking`` is the single source of truth for which
 thinking levels a model accepts.  Settings offers exactly the returned
 list; ``glm_config`` validates saved levels against it; providers use
 ``has_model_thinking_levels`` to decide whether ``reasoning_effort`` may
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from rikugan.core.thinking import (
+from lucnhan.core.thinking import (
     ALL_THINKING_LEVELS,
     DEFAULT_THINKING_LEVELS,
     default_thinking_level,

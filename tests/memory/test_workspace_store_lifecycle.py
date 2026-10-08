@@ -14,10 +14,10 @@ The fix:
   store is closed before the exception bubbles out (no orphan).
 
 NOTE on import order: ``tests/agent/test_session_controller.py`` calls
-``install_ida_mocks()`` at module level so ``rikugan.core.host`` captures
-the mocked ``idaapi``. Importing ``rikugan.memory.workspace`` BEFORE that
+``install_ida_mocks()`` at module level so ``lucnhan.core.host`` captures
+the mocked ``idaapi``. Importing ``lucnhan.memory.workspace`` BEFORE that
 hook freezes ``host._idaapi`` to ``None``. This file therefore defers every
-rikugan import to inside functions/fixtures.
+lucnhan import to inside functions/fixtures.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-# No rikugan imports at the module level. See the note above.
+# No lucnhan imports at the module level. See the note above.
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def ctrl(tmp_path: Path):
     # Defend against module-level sys.modules pollution from sibling
     # tests (``tests/tools/test_ida_panel.py``,
     # ``tests/ida_ui/test_panel_onside_widget.py``) that install a
-    # ``types.ModuleType("rikugan.ida.ui.session_controller")`` whose
+    # ``types.ModuleType("lucnhan.ida.ui.session_controller")`` whose
     # ``IdaSessionController`` is a ``MagicMock()``. The replacement
     # outlives those tests and would otherwise shadow the real class
     # here, turning the controller into a MagicMock and breaking every
@@ -43,26 +43,26 @@ def ctrl(tmp_path: Path):
     import sys
 
     for _name in (
-        "rikugan.ida.ui.session_controller",
-        "rikugan.ui.panel_core",
-        "rikugan.ida.ui.actions",
+        "lucnhan.ida.ui.session_controller",
+        "lucnhan.ui.panel_core",
+        "lucnhan.ida.ui.actions",
     ):
         _entry = sys.modules.get(_name)
         if _entry is None:
             continue
-        # Real rikugan modules have a ``__file__``; the stub
+        # Real lucnhan modules have a ``__file__``; the stub
         # ``types.ModuleType("...")`` instances installed by sibling
         # tests have none. Drop only the latter.
         if getattr(_entry, "__file__", None) is None:
             del sys.modules[_name]
 
-    from rikugan.core.config import RikuganConfig
-    from rikugan.ida.ui.session_controller import IdaSessionController
-    from rikugan.memory.workspace import FilesystemIdentity
-    from rikugan.memory.workspace_store import WorkspaceStore
-    from rikugan.state.history import SessionHistory
+    from lucnhan.core.config import LucNhanConfig
+    from lucnhan.ida.ui.session_controller import IdaSessionController
+    from lucnhan.memory.workspace import FilesystemIdentity
+    from lucnhan.memory.workspace_store import WorkspaceStore
+    from lucnhan.state.history import SessionHistory
 
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._config_dir = str(tmp_path)
     controller = IdaSessionController(cfg)
     controller._idb_path = "/fake/test.i64"
@@ -81,17 +81,17 @@ def ctrl(tmp_path: Path):
 
 def _patch_fs_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub ``get_filesystem_identity`` so registry bind succeeds."""
-    from rikugan.memory.workspace import FilesystemIdentity
+    from lucnhan.memory.workspace import FilesystemIdentity
 
     def _fake_fs_identity(_path: str) -> FilesystemIdentity:
         return FilesystemIdentity("vol", "test-volume")
 
-    monkeypatch.setattr("rikugan.memory.identity.get_filesystem_identity", _fake_fs_identity)
+    monkeypatch.setattr("lucnhan.memory.identity.get_filesystem_identity", _fake_fs_identity)
 
 
 def _patch_close_tracker(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Record every WorkspaceStore.close invocation. Returns the call list."""
-    from rikugan.memory.workspace_store import WorkspaceStore
+    from lucnhan.memory.workspace_store import WorkspaceStore
 
     calls: list[int] = []
     original_close = WorkspaceStore.close
@@ -108,8 +108,8 @@ class TestWorkspaceStoreCloseIdempotent:
     """``WorkspaceStore.close()`` must be safe to call twice."""
 
     def test_double_close_does_not_raise(self, tmp_path: Path) -> None:
-        from rikugan.memory.workspace import MemoryLocator, new_memory_id
-        from rikugan.memory.workspace_store import WorkspaceStore
+        from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+        from lucnhan.memory.workspace_store import WorkspaceStore
 
         owner = new_memory_id()
         paths = MemoryLocator(tmp_path / "memory").binary(owner)
@@ -128,7 +128,7 @@ class TestWireCentralMemoryClosesOnSwap:
     def test_six_runs_close_five_displaced_stores(self, ctrl, monkeypatch: pytest.MonkeyPatch) -> None:
         from unittest.mock import MagicMock
 
-        from rikugan.memory import workspace_open
+        from lucnhan.memory import workspace_open
 
         _patch_fs_identity(monkeypatch)
         calls = _patch_close_tracker(monkeypatch)
@@ -180,7 +180,7 @@ class TestWireCentralMemoryExceptionSafety:
     def test_exception_after_store_creation_closes_store(self, ctrl, monkeypatch: pytest.MonkeyPatch) -> None:
         from unittest.mock import MagicMock
 
-        from rikugan.memory import service
+        from lucnhan.memory import service
 
         _patch_fs_identity(monkeypatch)
         calls = _patch_close_tracker(monkeypatch)
@@ -277,8 +277,8 @@ class TestWorkspaceStoreCloseOrdering:
     """
 
     def test_close_flag_unset_until_close_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from rikugan.memory.workspace import MemoryLocator, new_memory_id
-        from rikugan.memory.workspace_store import WorkspaceStore
+        from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+        from lucnhan.memory.workspace_store import WorkspaceStore
 
         owner = new_memory_id()
 

@@ -22,7 +22,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.types import LLMRequestContext, Message, Role, StreamChunk
+from lucnhan.core.types import LLMRequestContext, Message, Role, StreamChunk
 
 # ---------------------------------------------------------------------------
 # Default model and builtin metadata
@@ -33,18 +33,18 @@ class TestMiniMaxDefaultsAndMetadata(unittest.TestCase):
     """MiniMax default model and builtin metadata follow current docs."""
 
     def test_default_model_is_minimax_m3(self) -> None:
-        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
+        from lucnhan.core.config import PROVIDER_DEFAULT_MODELS
 
         self.assertEqual(PROVIDER_DEFAULT_MODELS["minimax"], "MiniMax-M3")
 
     def test_minimax_provider_default_model_is_m3(self) -> None:
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         provider = MiniMaxProvider(api_key="sk-test")
         self.assertEqual(provider.model, "MiniMax-M3")
 
     def test_builtin_models_include_m3_with_documented_limits(self) -> None:
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         models = MiniMaxProvider._builtin_models()
         ids = [m.id for m in models]
@@ -62,7 +62,7 @@ class TestMiniMaxDefaultsAndMetadata(unittest.TestCase):
                 self.assertFalse(m.supports_vision)  # M2.x text-only per docs
 
     def test_capabilities_reflect_largest_documented_model(self) -> None:
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         caps = MiniMaxProvider(api_key="sk-test").capabilities
         self.assertEqual(caps.max_context_window, 1_000_000)
@@ -73,7 +73,7 @@ class TestMiniMaxDefaultsAndMetadata(unittest.TestCase):
     def test_builtin_models_include_m31_flash_preview(self) -> None:
         """M3.1 Flash Preview is Token-Plan-only and absent from
         ``/models`` listings, so the static list must carry it."""
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         m31 = next(m for m in MiniMaxProvider._builtin_models() if m.id == "MiniMax-M3.1-Flash-Preview")
         self.assertEqual(m31.context_window, 1_000_000)
@@ -83,7 +83,7 @@ class TestMiniMaxDefaultsAndMetadata(unittest.TestCase):
         """An M3-family id absent from ``_MODEL_LIMITS`` (a newer M3 variant
         shipped ahead of the table) must not fall back to the 204800-token
         M2.x contract."""
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         self.assertEqual(MiniMaxProvider._limits_for_model("MiniMax-M3.9"), (1_000_000, 524_288))
         self.assertEqual(MiniMaxProvider._limits_for_model("MiniMax-M2.9"), (204_800, 204_800))
@@ -99,7 +99,7 @@ class TestMiniMaxAutomaticThinking(unittest.TestCase):
     and not add a manual thinking budget for M2.x."""
 
     def _kwargs(self, model: str, max_tokens: int = 8192):
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         provider = MiniMaxProvider(api_key="sk-test", model=model)
         return provider._build_request_kwargs(
@@ -171,7 +171,7 @@ class TestMiniMaxRequestContextPayloadEquivalence(unittest.TestCase):
     currently strips ``cache_control`` / enables ``thinking`` for M3."""
 
     def test_request_context_does_not_change_minimax_payload(self) -> None:
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         provider = MiniMaxProvider(api_key="sk-test", model="MiniMax-M3")
         messages = [Message(role=Role.USER, content="hello")]
@@ -238,7 +238,7 @@ class TestMiniMaxInheritsAnthropicStreamingCoercion(unittest.TestCase):
         return _FakeAnthropicClient(events)
 
     def test_minimax_inherits_anthropic_message_delta_token_coercion(self) -> None:
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         provider = MiniMaxProvider(
             api_key="sk-test",
@@ -280,7 +280,7 @@ class TestMiniMaxNativeToolCallRecovery(unittest.TestCase):
     """Streamed native tool-call XML must become structured tool calls."""
 
     def _provider(self):
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         return MiniMaxProvider(api_key="sk-test", model="MiniMax-M3")
 
@@ -408,7 +408,7 @@ class TestMiniMaxNativeToolCallRecovery(unittest.TestCase):
     def test_server_tool_use_chunks_disable_filter(self):
         """Server converted one invoke but leaked a second into text —
         the leaked one must still be recovered (multi-invoke turns)."""
-        from rikugan.providers.minimax_provider import _NativeToolCallFilter
+        from lucnhan.providers.minimax_provider import _NativeToolCallFilter
 
         flt = _NativeToolCallFilter()
         chunks = list(flt.feed(StreamChunk(tool_call_id="srv_1", tool_name="f", is_tool_call_start=True)))
@@ -465,7 +465,7 @@ class TestMiniMaxThinkingChannel(unittest.TestCase):
         )
 
     def test_thinking_chunk_passthrough_with_invoke_xml(self):
-        from rikugan.providers.minimax_provider import _NativeToolCallFilter
+        from lucnhan.providers.minimax_provider import _NativeToolCallFilter
 
         flt = _NativeToolCallFilter()
         out = list(flt.feed(StreamChunk(text="", is_thinking=True)))

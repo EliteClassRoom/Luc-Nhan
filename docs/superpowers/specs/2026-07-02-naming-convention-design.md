@@ -9,15 +9,15 @@
 
 ## Context
 
-Rikugan hiện có naming convention **mâu thuẫn nội bộ**:
+Luc Nhan hiện có naming convention **mâu thuẫn nội bộ**:
 
 | Nguồn | File:line | Phong cách |
 |-------|-----------|------------|
-| System prompt (chat) | `rikugan/agent/prompts/base.py:60` | **PascalCase** function |
-| Skill `malware-analysis` | `rikugan/skills/builtins/malware-analysis/SKILL.md:90` | **PascalCase** function |
-| Skill `generic-re` | `rikugan/skills/builtins/generic-re/SKILL.md:52` | **PascalCase** function |
-| Bulk renamer Quick | `rikugan/agent/bulk_renamer.py:29` | **snake_case** function ⚠️ |
-| Bulk renamer Deep | `rikugan/agent/bulk_renamer.py:60` | **snake_case** function ⚠️ |
+| System prompt (chat) | `lucnhan/agent/prompts/base.py:60` | **PascalCase** function |
+| Skill `malware-analysis` | `lucnhan/skills/builtins/malware-analysis/SKILL.md:90` | **PascalCase** function |
+| Skill `generic-re` | `lucnhan/skills/builtins/generic-re/SKILL.md:52` | **PascalCase** function |
+| Bulk renamer Quick | `lucnhan/agent/bulk_renamer.py:29` | **snake_case** function ⚠️ |
+| Bulk renamer Deep | `lucnhan/agent/bulk_renamer.py:60` | **snake_case** function ⚠️ |
 
 Hậu quả: khi user dùng Bulk Rename widget, agent sinh tên `snake_case`; khi chat
 thường, agent sinh `PascalCase` → **cùng một IDB có 2 phong cách tên lộn xộn**,
@@ -29,7 +29,7 @@ dòng 49-63, phần convention chỉ 3 dòng 60-62), chỉ cover 3 loại đối
 
 **Lưu ý bug hiện có:** `RENAMING_SECTION` dòng 56 và `research.py:158`/
 `exploration_mode.py:300` reference tool `rename_multi_variables`, nhưng tool
-này **không tồn tại** trong `rikugan/ida/tools/` (chỉ có `rename_function`,
+này **không tồn tại** trong `lucnhan/ida/tools/` (chỉ có `rename_function`,
 `rename_variable`, `rename_address`). Đây là tool ma được kế thừa — baseline
 mới phải **loại bỏ** reference này, không kế thừa bug.
 
@@ -86,12 +86,12 @@ self-containment.
 
 | File | Loại | Mô tả |
 |------|------|-------|
-| `rikugan/agent/prompts/base.py` | Sửa | Expand `RENAMING_SECTION` từ 3 → ~12 dòng (baseline) |
-| `rikugan/skills/builtins/naming-convention/SKILL.md` | **Mới** | Bộ quy chuẩn đầy đủ + frontmatter |
-| `rikugan/skills/builtins/naming-convention/references/naming-examples.md` | **Mới** | Before/after examples, edge cases |
-| `rikugan/agent/bulk_renamer.py` | Sửa | `QUICK_ANALYSIS_PROMPT` + `DEEP_ANALYSIS_PROMPT`: snake_case → PascalCase |
-| `rikugan/skills/builtins/malware-analysis/SKILL.md` | Sửa (nhỏ) | Đồng bộ naming section với quy chuẩn mới |
-| `rikugan/skills/builtins/generic-re/SKILL.md` | Sửa (nhỏ) | Đồng bộ naming section với quy chuẩn mới |
+| `lucnhan/agent/prompts/base.py` | Sửa | Expand `RENAMING_SECTION` từ 3 → ~12 dòng (baseline) |
+| `lucnhan/skills/builtins/naming-convention/SKILL.md` | **Mới** | Bộ quy chuẩn đầy đủ + frontmatter |
+| `lucnhan/skills/builtins/naming-convention/references/naming-examples.md` | **Mới** | Before/after examples, edge cases |
+| `lucnhan/agent/bulk_renamer.py` | Sửa | `QUICK_ANALYSIS_PROMPT` + `DEEP_ANALYSIS_PROMPT`: snake_case → PascalCase |
+| `lucnhan/skills/builtins/malware-analysis/SKILL.md` | Sửa (nhỏ) | Đồng bộ naming section với quy chuẩn mới |
+| `lucnhan/skills/builtins/generic-re/SKILL.md` | Sửa (nhỏ) | Đồng bộ naming section với quy chuẩn mới |
 | `tests/agent/test_system_prompt.py` | Sửa | Thêm test xác nhận `RENAMING_SECTION` mới có keywords |
 
 ## Naming conventions by object type
@@ -264,7 +264,7 @@ Cho confidence 50-70%, dùng prefix `Unknown_<Hint>_<addr>`:
 name: Naming Convention
 description: Comprehensive naming standard for IDA — functions, variables, globals, structs, enums, types. Covers edge cases (wrappers, mangling, Go/Rust, vtable) and confidence-based placeholders. Load before bulk rename or complex retyping.
 tags: [naming, convention, annotations, reverse-engineering]
-author: Rikugan
+author: Luc Nhan
 version: 1.0
 triggers:
   - naming convention
@@ -401,7 +401,7 @@ match `Unknown_Foo_4012a0` OK.
 
 ## Baseline RENAMING_SECTION (Tầng 1)
 
-`rikugan/agent/prompts/base.py` dòng 49-63 expand từ 3 → ~12 dòng:
+`lucnhan/agent/prompts/base.py` dòng 49-63 expand từ 3 → ~12 dòng:
 
 ```python
 RENAMING_SECTION = """\
@@ -452,7 +452,7 @@ Cùng nội dung 6 dòng như trên, thay cho 1 dòng hiện tại.
 ```python
 def test_renaming_section_has_full_convention(self):
     """Baseline RENAMING_SECTION covers all 6 object types."""
-    from rikugan.agent.prompts.base import RENAMING_SECTION
+    from lucnhan.agent.prompts.base import RENAMING_SECTION
     assert "PascalCase" in RENAMING_SECTION      # functions
     assert "snake_case" in RENAMING_SECTION      # variables
     assert "g_" in RENAMING_SECTION              # globals
@@ -460,7 +460,7 @@ def test_renaming_section_has_full_convention(self):
 
 def test_renaming_section_references_skill(self):
     """Baseline points to the naming-convention skill for edge cases."""
-    from rikugan.agent.prompts.base import RENAMING_SECTION
+    from lucnhan.agent.prompts.base import RENAMING_SECTION
     assert "naming-convention" in RENAMING_SECTION
 ```
 
@@ -479,7 +479,7 @@ def test_bulk_renamer_prompts_use_pascalcase(self):
     PascalCase. Avoids brittle substring checks on the word "snake_case"
     (which legitimately appears in "NEVER snake_case" guidance).
     """
-    from rikugan.agent.bulk_renamer import QUICK_ANALYSIS_PROMPT, DEEP_ANALYSIS_PROMPT
+    from lucnhan.agent.bulk_renamer import QUICK_ANALYSIS_PROMPT, DEEP_ANALYSIS_PROMPT
     # Negative: original snake_case directives must be gone (exact phrases)
     assert "Use snake_case naming convention" not in QUICK_ANALYSIS_PROMPT
     assert "using snake_case convention" not in DEEP_ANALYSIS_PROMPT
@@ -495,7 +495,7 @@ def test_bulk_renamer_prompts_use_pascalcase(self):
 
 **Local CI (`./ci-local.sh` trước push):**
 - `ruff format` + `ruff check` — format Python.
-- `mypy rikugan/core rikugan/providers` — type check (không ảnh hưởng vì chỉ
+- `mypy lucnhan/core lucnhan/providers` — type check (không ảnh hưởng vì chỉ
   sửa string + markdown).
 - `pytest tests/agent/test_system_prompt.py` — test mới.
 - `pytest tests/tools/test_skills.py` — skill discovery.
@@ -531,16 +531,16 @@ def test_bulk_renamer_prompts_use_pascalcase(self):
 
 ```
 Phase 1: Tạo skill (Tầng 2) — không phá gì
-  └─ rikugan/skills/builtins/naming-convention/SKILL.md
-  └─ rikugan/skills/builtins/naming-convention/references/naming-examples.md
+  └─ lucnhan/skills/builtins/naming-convention/SKILL.md
+  └─ lucnhan/skills/builtins/naming-convention/references/naming-examples.md
   └─ Test: pytest tests/tools/test_skills.py
 
 Phase 2: Expand baseline (Tầng 1) — thay đổi system prompt
-  └─ rikugan/agent/prompts/base.py: RENAMING_SECTION (3 → ~12 dòng)
+  └─ lucnhan/agent/prompts/base.py: RENAMING_SECTION (3 → ~12 dòng)
   └─ Test: pytest tests/agent/test_system_prompt.py
 
 Phase 3: Đồng bộ bulk_renamer (Tầng 3) — sửa inconsistency
-  └─ rikugan/agent/bulk_renamer.py: QUICK + DEEP prompts
+  └─ lucnhan/agent/bulk_renamer.py: QUICK + DEEP prompts
   └─ Test: grep -i snake_case bulk_renamer.py (phải empty)
 
 Phase 4: Đồng bộ 2 skills hiện có — DRY cleanup

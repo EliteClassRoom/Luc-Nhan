@@ -12,7 +12,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.loop import AgentLoop
+from lucnhan.agent.loop import AgentLoop
 
 
 class _FakeSkill:

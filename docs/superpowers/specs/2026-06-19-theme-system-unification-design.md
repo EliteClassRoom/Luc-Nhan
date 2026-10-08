@@ -66,7 +66,7 @@ Changes:
 
 Verify:
 - Full `pytest` suite green.
-- mypy on `rikugan/core` + `rikugan/providers` clean.
+- mypy on `lucnhan/core` + `lucnhan/providers` clean.
 - **IDA visual**: open plugin, switch dark↔light↔ida mid-session, confirm no
   stale widgets (especially the host-scoped objects: `thinking_block`,
   `message_queued`, `message_question`, `message_thinking`, `input_area`,
@@ -93,7 +93,7 @@ Changes:
 - **KEEP the host-inherit half**: `_current_theme`, `is_host_theme()`,
   `use_native_host_theme()`, `host_stylesheet()`, `maybe_host_stylesheet()`.
   These answer a *different* question ("inherit host Qt palette vs force
-  Rikugan palette") and are consumed widely (~40 sites: `markdown.py`,
+  Luc Nhan palette") and are consumed widely (~40 sites: `markdown.py`,
   `markdown_renderer.py`, `chat_view.py`, `input_area.py`,
   `message_widgets.py` via `host_stylesheet`, `panel_core.py`,
   `settings_dialog.py`, and the 3 `build_*_stylesheet` builders). They are
@@ -105,7 +105,7 @@ Changes:
   for `is_host_theme()`) but simplified to a single-arg form.
   `settings_dialog.py:668` (ThemeManager.set_mode already drives everything).
 - Re-export shim: `styles.py` keeps re-exporting the `widgets_*.py` getters so
-  consumers importing from `rikugan.ui.styles` keep working.
+  consumers importing from `lucnhan.ui.styles` keep working.
 
 Verify:
 - Full `pytest` green; mypy clean.

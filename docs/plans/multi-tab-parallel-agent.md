@@ -37,7 +37,7 @@
 
 ### Does NOT change (already multi-tab capable)
 
-- `RikuganPanelCore._chat_views: dict[str, ChatView]` — one ChatView per tab. ✅
+- `LucNhanPanelCore._chat_views: dict[str, ChatView]` — one ChatView per tab. ✅
 - `SessionControllerBase._sessions: dict[str, SessionState]` — one session per tab. ✅
 - `BackgroundAgentRunner` — already self-contained (own thread + own bounded
   `event_queue`). Multiple instances are independent by construction. ✅
@@ -52,11 +52,11 @@ Three files only:
 
 | File | Change |
 | ------ | -------- |
-| `rikugan/ui/session_controller_base.py` | `self._runner` (single) → `self._runners: dict[str, BackgroundAgentRunner]` (per tab). All lifecycle methods become tab-aware. |
-| `rikugan/ui/panel_core.py` | `_poll_events` drains **all** running tabs (not just active). Approval/pending-answer state becomes per-tab. `_set_running` reflects "any tab running". |
-| `rikugan/tools/registry.py` | Add a `_mutate_lock` (phase 2) so mutating tools serialize → keeps the undo stack coherent across concurrent agents. |
+| `lucnhan/ui/session_controller_base.py` | `self._runner` (single) → `self._runners: dict[str, BackgroundAgentRunner]` (per tab). All lifecycle methods become tab-aware. |
+| `lucnhan/ui/panel_core.py` | `_poll_events` drains **all** running tabs (not just active). Approval/pending-answer state becomes per-tab. `_set_running` reflects "any tab running". |
+| `lucnhan/tools/registry.py` | Add a `_mutate_lock` (phase 2) so mutating tools serialize → keeps the undo stack coherent across concurrent agents. |
 
-The IDA host controller (`rikugan/ida/ui/session_controller.py`) overrides **none**
+The IDA host controller (`lucnhan/ida/ui/session_controller.py`) overrides **none**
 of the lifecycle methods — confirmed. So no host-side changes needed.
 
 ---
@@ -79,7 +79,7 @@ self._max_concurrent_agents: int = 3                          # cap (config-driv
 `_pending_messages` moves from a flat list to a per-tab dict so a queued
 follow-up in tab A doesn't leak into tab B. `_pending_messages.get(tab_id, [])`.
 
-### 2.2 `RikuganPanelCore`
+### 2.2 `LucNhanPanelCore`
 
 ```python
 # BEFORE (panel_core.py:249)
@@ -135,7 +135,7 @@ def _acquire_slot(self) -> bool:
 The panel, when a slot frees (a tab finishes), should start the oldest queued
 message in any tab (FIFO across tabs) — see Step 1.4.
 
-### Step 1.2 — `RikuganPanelCore._poll_events`: drain all tabs
+### Step 1.2 — `LucNhanPanelCore._poll_events`: drain all tabs
 
 Current code (panel_core.py:1669) polls only the active runner. Rewrite to
 round-robin every runner and route each event to **its own tab's ChatView**:
@@ -313,7 +313,7 @@ mutation panel tooltip.
 
 ## 5. Config additions
 
-`rikugan/core/config.py` (`RikuganConfig` dataclass):
+`lucnhan/core/config.py` (`LucNhanConfig` dataclass):
 
 ```python
 parallel_agent_enabled: bool = True

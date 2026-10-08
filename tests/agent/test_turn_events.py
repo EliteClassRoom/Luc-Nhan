@@ -11,7 +11,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.agent.turn import TurnEvent, TurnEventType
 
 
 class TestTurnEventFactories(unittest.TestCase):

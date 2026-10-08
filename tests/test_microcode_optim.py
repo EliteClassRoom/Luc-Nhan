@@ -16,7 +16,7 @@ install_ida_mocks()
 # from our updated ida_mock (optinsn_t, optblock_t as real classes).
 import importlib
 
-import rikugan.ida.tools.microcode_optim as _mod
+import lucnhan.ida.tools.microcode_optim as _mod
 
 importlib.reload(_mod)
 

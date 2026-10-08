@@ -25,14 +25,14 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.loop import AgentLoop
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import ModelInfo, ProviderCapabilities, ToolCall
-from rikugan.providers.base import LLMProvider
-from rikugan.state.session import SessionState
-from rikugan.tools.base import ParameterSchema, ToolDefinition
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import ModelInfo, ProviderCapabilities, ToolCall
+from lucnhan.providers.base import LLMProvider
+from lucnhan.state.session import SessionState
+from lucnhan.tools.base import ParameterSchema, ToolDefinition
+from lucnhan.tools.registry import ToolRegistry
 
 
 class _NullProvider(LLMProvider):
@@ -104,7 +104,7 @@ class TestRequiresApprovalFlag(unittest.TestCase):
         self.assertIs(td.requires_approval, True)
 
     def test_install_microcode_optimizer_flagged_requires_approval(self):
-        from rikugan.ida.tools.microcode import install_microcode_optimizer
+        from lucnhan.ida.tools.microcode import install_microcode_optimizer
 
         # @tool attaches the ToolDefinition as a function attribute.
         defn = getattr(install_microcode_optimizer, "_tool_definition", None)
@@ -116,7 +116,7 @@ class TestApprovalGateBehavior(unittest.TestCase):
     """The agent loop must gate requires_approval tools like execute_python."""
 
     def _make_loop(self, tools: ToolRegistry) -> AgentLoop:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False  # Skip IDA API calls
         session = SessionState(provider_name="mock", model_name="mock-model")
         return AgentLoop(provider=_NullProvider(), tool_registry=tools, config=config, session=session)
@@ -197,7 +197,7 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
     """
 
     def _make_loop(self) -> AgentLoop:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False  # Skip IDA API calls
         session = SessionState(provider_name="mock", model_name="mock-model")
         return AgentLoop(provider=_NullProvider(), tool_registry=ToolRegistry(), config=config, session=session)
@@ -219,7 +219,7 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
             dispatched.append({"agent": agent_name, "task": task})
             yield TurnEvent.text_delta("payload")
 
-        with patch("rikugan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
+        with patch("lucnhan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
             loop._tool_approval_queue.put("deny")
             events, tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
 
@@ -239,7 +239,7 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
             dispatched.append({"agent": agent_name, "task": task})
             yield TurnEvent.text_delta("external answer")
 
-        with patch("rikugan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
+        with patch("lucnhan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
             loop._tool_approval_queue.put("allow")
             _events, tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
 
@@ -258,7 +258,7 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
         def fake_run(self_dispatcher, agent_name, task, cancel_event=None, include_context=""):
             yield TurnEvent.text_delta("ok")
 
-        with patch("rikugan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
+        with patch("lucnhan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
             loop._tool_approval_queue.put("allow")
             events, _tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
 
@@ -272,8 +272,8 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
     def test_a2a_mode_stays_ungated(self):
         """The explicit /a2a slash command routes through run_a2a_mode
         (not the pseudo-tool handler) and never requests approval."""
-        from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
-        from rikugan.agent.modes.a2a import run_a2a_mode
+        from lucnhan.agent.a2a.types import A2AEvent, ExternalAgentConfig
+        from lucnhan.agent.modes.a2a import run_a2a_mode
 
         loop = MagicMock()
         loop._cancelled = None
@@ -287,8 +287,8 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
             yield A2AEvent(type="completed", text="done!", done=True)
 
         with (
-            patch("rikugan.agent.a2a.dispatcher.SubprocessBridge.discover", return_value=agents),
-            patch("rikugan.agent.a2a.dispatcher.SubprocessBridge.run_task", new=fake_run),
+            patch("lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover", return_value=agents),
+            patch("lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task", new=fake_run),
         ):
             events, _ = _drain_generator_with_return(run_a2a_mode(loop, "claude do thing", "", []))
 

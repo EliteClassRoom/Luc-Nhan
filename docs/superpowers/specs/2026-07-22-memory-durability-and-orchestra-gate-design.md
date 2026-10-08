@@ -24,7 +24,7 @@ The safe short-term action is to disable `/orchestra` until a shared execution-p
 
 ### 2.3 Incomplete CI collection
 
-GitHub CI, release CI, and `ci-local.sh` invoke pytest only on `tests/`. Existing regression tests under `rikugan/tests/` are not part of those gates.
+GitHub CI, release CI, and `ci-local.sh` invoke pytest only on `tests/`. Existing regression tests under `lucnhan/tests/` are not part of those gates.
 
 ## 3. Goals
 
@@ -316,9 +316,9 @@ A2A remains available because it is a distinct execution path.
 
 ### 10.2 Configuration
 
-The gate constant lives in `rikugan.agent.loop`, next to the early command dispatch: `_ORCHESTRA_ENABLED = False`. This placement makes the no-prompt/no-retrieval/no-session-mutation contract enforceable. This tranche does not add a Settings control, persisted config field, or environment override that could present the unsafe path as supported.
+The gate constant lives in `lucnhan.agent.loop`, next to the early command dispatch: `_ORCHESTRA_ENABLED = False`. This placement makes the no-prompt/no-retrieval/no-session-mutation contract enforceable. This tranche does not add a Settings control, persisted config field, or environment override that could present the unsafe path as supported.
 
-Focused legacy tests may override the constant with `monkeypatch.setattr(rikugan.agent.loop, "_ORCHESTRA_ENABLED", True)` only inside the test process. Production defaults remain disabled until the Orchestra rewrite has its own approved design and test gate.
+Focused legacy tests may override the constant with `monkeypatch.setattr(lucnhan.agent.loop, "_ORCHESTRA_ENABLED", True)` only inside the test process. Production defaults remain disabled until the Orchestra rewrite has its own approved design and test gate.
 
 ### 10.3 Documentation
 
@@ -329,7 +329,7 @@ User-facing and architecture documentation marks Orchestra as experimental and t
 All local, merge, and release test gates collect both roots:
 
 ```bash
-python -m pytest tests/ rikugan/tests/ --tb=short -q
+python -m pytest tests/ lucnhan/tests/ --tb=short -q
 ```
 
 Before changing workflow files, the combined suite must pass with the same dependency set on:
@@ -339,7 +339,7 @@ Before changing workflow files, the combined suite must pass with the same depen
 
 Fixture or import conflicts are fixed before the workflow begins enforcing both roots.
 
-`pyproject.toml` becomes the single source of truth for collection with `[tool.pytest.ini_options]` and `testpaths = ["tests", "rikugan/tests"]`. The rollout explicitly verifies cross-root `conftest.py` behavior, Qt module cleanup, import package names, and fixture compatibility before CI enforcement. `rikugan/tests` is upgraded to a package by adding an empty `__init__.py` unconditionally — the two roots already share a duplicate basename (`tests/test_ida_docs_review_prompt.py` and `rikugan/tests/test_ida_docs_review_prompt.py` both exist), and under pytest's default prepend import mode the bare-basename collision would shadow one of the two roots. The `__init__.py` forces package-qualified imports (`rikugan.tests.<name>`) and matches the existing mypy override at `pyproject.toml` (`module = ["rikugan.tests.test_settings_dialog_fixes"]`).
+`pyproject.toml` becomes the single source of truth for collection with `[tool.pytest.ini_options]` and `testpaths = ["tests", "lucnhan/tests"]`. The rollout explicitly verifies cross-root `conftest.py` behavior, Qt module cleanup, import package names, and fixture compatibility before CI enforcement. `lucnhan/tests` is upgraded to a package by adding an empty `__init__.py` unconditionally — the two roots already share a duplicate basename (`tests/test_ida_docs_review_prompt.py` and `lucnhan/tests/test_ida_docs_review_prompt.py` both exist), and under pytest's default prepend import mode the bare-basename collision would shadow one of the two roots. The `__init__.py` forces package-qualified imports (`lucnhan.tests.<name>`) and matches the existing mypy override at `pyproject.toml` (`module = ["lucnhan.tests.test_settings_dialog_fixes"]`).
 
 CI invokes pytest without a narrower positional root so the configured `testpaths` cannot be bypassed accidentally. A collection smoke assertion verifies that representative tests from each root are present. This tranche does not add a percentage coverage gate.
 
@@ -429,7 +429,7 @@ Implementation follows test-driven development.
 6. Correct bundle-import destination-ID idempotency and verify bundle/projection compatibility.
 7. Add and enable the early Orchestra temporary gate.
 8. Add pytest `testpaths` as the single collection source and run both roots on Python 3.11 and 3.12 with frozen dependencies.
-9. Resolve cross-root `conftest.py`, Qt cleanup, import-name, and fixture conflicts; add `rikugan/tests/__init__.py` unconditionally (the duplicate-basename collision is already present in the repo, not hypothetical).
+9. Resolve cross-root `conftest.py`, Qt cleanup, import-name, and fixture conflicts; add `lucnhan/tests/__init__.py` unconditionally (the duplicate-basename collision is already present in the repo, not hypothetical).
 10. Add the representative-test collection assertion.
 11. Update local, merge, and release CI to rely on configured `testpaths` without a narrower positional root.
 12. Run lint, type checking, focused tests, both full test roots, and migration/backup rollback tests.

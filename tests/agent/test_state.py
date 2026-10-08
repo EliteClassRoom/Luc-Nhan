@@ -13,10 +13,10 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult
-from rikugan.state.history import SessionHistory
-from rikugan.state.session import SessionState
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult
+from lucnhan.state.history import SessionHistory
+from lucnhan.state.session import SessionState
 
 
 class TestSessionState(unittest.TestCase):
@@ -290,7 +290,7 @@ class TestReplaceMessages(unittest.TestCase):
 class TestSessionHistory(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.config = RikuganConfig(_config_dir=self.tmpdir)
+        self.config = LucNhanConfig(_config_dir=self.tmpdir)
 
     def test_save_and_load_session(self):
         history = SessionHistory(self.config)
@@ -426,7 +426,7 @@ class TestManifestV2AndTitleDerivation(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.config = RikuganConfig(_config_dir=self.tmpdir)
+        self.config = LucNhanConfig(_config_dir=self.tmpdir)
 
     def tearDown(self):
         import shutil

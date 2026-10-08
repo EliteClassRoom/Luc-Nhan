@@ -14,7 +14,7 @@ class TestCliAskParser:
 
     def test_ask_no_overrides(self):
         """Default ask command produces no provider fields in bootstrap config."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         args = parser.parse_args(["ask", "binary.exe", "hello"])
@@ -24,7 +24,7 @@ class TestCliAskParser:
         assert args.api_base is None
 
     def test_ask_with_provider_only(self):
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         args = parser.parse_args(["ask", "binary.exe", "hello", "--provider", "openai"])
@@ -33,7 +33,7 @@ class TestCliAskParser:
         assert args.api_base is None
 
     def test_ask_with_model_only(self):
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         args = parser.parse_args(["ask", "binary.exe", "hello", "--model", "gpt-4o"])
@@ -42,7 +42,7 @@ class TestCliAskParser:
         assert args.api_base is None
 
     def test_ask_with_api_base_only(self):
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         args = parser.parse_args(["ask", "binary.exe", "hello", "--api-base", "http://localhost:11434/v1"])
@@ -51,7 +51,7 @@ class TestCliAskParser:
         assert args.api_base == "http://localhost:11434/v1"
 
     def test_ask_with_all_overrides(self):
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         args = parser.parse_args(
@@ -73,7 +73,7 @@ class TestCliAskParser:
 
     def test_ask_no_api_key_argument(self):
         """Confirm --api-key is NOT a valid argument."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         with pytest.raises(SystemExit):
@@ -84,7 +84,7 @@ class TestCliServeParser:
     """Verify the 'serve' subcommand accepts provider override flags."""
 
     def test_serve_no_overrides(self):
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         args = parser.parse_args(["serve", "binary.exe"])
@@ -93,7 +93,7 @@ class TestCliServeParser:
         assert args.api_base is None
 
     def test_serve_with_all_overrides(self):
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         args = parser.parse_args(
@@ -114,7 +114,7 @@ class TestCliServeParser:
 
     def test_serve_no_api_key_argument(self):
         """Confirm --api-key is NOT a valid argument for serve."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         with pytest.raises(SystemExit):
@@ -131,7 +131,7 @@ class TestBootstrapConfigGeneration:
 
     def test_ask_bootstrap_includes_overrides(self):
         """Bootstrap dict from cmd_ask includes provider fields when set."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         args = parser.parse_args(
@@ -166,7 +166,7 @@ class TestBootstrapConfigGeneration:
 
     def test_ask_bootstrap_no_overrides(self):
         """Bootstrap dict from cmd_ask has no provider fields when not set."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
 
         parser = build_parser()
         args = parser.parse_args(["ask", "binary.exe", "hello"])
@@ -194,34 +194,34 @@ class TestBootstrapConfigGeneration:
 
 
 class TestProviderValidation:
-    """Test RikuganConfig.validate_active_provider and get_provider_default_model."""
+    """Test LucNhanConfig.validate_active_provider and get_provider_default_model."""
 
     def test_known_builtin_provider_is_valid(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "anthropic"
         assert cfg.validate_active_provider() is None
 
     def test_known_openai_provider_is_valid(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "openai"
         assert cfg.validate_active_provider() is None
 
     def test_known_custom_provider_is_valid(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.custom_providers["my-custom"] = {}
         cfg.provider.name = "my-custom"
         assert cfg.validate_active_provider() is None
 
     def test_unknown_provider_returns_error(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "nonexistent-xyz"
         error = cfg.validate_active_provider()
         assert error is not None
@@ -229,9 +229,9 @@ class TestProviderValidation:
         assert "nonexistent-xyz" in error
 
     def test_unknown_provider_message_lists_available(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "nonexistent-xyz"
         error = cfg.validate_active_provider()
         assert error is not None
@@ -243,39 +243,39 @@ class TestDefaultModelFallback:
     """Test get_provider_default_model returns correct defaults."""
 
     def test_anthropic_default(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        assert RikuganConfig.get_provider_default_model("anthropic") == "claude-sonnet-4-20250514"
+        assert LucNhanConfig.get_provider_default_model("anthropic") == "claude-sonnet-4-20250514"
 
     def test_openai_default(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        assert RikuganConfig.get_provider_default_model("openai") == "gpt-4o"
+        assert LucNhanConfig.get_provider_default_model("openai") == "gpt-4o"
 
     def test_gemini_default(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        assert RikuganConfig.get_provider_default_model("gemini") == "gemini-2.0-flash"
+        assert LucNhanConfig.get_provider_default_model("gemini") == "gemini-2.0-flash"
 
     def test_ollama_default(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        assert RikuganConfig.get_provider_default_model("ollama") == "llama3.1"
+        assert LucNhanConfig.get_provider_default_model("ollama") == "llama3.1"
 
     def test_minimax_default(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        assert RikuganConfig.get_provider_default_model("minimax") == "MiniMax-M3"
+        assert LucNhanConfig.get_provider_default_model("minimax") == "MiniMax-M3"
 
     def test_openai_compat_no_default(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        assert RikuganConfig.get_provider_default_model("openai_compat") == ""
+        assert LucNhanConfig.get_provider_default_model("openai_compat") == ""
 
     def test_unknown_provider_no_default(self):
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        assert RikuganConfig.get_provider_default_model("nonexistent") == ""
+        assert LucNhanConfig.get_provider_default_model("nonexistent") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -288,10 +288,10 @@ class TestApplyProviderOverrides:
 
     def test_switch_provider_in_memory(self):
         """Provider override switches the provider correctly."""
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ida.headless_bootstrap import _apply_provider_overrides
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ida.headless_bootstrap import _apply_provider_overrides
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "anthropic"
         cfg.provider.model = "claude-sonnet-4-20250514"
 
@@ -305,10 +305,10 @@ class TestApplyProviderOverrides:
 
     def test_model_override_only(self):
         """Model override without provider switch."""
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ida.headless_bootstrap import _apply_provider_overrides
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ida.headless_bootstrap import _apply_provider_overrides
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "anthropic"
         cfg.provider.model = "some-old-model"
 
@@ -320,10 +320,10 @@ class TestApplyProviderOverrides:
 
     def test_api_base_override(self):
         """API base override is applied."""
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ida.headless_bootstrap import _apply_provider_overrides
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ida.headless_bootstrap import _apply_provider_overrides
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "ollama"
 
         bootstrap = {"api_base": "http://localhost:11434/v1"}
@@ -333,10 +333,10 @@ class TestApplyProviderOverrides:
 
     def test_empty_model_falls_back_to_default(self):
         """When model is empty, the provider default is used."""
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ida.headless_bootstrap import _apply_provider_overrides
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ida.headless_bootstrap import _apply_provider_overrides
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "openai"
         cfg.provider.model = ""  # empty
 
@@ -349,15 +349,15 @@ class TestApplyProviderOverrides:
         """validate_active_provider calls _clean_exit_ida(2, ...) for unknown provider."""
         from unittest.mock import patch
 
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ida.headless_bootstrap import _apply_provider_overrides
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ida.headless_bootstrap import _apply_provider_overrides
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "nonexistent-xyz"
 
         # _clean_exit_ida calls os._exit(2), which would kill pytest.
         # Mock it to raise SystemExit instead so the test can catch it.
-        with patch("rikugan.ida.headless_bootstrap._clean_exit_ida") as mock_exit:
+        with patch("lucnhan.ida.headless_bootstrap._clean_exit_ida") as mock_exit:
             mock_exit.side_effect = SystemExit(2)
             with pytest.raises(SystemExit) as exc_info:
                 _apply_provider_overrides(cfg, {"provider": "nonexistent-xyz"})
@@ -365,10 +365,10 @@ class TestApplyProviderOverrides:
 
     def test_switch_provider_triggers_default_model(self):
         """Switching to a provider with no saved model uses the default."""
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ida.headless_bootstrap import _apply_provider_overrides
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ida.headless_bootstrap import _apply_provider_overrides
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "anthropic"
         cfg.provider.model = "claude-sonnet-4-20250514"
 
@@ -380,10 +380,10 @@ class TestApplyProviderOverrides:
 
     def test_switch_provider_no_model_override_uses_default(self):
         """Switching provider without explicit model override falls back to default."""
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ida.headless_bootstrap import _apply_provider_overrides
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ida.headless_bootstrap import _apply_provider_overrides
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.provider.name = "anthropic"
         cfg.provider.model = "some-model"
 
@@ -400,9 +400,9 @@ class TestApplyProviderOverrides:
 
 
 def test_switch_provider_preserves_nested_extra_without_aliasing():
-    from rikugan.core.config import RikuganConfig
+    from lucnhan.core.config import LucNhanConfig
 
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg.provider.name = "glm"
     cfg.provider.extra = {"dialect": "glm", "thinking": {"enabled": True}}
 

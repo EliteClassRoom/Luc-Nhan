@@ -7,16 +7,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rikugan.agent.loop import AgentLoop
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import ToolCall
-from rikugan.memory.authority import MemoryAuthorityIssuer, MemoryWriteDenied
-from rikugan.memory.markdown import MemoryProjector
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.service import BinaryMemoryService
-from rikugan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
-from rikugan.state.session import SessionState
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import ToolCall
+from lucnhan.memory.authority import MemoryAuthorityIssuer, MemoryWriteDenied
+from lucnhan.memory.markdown import MemoryProjector
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.service import BinaryMemoryService
+from lucnhan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
+from lucnhan.state.session import SessionState
 
 
 class TestSubagentNoMemoryService:
@@ -24,7 +24,7 @@ class TestSubagentNoMemoryService:
 
     def test_subagent_loop_has_no_memory_service(self) -> None:
         """A child AgentLoop created without explicit memory wiring has no persistence."""
-        config = RikuganConfig()
+        config = LucNhanConfig()
         session = SessionState()
         provider = MagicMock()
         tools = MagicMock()
@@ -35,7 +35,7 @@ class TestSubagentNoMemoryService:
 
     def test_subagent_save_memory_without_service_returns_error(self, tmp_path: Path) -> None:
         """When memory_service is None, subagent save_memory reports unavailable (no legacy fallback)."""
-        config = RikuganConfig()
+        config = LucNhanConfig()
         session = SessionState(idb_path=str(tmp_path / "child.i64"))
         provider = MagicMock()
         tools = MagicMock()

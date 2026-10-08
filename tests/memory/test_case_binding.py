@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.manager import MemoryWorkspaceManager
-from rikugan.memory.registry import MemoryRegistry
-from rikugan.memory.workspace import FilesystemIdentity, IdentityRequest, MemoryLocator
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.case_repository import CaseRepository
+from lucnhan.memory.manager import MemoryWorkspaceManager
+from lucnhan.memory.registry import MemoryRegistry
+from lucnhan.memory.workspace import FilesystemIdentity, IdentityRequest, MemoryLocator
 
 
 def _bind_workspace(tmp_path: Path) -> tuple[MemoryWorkspaceManager, str, str]:
     """Bind a binary workspace and return (manager, memory_id, db_instance_id)."""
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     manager = MemoryWorkspaceManager(config)
     request = IdentityRequest(
