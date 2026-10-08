@@ -634,6 +634,9 @@ class LucNhanPanelCore(QWidget):
         self._dependency_banner.setStyleSheet(maybe_host_stylesheet(self._dependency_banner_style()))
         if self._dependency_warnings:
             self._dependency_banner.setText("Warnings: " + " ".join(self._dependency_warnings))
+            # Below the header, above the session strip: the banner must be
+            # in a layout or the warnings are silently invisible.
+            layout.insertWidget(1, self._dependency_banner)
         else:
             self._dependency_banner.hide()
         _early_log("panel_core:build_ui:dependency_banner:done")
@@ -652,9 +655,8 @@ class LucNhanPanelCore(QWidget):
         _early_log("panel_core:build_ui:create_initial_tab:entry")
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
         _early_log("panel_core:build_ui:create_initial_tab:done")
-        # Session strip region, then the conversation pages it drives.
+        # Session strip region (chrome).
         layout.addWidget(self._session_strip)
-        layout.addWidget(self._tab_widget, 1)
         _early_log("panel_core:build_ui:session_strip:done")
 
         # Context row: CONTEXT -> symbol -> address -> metadata.
@@ -669,12 +671,11 @@ class LucNhanPanelCore(QWidget):
         _early_log("panel_core:build_ui:mode_stack_chat_page:done")
         self._mode_stack.addWidget(self._tools_placeholder)
         _early_log("panel_core:build_ui:tools_panel:done")
-        layout.addWidget(self._mode_stack, 1)
-        _early_log("panel_core:build_ui:mode_stack:done")
 
-        # Composer below the flex-grow content region.  It keeps the
-        # existing draggable vertical splitter so the user can still grow
-        # it with a real resize handle.
+        # Content region: [content stack | composer] in the *existing*
+        # two-pane vertical chat splitter, so the user keeps the drag
+        # handle that grows / shrinks the composer (GUI contract G3: the
+        # chat/content area takes the remaining height above the composer).
         _early_log("panel_core:build_ui:input_section:entry")
         input_container = self._build_input_section()
         self._chat_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -682,18 +683,25 @@ class LucNhanPanelCore(QWidget):
         self._chat_splitter.setHandleWidth(4)
         self._chat_splitter.setChildrenCollapsible(False)
         self._chat_splitter.setStyleSheet(maybe_host_stylesheet(self._chat_splitter_style()))
+        self._chat_splitter.addWidget(self._mode_stack)
         self._chat_splitter.addWidget(input_container)
-        # The composer absorbs every extra pixel above its contract
-        # baseline; shrinking shows more transcript underneath.
         self._chat_splitter.setStretchFactor(0, 1)
-        self._chat_splitter.setStretchFactor(1, 1)
-        layout.addWidget(self._chat_splitter)
+        self._chat_splitter.setStretchFactor(1, 0)
+        layout.addWidget(self._chat_splitter, 1)
+        _early_log("panel_core:build_ui:mode_stack:done")
         _early_log("panel_core:build_ui:input_section:done")
 
         # Footer: pinned strip below the composer, never scrolls with chat.
         _early_log("panel_core:build_ui:footer:entry")
         layout.addWidget(self._build_footer())
         _early_log("panel_core:build_ui:footer:done")
+
+        # Style every themed control at build time: a panel rebuilt while
+        # the persisted theme is already active never receives a
+        # ``themeChanged`` signal, so build-time styling is the only path
+        # that guarantees the composer controls are not left unstyled.
+        self._apply_action_button_styles()
+        self._composer_hint_style()
 
         self._narrow = False
         self._apply_narrow_presentation(self.width() <= NARROW_BREAKPOINT_PX)
@@ -913,9 +921,13 @@ class LucNhanPanelCore(QWidget):
         self._input_area.set_cancel_callback(self._on_cancel)
         self._input_area.set_skill_slugs(self._ctrl.skill_slugs)
         self._ensure_skills_refresh_timer()
-        # GUI contract G2: composer text baseline 44 px, min 38 px.
-        self._input_area.setFixedHeight(44)
-        input_layout.addWidget(self._input_area)
+        # GUI contract G2: composer text baseline 44 px, min 38 px.  The editor
+        # stays *stretchable* — the drag-to-grow composer behaviour is
+        # unchanged, so no maximum height is pinned here (the vertical
+        # chat splitter owns the pane the editor lives in).
+        self._input_area.setMinimumHeight(_COMPOSER_MIN_HEIGHT)
+        self._input_area.setMaximumHeight(16777215)
+        input_layout.addWidget(self._input_area, 1)
 
         # Commands left, keyboard hint centre, Send/Stop right.
         action_row = QHBoxLayout()
@@ -1364,10 +1376,16 @@ class LucNhanPanelCore(QWidget):
     # --- Tab management ---
 
     def _update_tab_bar_visibility(self) -> None:
-        """Show the session strip only when there are 2+ tabs."""
+        """Keep the session strip (and its ``+``) visible.
+
+        GUI contract G3 puts New chat on the session strip, so the strip
+        must not disappear with a single tab — otherwise a mouse-only user
+        could never open a second chat.  The tab *bar* still only shows
+        labels once there are 2+ tabs to label.
+        """
         strip = getattr(self, "_session_strip", None)
         if strip is not None:
-            strip.setVisible(self._tab_widget.count() > 1)
+            strip.setVisible(True)
 
     def _create_tab(self, tab_id: str, label: str) -> ChatView:
         """Create a new ChatView and add it as a tab."""

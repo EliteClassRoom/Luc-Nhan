@@ -541,14 +541,15 @@ class TestSetRunning(unittest.TestCase):
 
 
 class TestUpdateTabBarVisibility(unittest.TestCase):
-    """The *session strip* container is shown only with 2+ tabs (G3)."""
+    """The session strip stays visible so its ``+`` new-chat control is
+    always reachable with the mouse (GUI contract G3)."""
 
-    def test_single_tab_hides_strip(self):
+    def test_single_tab_keeps_strip_visible(self):
         panel = _make_panel()
         panel._session_strip = MagicMock()
         panel._tab_widget.count.return_value = 1
         panel._update_tab_bar_visibility()
-        panel._session_strip.setVisible.assert_called_with(False)
+        panel._session_strip.setVisible.assert_called_with(True)
 
     def test_two_tabs_shows_strip(self):
         panel = _make_panel()
@@ -557,12 +558,12 @@ class TestUpdateTabBarVisibility(unittest.TestCase):
         panel._update_tab_bar_visibility()
         panel._session_strip.setVisible.assert_called_with(True)
 
-    def test_zero_tabs_hides_strip(self):
+    def test_zero_tabs_keeps_strip_visible(self):
         panel = _make_panel()
         panel._session_strip = MagicMock()
         panel._tab_widget.count.return_value = 0
         panel._update_tab_bar_visibility()
-        panel._session_strip.setVisible.assert_called_with(False)
+        panel._session_strip.setVisible.assert_called_with(True)
 
 
 class TestOnCloseTab(unittest.TestCase):
@@ -1776,9 +1777,24 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
         # it takes height *from the transcript above* rather than pushing
         # the footer off-screen.
         self.assertIn(
+            "self._chat_splitter.addWidget(self._mode_stack)",
+            source,
+            msg=(
+                "_build_ui() must place the content region in the top pane of the chat splitter."
+            ),
+        )
+        self.assertIn(
             "self._chat_splitter.addWidget(input_container)",
             source,
-            msg=("_build_ui() must place the input section in the chat splitter so the user can drag."),
+            msg=("_build_ui() must place the input section in the bottom pane of the chat splitter so the user can drag."),
+        )
+        # The tab widget must stay inside the horizontal splitter — adding
+        # it to the root layout would steal the chat pane and blank the
+        # content region.
+        self.assertNotIn(
+            "layout.addWidget(self._tab_widget",
+            source,
+            msg="_build_ui() must not reparent the tab widget into the root layout.",
         )
         self.assertIn(
             "self._chat_splitter.addWidget(input_container)",
