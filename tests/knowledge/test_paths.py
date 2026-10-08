@@ -136,6 +136,17 @@ class TestKnowledgePaths(unittest.TestCase):
         self.assertEqual(bid, "abc123")
 
     def test_derive_binary_id_path_normalized(self):
+        # Redundant separators and relative-vs-absolute must collapse on
+        # every host — ``abspath`` + ``normpath`` cover both.
+        a = derive_binary_id(os.path.join("samples", "Foo.i64"))
+        b = derive_binary_id(os.path.join("samples", ".", "Foo.i64"))
+        self.assertEqual(a, b)
+
+    @unittest.skipUnless(os.name == "nt", "POSIX paths are case-sensitive")
+    def test_derive_binary_id_case_insensitive_on_windows(self):
+        # ``normcase`` is an identity on POSIX, where two paths differing
+        # only in case name two different files. Collapsing case can
+        # therefore only be asserted on a case-insensitive host.
         a = derive_binary_id(r"C:\Samples\Foo.i64")
         b = derive_binary_id(r"c:\samples\foo.i64")
         self.assertEqual(a, b)
