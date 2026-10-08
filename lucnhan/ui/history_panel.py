@@ -82,8 +82,13 @@ if TYPE_CHECKING:
 
 # Maximum panel content width. The panel caps itself + every title/meta
 # label at this width so a long title cannot overflow horizontally on
-# narrow IDA layouts (the spec lists 320 px as the reference width).
+# narrow IDA layouts.  It is a *content* cap only — the GUI contract G2
+# nominal pane width (295 px) is owned by the composition seam, which
+# lifts this cap for the narrow overlay.
 HISTORY_PANEL_CONTENT_MAX_WIDTH = 320
+# ``QWIDGETSIZE_MAX`` — releases the width pin for the narrow overlay.
+# Shared with the composition seam so both presentations agree on one value.
+PANE_WIDTH_UNBOUND = 16777215
 # Panel-level padding (left + right) consumed by the root QVBoxLayout.
 _HISTORY_PANEL_PADDING = 16
 # Row-level horizontal inset (left + right padding inside each row).
@@ -328,6 +333,10 @@ class HistoryPanel(QFrame):
         # more than 320 px even if the parent layout grows. The row
         # labels carry their own matching caps below.
         self.setMaximumWidth(HISTORY_PANEL_CONTENT_MAX_WIDTH)
+        # The pane is a focus scope in the narrow overlay (GUI contract
+        # G5) so Escape reaches the panel's shortcut and the search box
+        # lands on Tab.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.setStyleSheet(get_history_panel_style())
 
@@ -355,19 +364,31 @@ class HistoryPanel(QFrame):
         header_layout.setSpacing(8)
 
         self._title = QLabel()
-        self._title.setText("Chat History")
+        # GUI contract G5: the pane header is the pane's *name*, so the
+        # header nav's ``History`` and the pane agree.  Only the visible
+        # string changed — the scope badge below still carries "Current
+        # IDB" and every state/copy string is untouched.
+        self._title.setText("History")
         self._title.setStyleSheet(get_history_title_style())
         header_layout.addWidget(self._title)
 
         self._scope_label = QLabel()
         self._scope_label.setText("Current IDB")
         self._scope_label.setStyleSheet(get_history_scope_style())
+        # GUI contract G3: secondary metadata may drop out when the pane
+        # gets narrow.  ``Ignored`` width policy collapses the badge
+        # first — the pane name and Close stay readable.
+        self._scope_label.setMinimumWidth(0)
+        self._scope_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         header_layout.addWidget(self._scope_label)
         header_layout.addStretch(1)
 
         self._close_btn = QPushButton()
         self._close_btn.setText("Close")
         self._close_btn.setObjectName("history_close_btn")
+        self._close_btn.setToolTip("Close the History pane")
+        self._close_btn.setAccessibleName("Close the History pane")
+        self._close_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._close_btn.setStyleSheet(get_history_close_btn_style())
         self._close_btn.clicked.connect(lambda: self.close_requested.emit())
         header_layout.addWidget(self._close_btn)
@@ -517,6 +538,23 @@ class HistoryPanel(QFrame):
         bind_theme(self, self._apply_styles)
 
     # === Public API ====================================================
+
+    def set_overlay_presentation(self, overlay: bool) -> None:
+        """Present as a docked column (wide) or a content overlay (narrow).
+
+        GUI contract G5.  The *same* widget is reused in both
+        presentations — only the width cap changes:
+
+        * docked: keep the content cap so a long title cannot push the
+          splitter wider than the nominal pane.
+        * overlay: lift the cap so the pane fills the content region it
+          covers.
+
+        Presentation only: cached rows, search query, scroll position and
+        every state stay exactly as they are, so resizing across the
+        breakpoint loses nothing.
+        """
+        self.setMaximumWidth(PANE_WIDTH_UNBOUND if overlay else HISTORY_PANEL_CONTENT_MAX_WIDTH)
 
     def set_entries(self, entries: list[SessionHistoryEntry]) -> None:
         """Replace the cached entry list and re-render rows.
@@ -870,6 +908,7 @@ class HistoryPanel(QFrame):
 
 __all__ = [
     "HISTORY_PANEL_CONTENT_MAX_WIDTH",
+    "PANE_WIDTH_UNBOUND",
     "HistoryPanel",
     "HistoryRowWidget",
 ]

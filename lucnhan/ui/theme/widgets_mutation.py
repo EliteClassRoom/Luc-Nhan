@@ -42,6 +42,12 @@ def _mutation_desc_style() -> str:
     return f"color: {t.text}; font-size: inherit;"
 
 
+def _mutation_meta_style() -> str:
+    """Muted time + reversibility status under each record (G2 meta line)."""
+    t = _tokens()
+    return f"color: {t.muted_text}; font-size: inherit;"
+
+
 def _mutation_badge_style() -> str:
     t = _tokens()
     return f"color: {t.muted_text}; font-size: inherit; padding: 1px 4px; background: {t.button}; border-radius: 3px;"
@@ -248,6 +254,10 @@ def get_mutation_indicator_style(reversible: bool) -> str:
 
 def get_mutation_desc_style() -> str:
     return _mutation_desc_style()
+
+
+def get_mutation_meta_style() -> str:
+    return _mutation_meta_style()
 
 
 def get_mutation_badge_style() -> str:

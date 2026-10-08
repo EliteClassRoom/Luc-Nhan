@@ -222,6 +222,8 @@ from lucnhan.ui.export_formatting import (
     _export_format_tool_result,
 )
 from lucnhan.ui.panel_core import (
+    _PANE_NOMINAL_WIDTH,
+    _PANE_WIDTH_UNBOUND,
     LucNhanPanelCore,
 )
 from tests.qt_real import live_class
@@ -600,26 +602,27 @@ class TestOnToggleMutationLog(unittest.TestCase):
         panel._mutation_panel = None
         panel._on_toggle_mutation_log()  # must not raise
 
-    def test_shows_when_hidden(self):
+    def test_shows_when_closed(self):
         panel = _make_panel()
         mock_mp = MagicMock()
-        mock_mp.isVisible.return_value = False
         panel._mutation_panel = mock_mp
+        panel._show_right_panel = MagicMock()
         panel._on_toggle_mutation_log()
-        mock_mp.setVisible.assert_called_with(True)
+        # The coordinator — not ``isVisible`` — owns pane state (G5).
+        panel._show_right_panel.assert_called_once_with("mutation", opener=panel._mutations_btn)
 
-    def test_hides_when_visible(self):
+    def test_hides_when_open(self):
         panel = _make_panel()
         mock_mp = MagicMock()
-        mock_mp.isVisible.return_value = True
         panel._mutation_panel = mock_mp
+        panel._pane_name = "mutation"
+        panel._show_right_panel = MagicMock()
         panel._on_toggle_mutation_log()
-        mock_mp.setVisible.assert_called_with(False)
+        panel._show_right_panel.assert_called_once_with(None, opener=panel._mutations_btn)
 
     def test_updates_checked_state(self):
         panel = _make_panel()
         mock_mp = MagicMock()
-        mock_mp.isVisible.return_value = False
         panel._mutation_panel = mock_mp
         panel._on_toggle_mutation_log()
         panel._mutations_btn.setChecked.assert_called_with(True)
@@ -1777,9 +1780,13 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
         # it takes height *from the transcript above* rather than pushing
         # the footer off-screen.
         self.assertIn(
-            "self._chat_splitter.addWidget(self._mode_stack)",
+            "self._chat_splitter.addWidget(self._content_area)",
             source,
-            msg=("_build_ui() must place the content region in the top pane of the chat splitter."),
+            msg=(
+                "_build_ui() must place the content region in the top pane of the chat splitter. "
+                "GUI contract G5 wraps it in the content-area widget so the pane stack can "
+                "overlay the content region at a narrow width."
+            ),
         )
         self.assertIn(
             "self._chat_splitter.addWidget(input_container)",
@@ -2072,27 +2079,41 @@ def _patch_session_history():
 class TestShowRightPanelMutuallyExclusive(unittest.TestCase):
     """``_show_right_panel`` is the single right-panel coordinator.
 
-    Spec §6.4: only one right-side auxiliary panel is visible at a time.
-    History and Mutation toggle through one entry point; closing hides
-    both panels and unchecks both buttons.
+    Spec §6.4 / GUI contract G5: only one auxiliary pane is active at a
+    time.  Both panes live in one stack, so the coordinator's page
+    selection *is* the mutual exclusion; the button check states follow
+    the coordinator rather than a separate toggle path.
     """
 
-    def _assert_transition(self, name, history_visible, mutation_visible) -> None:
+    def _assert_transition(self, name, history_checked, mutation_checked) -> None:
         panel = _make_history_panel()
         # Opening history submits the list worker to a REAL
         # single-worker executor; stub the request itself so no
         # background thread builds a real ``SessionHistory``.
         panel._start_history_list_request = MagicMock()
+        # The stack + History's overlay hook live in the composition
+        # seam, which these fixtures bypass; stub them so the
+        # coordinator's own bookkeeping is what gets asserted.
+        panel._content_layout = MagicMock()
+        panel._main_splitter = MagicMock()
+        panel._main_splitter.width.return_value = 1000
+        panel._pane_stack = MagicMock()
+        panel._history_panel.set_overlay_presentation = MagicMock()
+        panel._narrow = False
         panel._show_right_panel(name)
-        panel._history_panel.setVisible.assert_any_call(False)
-        panel._mutation_panel.setVisible.assert_any_call(False)
-        panel._history_btn.setChecked.assert_any_call(False)
-        panel._mutations_btn.setChecked.assert_any_call(False)
-        # The final visible/checked state matches the requested panel.
-        panel._history_panel.setVisible.assert_called_with(history_visible)
-        panel._mutation_panel.setVisible.assert_called_with(mutation_visible)
-        panel._history_btn.setChecked.assert_called_with(history_visible)
-        panel._mutations_btn.setChecked.assert_called_with(mutation_visible)
+
+        if name is None:
+            panel._pane_stack.setVisible.assert_called_with(False)
+            panel._pane_stack.setCurrentWidget.assert_not_called()
+        else:
+            panel._pane_stack.setVisible.assert_called_with(True)
+            panel._pane_stack.setCurrentWidget.assert_called_with(
+                panel._history_panel if name == "history" else panel._mutation_panel
+            )
+        self.assertIs(panel._pane_name, name)
+        panel._history_btn.setChecked.assert_called_with(history_checked)
+        panel._mutations_btn.setChecked.assert_called_with(mutation_checked)
+        self.assertEqual(panel._start_history_list_request.call_count, 1 if name == "history" else 0)
 
     def test_history_open(self) -> None:
         self._assert_transition("history", True, False)
@@ -2123,6 +2144,127 @@ class TestShowRightPanelMutuallyExclusive(unittest.TestCase):
         panel._start_history_list_request = MagicMock()
         panel._show_right_panel(None)
         panel._start_history_list_request.assert_not_called()
+
+
+class TestAdaptivePanePresentation(unittest.TestCase):
+    """GUI contract G5: wide docks the pane, narrow overlays the content.
+
+    The two presentations are driven purely by the panel-width
+    breakpoint — never by the screen, never by a timer — and the open
+    pane survives the transition.
+    """
+
+    def _panel(self, panel_width: int = 460) -> object:
+        panel = _make_history_panel()
+        panel._start_history_list_request = MagicMock()
+        panel._content_layout = MagicMock()
+        panel._main_splitter = MagicMock()
+        panel._main_splitter.width.return_value = panel_width
+        panel._pane_stack = MagicMock()
+        panel._mode_stack = MagicMock()
+        # ``minimumSizeHint().width()`` — a QSize-like object.
+        panel._mode_stack.minimumSizeHint.return_value.width.return_value = 100
+        panel.width = MagicMock(return_value=panel_width)
+        panel._history_panel.set_overlay_presentation = MagicMock()
+        panel._narrow = False
+        panel._pane_narrow = None
+        return panel
+
+    def test_breakpoint_comes_from_panel_width(self) -> None:
+        """G3: the single breakpoint is ``panel_width <= 640`` logical px."""
+        import inspect
+
+        from lucnhan.ui.context_bar import NARROW_BREAKPOINT_PX
+
+        # This module stubs ``lucnhan.ui.context_bar``, so read the
+        # breakpoint from the source file rather than the stubbed symbol.
+        src = inspect.getsource(LucNhanPanelCore.resizeEvent)
+        self.assertIn("self.width() <= NARROW_BREAKPOINT_PX", src)
+        del NARROW_BREAKPOINT_PX
+
+    def test_narrow_takes_the_content_region(self) -> None:
+        """Narrow: the pane is pinned to the region minus the chat's own
+        minimum column, and its width cap is released."""
+        panel = self._panel()
+        panel._apply_pane_presentation(True)
+        panel._content_layout.setStretchFactor.assert_any_call(panel._pane_stack, 1)
+        # 460 panel width - 100 chat minimum column.
+        panel._pane_stack.setMinimumWidth.assert_called_with(360)
+        panel._pane_stack.setMaximumWidth.assert_called_with(_PANE_WIDTH_UNBOUND)
+        panel._history_panel.set_overlay_presentation.assert_called_with(True)
+        panel._main_splitter.setSizes.assert_not_called()
+
+    def test_wide_pins_the_nominal_pane_width(self) -> None:
+        panel = self._panel()
+        panel._apply_pane_presentation(False)
+        panel._pane_stack.setMinimumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._pane_stack.setMaximumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._history_panel.set_overlay_presentation.assert_called_with(False)
+
+    def test_wide_open_pane_gets_the_nominal_split(self) -> None:
+        """G2: 295 px nominal pane, the rest to the conversation."""
+        panel = self._panel(panel_width=1000)
+        panel._show_right_panel("history")
+        panel._main_splitter.setSizes.assert_called_with([1000 - _PANE_NOMINAL_WIDTH, _PANE_NOMINAL_WIDTH])
+
+    def test_wide_closed_pane_does_not_resize_the_splitter(self) -> None:
+        panel = self._panel()
+        panel._apply_pane_presentation(False)
+        panel._main_splitter.setSizes.assert_not_called()
+
+    def test_open_pane_survives_the_breakpoint_transition(self) -> None:
+        """Resizing must not close or recreate the pane (G5)."""
+        panel = self._panel()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        self.assertEqual(panel._pane_name, "history")
+        panel._apply_pane_presentation(True)
+        self.assertEqual(panel._pane_name, "history")
+        self.assertTrue(panel._pane_stack.setVisible.call_args[0][0])
+        panel._apply_pane_presentation(False)
+        self.assertEqual(panel._pane_name, "history")
+        self.assertTrue(panel._pane_stack.setVisible.call_args[0][0])
+        # Presentation only: no transcript/session rebuild, one list
+        # request for the whole open (the resize must not re-list).
+        self.assertEqual(panel._start_history_list_request.call_count, 1)
+
+    def test_close_returns_focus_to_the_opener(self) -> None:
+        panel = self._panel()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._close_right_panel()
+        self.assertIsNone(panel._pane_name)
+        panel._history_btn.setFocus.assert_called_once()
+
+    def test_escape_shortcut_routes_through_the_coordinator(self) -> None:
+        panel = self._panel()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._on_close_pane_shortcut()
+        self.assertIsNone(panel._pane_name)
+
+    def test_escape_is_inert_when_no_pane_is_open(self) -> None:
+        panel = self._panel()
+        panel._show_right_panel = MagicMock()
+        panel._on_close_pane_shortcut()
+        panel._show_right_panel.assert_not_called()
+
+    def test_no_screen_width_lookup(self) -> None:
+        """The breakpoint must never read the desktop screen."""
+        import inspect
+
+        src = inspect.getsource(LucNhanPanelCore._apply_pane_presentation)
+        self.assertNotIn("screenGeometry", src)
+        self.assertNotIn("primaryScreen", src)
+        self.assertNotIn("QTimer", src)
+
+    def test_panes_share_one_stack_so_they_cannot_coexist(self) -> None:
+        """Source-level guard: the panes live in the pane stack, never as
+        siblings of the conversation in the splitter (G5)."""
+        import inspect
+
+        src = inspect.getsource(LucNhanPanelCore._build_main_splitter)
+        self.assertIn("self._build_pane_stack()", src)
+        self.assertEqual(src.count("self._main_splitter.addWidget("), 2)
+        self.assertNotIn("self._main_splitter.addWidget(self._history_panel)", src)
+        self.assertNotIn("self._main_splitter.addWidget(self._mutation_panel)", src)
 
 
 class TestHistoryStartListRequest(unittest.TestCase):

@@ -147,6 +147,7 @@ from .theme.widgets_mutation import (  # noqa: E402,F401 — re-export
     get_mutation_count_style,
     get_mutation_desc_style,
     get_mutation_indicator_style,
+    get_mutation_meta_style,
     get_mutation_title_style,
     get_mutation_undo_btn_style,
     get_tool_approval_allow_btn_style,

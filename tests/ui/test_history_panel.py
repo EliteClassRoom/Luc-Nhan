@@ -29,6 +29,7 @@ sys.modules.pop("lucnhan.ui.history_panel", None)
 
 from lucnhan.ui.history_panel import (
     HISTORY_PANEL_CONTENT_MAX_WIDTH,
+    PANE_WIDTH_UNBOUND,
     HistoryPanel,
     HistoryRowWidget,
 )
@@ -102,7 +103,9 @@ class TestEmptyStateCopy(unittest.TestCase):
 
     def test_header_titles_are_exact_copy(self) -> None:
         panel = HistoryPanel()
-        self.assertEqual(panel._title.text(), "Chat History")
+        # GUI contract G5: the pane header carries the pane's *name*, the
+        # same word the header nav uses.
+        self.assertEqual(panel._title.text(), "History")
         self.assertEqual(panel._scope_label.text(), "Current IDB")
         self.assertEqual(panel._search.placeholderText(), "Search conversations…")
 
@@ -734,6 +737,43 @@ class TestNoForbiddenImports(unittest.TestCase):
                 re.search(pattern, source, re.MULTILINE),
                 f"history_panel.py must not reference {label!r} (pattern: {pattern!r})",
             )
+
+
+class TestOverlayPresentation(unittest.TestCase):
+    """GUI contract G5: one widget, two presentations.
+
+    Wide docks the pane at the nominal column width; a narrow dock
+    releases the content cap so the same widget fills the content region
+    it covers.  The transition is presentation-only — cached rows, the
+    search query and the rendered state all survive it.
+    """
+
+    def test_docked_keeps_content_cap(self) -> None:
+        panel = HistoryPanel()
+        panel.set_overlay_presentation(False)
+        self.assertEqual(panel.maximumWidth(), HISTORY_PANEL_CONTENT_MAX_WIDTH)
+
+    def test_overlay_releases_width_cap(self) -> None:
+        panel = HistoryPanel()
+        panel.set_overlay_presentation(True)
+        self.assertEqual(panel.maximumWidth(), PANE_WIDTH_UNBOUND)
+
+    def test_transition_preserves_rows_and_query(self) -> None:
+        panel = HistoryPanel()
+        panel.set_entries([_entry("a", "Analyze Parser"), _entry("b", "Map imports")])
+        panel._search.setText("parse")
+        panel.set_overlay_presentation(True)
+        panel.set_overlay_presentation(False)
+        self.assertEqual(panel._search.text(), "parse")
+        self.assertEqual(panel.visible_session_ids(), ["a"])
+
+    def test_close_button_and_focus_scope_exist(self) -> None:
+        """G5: the pane keeps its Close control and takes focus as a scope
+        so Escape reaches it in the narrow overlay."""
+        panel = HistoryPanel()
+        self.assertEqual(panel._close_btn.text(), "Close")
+        self.assertTrue(panel._close_btn.toolTip())
+        self.assertEqual(panel.focusPolicy(), Qt.FocusPolicy.StrongFocus)
 
 
 if __name__ == "__main__":

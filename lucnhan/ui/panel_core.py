@@ -104,6 +104,13 @@ _COMPOSER_TEXT_HEIGHT = 44
 _COMPOSER_MIN_HEIGHT = 38
 # Footer: min-height 25 px, padding 2 / 11 px.
 _FOOTER_MIN_HEIGHT = 25
+# GUI contract G2: wide auxiliary pane nominal width.  Pinned (not
+# user-draggable) so opening History / Mutations can never squeeze the
+# conversation into a super-narrow column (G3).
+_PANE_NOMINAL_WIDTH = 295
+# ``QWIDGETSIZE_MAX`` — the narrow presentation releases the width pin so
+# the same widgets fill the whole content region.
+_PANE_WIDTH_UNBOUND = 16777215
 # Built-in slash commands offered by the composer's ``/ Commands`` button.
 # Mirrors the set ``InputArea.set_skill_slugs`` guarantees is autocompleted.
 _BUILTIN_COMMAND_SLUGS = (
@@ -306,6 +313,19 @@ class LucNhanPanelCore(QWidget):
         # build completed (or in tests that bypass ``__init__``).
         self._history_panel: HistoryPanel | None = None
         self._history_btn: QPushButton | None = None
+        # Adaptive pane presentation (GUI contract G5).  ``_pane_name``
+        # is the state ``_show_right_panel`` owns: ``None`` means closed,
+        # so it survives a wide/narrow resize untouched.  The stack is
+        # built next to ``_mode_stack`` and is the pane's parent in both
+        # presentations, which is why a wide dock can slide to narrow
+        # without re-parenting a single widget.
+        self._pane_stack: QStackedWidget | None = None
+        self._pane_name: Literal["history", "mutation"] | None = None
+        self._pane_opener: QWidget | None = None
+        # Last applied pane presentation; ``None`` forces the first
+        # application.  Only the breakpoint changes it — never the pane
+        # state — so an open pane survives a resize untouched.
+        self._pane_narrow: bool | None = None
         self._history_generation: int = 0
         self._history_executor: ThreadPoolExecutor | None = None
         # Typed union queue: every history worker (list, load, delete)
@@ -626,7 +646,20 @@ class LucNhanPanelCore(QWidget):
         # all remaining height (the flex-grow region of GUI contract G3).
         _early_log("panel_core:build_ui:mode_stack:entry")
         self._mode_stack = QStackedWidget()
-        self._mode_stack.setObjectName("content_area")
+        self._mode_stack.setObjectName("content_mode_stack")
+        # GUI contract G5: the content area is a *wrapper* holding the
+        # Chat/Tools stack and the auxiliary-pane stack side by side.
+        # At wide width the horizontal splitter gives the pane stack its
+        # nominal width (G2); at narrow width the wrapper gives the
+        # stack the full content region, so the SAME pane widgets cover
+        # the conversation while header, composer and footer stay
+        # untouched.  No top-level window, no modal.
+        self._content_area = QWidget()
+        self._content_area.setObjectName("content_area")
+        content_layout = QHBoxLayout(self._content_area)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        self._content_layout = content_layout
         _early_log("panel_core:build_ui:dependency_banner:entry")
         self._dependency_banner = QLabel()
         self._dependency_banner.setObjectName("dependency_banner")
@@ -671,6 +704,14 @@ class LucNhanPanelCore(QWidget):
         _early_log("panel_core:build_ui:mode_stack_chat_page:done")
         self._mode_stack.addWidget(self._tools_placeholder)
         _early_log("panel_core:build_ui:tools_panel:done")
+        # Both stacks share the content-area wrapper.  ``_build_main_splitter``
+        # (called above) has already created ``_pane_stack``.
+        content_layout.addWidget(self._mode_stack, 1)
+        # Equal stretch: with the stack capped (wide) the splitter's 3:1
+        # sizing drives the ratio; with the cap released (narrow) the
+        # stack's own stretch gives it exactly the content region, which
+        # is what turns the same widget into a content overlay (G5).
+        content_layout.addWidget(self._pane_stack, 1)
 
         # Content region: [content stack | composer] in the *existing*
         # two-pane vertical chat splitter, so the user keeps the drag
@@ -683,7 +724,7 @@ class LucNhanPanelCore(QWidget):
         self._chat_splitter.setHandleWidth(4)
         self._chat_splitter.setChildrenCollapsible(False)
         self._chat_splitter.setStyleSheet(maybe_host_stylesheet(self._chat_splitter_style()))
-        self._chat_splitter.addWidget(self._mode_stack)
+        self._chat_splitter.addWidget(self._content_area)
         self._chat_splitter.addWidget(input_container)
         self._chat_splitter.setStretchFactor(0, 1)
         self._chat_splitter.setStretchFactor(1, 0)
@@ -805,9 +846,26 @@ class LucNhanPanelCore(QWidget):
         close_tab_sc.setContext(Qt.ShortcutContext.WindowShortcut)
         close_tab_sc.activated.connect(self._close_current_tab)
 
+        # GUI contract G5: Escape is the narrow-dock equivalent of the
+        # pane's Close button — it routes through the same coordinator,
+        # so focus returns to the action that opened the pane.
+        close_pane_sc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        close_pane_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+        close_pane_sc.activated.connect(self._on_close_pane_shortcut)
+
     def _close_current_tab(self) -> None:
         """Close the active chat tab (Ctrl+W handler)."""
         self._on_close_tab(self._tab_widget.currentIndex())
+
+    def _on_close_pane_shortcut(self) -> None:
+        """Escape: close the auxiliary pane when one is open.
+
+        Only the coordinator runs; a pane that is already closed leaves
+        the shortcut inert so Escape keeps its existing behaviour
+        elsewhere (approval cancel, dialogs, composer).
+        """
+        if getattr(self, "_pane_name", None) is not None:
+            self._close_right_panel()
 
     def _build_tab_widget(self) -> None:
         """Create the session strip and the tab widget whose pages it drives.
@@ -845,18 +903,18 @@ class LucNhanPanelCore(QWidget):
         self._session_strip_layout.addWidget(self._tab_bar._add_btn)
 
     def _build_main_splitter(self) -> QSplitter:
-        """Create the horizontal splitter (chat | mutation log | history) and return it.
+        """Create the horizontal splitter (chat | auxiliary pane) and return it.
 
-        Spec §6.4: splitter widget order is chat, Mutation Log, History.
-        Mutation and History start hidden; only the visible auxiliary
-        widget receives the existing 3:1 chat-to-side stretch ratio, so
-        the hidden third widget consumes zero width.
+        Spec §6.4 / GUI contract G5: History and Mutations are mutually
+        exclusive.  Both live in the *same* stack — the pane stack built
+        by :meth:`_build_pane_stack` — and only that stack's active page
+        is shown, so exactly one pane can ever be visible.  The splitter
+        therefore holds two widgets: the conversation and the stack.
 
         The splitter is *not* added to any layout here — the caller
         decides where the splitter lives.  In the normal panel layout
-        it is the top pane of the vertical chat splitter
-        (``self._chat_splitter``), but tests and host wrappers may place
-        it elsewhere.
+        it is page 0 of the content stack, but tests and host wrappers
+        may place it elsewhere.
         """
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._main_splitter.setObjectName("main_splitter")
@@ -868,17 +926,19 @@ class LucNhanPanelCore(QWidget):
         self._main_splitter.setStyleSheet(maybe_host_stylesheet(self._main_splitter_style()))
         self._main_splitter.addWidget(self._tab_widget)
 
+        # Both auxiliary panes — created once, never recreated on a
+        # wide/narrow transition (G5).  ``_build_pane_stack`` owns their
+        # signals and adds them as stack pages.
         self._mutation_panel = MutationLogPanel()
         self._mutation_panel.undo_requested.connect(self._on_undo_requested)
         self._mutation_panel.setVisible(False)
-        self._main_splitter.addWidget(self._mutation_panel)
 
-        # History panel — third hidden widget.  Passive widget: only
-        # main-thread signals fire here (spec §6.3).  PanelCore owns
-        # the worker / queue / timer that drive its content.
+        # History panel — passive widget: only main-thread signals fire
+        # here (spec §6.3).  PanelCore owns the worker / queue / timer
+        # that drive its content.
         self._history_panel = HistoryPanel()
         self._history_panel.setVisible(False)
-        self._history_panel.close_requested.connect(lambda: self._show_right_panel(None))
+        self._history_panel.close_requested.connect(lambda: self._close_right_panel())
         self._history_panel.retry_requested.connect(self._on_history_retry)
         # ``session_open_requested`` is consumed by Task 9; the slot is
         # wired now so the passive widget has a stable connection owner
@@ -890,13 +950,51 @@ class LucNhanPanelCore(QWidget):
         # touching persistence / worker / queue state directly.
         self._history_panel.session_delete_requested.connect(self._on_history_delete_requested)
         self._history_panel.notice_dismissed.connect(self._on_history_notice_dismissed)
-        self._main_splitter.addWidget(self._history_panel)
+        # Mutations gets the same Close / Escape affordance as History.
+        self._mutation_panel.close_requested.connect(self._close_right_panel)
+
+        # G5: one stack, one visible page — the panes can never be
+        # active at the same time, in either presentation.
+        self._build_pane_stack()
+        self._main_splitter.addWidget(self._pane_stack)
 
         self._main_splitter.setStretchFactor(0, 3)
         self._main_splitter.setStretchFactor(1, 1)
-        self._main_splitter.setStretchFactor(2, 1)
 
         return self._main_splitter
+
+    def _build_pane_stack(self) -> None:
+        """Stack the two auxiliary panes over one another (G5).
+
+        The stack is a *sibling* of the content stack inside the same
+        content-area wrapper (see :meth:`_build_ui`), so at wide width
+        the splitter gives it the G2 nominal pane width and at narrow
+        width the wrapper simply keeps both children at full width and
+        the stack covers the conversation.  Neither transition moves a
+        widget between parents, so the running agent, transcript and
+        draft are never disturbed.
+        """
+        stack = QStackedWidget()
+        stack.setObjectName("aux_pane_stack")
+        # Expanding: at a narrow width the released width pin hands the
+        # stack the *whole* content region (the overlay), which only
+        # happens for a widget that wants to grow.  At the wide width
+        # the cap pins it at the G2 nominal width anyway.
+        stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        stack.addWidget(self._mutation_panel)
+        stack.addWidget(self._history_panel)
+        # Closed presentation: the wide splitter hides the whole stack,
+        # so the exact current page never matters while it is closed.
+        stack.setVisible(False)
+        self._pane_stack = stack
+
+    def _pane_widget(self, name: Literal["history", "mutation"] | None) -> QWidget | None:
+        """Return the widget backing *name* (``None`` → nothing)."""
+        if name == "history":
+            return self._history_panel
+        if name == "mutation":
+            return self._mutation_panel
+        return None
 
     def _build_input_section(self) -> QWidget:
         """Build the composer region: editor + Send/Stop + overflow.
@@ -1161,7 +1259,13 @@ class LucNhanPanelCore(QWidget):
         Narrow: ``Tools`` direct, ``History`` / ``Settings`` / ``Export``
         move into the overflow menu (labels + tooltips preserved), header
         gap drops to 5 px and the context row hides its secondary metadata.
+
+        The auxiliary pane presentation (GUI contract G5) is applied here
+        too — a resize is exactly when it has to change — but it depends
+        only on the breakpoint, never on the current pane state, so an
+        open pane survives the transition either way.
         """
+        self._apply_pane_presentation(narrow)
         if getattr(self, "_narrow", None) == narrow:
             return
         self._narrow = narrow
@@ -1179,6 +1283,86 @@ class LucNhanPanelCore(QWidget):
         context_bar = getattr(self, "_context_bar", None)
         if context_bar is not None:
             context_bar.set_narrow(narrow)
+
+    # ------------------------------------------------------------------
+    # Adaptive auxiliary panes (GUI contract G5)
+    # ------------------------------------------------------------------
+
+    def _apply_pane_presentation(self, narrow: bool) -> None:
+        """Present the pane stack as a docked column (wide) or an overlay.
+
+        Wide  : the stack lives in the main splitter at the G2 nominal
+        width (295 px), with the 3:1 conversation-to-pane stretch ratio.
+        Narrow: the same stack — same widgets, same parent — fills the
+        content region and covers the conversation while leaving header,
+        composer and footer reachable (G5).  Nothing else changes: the
+        stack's current page, the running agent, the transcript and the
+        composer draft are untouched, so an open pane survives the
+        breakpoint transition.
+
+        Depends on the breakpoint alone, never on the pane state, so it
+        is safe to call on every resize (no timer, no state re-entry).
+        """
+        stack = getattr(self, "_pane_stack", None)
+        layout = getattr(self, "_content_layout", None)
+        last_narrow = getattr(self, "_pane_narrow", None)
+        if last_narrow != narrow:
+            self._pane_narrow = narrow
+            if layout is not None and stack is not None:
+                # 3:1 mirrors the splitter's wide ratio.  At the narrow
+                # breakpoint the pane takes the whole stretch and the
+                # conversation falls back to its minimum hint — it is
+                # behind the overlay either way, so that spare column is
+                # exactly what buys the pane the full content region (G5).
+                mode = getattr(self, "_mode_stack", None)
+                if mode is not None:
+                    layout.setStretchFactor(mode, 1)
+                layout.setStretchFactor(stack, 1)
+            if stack is not None:
+                # The width is *pinned*, not merely capped: a cap alone
+                # leaves Qt free to keep the split as-is (real Qt only
+                # honours the minimum), so wide gets the G2 nominal
+                # column and narrow gets the whole content region — the
+                # overlay — from the same widget.
+                stack.setMinimumWidth(_PANE_NOMINAL_WIDTH)
+                if narrow:
+                    # The overlay takes the content region minus the
+                    # conversation's own minimum column — the pane covers
+                    # the transcript without forcing it into a sliver
+                    # (plan §1: never squeeze chat/composer).
+                    # ``self.width()`` is the NEW panel width in
+                    # ``resizeEvent`` — the layout has not been applied
+                    # yet, so the measured region would still be stale.
+                    region = self.width()
+                    chat_min = mode.minimumSizeHint().width() if mode is not None else 0
+                    stack.setMinimumWidth(max(region - chat_min, _PANE_NOMINAL_WIDTH))
+                    stack.setMaximumWidth(_PANE_WIDTH_UNBOUND)
+                else:
+                    stack.setMaximumWidth(_PANE_NOMINAL_WIDTH)
+            # Geometry hints changed, so the cached split is stale.
+            if layout is not None:
+                layout.invalidate()
+        if stack is not None and not narrow and getattr(self, "_pane_name", None) is not None:
+            splitter = getattr(self, "_main_splitter", None)
+            if splitter is not None:
+                splitter.setSizes([max(splitter.width() - _PANE_NOMINAL_WIDTH, 1), _PANE_NOMINAL_WIDTH])
+        history = getattr(self, "_history_panel", None)
+        if history is not None and hasattr(history, "set_overlay_presentation"):
+            history.set_overlay_presentation(narrow)
+
+    def _close_right_panel(self) -> None:
+        """Close the open pane and hand focus back to its opener.
+
+        GUI contract G5: Close returns focus to the action that opened
+        the pane.  The composer draft and caret are never touched.
+        """
+        self._show_right_panel(None)
+        opener = self._pane_opener
+        self._pane_opener = None
+        if opener is not None:
+            # ``setFocus()`` defaults to ``OtherFocusReason`` — no reason
+            # argument needed, and the composer draft/caret are untouched.
+            opener.setFocus()
 
     def _apply_header_styles(self) -> None:
         """Push token-driven chrome + navigation styles onto the header."""
@@ -2383,14 +2567,18 @@ class LucNhanPanelCore(QWidget):
     def _on_toggle_mutation_log(self) -> None:
         """Toggle visibility of the mutation log panel.
 
-        Routed through the shared right-panel coordinator (spec §6.4)
-        so Mutation Log and History remain mutually exclusive and the
-        ``Mutations`` button stays in sync with the panel visibility.
+        Routed through the shared right-panel coordinator (spec §6.4,
+        GUI contract G5) so Mutation Log and History remain mutually
+        exclusive and the ``Mutations`` button stays in sync with the
+        open pane.  The coordinator — not ``isVisible`` — is the single
+        owner of pane state, so the button reads ``_pane_name``.
         """
         if self._mutation_panel is None:
             return
-        visible = not self._mutation_panel.isVisible()
-        self._show_right_panel("mutation" if visible else None)
+        self._show_right_panel(
+            "mutation" if getattr(self, "_pane_name", None) != "mutation" else None,
+            opener=self._mutations_btn,
+        )
 
     def _on_toggle_history(self) -> None:
         """Toggle the History side panel via the shared coordinator.
@@ -2401,46 +2589,61 @@ class LucNhanPanelCore(QWidget):
         """
         if self._history_panel is None:
             return
-        visible = not self._history_panel.isVisible()
-        log_debug(f"HIST-TRACE toggle: panel_visible={not visible}")  # TEMP-DIAG
-        self._show_right_panel("history" if visible else None)
+        log_debug(f"HIST-TRACE toggle: panel_visible={getattr(self, '_pane_name', None) != 'history'}")  # TEMP-DIAG
+        self._show_right_panel(
+            "history" if getattr(self, "_pane_name", None) != "history" else None,
+            opener=self._history_btn,
+        )
 
-    def _show_right_panel(self, name: Literal["history", "mutation"] | None) -> None:
-        """Single right-panel coordinator (spec §6.4).
+    def _show_right_panel(
+        self,
+        name: Literal["history", "mutation"] | None,
+        *,
+        opener: QWidget | None = None,
+    ) -> None:
+        """Single auxiliary-pane coordinator (spec §6.4, GUI contract G5).
 
-        Hide + uncheck both auxiliary panels first, then show + check
-        only the requested one.  Opening History also kicks off a list
-        request; closing History simply hides the panel — the cached
-        rows and search query survive in ``HistoryPanel`` so a reopen
-        restores them while a fresh background refresh runs (spec §6.3
-        "Closing and reopening History preserves the last successful
-        rows and search query, but reopening always starts a background
-        refresh").
+        Both panes live in one stack, so showing the requested page
+        *is* the mutual exclusion: the other pane becomes hidden because
+        Qt shows only the stack's current page.  The button check states
+        follow ``name``, so the header / overflow / composer triggers can
+        never disagree with what the user sees.
+
+        Opening History also kicks off a list request; closing History
+        simply hides the pane — the cached rows and search query survive
+        in ``HistoryPanel`` so a reopen restores them while a fresh
+        background refresh runs (spec §6.3 "Closing and reopening History
+        preserves the last successful rows and search query, but reopening
+        always starts a background refresh").
+
+        ``opener`` is the control the user activated; it is remembered so
+        :meth:`_close_right_panel` can hand focus back (G5).
         """
-        # Defensive: ``_mutation_panel`` / ``_history_panel`` are built
-        # during ``_build_ui``; in tests that bypass construction the
-        # attributes may be ``MagicMock`` or ``None``.  Guard each call
-        # so the coordinator never crashes on a partially-built panel.
-        if getattr(self, "_mutation_panel", None) is not None:
-            self._mutation_panel.setVisible(False)
+        # Defensive: the stack / panels are built during ``_build_ui``; in
+        # tests that bypass construction the attributes may be
+        # ``MagicMock`` or ``None``.  Guard each call so the coordinator
+        # never crashes on a partially-built pane.
+        self._pane_name = name
+        if opener is not None:
+            self._pane_opener = opener
         if getattr(self, "_mutations_btn", None) is not None:
-            self._mutations_btn.setChecked(False)
-        if getattr(self, "_history_panel", None) is not None:
-            self._history_panel.setVisible(False)
+            self._mutations_btn.setChecked(name == "mutation")
         if getattr(self, "_history_btn", None) is not None:
-            self._history_btn.setChecked(False)
+            self._history_btn.setChecked(name == "history")
+
+        stack = getattr(self, "_pane_stack", None)
+        pane = self._pane_widget(name) if name is not None else None
+        if stack is not None and pane is not None:
+            stack.setCurrentWidget(pane)
+            stack.setVisible(True)
+            # Wide docks start at the G2 nominal pane width; the stack is
+            # capped there by ``_apply_pane_presentation``.
+            self._apply_pane_presentation(getattr(self, "_narrow", False))
+        elif stack is not None:
+            stack.setVisible(False)
 
         if name == "history":
-            if self._history_panel is not None:
-                self._history_panel.setVisible(True)
-            if self._history_btn is not None:
-                self._history_btn.setChecked(True)
             self._start_history_list_request()
-        elif name == "mutation":
-            if self._mutation_panel is not None:
-                self._mutation_panel.setVisible(True)
-            if self._mutations_btn is not None:
-                self._mutations_btn.setChecked(True)
 
     # ------------------------------------------------------------------
     # History on-demand coordinator (spec §8.1, §11.4)

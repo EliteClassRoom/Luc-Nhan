@@ -362,7 +362,11 @@ def _history_meta_style() -> str:
 
 def _history_scope_style() -> str:
     t = _tokens()
-    return f"color: {t.muted_text}; font-size: inherit; font-style: italic;"
+    # GUI contract G2: compact inline badge, radius 3 px.  ``Ignored``
+    # width policy (set by the panel) lets the scope badge drop out at
+    # narrow pane widths instead of squeezing the title — the header
+    # still names the pane and keeps Close reachable.
+    return f"color: {t.muted_text}; font-size: 11px; border-radius: 3px;"
 
 
 def _history_status_style() -> str:
