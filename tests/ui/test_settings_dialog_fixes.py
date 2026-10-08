@@ -26,6 +26,7 @@ from unittest.mock import MagicMock, patch
 
 from rikugan.core.types import Message, Role
 from rikugan.providers.openai_provider import OpenAIProvider
+from tests.qt_real import requires_real_qt
 
 # ----------------------------------------------------------------------------
 # Test-local fakes for Anthropic streaming and provider-fetcher ordering.
@@ -79,6 +80,7 @@ def _ensure_qapplication():
 # ----------------------------------------------------------------------------
 
 
+@requires_real_qt
 class TestSettingsDialogLazyOK(unittest.TestCase):
     """Pressing OK on a fresh SettingsDialog must not blow up when the
     Skills / MCP / Profiles tabs have not been opened.
@@ -163,6 +165,7 @@ class TestSettingsDialogLazyOK(unittest.TestCase):
 # ----------------------------------------------------------------------------
 
 
+@requires_real_qt
 class TestModelFetcherSafety(unittest.TestCase):
     """The fetcher must not create the provider on a background thread.
 
@@ -357,6 +360,7 @@ class TestModelFetcherSafety(unittest.TestCase):
 # ----------------------------------------------------------------------------
 
 
+@requires_real_qt
 class TestBuiltinModelPopulation(unittest.TestCase):
     """Ollama / openai_compat / custom providers MUST NOT silently
     overwrite the configured model with the OpenAI base class's
@@ -1141,6 +1145,7 @@ class TestOpenAIRetryableErrorMapping(unittest.TestCase):
 # ----------------------------------------------------------------------------
 
 
+@requires_real_qt
 class TestAddButtonTabBarTheme(unittest.TestCase):
     """The ``+`` button on the tab bar must reflect the current theme
     palette (light or dark) by re-applying its inline stylesheet from
@@ -1787,6 +1792,7 @@ class TestKnowledgeEnabledSetting(unittest.TestCase):
 # ----------------------------------------------------------------------------
 
 
+@requires_real_qt
 class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
     """The ``Max Output Tokens`` spin box must follow the selected model.
 
@@ -2188,6 +2194,7 @@ class TestAnthropicRawPartsPreservation(unittest.TestCase):
         self.assertEqual(formatted[0]["content"][0], {"type": "text", "text": "hello"})
 
 
+@requires_real_qt
 class TestRefreshKeepsUnlistedModel(unittest.TestCase):
     """Clicking Refresh must not rewrite the configured model.
 

@@ -25,7 +25,7 @@ from rikugan.memory.ingest import (
     ingest_save_memory,
 )
 from rikugan.memory.retrieve import RetrievalQuery, retrieve, search_all
-from rikugan.tests.knowledge._helpers import fresh_store
+from tests.knowledge._helpers import fresh_store
 
 
 class TestBudgetFromConfig(unittest.TestCase):

@@ -9,6 +9,8 @@ import unittest
 
 import pytest
 
+from tests.qt_real import requires_real_qt
+
 
 class TestSplitThinking(unittest.TestCase):
     """Tests for the thinking-content split helpers."""
@@ -180,6 +182,7 @@ class TestExtractThinkingText(unittest.TestCase):
         self.assertEqual(_extract_thinking_text("Just visible."), "")
 
 
+@requires_real_qt
 class TestAssistantMessageWidgetUI(unittest.TestCase):
     """Structural / UI tests for AssistantMessageWidget.
 
@@ -214,6 +217,7 @@ class TestAssistantMessageWidgetUI(unittest.TestCase):
         self.assertEqual(w.full_text(), "I am thinking about code")
 
 
+@requires_real_qt
 class TestKnowledgeContextWidget(unittest.TestCase):
     """The chat indicator for ``KNOWLEDGE_RETRIEVED`` must use a
     dedicated widget that does NOT render the misleading

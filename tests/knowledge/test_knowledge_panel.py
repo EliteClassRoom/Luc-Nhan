@@ -15,6 +15,7 @@ from rikugan.memory.schema import (
     KnowledgeMemory,
     KnowledgeRelation,
 )
+from tests.qt_real import requires_real_qt
 
 
 class FakeMemory(KnowledgeMemory):
@@ -42,6 +43,7 @@ def _make_widget():
     return KnowledgePanel()
 
 
+@requires_real_qt
 class TestKnowledgePanel(unittest.TestCase):
     def setUp(self):
         self.w = _make_widget()

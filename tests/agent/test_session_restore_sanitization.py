@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 # Ensure the workspace root is importable so the tests work both in
-# ``pytest rikugan/tests`` and ``pytest rikugan/tests/test_…``.
+# ``pytest tests`` and ``pytest tests/agent/test_…``.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))

@@ -434,5 +434,51 @@ class TestMdToHtmlIntegration(unittest.TestCase):
         self.assertIn("<li>", result)
 
 
+_LEGACY_BODY = "**Report draft**\n\n# Draft\n\n```c\nint main(void) {return 0;}\n```\n\nTrailing line about entry."
+
+
+class TestLegacyMarkdownFences(unittest.TestCase):
+    """The legacy regex-based renderer is exercised when ``markdown-it``
+    is not installed.  The renderer must still emit the inner code
+    block and the trailing prose in that case.
+    """
+
+    def test_legacy_renders_inner_code_block_and_trailing(self):
+        from rikugan.ui.markdown import _legacy_md_to_html
+
+        out = _legacy_md_to_html(_LEGACY_BODY)
+        self.assertIn("int main(void) {return 0;}", out)
+        self.assertIn("Trailing line about entry.", out)
+        # The block must be wrapped in a ``<div>`` carrying the
+        # block-code style and not crammed together with adjacent
+        # sentences (one of the symptoms of broken fence handling is
+        # the placeholder leak that ends up with literal ``\x00`` in
+        # the rendered HTML).
+        self.assertNotIn("\x00", out)
+        # Inner code must be inside its own ``<div>`` so Qt renders
+        # a real code block (pre-wrap background) and the trailing
+        # line stays a sibling — they must not be concatenated into
+        # the same inline tag.
+        self.assertRegex(out, r"<div[^>]*white-space:pre-wrap[^>]*>int main")
+        # NUL sentinels from the placeholder registry must never leak.
+        self.assertNotIn("\x00", out)
+
+
+class TestMdToHtmlDispatchFallback(unittest.TestCase):
+    """The public entry point must select the markdown-it path when
+    available and produce HTML, not the empty string.
+    """
+
+    def test_md_to_html_returns_html(self):
+        from rikugan.ui.markdown import md_to_html
+
+        out = md_to_html(_LEGACY_BODY)
+        # ``md_to_html`` must return a non-empty string.  The exact
+        # markup depends on which engine was selected; the body must
+        # survive either way.
+        self.assertTrue(out)
+        self.assertNotIn("\x00", out)
+
+
 if __name__ == "__main__":
     unittest.main()

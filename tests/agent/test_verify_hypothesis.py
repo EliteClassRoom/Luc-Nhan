@@ -18,7 +18,7 @@ from rikugan.core.config import RikuganConfig
 from rikugan.core.errors import CancellationError
 from rikugan.memory.schema import KnowledgeMemory
 from rikugan.state.session import SessionState
-from rikugan.tests.knowledge._helpers import fresh_store
+from tests.knowledge._helpers import fresh_store
 
 
 def _hypothesis(

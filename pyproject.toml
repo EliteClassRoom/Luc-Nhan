@@ -53,11 +53,10 @@ dependencies = [
 target-version = "py311"
 line-length = 120
 
-# ``tests/`` (top-level) is intentionally included in ruff's walk set.
-# ``rikugan/tests/`` is already covered by ``*.py`` default includes;
-# the top-level ``tests/`` lives outside ``rikugan/`` so it needs an
-# explicit ``extend-include`` so that ``ruff check`` (no args) and
-# ``ruff check .`` from the project root lint it alongside the package.
+# The whole suite lives under the top-level ``tests/`` tree, which sits
+# outside ``rikugan/``; it needs an explicit ``extend-include`` so that
+# ``ruff check`` (no args) and ``ruff check .`` from the project root
+# lint it alongside the package.
 #
 # Note: the CI workflow currently invokes ``ruff check rikugan/``, which
 # passes an explicit path and bypasses the default include set.  To
@@ -80,14 +79,13 @@ ignore = ["E501", "B008", "UP042"]
 # range.  Test fixtures (``tests/ida/test_evidence_comment.py``) assert
 # on this exact glyph, so replacing it would break the contract.
 "rikugan/agent/exploration_mode.py" = ["RUF001"]
-# ``tests/**`` and ``rikugan/tests/**`` files intentionally bootstrap
-# ``sys.path`` and the IDA/Qt stub modules before importing the package
-# under test (see e.g. ``tests/a2a/test_dispatcher.py``).  The
-# resulting non-top-of-file imports are a structural requirement, not
-# a mistake — silencing E402 here avoids 160+ ``# noqa: E402`` lines
-# that would otherwise drown out the real E-rule violations.
+# ``tests/**`` files intentionally bootstrap ``sys.path`` and the IDA/Qt
+# stub modules before importing the package under test (see e.g.
+# ``tests/a2a/test_dispatcher.py``).  The resulting non-top-of-file
+# imports are a structural requirement, not a mistake — silencing E402
+# here avoids 160+ ``# noqa: E402`` lines that would otherwise drown out
+# the real E-rule violations.
 "tests/**" = ["E402"]
-"rikugan/tests/**" = ["E402"]
 # ``tests/core/test_sanitize.py`` is the homoglyph test fixture — it
 # embeds Cyrillic/Greek look-alike characters as **input data** that
 # ``sanitize()`` is expected to detect.  Ruff cannot distinguish
@@ -184,7 +182,6 @@ module = [
   "rikugan.ida.ui.tools_form",
   "rikugan.ida.tools.registry",
   "rikugan.tools.web_fetch",
-  "rikugan.tests.conftest",
   # NOTE (task-7 r1, against reviewer recommendation): both modules
   # DO surface errors when mypy follows imports into them — the
   # reviewer claim of "0 errors" was verified empirically as referring
@@ -216,8 +213,8 @@ module = [
   #   * ``[attr-defined]`` ``QFrame`` has no attribute
   #     ``_announcements_sink`` (753) — the attribute is injected at
   #     runtime by the Qt compat layer / a ``TYPE_CHECKING`` shim.
-  # Same pattern as ``rikugan.tests.conftest`` (dynamic attribute
-  # injection on a Qt class) which is already in this override block.
+  # Same pattern as the other Qt classes in this block: an attribute
+  # injected at runtime that mypy cannot see.
   "rikugan.ui.history_panel",
 ]
 ignore_errors = true
@@ -230,14 +227,8 @@ ignore_errors = true
 module = ["rikugan.ida.tools.microcode_optim"]
 ignore_errors = true
 
-[[tool.mypy.overrides]]
-# Lightweight test fixtures that intentionally re-use real Qt classes in
-# places where mypy cannot follow the dynamic attribute access pattern.
-module = ["rikugan.tests.test_settings_dialog_fixes"]
-ignore_errors = true
-
 [tool.pytest.ini_options]
-testpaths = ["tests", "rikugan/tests"]
+testpaths = ["tests"]
 # Per-test timeout was the goal here (see task 7 brief:
 # ``test_height_cached_label`` mock-pollution flake is the canonical
 # case the timeout guards against).  ``--timeout=30`` with the

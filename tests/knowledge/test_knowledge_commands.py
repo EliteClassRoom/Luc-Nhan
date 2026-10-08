@@ -11,6 +11,10 @@ import unittest
 from collections.abc import Generator
 from unittest.mock import MagicMock
 
+import tests as _tests
+
+_tests.purge_rikugan_stubs()
+
 from rikugan.agent.loop import _parse_user_command
 from rikugan.agent.loop_commands import _handle_knowledge_command
 from rikugan.agent.turn import TurnEvent
@@ -20,7 +24,7 @@ from rikugan.memory.ingest import (
     ingest_save_memory,
 )
 from rikugan.state.session import SessionState
-from rikugan.tests.knowledge._helpers import fresh_store
+from tests.knowledge._helpers import fresh_store
 
 
 class TestParser(unittest.TestCase):

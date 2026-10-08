@@ -19,13 +19,19 @@ import unittest
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
+import tests as _tests
+
+_tests.purge_rikugan_stubs()
+
+from tests.qt_real import requires_real_qt
+
 from rikugan.agent.loop_commands import _handle_report_command
 from rikugan.agent.turn import TurnEvent, TurnEventType
 from rikugan.core.config import RikuganConfig
 from rikugan.memory.report import ReportSaveResult, build_report_context
 from rikugan.memory.schema import KnowledgeMemory
 from rikugan.state.session import SessionState
-from rikugan.tests.knowledge._helpers import fresh_store
+from tests.knowledge._helpers import fresh_store
 
 
 class _FakeLoop:
@@ -182,7 +188,7 @@ class TestReportCommandEventSequence(unittest.TestCase):
         self.assertEqual(kwargs.get("scope"), "full")
 
     def test_no_findings_emits_skip_message_no_draft(self) -> None:
-        from rikugan.tests.knowledge._helpers import fresh_store
+        from tests.knowledge._helpers import fresh_store
 
         tmp = tempfile.mkdtemp()
         _, empty_paths = fresh_store(tmp)
@@ -407,6 +413,7 @@ class TestReportDraftFencing(unittest.TestCase):
         # No stray outer fence header.
         self.assertFalse(first.text.startswith("```"))
 
+    @requires_real_qt
     def test_draft_inner_fence_renders_in_widget(self) -> None:
         """Exercise the full ChatView path end-to-end with a nested fence.
 
@@ -509,6 +516,7 @@ class TestReportDraftFencing(unittest.TestCase):
         # restoration / re-render.
         self.assertIn("Trailing line about entry.", asst[0].full_text())
 
+    @requires_real_qt
     def test_plain_draft_body_visible_in_widget(self) -> None:
         """Regression for the "heading visible, body empty" failure
         mode reported by the user — a draft whose Markdown body has
@@ -640,6 +648,7 @@ class TestReportDraftFencing(unittest.TestCase):
         self.assertEqual(events[0].type, TurnEventType.ERROR)
         self.assertIn("empty", events[0].error.lower())
 
+    @requires_real_qt
     def test_long_body_with_inner_fence_is_balanced_in_widget(self) -> None:
         """Regression: a >1500-char body whose inner code fence
         spans the truncation cap must yield a balanced preview (no

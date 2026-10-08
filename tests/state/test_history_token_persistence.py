@@ -47,7 +47,7 @@ def _history(tmp_path: Path) -> SessionHistory:
     """Build a SessionHistory whose storage dir is rooted in *tmp_path*.
 
     Mirrors the convention in ``tests/state/test_history_on_demand.py``
-    and ``rikugan/tests/test_session_restore_sanitization.py``: assign
+    and ``tests/agent/test_session_restore_sanitization.py``: assign
     ``_config_dir`` on a default ``RikuganConfig`` and then construct
     the history. ``RikuganConfig.checkpoints_dir`` is a computed
     property so we cannot assign it directly.
@@ -61,7 +61,7 @@ def _base_payload(session_id: str, messages: list[dict], **extra: object) -> dic
     """Build a minimal valid session JSON payload.
 
     Mirrors ``_base_payload`` in
-    ``rikugan/tests/test_session_restore_sanitization.py`` so the
+    ``tests/agent/test_session_restore_sanitization.py`` so the
     hand-forged legacy / hostile cases below match the shape
     ``save_session`` would write, minus the fields under test.
     """

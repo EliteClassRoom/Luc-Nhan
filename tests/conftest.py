@@ -16,7 +16,29 @@ at the very top, before the rikugan imports.  See
 
 from __future__ import annotations
 
+import pytest
+
 from tests import purge_rikugan_stubs
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """Real ``QApplication`` singleton for the real-Qt widget tests.
+
+    The import is deliberately inside the fixture body: in a session where
+    ``tests.qt_stubs`` has already replaced ``PySide6.*`` these tests skip
+    (see ``tests/qt_real.py``) and the fixture is never requested, while an
+    eager module-level import would pull the real binding into every
+    session and disable the stubs.
+    """
+    from rikugan.ui.qt_compat import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    yield app
+    # Don't quit() here — leave the singleton alive so Qt cleans up via its
+    # normal shutdown sequence when the process exits.
 
 
 def pytest_runtest_setup(item):

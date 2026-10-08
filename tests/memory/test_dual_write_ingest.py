@@ -11,7 +11,7 @@ honors the ``_LEGACY_JSONL_DUAL_WRITE`` module flag and the optional
 - A failure in one write path never blocks the other.
 - When ``memory_service`` is ``None``, the function falls back to the
   legacy JSONL-only behavior regardless of the flag (this is the path
-  exercised by ``rikugan/tests/knowledge/test_ingest.py``).
+  exercised by ``tests/knowledge/test_ingest.py``).
 """
 
 from __future__ import annotations

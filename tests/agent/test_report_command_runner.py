@@ -27,7 +27,7 @@ from rikugan.core.config import RikuganConfig
 from rikugan.memory.report import ReportSaveResult, build_report_context
 from rikugan.memory.schema import KnowledgeMemory
 from rikugan.state.session import SessionState
-from rikugan.tests.knowledge._helpers import fresh_store
+from tests.knowledge._helpers import fresh_store
 
 
 def _seed_verified_hypothesis(store, paths) -> KnowledgeMemory:

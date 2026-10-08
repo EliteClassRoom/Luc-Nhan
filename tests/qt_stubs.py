@@ -837,16 +837,52 @@ _GUI_NAMES = [
 ]
 
 
+_STUB_MARKER = "__rikugan_qt_stub__"
+
+
 def _stub_mod(name: str, **attrs) -> types.ModuleType:
     m = types.ModuleType(name)
     m.__dict__.update(attrs)
+    # Marks the module as one of ours so a later caller can tell a fake
+    # ``PySide6.*`` apart from the real binding (see
+    # ``_real_qt_already_loaded``).
+    setattr(m, _STUB_MARKER, True)
     return m
 
 
+def _real_qt_already_loaded() -> str | None:
+    """Return the first real (non-stub) ``PySide6*`` module in sys.modules.
+
+    ``True``-ish module names only: anything we created via
+    :func:`_stub_mod` carries ``_STUB_MARKER`` and is ignored.
+    """
+    for name, module in list(sys.modules.items()):
+        if name != "PySide6" and not name.startswith("PySide6."):
+            continue
+        if not getattr(module, _STUB_MARKER, False):
+            return name
+    return None
+
+
 def ensure_pyside6_stubs() -> None:
-    """Install minimal PySide6 stubs into sys.modules (idempotent)."""
+    """Install minimal PySide6 stubs into sys.modules (idempotent).
+
+    Refuses to install when the real PySide6 binding is already imported:
+    ``setdefault`` would leave the real extension modules in place and the
+    unconditional attribute writes below would then overwrite real classes
+    (``QFont``, ``QScrollArea``, ``QApplication``, ...) inside them, giving
+    one process two incompatible Qt type universes.  That mismatch
+    fast-fails natively (0xC0000409/STATUS_STACK_BUFFER_OVERRUN) instead of
+    raising, so it takes the whole pytest process down with it.  First
+    importer wins: modules that need the fakes must call this before any
+    ``rikugan.ui`` import (see the module docstring).
+    """
     global _installed
     if _installed:
+        return
+    real = _real_qt_already_loaded()
+    if real is not None:
+        _installed = True
         return
     _installed = True
 

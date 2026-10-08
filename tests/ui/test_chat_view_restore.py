@@ -29,9 +29,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # *real* modules.
 #
 # We deliberately do NOT touch ``PySide6.*`` here: the real
-# PySide6 modules may already be loaded by sibling conftests
-# (e.g. ``rikugan/tests/conftest.py`` imports real
-# ``rikugan.ui.qt_compat``), and dropping + re-importing the
+# PySide6 modules may already be loaded by a sibling test module
+# that imports ``rikugan.ui.qt_compat``, and dropping + re-importing the
 # PySide6 C extensions can recurse into the Shiboken loader
 # (observed stack overflow on PySide6 6.7+ when several test
 # files in the same session each purge and reload PySide6).
@@ -409,6 +408,7 @@ class WorkerRunTests(unittest.TestCase):
         self.assertEqual(len(chunks[0].specs), _RESTORE_CHUNK_SIZE)
         self.assertTrue(finished)
 
+
 class WorkerQueueTests(unittest.TestCase):
     """RestoreWorker pushes (kind, payload) tuples to a queue.Queue.
 
@@ -449,6 +449,7 @@ class WorkerQueueTests(unittest.TestCase):
     def test_worker_has_queue_attribute(self) -> None:
         worker = RestoreWorker([])
         import queue as _queue
+
         self.assertIsInstance(worker.queue, _queue.Queue)
 
     def test_worker_run_populates_queue_with_chunks_and_finished(self) -> None:
@@ -464,6 +465,7 @@ class WorkerQueueTests(unittest.TestCase):
         self.assertEqual(len(chunks[0].specs), _RESTORE_CHUNK_SIZE)
         self.assertEqual(len(chunks[1].specs), 5)
         self.assertEqual(sum(len(c.specs) for c in chunks), n)
+
     def test_worker_run_no_chunk_ready_or_finished_ok_signal(self) -> None:
         """The Qt-signal interface must be GONE — clean cutover.
 
@@ -535,8 +537,7 @@ class WorkerQueueTests(unittest.TestCase):
         self.assertEqual(
             [role for _tid, role in factory_calls],
             ["a", "b", "c", "FINISHED"],
-            "drain must dispatch every chunk spec in order, then the "
-            "finished sentinel",
+            "drain must dispatch every chunk spec in order, then the finished sentinel",
         )
         drain_tid = factory_calls[0][0]
         self.assertEqual(
@@ -567,6 +568,7 @@ class WorkerQueueTests(unittest.TestCase):
         chunks, finished = self._drain(worker)
         self.assertEqual(chunks, [])
         self.assertTrue(finished)
+
 
 class PlaceholderTests(unittest.TestCase):
     """``MessagePlaceholder`` is a tiny ``QFrame`` used during async
@@ -751,7 +753,11 @@ class AsyncRestoreEndToEndTests(unittest.TestCase):
         while time.monotonic() < deadline:
             last_user = len(self.view.findChildren(UserMessageWidget))
             last_assistant = len(self.view.findChildren(AssistantMessageWidget))
-            if last_user >= expected_min_user and last_assistant >= expected_min_assistant and not self.view._in_restore:
+            if (
+                last_user >= expected_min_user
+                and last_assistant >= expected_min_assistant
+                and not self.view._in_restore
+            ):
                 # Spin a few more turns to flush any late queue items.
                 for _ in range(10):
                     self._qapp.processEvents()
@@ -771,9 +777,7 @@ class AsyncRestoreEndToEndTests(unittest.TestCase):
     def test_two_message_session_paints_user_and_assistant(self) -> None:
         """The minimal repro: a 2-message session must yield both
         a ``UserMessageWidget`` and an ``AssistantMessageWidget``."""
-        self.view.restore_from_messages_async(
-            [self._user("hello", "u1"), self._assistant("hi", "a1")]
-        )
+        self.view.restore_from_messages_async([self._user("hello", "u1"), self._assistant("hi", "a1")])
         self._pump_until_done(expected_min_user=1, expected_min_assistant=1)
         # Clean terminal flags.
         self.assertFalse(self.view._in_restore)
@@ -825,9 +829,7 @@ class AsyncRestoreEndToEndTests(unittest.TestCase):
             expected_min_assistant=_RESTORE_DEFAULT_MAX_RENDERED // 2,
         )
         # Cap grew.
-        self.assertGreater(
-            self.view._restore_max_rendered, _RESTORE_DEFAULT_MAX_RENDERED
-        )
+        self.assertGreater(self.view._restore_max_rendered, _RESTORE_DEFAULT_MAX_RENDERED)
 
     def test_cancel_tears_down_timer_and_clears_state(self) -> None:
         """``_cancel_restore`` must stop the drain timer and clear

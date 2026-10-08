@@ -19,7 +19,7 @@ from rikugan.memory.ingest import (
     ingest_save_memory,
     make_store,
 )
-from rikugan.tests.knowledge._helpers import fresh_store
+from tests.knowledge._helpers import fresh_store
 
 
 class TestMakeStore(unittest.TestCase):

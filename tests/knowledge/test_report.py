@@ -17,7 +17,7 @@ from rikugan.memory.report import (
     wrap_report_pack,
     write_report_file,
 )
-from rikugan.tests.knowledge._helpers import fresh_store as fresh
+from tests.knowledge._helpers import fresh_store as fresh
 
 
 def _seed_basic(store: KnowledgeRawStore, paths):

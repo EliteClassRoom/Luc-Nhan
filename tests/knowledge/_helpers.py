@@ -1,6 +1,6 @@
 """Shared helpers for the knowledge-store test suite.
 
-The tests under ``rikugan/tests/knowledge`` historically defined their
+The tests under ``tests/knowledge`` historically defined their
 own ``fresh_store`` / ``fresh`` helpers inline.  The drift caused
 filename and behavior differences (some used ``x.i64``, others
 ``x.idb``) that made it harder to grep for fixture changes.

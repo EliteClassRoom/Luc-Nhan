@@ -17,7 +17,7 @@ from rikugan.agent.report_evidence import collect_binary_evidence, fetch_binary_
 from rikugan.core.errors import ToolError, ToolNotFoundError
 from rikugan.memory.report import EvidenceBlock, synthesize_report
 from rikugan.memory.schema import KnowledgeMemory
-from rikugan.tests.knowledge._helpers import fresh_store
+from tests.knowledge._helpers import fresh_store
 
 
 def _memory(paths, mem_id: str, content: str, title: str = "t", claim: str = "", citations=None) -> KnowledgeMemory:
