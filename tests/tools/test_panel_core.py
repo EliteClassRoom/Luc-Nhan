@@ -61,6 +61,7 @@ _STUBBED_MODULES = [
     "lucnhan.ui.theme.palette_dark",
     "lucnhan.ui.theme.palette_light",
     "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.theme.widgets_common",
     "lucnhan.core.config",
     "lucnhan.core.logging",
     "lucnhan.core.types",
@@ -90,6 +91,7 @@ for _mod_name in [
     "lucnhan.ui.theme.palette_dark",
     "lucnhan.ui.theme.palette_light",
     "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.theme.widgets_common",
     "lucnhan.core.config",
     "lucnhan.core.logging",
     "lucnhan.core.types",
@@ -1193,18 +1195,21 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
             def widget(self, _index: int) -> MagicMock:
                 return MagicMock()
 
-            def removeTab(self, _index: int) -> None:
+            def removeWidget(self, _widget: object) -> None:
                 self._current_index = ToolsPanel.TAB_AGENTS
                 if not self._signals_blocked:
                     self.currentChanged.emit(self._current_index)
 
-            def insertTab(self, _index: int, _widget: object, _label: str) -> None:
+            def insertWidget(self, _index: int, _widget: object) -> None:
                 self._current_index = ToolsPanel.TAB_A2A
                 if not self._signals_blocked:
                     self.currentChanged.emit(self._current_index)
 
         tools_panel = ToolsPanel.__new__(ToolsPanel)
-        tools_panel._tabs = _Tabs()
+        # G8: the page host replaced the QTabWidget (``_tabs`` is now a
+        # compatibility alias); replacing a page must still not re-enter
+        # the lazy activation callback.
+        tools_panel.__dict__["_page_host"] = _Tabs()
 
         tools_panel._replace_tab(ToolsPanel.TAB_AGENTS, MagicMock(), "Agents")
 
@@ -1259,7 +1264,7 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         panel.show_tools_panel()
 
         # Default tab is Knowledge (2), not the removed Renamer.
-        fake_panel._tabs.setCurrentIndex.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
+        fake_panel.set_current_page.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
         panel._ensure_tab_initialized.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
 
     def test_show_tools_panel_falls_back_for_unknown_index(self):
@@ -1276,18 +1281,19 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         panel._ensure_tools_panel_created = MagicMock()
         panel._tools_panel = MagicMock()
         panel._tools_panel._tabs.count.return_value = ToolsPanel.TAB_COUNT
+        panel._tools_panel.current_page.return_value = ToolsPanel.TAB_KNOWLEDGE
         panel._ensure_tab_initialized = MagicMock()
 
         panel.show_tools_panel(tab_index=99)
-        panel._tools_panel._tabs.setCurrentIndex.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
+        panel._tools_panel.set_current_page.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
         panel._ensure_tab_initialized.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
 
         # Historical numeric index ``0`` previously meant Renamer.
         # It must now map to the new tab-zero (Agents), not raise.
-        panel._tools_panel._tabs.setCurrentIndex.reset_mock()
+        panel._tools_panel.set_current_page.reset_mock()
         panel._ensure_tab_initialized.reset_mock()
         panel.show_tools_panel(tab_index=0)
-        panel._tools_panel._tabs.setCurrentIndex.assert_called_with(ToolsPanel.TAB_AGENTS)
+        panel._tools_panel.set_current_page.assert_called_with(ToolsPanel.TAB_AGENTS)
         panel._ensure_tab_initialized.assert_called_with(ToolsPanel.TAB_AGENTS)
 
     def test_no_renamer_widget_or_engine_attributes_on_panel(self):

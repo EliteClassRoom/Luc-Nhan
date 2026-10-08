@@ -114,6 +114,7 @@ _STUBBED_MODULES = [
     "lucnhan.ui.theme.palette_dark",
     "lucnhan.ui.theme.palette_light",
     "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.theme.widgets_common",
     "lucnhan.core.logging",
     "lucnhan.agent.turn",
     "lucnhan.agent.mutation",

@@ -405,7 +405,9 @@ def _qt_class(name: str) -> type:
         "setDecimals": _noop,
         "setValidator": _noop,
         "setHorizontalSpacing": _noop,
+        "setVerticalSpacing": _noop,
         "setFieldGrowthPolicy": _noop,
+        "removeRow": _noop,
         "setRowWrapPolicy": _noop,
         "setLabelAlignment": _noop,
         "setFormAlignment": _noop,
@@ -540,6 +542,7 @@ def _qt_class(name: str) -> type:
         "setTristate": _noop,
         "setNoChange": _noop,
         "setStyle": _noop,
+        "setFont": _noop,
         "setLocale": _noop,
         "setInputMethodHints": _noop,
         "setGraphicsItem": _noop,
@@ -1055,6 +1058,11 @@ def ensure_pyside6_stubs() -> None:
     # QFont needs a nested Weight enum (QFont.Weight.Bold) so the syntax
     # highlighter can mark keywords as bold without hitting AttributeError.
     _qfont = _qt_class("QFont")
+    # The Settings reading sample builds a QFont to preview the font
+    # override (family + point size).
+    _qfont.setPointSize = lambda *a, **k: None
+    _qfont.setFamily = lambda *a, **k: None
+    _qfont.setBold = lambda *a, **k: None
     _qfont.Weight = type(
         "_QFontWeight",
         (),
@@ -1493,6 +1501,18 @@ def ensure_pyside6_stubs() -> None:
                 self._current = 0
                 self.currentChanged = _Signal()
                 self.currentIndexChanged = _Signal()
+
+            def setObjectName(self, name):
+                self._object_name = name
+
+            def objectName(self):
+                return getattr(self, "_object_name", "")
+
+            def removeTab(self, index):
+                if 0 <= index < len(self._tabs):
+                    del self._tabs[index]
+                    return self._tabs[index][1]
+                return None
 
             def addTab(self, widget, label):
                 idx = len(self._tabs)

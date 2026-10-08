@@ -1,6 +1,6 @@
-"""Tools panel: container for Agents, A2A bridge, and Knowledge panel.
+"""Tools panel: horizontal navigation over Agents, A2A, Knowledge.
 
-The Bulk Renamer tab has been removed from the visible Tools surface so
+The Bulk Renamer page has been removed from the visible Tools surface so
 opening Tools does not eagerly enumerate every function in the binary.
 The Renamer UI/backend modules remain in the repository for a future
 re-enable, but no Tools entry point builds them.
@@ -17,7 +17,10 @@ from .qt_compat import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QTabWidget,
+    QPushButton,
+    QScrollArea,
+    QStackedWidget,
+    Qt,
     QVBoxLayout,
     QWidget,
 )
@@ -27,10 +30,14 @@ from .styles import (
     get_tools_panel_style,
 )
 from .theme.applicator import bind_theme, disconnect_theme
+from .theme.widgets_common import get_tools_subnav_style
+
+#: GUI contract G8 — horizontal subnavigation order.
+_TOOL_PAGES: tuple[str, ...] = ("Agents", "A2A", "Knowledge")
 
 
 class ToolsPanel(QWidget):
-    """Standalone tools window containing tabs: Agents, A2A, Knowledge."""
+    """Tools window with horizontal navigation: Agents, A2A, Knowledge."""
 
     # Public tab index contract.  Tests and external callers should
     # reference these constants instead of hard-coded integers so the
@@ -71,64 +78,71 @@ class ToolsPanel(QWidget):
 
         main_layout.addWidget(self._header)
 
-        # Tab widget
-        self._tabs = QTabWidget()
-        self._tabs.setObjectName("tools_tabs")
-        # Lazy tab population: route ``currentChanged`` so we can
-        # tell ``panel_core`` which tab became visible.
-        self._tabs.currentChanged.connect(self._on_tab_changed)
-        _early_log("tools_panel:tabs_created")
+        # Horizontal subnavigation (GUI contract G8).  Checkable
+        # buttons in a scroll area rather than a QTabBar so the active
+        # page keeps the ``selection`` fill + accent text and the strip
+        # scrolls instead of overflowing a narrow dock.
+        self._subnav = self._build_subnav()
+        main_layout.addWidget(self._subnav)
 
-        # Per-tab initialization flags. Set True once a tab's heavy
+        # Page host.  Same lazy contract as the old QTabWidget: one
+        # placeholder per page, replaced by ``set_*_widget`` when
+        # panel_core lazily initialises that page.
+        self._page_host = QStackedWidget()
+        self._page_host.setObjectName("tools_pages")
+        self._page_host.currentChanged.connect(self._on_tab_changed)
+        _early_log("tools_panel:pages_created")
+
+        # Per-page initialization flags. Set True once a page's heavy
         # widget has been created/replaced by panel_core. Keeps the
-        # placeholder until the user actually selects the tab (or
+        # placeholder until the user actually selects the page (or
         # panel_core explicitly requests it via ``show_tools_panel``).
         self._agents_initialized = False
         self._a2a_initialized = False
         self._knowledge_initialized = False
 
-        # Placeholder tabs. Real widgets are injected by
+        # Placeholder pages. Real widgets are injected by
         # ``set_*_widget`` methods called from panel_core.
         # ``_placeholder_labels`` tracks every QLabel we own so
         # ``_apply_styles`` can re-paint them on a theme change.
         self._placeholder_labels: list[QLabel] = []
 
-        # Agents tab — always visible first.
+        # Agents page — always visible first.
         self._agents_placeholder = QLabel("Not loaded")
         self._agents_placeholder.setStyleSheet(get_placeholder_style())
         self._agents_placeholder.setWordWrap(True)
-        self._tabs.addTab(self._agents_placeholder, "Agents")
+        self._page_host.insertWidget(self.TAB_AGENTS, self._agents_placeholder)
         self._placeholder_labels.append(self._agents_placeholder)
 
         # A2A bridge placeholder — the real widget is created on
-        # first A2A-tab selection so A2A discovery (PATH, config,
+        # first A2A-page selection so A2A discovery (PATH, config,
         # optional HTTP agent-card fetch) doesn't block startup.
         self._a2a_widget = QLabel("Click Refresh to discover external agents")
         self._a2a_widget.setStyleSheet(get_placeholder_style())
         self._a2a_widget.setWordWrap(True)
-        self._tabs.addTab(self._a2a_widget, "A2A")
+        self._page_host.insertWidget(self.TAB_A2A, self._a2a_widget)
         # ``_a2a_widget`` may be replaced by ``set_a2a_widget`` —
         # track it for theme refresh separately from the static
         # placeholders so a real widget replacement is detected.
         # When replaced, ``set_a2a_widget`` updates this attribute
         # and ``_apply_styles`` reads the current value.
 
-        # Knowledge tab — default visible tab so opening Tools lands on
+        # Knowledge page — default visible page so opening Tools lands on
         # a cheap, read-only view instead of triggering function
-        # enumeration.  A placeholder keeps the tab order stable so
-        # the index contract above stays valid.
+        # enumeration.  A placeholder keeps the page order stable so the
+        # index contract above stays valid.
         self._knowledge_widget = QLabel("Not loaded")
         self._knowledge_widget.setStyleSheet(get_placeholder_style())
         self._knowledge_widget.setWordWrap(True)
-        self._tabs.addTab(self._knowledge_widget, "Knowledge")
+        self._page_host.insertWidget(self.TAB_KNOWLEDGE, self._knowledge_widget)
         self._placeholder_labels.append(self._knowledge_widget)
 
-        # Land on Knowledge by default.  ``addTab`` leaves the index
-        # at 0 (Agents), so setCurrentIndex must run after the tabs
-        # are populated.
-        self._tabs.setCurrentIndex(self.TAB_KNOWLEDGE)
+        # Land on Knowledge by default.  ``insertWidget`` leaves the
+        # index at 0 (Agents), so setCurrentIndex must run after the
+        # pages are populated.
+        self._select_page(self.TAB_KNOWLEDGE)
 
-        main_layout.addWidget(self._tabs)
+        main_layout.addWidget(self._page_host, 1)
 
         # Subscribe to theme changes now that every visual element
         # is constructed.  ``bind_theme`` runs the callback
@@ -138,6 +152,75 @@ class ToolsPanel(QWidget):
         bind_theme(self, self._apply_styles)
 
         _early_log(f"tools_panel:init:done:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
+
+    def _build_subnav(self) -> QWidget:
+        """Horizontal page strip (G8): padding 5/10, gap 3, min-height 29."""
+        nav = QWidget()
+        nav.setObjectName("tools_subnav")
+        nav.setStyleSheet(get_tools_subnav_style())
+        outer = QHBoxLayout(nav)
+        outer.setContentsMargins(12, 5, 12, 5)
+        outer.setSpacing(3)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(3)
+        self._nav_buttons: list[QPushButton] = []
+        for index, title in enumerate(_TOOL_PAGES):
+            btn = QPushButton(title)
+            btn.setObjectName("tools_subnav_btn")
+            btn.setCheckable(True)
+            btn.setChecked(index == 0)
+            btn.setMinimumHeight(29)
+            btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            btn.setAccessibleName(f"Tools page: {title}")
+            btn.setToolTip(f"{title} tools")
+            btn.clicked.connect(lambda _checked=False, page=index: self._select_page(page))
+            row_layout.addWidget(btn)
+            self._nav_buttons.append(btn)
+        row_layout.addStretch(1)
+        scroll.setWidget(row)
+        outer.addWidget(scroll)
+        return nav
+
+    def _select_page(self, index: int) -> None:
+        """Activate page ``index`` and keep the subnav selection in sync."""
+        host = getattr(self, "_page_host", None)
+        if host is None or not (0 <= index < len(_TOOL_PAGES)):
+            return
+        for position, btn in enumerate(getattr(self, "_nav_buttons", [])):
+            btn.setChecked(position == index)
+        if host.currentIndex() != index:
+            host.setCurrentIndex(index)
+        else:
+            self._on_tab_changed(index)
+        btn = getattr(self, "_nav_buttons", [])
+        if index < len(btn):
+            parent = btn[index].parentWidget()
+            if parent is not None:
+                parent.ensureWidgetVisible(btn[index], 0, 0)
+
+    @property
+    def _tabs(self) -> QStackedWidget:
+        """Compatibility shim for the pre-G8 ``QTabWidget`` attribute.
+
+        Callers (and tests) that still read ``_tabs.currentIndex()`` /
+        ``setCurrentIndex()`` get the page host.  No tab bar is
+        rendered — navigation is the horizontal subnav.
+        """
+        return self._page_host
+
+    def set_current_page(self, index: int) -> None:
+        """Public navigation entry point used by ``panel_core``."""
+        self._select_page(index)
+
+    def current_page(self) -> int:
+        """Index of the page currently shown."""
+        host = getattr(self, "_page_host", None)
+        return host.currentIndex() if host is not None else self.TAB_AGENTS
 
     def _apply_styles(self, _tokens: object = None) -> None:
         """Re-apply panel QSS, header title, and placeholders on theme change.
@@ -152,7 +235,7 @@ class ToolsPanel(QWidget):
         already does this for the tools shell itself, so the
         placeholders follow the same pattern.
         """
-        # Panel shell QSS (tab widget styling etc.).
+        # Panel shell QSS.
         self.setStyleSheet(get_tools_panel_style())
         # Header title (was a local var before, now ``self._title``).
         if getattr(self, "_title", None) is not None:
@@ -175,7 +258,7 @@ class ToolsPanel(QWidget):
     def _on_tab_changed(self, index: int) -> None:
         """Forward tab selection to panel_core so it can lazy-init that tab.
 
-        The hook is wired via ``_tabs.currentChanged``. The panel
+        The hook is wired via ``_page_host.currentChanged``. The panel
         core installs an ``on_tab_activated`` callback via
         :meth:`set_tab_activation_callback` after the panel is
         embedded or docked; until then the signal is a no-op.
@@ -201,24 +284,29 @@ class ToolsPanel(QWidget):
         self._on_tab_activated_cb = callback
 
     def _replace_tab(self, index: int, widget: QWidget, label: str) -> QWidget | None:
-        """Replace the widget at the given tab index.
+        """Replace the widget at the given page index.
 
         Returns the widget that was previously shown at ``index``
-        (after detaching it from the tab widget) so callers can keep
+        (after detaching it from the page host) so callers can keep
         a strong reference if needed. The returned widget has already
-        been removed from the tab and had ``shutdown()`` called on it
+        been removed and had ``shutdown()`` called on it
         when applicable, but has NOT been deleted — the caller owns
         its lifetime after this call.
+
+        ``label`` is unused by the subnav (the strip owns the page
+        names) but is kept in the signature so existing callers keep
+        working.
         """
-        old = self._tabs.widget(index)
-        current_index = self._tabs.currentIndex()
-        signals_were_blocked = self._tabs.blockSignals(True)
+        host = self._page_host
+        old = host.widget(index)
+        current_index = host.currentIndex()
+        signals_were_blocked = host.blockSignals(True)
         try:
-            self._tabs.removeTab(index)
-            self._tabs.insertTab(index, widget, label)
-            self._tabs.setCurrentIndex(current_index)
+            host.removeWidget(old)
+            host.insertWidget(index, widget)
+            host.setCurrentIndex(current_index)
         finally:
-            self._tabs.blockSignals(signals_were_blocked)
+            host.blockSignals(signals_were_blocked)
         if old is not None and old is not widget:
             # Shut down the old widget first so any background threads
             # / timers tied to it stop while the replacement is still
@@ -263,7 +351,7 @@ class ToolsPanel(QWidget):
         self._header.setVisible(False)
 
     def shutdown(self) -> None:
-        """Propagate shutdown to lazy tab widgets.
+        """Propagate shutdown to lazily-built page widgets.
 
         Walks every tab and shuts down any widget that exposes a
         ``shutdown()`` method (the heavy Real widgets — not the
@@ -276,8 +364,9 @@ class ToolsPanel(QWidget):
         ``shutdown`` paths.
         """
         disconnect_theme(self)
-        for index in range(self._tabs.count()):
-            widget = self._tabs.widget(index)
+        host = getattr(self, "_page_host", None)
+        for index in range(host.count()):
+            widget = host.widget(index)
             if widget is None:
                 continue
             if hasattr(widget, "shutdown"):

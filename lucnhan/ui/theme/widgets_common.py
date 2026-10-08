@@ -481,6 +481,118 @@ def _history_delete_btn_style() -> str:
     )
 
 
+# === Settings composition (GUI contract G7) ==================================
+#
+# Four builders cover the whole restructured dialog: the heading row, the
+# horizontal subnavigation strip, the section separators used inside the
+# scrollable body, and the pinned Cancel/Save footer.
+
+
+def _settings_heading_style() -> str:
+    """``Settings`` page heading (G2: 15 px semibold)."""
+    t = _tokens()
+    return f"color: {t.text}; font-size: 15px; font-weight: 600; background: transparent;"
+
+
+def _settings_subnav_style() -> str:
+    """Horizontal subnav strip: padding 5/10, gap 3, item min-height 29.
+
+    Active item = ``selection`` fill + ``accent`` text (G1).  The strip is
+    a plain ``QWidget`` row of checkable buttons rather than a ``QTabBar``
+    so the active item keeps the selection fill instead of an underline
+    and so the row scrolls horizontally on narrow widths instead of
+    overflowing the dialog.
+    """
+    t = _tokens()
+    return (
+        f"QWidget#settings_subnav {{ background: {t.window}; border-bottom: 1px solid {t.mid}; }}"
+        f"QPushButton#settings_subnav_btn {{ background: transparent; color: {t.muted_text};"
+        f" border: none; border-radius: 4px; padding: 5px 10px; min-height: 19px;"
+        f" font-size: 12px; text-align: left; }}"
+        f"QPushButton#settings_subnav_btn:hover {{ background: {t.alt_base}; color: {t.text}; }}"
+        f"QPushButton#settings_subnav_btn:checked {{ background: {t.selection}; color: {t.accent};"
+        f" font-weight: 600; }}"
+        f"QPushButton#settings_subnav_btn:focus {{ border: 1px solid {t.accent}; }}"
+    )
+
+
+def _settings_section_style() -> str:
+    """Flat section block inside the body — 1 px separator, no card chrome."""
+    t = _tokens()
+    return (
+        f"QFrame#settings_section {{ background: transparent; border: none;"
+        f" border-top: 1px solid {t.mid}; }}"
+        f"QFrame#settings_section:first-of-type {{ border-top: none; }}"
+        f"QLabel#settings_section_title {{ color: {t.text}; font-size: 12px;"
+        f" font-weight: 600; background: transparent; }}"
+        f"QLabel#settings_form_label {{ color: {t.muted_text}; font-size: 12px;"
+        f" background: transparent; }}"
+    )
+
+
+def _settings_footer_style() -> str:
+    """Pinned action strip: hint left, Cancel then Save right."""
+    t = _tokens()
+    return (
+        f"QFrame#settings_footer {{ background: {t.window}; border-top: 1px solid {t.mid}; }}"
+        f"QLabel#settings_footer_hint {{ color: {t.muted_text}; font-size: 11px;"
+        f" background: transparent; }}"
+        f"QPushButton#settings_footer_btn {{ background: {t.button}; color: {t.button_text};"
+        f" border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 9px;"
+        f" min-width: 55px; min-height: 20px; font-size: 12px; }}"
+        f"QPushButton#settings_footer_btn:hover {{ background: {t.alt_base}; border-color: {t.accent}; }}"
+        f"QPushButton#settings_footer_btn:pressed {{ background: {t.mid}; }}"
+        f"QPushButton#settings_footer_btn:focus {{ border-color: {t.accent}; outline: 2px solid {t.accent}; }}"
+        f"QPushButton#settings_footer_btn#settings_footer_save {{ background: {t.highlight};"
+        f" color: {t.highlight_text}; border-color: {t.highlight}; }}"
+        f"QPushButton#settings_footer_btn#settings_footer_save:hover {{ background: {t.accent};"
+        f" border-color: {t.accent}; }}"
+    )
+
+
+# === Tools composition (GUI contract G8) ======================================
+
+
+def _tools_subnav_style() -> str:
+    """Tools subnav strip — same geometry as the Settings subnav.
+
+    Shares the G7 strip geometry so Settings and Tools read as the same
+    navigation surface; only the object name differs.
+    """
+    t = _tokens()
+    return (
+        f"QWidget#tools_subnav {{ background: {t.window}; border-bottom: 1px solid {t.mid}; }}"
+        f"QPushButton#tools_subnav_btn {{ background: transparent; color: {t.muted_text};"
+        f" border: none; border-radius: 4px; padding: 5px 10px; min-height: 19px;"
+        f" font-size: 12px; text-align: left; }}"
+        f"QPushButton#tools_subnav_btn:hover {{ background: {t.alt_base}; color: {t.text}; }}"
+        f"QPushButton#tools_subnav_btn:checked {{ background: {t.selection}; color: {t.accent};"
+        f" font-weight: 600; }}"
+        f"QPushButton#tools_subnav_btn:focus {{ border: 1px solid {t.accent}; }}"
+    )
+
+
+def _tools_section_style() -> str:
+    """Flat section block for the Agents / A2A / Knowledge pages."""
+    t = _tokens()
+    return (
+        f"QFrame#tools_section {{ background: transparent; border: none;"
+        f" border-top: 1px solid {t.mid}; }}"
+        f"QLabel#tools_section_title {{ color: {t.text}; font-size: 12px;"
+        f" font-weight: 600; background: transparent; }}"
+        f"QTableWidget#tools_table {{ background: {t.base}; color: {t.text};"
+        f" border: 1px solid {t.mid}; gridline-color: {t.mid}; }}"
+        f"QTableWidget#tools_table::item {{ padding: 6px 8px; }}"
+        f"QTableWidget#tools_table::item:selected {{ background: {t.selection}; color: {t.text}; }}"
+        f"QHeaderView::section {{ background: {t.button}; color: {t.text};"
+        f" border: none; border-bottom: 1px solid {t.mid}; padding: 3px 6px; font-size: 12px; }}"
+        f"QPlainTextEdit#tools_detail {{ background: {t.code_bg}; color: {t.code_text};"
+        f" border: 1px solid {t.mid}; padding: 7px; }}"
+        f"QTextEdit#tools_detail {{ background: {t.code_bg}; color: {t.code_text};"
+        f" border: 1px solid {t.mid}; padding: 7px; }}"
+    )
+
+
 # Settings button (bold, accent focus)
 def _settings_btn_style() -> str:
     t = _tokens()
@@ -586,6 +698,30 @@ def get_err_status_style() -> str:
 
 def get_settings_btn_style() -> str:
     return _settings_btn_style()
+
+
+def get_settings_heading_style() -> str:
+    return _settings_heading_style()
+
+
+def get_settings_subnav_style() -> str:
+    return _settings_subnav_style()
+
+
+def get_settings_section_style() -> str:
+    return _settings_section_style()
+
+
+def get_settings_footer_style() -> str:
+    return _settings_footer_style()
+
+
+def get_tools_subnav_style() -> str:
+    return _tools_subnav_style()
+
+
+def get_tools_section_style() -> str:
+    return _tools_section_style()
 
 
 def get_history_nav_frame_style() -> str:

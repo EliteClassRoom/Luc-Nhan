@@ -80,7 +80,7 @@ from .styles import (
 )
 from .theme.manager import ThemeManager
 from .tool_widgets import _SharedSpinnerTimer
-from .tools_panel import ToolsPanel
+from .tools_panel import _TOOL_PAGES, ToolsPanel
 
 # History poll interval (ms). Spec §7.4: a dedicated main-thread QTimer
 # drains history results so History works while the agent is idle.
@@ -4156,7 +4156,7 @@ class LucNhanPanelCore(QWidget):
             # already pressed the Tools button before the stack caught up.
             self._ensure_tools_panel_created()
             if self._tools_panel is not None:
-                self._activate_tools_tab(self._tools_panel._tabs.currentIndex())
+                self._activate_tools_tab(self._tools_panel.current_page())
             self._tools_btn.setChecked(True)
             self._chat_btn.setChecked(False)
         else:
@@ -4185,7 +4185,7 @@ class LucNhanPanelCore(QWidget):
                 self._tools_form.show()
                 self._tools_btn.setChecked(True)
                 if self._tools_panel is not None:
-                    self._activate_tools_tab(self._tools_panel._tabs.currentIndex())
+                    self._activate_tools_tab(self._tools_panel.current_page())
         else:
             # Toggle the workspace stack between Chat (0) and Tools (1)
             self._mode_stack.setCurrentIndex(1 if self._mode_stack.currentIndex() == 0 else 0)
@@ -4193,7 +4193,7 @@ class LucNhanPanelCore(QWidget):
                 self._tools_btn.setChecked(True)
                 self._chat_btn.setChecked(False)
                 if self._tools_panel is not None:
-                    self._activate_tools_tab(self._tools_panel._tabs.currentIndex())
+                    self._activate_tools_tab(self._tools_panel.current_page())
             else:
                 self._tools_btn.setChecked(False)
                 self._chat_btn.setChecked(True)
@@ -4241,8 +4241,8 @@ class LucNhanPanelCore(QWidget):
         else:
             self._mode_stack.setCurrentIndex(1)
             self._chat_btn.setChecked(False)
-            if hasattr(self._tools_panel, "_tabs"):
-                self._tools_panel._tabs.setCurrentIndex(tab_index)
+            if hasattr(self._tools_panel, "set_current_page"):
+                self._tools_panel.set_current_page(tab_index)
         self._tools_btn.setChecked(True)
         _early_log(
             f"panel_core:show_tools_panel:done:tab={tab_index}:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
@@ -4261,7 +4261,7 @@ class LucNhanPanelCore(QWidget):
         self._ensure_tools_panel_created()
         if self._tools_panel is None:
             return
-        for idx in range(self._tools_panel._tabs.count()):
+        for idx in range(len(_TOOL_PAGES)):
             self._ensure_tab_initialized(idx)
 
     def _ensure_tools_panel_created(self) -> None:

@@ -41,12 +41,15 @@ from .qt_compat import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     Qt,
     QTabWidget,
     QTimer,
@@ -63,6 +66,12 @@ from .styles import (
 )
 from .theme.applicator import disconnect_theme
 from .theme.manager import ThemeManager
+from .theme.widgets_common import (
+    get_settings_footer_style,
+    get_settings_heading_style,
+    get_settings_section_style,
+    get_settings_subnav_style,
+)
 
 _DEFAULT_MINIMAX_URL = "https://api.minimax.io/anthropic"
 _CUSTOM_PROVIDER_URL_PLACEHOLDER = "https://api.example.com/v1"
@@ -100,6 +109,30 @@ _resolve_auth_cached = resolve_auth_cached
 #: Hostname of Z.AI's API endpoint.  The one-time migration prompt
 #: fires only when ``urlparse(api_base).hostname`` is exactly this value.
 _ZAI_HOSTNAME = "api.z.ai"
+
+# --- Settings composition (GUI contract G7) --------------------------------
+#
+# Dialog order: heading -> horizontal subnav -> scrollable body ->
+# pinned Cancel/Save strip.  The subnav is a row of checkable buttons
+# (not a QTabBar) so the active item keeps the ``selection`` fill and the
+# strip can scroll horizontally on narrow widths.  ``QTabWidget`` stays
+# only as a compatibility shim for the historical ``_tabs`` attribute —
+# nothing renders through it.
+_SETTINGS_PAGES: tuple[str, ...] = ("Provider", "Appearance", "Skills", "MCP", "Profiles")
+
+#: Width below which the dialog switches to the narrow geometry (G7:
+#: 108 px label column, 8 px column gap, 55 px footer buttons).
+_SETTINGS_NARROW_PX = 560
+
+#: G2 / G7: form label column, row gap, column gap, body padding.
+_SETTINGS_LABEL_WIDTH_PX = 138
+_SETTINGS_LABEL_WIDTH_NARROW_PX = 108
+_SETTINGS_ROW_GAP_PX = 7
+_SETTINGS_COLUMN_GAP_PX = 12
+_SETTINGS_COLUMN_GAP_NARROW_PX = 8
+_SETTINGS_BODY_PADDING_PX = 12
+_SETTINGS_SECTION_GAP_PX = 13
+_SETTINGS_FONT_SIZE_LARGE_PT = 18
 
 
 def _prompt_zai_migration(parent: Any = None) -> bool:
@@ -315,6 +348,13 @@ class SettingsDialog(QDialog):
         self._shown = False
         self._closed = False
         self.encryption_password: str = ""
+        # Form labels collected by ``_form_row`` / ``_make_section`` so the
+        # responsive pass (G7) can re-width every label column at once.
+        self._form_labels: list[QLabel] = []
+        # Per-column-group record of the last applied shape, so the
+        # responsive pass only re-flows when the breakpoint actually
+        # changes.
+        self._stacked_state: dict[int, bool] = {}
         self.setWindowTitle("Luc Nhan Settings")
         screen = QApplication.primaryScreen()
         if screen:
@@ -371,21 +411,63 @@ class SettingsDialog(QDialog):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        self._tabs = QTabWidget()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # Tab 0: Provider (existing 3 group boxes + GLM group)
-        provider_tab = QWidget()
-        playout = QVBoxLayout(provider_tab)
+        # --- Heading: page title, status hint, Back to chat ---------------
+        heading = QWidget()
+        heading_layout = QHBoxLayout(heading)
+        heading_layout.setContentsMargins(14, 8, 14, 8)
+        heading_layout.setSpacing(8)
+        self._heading_label = QLabel("Settings")
+        self._heading_label.setStyleSheet(get_settings_heading_style())
+        heading_layout.addWidget(self._heading_label)
+        heading_layout.addStretch(1)
+        # ``Back to chat`` closes the dialog through the Cancel/reject
+        # path (G7) — it must never accept or persist.
+        self._back_to_chat_btn = QPushButton("Back to chat")
+        self._back_to_chat_btn.setToolTip("Close settings and return to the chat")
+        self._back_to_chat_btn.setStyleSheet(get_settings_btn_style())
+        self._back_to_chat_btn.clicked.connect(self.reject)
+        heading_layout.addWidget(self._back_to_chat_btn)
+        layout.addWidget(heading)
+
+        # --- Horizontal subnavigation (Provider | Appearance | ...) --------
+        layout.addWidget(self._build_subnav())
+
+        # --- Scrollable body ---------------------------------------------
+        self._body = QScrollArea()
+        self._body.setWidgetResizable(True)
+        self._body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._body_content = QWidget()
+        body_layout = QVBoxLayout(self._body_content)
+        body_layout.setContentsMargins(
+            _SETTINGS_BODY_PADDING_PX,
+            _SETTINGS_BODY_PADDING_PX,
+            _SETTINGS_BODY_PADDING_PX,
+            _SETTINGS_BODY_PADDING_PX,
+        )
+        body_layout.setSpacing(_SETTINGS_SECTION_GAP_PX)
+
+        self._page_host = QStackedWidget()
+        self._page_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        body_layout.addWidget(self._page_host, 1)
+
+        # Provider page — connection/auth, then Generation, Behavior, GLM.
+        self._provider_page = QWidget()
+        provider_layout = QVBoxLayout(self._provider_page)
+        provider_layout.setContentsMargins(0, 0, 0, 0)
+        provider_layout.setSpacing(_SETTINGS_SECTION_GAP_PX)
         self._provider_group = self._build_provider_group()
-        playout.addWidget(self._provider_group)
+        provider_layout.addWidget(self._provider_group)
         self._generation_group = self._build_generation_group()
-        playout.addWidget(self._generation_group)
+        provider_layout.addWidget(self._generation_group)
         self._behavior_group = self._build_behavior_group()
-        playout.addWidget(self._behavior_group)
+        provider_layout.addWidget(self._behavior_group)
         self._glm_group = self._build_glm_group()
-        playout.addWidget(self._glm_group)
-        playout.addStretch()
-        self._tabs.addTab(provider_tab, "Provider")
+        provider_layout.addWidget(self._glm_group)
+        provider_layout.addStretch(1)
+        self._page_host.addWidget(self._provider_page)
 
         # Initialise the thinking combo from the selected model, then
         # apply the saved level on top of it.
@@ -396,44 +478,36 @@ class SettingsDialog(QDialog):
         self._load_glm_controls_from_config()
         self._refresh_glm_controls()
 
-        # Tab: Appearance
-        appearance_tab = QWidget()
-        appearance_layout = QVBoxLayout(appearance_tab)
+        # Appearance page — theme, fonts, inline reading sample.
+        self._appearance_page = QWidget()
+        appearance_layout = QVBoxLayout(self._appearance_page)
+        appearance_layout.setContentsMargins(0, 0, 0, 0)
+        appearance_layout.setSpacing(_SETTINGS_SECTION_GAP_PX)
         self._appearance_group = self._build_appearance_group()
         appearance_layout.addWidget(self._appearance_group)
-        appearance_layout.addStretch()
-        self._tabs.addTab(appearance_tab, "Appearance")
+        self._sample_group = self._build_reading_sample_group()
+        appearance_layout.addWidget(self._sample_group)
+        appearance_layout.addStretch(1)
+        self._page_host.addWidget(self._appearance_page)
 
-        # Tab 1-3: Skills, MCP, Profiles — LAZILY constructed on first tab
-        # switch. The SettingsService (which scans Luc Nhan / external
-        # skills and MCP configs) is heavy and previously ran synchronously
-        # in __init__, blocking first paint.  We add lightweight
-        # placeholders and build the real tabs on demand.
+        # Skills / MCP / Profiles — LAZILY constructed on first selection.
+        # The SettingsService (which scans Luc Nhan / external skills and
+        # MCP configs) is heavy and previously ran synchronously in
+        # ``__init__``, blocking first paint.  Placeholders keep the body
+        # stable; the real page is built on demand.
         self._service: Any = None
         self._skills_tab = None
         self._mcp_tab = None
         self._profiles_tab = None
-        for tab_title, _attr_name in (
-            ("Skills", "_skills_tab"),
-            ("MCP", "_mcp_tab"),
-            ("Profiles", "_profiles_tab"),
-        ):
-            placeholder = QWidget()
-            ph_layout = QVBoxLayout(placeholder)
-            ph_label = QLabel(f"{tab_title} not loaded.\nClick to load.")
-            ph_label.setStyleSheet(get_hint_status_style())
-            ph_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            ph_layout.addWidget(ph_label)
-            self._tabs.addTab(placeholder, tab_title)
-        # Connect tab change handler to lazy-load on first selection.
-        self._tabs.currentChanged.connect(self._on_tab_changed_lazy)
+        for page_title in ("Skills", "MCP", "Profiles"):
+            self._page_host.addWidget(self._build_placeholder_page(page_title))
+        self._page_host.currentChanged.connect(self._on_page_changed_lazy)
 
-        layout.addWidget(self._tabs)
+        self._body.setWidget(self._body_content)
+        layout.addWidget(self._body, 1)
 
-        self._button_box = QDialogButtonBox(OK_CANCEL_BUTTONS)
-        self._button_box.accepted.connect(self._on_accept)
-        self._button_box.rejected.connect(self.reject)
-        layout.addWidget(self._button_box)
+        # --- Pinned Cancel / Save strip ----------------------------------
+        layout.addWidget(self._build_footer())
 
         # Connect provider/key change signals AFTER everything is built
         self._provider_combo.currentTextChanged.connect(self._on_provider_changed)
@@ -449,19 +523,173 @@ class SettingsDialog(QDialog):
         # ``_on_models_ready`` are safe — they trigger a re-application
         # that is a no-op when the model matches the saved config.
         self._model_combo.currentIndexChanged.connect(lambda _idx: self._update_generation_defaults())
+        self._model_combo.currentIndexChanged.connect(lambda _idx: self._update_footer_hint())
+        self._thinking_combo.currentIndexChanged.connect(lambda _idx: self._update_footer_hint())
 
-    def _on_tab_changed_lazy(self, index: int) -> None:
-        """Lazy-construct Skills / MCP / Profiles tabs on first selection."""
-        if index < 0 or index >= self._tabs.count():
+        # Apply the G7 geometry once so the first paint already matches
+        # the wide or narrow composition — no rebuild, no fetch.
+        self._apply_responsive_geometry()
+
+    # --- Composition helpers ---------------------------------------------
+
+    def _build_subnav(self) -> QWidget:
+        """Horizontal page strip (G7).  Checkable buttons in a scroll area."""
+        nav = QWidget()
+        nav.setObjectName("settings_subnav")
+        nav.setStyleSheet(get_settings_subnav_style())
+        outer = QHBoxLayout(nav)
+        outer.setContentsMargins(14, 5, 14, 5)
+        outer.setSpacing(3)
+
+        # Narrow dialogs scroll the strip horizontally instead of
+        # wrapping or dropping items (G7).
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(3)
+        self._subnav_buttons: dict[str, QPushButton] = {}
+        for index, title in enumerate(_SETTINGS_PAGES):
+            btn = QPushButton(title)
+            btn.setObjectName("settings_subnav_btn")
+            btn.setCheckable(True)
+            btn.setChecked(index == 0)
+            btn.setMinimumHeight(29)
+            btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            btn.setAccessibleName(f"Settings page: {title}")
+            btn.setToolTip(f"{title} settings")
+            btn.clicked.connect(lambda _checked=False, name=title: self._select_page(name))
+            row_layout.addWidget(btn)
+            self._subnav_buttons[title] = btn
+        row_layout.addStretch(1)
+        scroll.setWidget(row)
+        outer.addWidget(scroll)
+        return nav
+
+    def _build_footer(self) -> QWidget:
+        """Pinned action strip: hint left, Cancel then Save right (G7)."""
+        footer = QFrame()
+        footer.setObjectName("settings_footer")
+        footer.setStyleSheet(get_settings_footer_style())
+        row = QHBoxLayout(footer)
+        row.setContentsMargins(14, 8, 14, 8)
+        row.setSpacing(8)
+        self._footer_hint = QLabel("")
+        self._footer_hint.setObjectName("settings_footer_hint")
+        self._footer_hint.setWordWrap(True)
+        row.addWidget(self._footer_hint, 1)
+
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setObjectName("settings_footer_btn")
+        self._cancel_btn.setMinimumWidth(68)
+        self._cancel_btn.setMinimumHeight(28)
+        self._cancel_btn.setToolTip("Discard changes made in this session")
+        self._cancel_btn.clicked.connect(self.reject)
+        row.addWidget(self._cancel_btn)
+
+        self._save_btn = QPushButton("Save")
+        self._save_btn.setObjectName("settings_footer_save")
+        self._save_btn.setMinimumWidth(68)
+        self._save_btn.setMinimumHeight(28)
+        self._save_btn.setToolTip("Apply and persist these settings")
+        self._save_btn.clicked.connect(self._on_accept)
+        row.addWidget(self._save_btn)
+        return footer
+
+    # --- Footer hint (G7: dirty/status hint, left of Cancel/Save) ---------
+
+    def _current_selection_text(self) -> str:
+        """The selection the footer picker reads, from the same config.
+
+        Display only — no persistence, no controller call.
+        """
+        provider = self._config.provider
+        level = self._saved_thinking_level()
+        shown = "off" if level == "none" else level
+        return f"{provider.name} / {provider.model or '(no model)'} · thinking {shown}"
+
+    def _update_footer_hint(self) -> None:
+        """Refresh the footer hint: pending selection + unsaved marker."""
+        if getattr(self, "_closed", False) or not hasattr(self, "_footer_hint"):
             return
-        title = self._tabs.tabText(index)
-        widget = self._tabs.widget(index)
-        if widget is None:
+        pending = f"Pending: {self._provider_combo.currentText()} / {self._get_selected_model_id() or '(no model)'}"
+        level = self._thinking_combo.currentData() or "none"
+        pending = f"{pending} · thinking {'off' if level == 'none' else level}"
+        self._footer_hint.setText(f"{pending}\nFooter: {self._current_selection_text()}")
+
+    def _build_placeholder_page(self, title: str) -> QWidget:
+        """Empty-state placeholder for a lazily constructed page."""
+        placeholder = QWidget()
+        ph_layout = QVBoxLayout(placeholder)
+        ph_label = QLabel(f"{title} not loaded.\nSelect this page to load it.")
+        ph_label.setStyleSheet(get_hint_status_style())
+        ph_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ph_layout.addWidget(ph_label)
+        return placeholder
+
+    def _build_reading_sample_group(self) -> QFrame:
+        """Inline reading sample for the Appearance page (G7).
+
+        No branded theme gallery — just the current font/size applied to
+        prose and a monospace code line so the user can judge the
+        override before saving.
+        """
+        section = self._make_section("Reading sample")
+        sample = QFrame()
+        sample_layout = QVBoxLayout(sample)
+        sample_layout.setContentsMargins(0, 0, 0, 0)
+        sample_layout.setSpacing(4)
+        self._sample_prose = QLabel("Compact message sample with the selected font and size.")
+        self._sample_prose.setWordWrap(True)
+        sample_layout.addWidget(self._sample_prose)
+        self._sample_code = QLabel("bool parse_header(const uint8_t *data, size_t size);")
+        sample_layout.addWidget(self._sample_code)
+        section.layout().addWidget(sample)
+        self._refresh_reading_sample()
+        return section
+
+    def _refresh_reading_sample(self) -> None:
+        """Apply the font override / family to the reading sample."""
+        family = self._font_family_combo.currentText()
+        family = "" if family == "(Inherit from IDA)" else family
+        size_pt = self._font_size_spin.value()
+        for label, mono in ((self._sample_prose, False), (self._sample_code, True)):
+            from .qt_compat import QFont
+
+            font = QFont(family) if family else QFont()
+            if mono and not family:
+                font.setFamily("Consolas")
+            font.setPointSize(size_pt if size_pt > 0 else 9)
+            label.setFont(font)
+
+    def _select_page(self, title: str) -> None:
+        """Switch the stacked body to ``title`` without rebuilding it."""
+        index = _SETTINGS_PAGES.index(title)
+        for name, btn in self._subnav_buttons.items():
+            btn.setChecked(name == title)
+        if self._page_host.currentIndex() != index:
+            self._page_host.setCurrentIndex(index)
+        else:
+            # Re-selecting the current page still runs the lazy loader.
+            self._on_page_changed_lazy(index)
+        btn = self._subnav_buttons[title]
+        scroll = btn.parentWidget()
+        if scroll is not None:
+            # Keep the current item visible in a narrow, scrolled strip.
+            scroll.ensureWidgetVisible(btn, 0, 0)
+
+    def _on_page_changed_lazy(self, index: int) -> None:
+        """Lazy-construct the Skills / MCP / Profiles pages on first selection."""
+        if index < 0 or index >= _SETTINGS_PAGES.__len__():
             return
-        # If the widget at this index has been replaced with a real tab,
-        # ``objectName`` will have been set on the real tab.  In that
-        # case there is nothing to do.
-        if widget.objectName() in {"skills_tab", "mcp_tab", "profiles_tab"}:
+        title = _SETTINGS_PAGES[index]
+        if self._skills_tab is not None and title == "Skills":
+            return
+        if self._mcp_tab is not None and title == "MCP":
+            return
+        if self._profiles_tab is not None and title == "Profiles":
             return
         if title == "Skills":
             self._load_skills_tab()
@@ -483,55 +711,66 @@ class SettingsDialog(QDialog):
             return
         from .tabs.skills_tab import SkillsTab
 
-        idx = self._index_of_tab("Skills")
-        if idx < 0:
-            return
         self._skills_tab = SkillsTab(self._config, service=self._ensure_service())
         self._skills_tab.setObjectName("skills_tab")
-        self._tabs.removeTab(idx)
-        self._tabs.insertTab(idx, self._skills_tab, "Skills")
-        self._tabs.setCurrentIndex(idx)
+        self._replace_page("Skills", self._skills_tab)
 
     def _load_mcp_tab(self) -> None:
         if self._mcp_tab is not None:
             return
         from .tabs.mcp_tab import MCPTab
 
-        idx = self._index_of_tab("MCP")
-        if idx < 0:
-            return
         self._mcp_tab = MCPTab(self._config, service=self._ensure_service())
         self._mcp_tab.setObjectName("mcp_tab")
-        self._tabs.removeTab(idx)
-        self._tabs.insertTab(idx, self._mcp_tab, "MCP")
-        self._tabs.setCurrentIndex(idx)
+        self._replace_page("MCP", self._mcp_tab)
 
     def _load_profiles_tab(self) -> None:
         if self._profiles_tab is not None:
             return
         from .tabs.profiles_tab import ProfilesTab
 
-        idx = self._index_of_tab("Profiles")
-        if idx < 0:
-            return
         self._profiles_tab = ProfilesTab(self._config, service=self._ensure_service())
         self._profiles_tab.setObjectName("profiles_tab")
-        self._tabs.removeTab(idx)
-        self._tabs.insertTab(idx, self._profiles_tab, "Profiles")
-        self._tabs.setCurrentIndex(idx)
+        self._replace_page("Profiles", self._profiles_tab)
+
+    def _replace_page(self, title: str, widget: QWidget) -> None:
+        """Swap the lazy placeholder for the real page, in place."""
+        index = _SETTINGS_PAGES.index(title)
+        current = self._page_host.currentIndex()
+        self._page_host.removeWidget(self._page_host.widget(index))
+        self._page_host.insertWidget(index, widget)
+        self._page_host.setCurrentIndex(current)
+
+    @property
+    def _tabs(self) -> QTabWidget:
+        """Compatibility shim for the pre-G7 ``QTabWidget`` attribute.
+
+        The body is a ``QStackedWidget`` driven by the horizontal
+        subnav; this shim exists so callers/tests that still read
+        ``_tabs.count()`` / ``_tabs.tabText(i)`` see the five page
+        titles in order.  Nothing renders through it.
+        """
+        tabs = self.__dict__.get("_tabs_shim")
+        if tabs is None:
+            tabs = QTabWidget()
+            tabs.setObjectName("lucnhan_settings_legacy_tabs")
+            for title in _SETTINGS_PAGES:
+                tabs.addTab(QWidget(), title)
+            self.__dict__["_tabs_shim"] = tabs
+        return tabs
 
     def _index_of_tab(self, title: str) -> int:
-        for i in range(self._tabs.count()):
-            if self._tabs.tabText(i) == title:
-                return i
-        return -1
+        try:
+            return _SETTINGS_PAGES.index(title)
+        except ValueError:
+            return -1
 
-    def _build_provider_group(self) -> QGroupBox:
-        """Build the LLM Provider settings group box."""
-        provider_group = QGroupBox("LLM Provider")
-        provider_form = QFormLayout(provider_group)
+    def _build_provider_group(self) -> QFrame:
+        """Build the Connection section (provider, auth, endpoint, model)."""
+        section = self._make_section("Connection")
+        form = self._make_form()
 
-        provider_form.addRow("Provider:", self._build_provider_row())
+        form.addRow(*self._form_row("Connection:", self._build_provider_row()))
 
         # API key — only show explicit user keys, NOT auto-resolved OAuth tokens
         key_layout = QHBoxLayout()
@@ -541,7 +780,7 @@ class SettingsDialog(QDialog):
         key_layout.addWidget(self._api_key_edit, 1)
         self._auth_status = QLabel()
         key_layout.addWidget(self._auth_status)
-        provider_form.addRow("API Key:", key_layout)
+        form.addRow(*self._form_row("API key:", key_layout))
 
         # OAuth checkbox — controls keychain autoload
         self._oauth_cb = QCheckBox("Use OAuth from Claude Code (macOS Keychain)")
@@ -552,15 +791,115 @@ class SettingsDialog(QDialog):
             "Requires accepting Anthropic's credential use policy."
         )
         self._oauth_cb.toggled.connect(self._on_oauth_toggled)
-        provider_form.addRow("", self._oauth_cb)
+        form.addRow(*self._form_row("", self._oauth_cb))
 
         self._api_base_edit = QLineEdit(self._config.provider.api_base)
         self._api_base_edit.setPlaceholderText("Custom endpoint URL (optional)")
-        provider_form.addRow("API Base:", self._api_base_edit)
+        form.addRow(*self._form_row("API base:", self._api_base_edit))
 
-        provider_form.addRow("Model:", self._build_model_row())
+        form.addRow(*self._form_row("Model:", self._build_model_row()))
+        section.layout().addLayout(form)
+        return section
 
-        return provider_group
+    def _make_section(self, title: str) -> QFrame:
+        """Flat section block: title label + 1 px separator (G7, no cards)."""
+        section = QFrame()
+        section.setObjectName("settings_section")
+        section.setStyleSheet(get_settings_section_style())
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, _SETTINGS_SECTION_GAP_PX, 0, _SETTINGS_SECTION_GAP_PX)
+        layout.setSpacing(6)
+        label = QLabel(title)
+        label.setObjectName("settings_section_title")
+        layout.addWidget(label)
+        self._form_labels.append(label)
+        return section
+
+    def _make_form(self) -> QFormLayout:
+        """Form layout with the G2/G7 label column and row gap."""
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        form.setHorizontalSpacing(_SETTINGS_COLUMN_GAP_PX)
+        form.setVerticalSpacing(_SETTINGS_ROW_GAP_PX)
+        return form
+
+    def _form_row(self, label_text: str, widget: QWidget | QHBoxLayout) -> tuple:
+        """Return a ``(label, widget)`` pair with the fixed label column."""
+        label = QLabel(label_text)
+        label.setObjectName("settings_form_label")
+        label.setMinimumWidth(_SETTINGS_LABEL_WIDTH_PX)
+        label.setMaximumWidth(_SETTINGS_LABEL_WIDTH_PX)
+        self._form_labels.append(label)
+        return (label, widget)
+
+    def _apply_responsive_geometry(self) -> None:
+        """Re-flow the form geometry for the current width (G7).
+
+        Presentation only — no page is rebuilt, no model is fetched, and
+        no config is read or written.  The dialog's *only* breakpoint is
+        its own width; a large user font override stacks the Generation
+        and Behavior columns instead of clipping the labels (G2).
+        """
+        narrow = self.width() <= _SETTINGS_NARROW_PX
+        label_width = _SETTINGS_LABEL_WIDTH_NARROW_PX if narrow else _SETTINGS_LABEL_WIDTH_PX
+        for label in getattr(self, "_form_labels", ()):
+            label.setMinimumWidth(label_width)
+            label.setMaximumWidth(label_width)
+        button_width = 55 if narrow else 68
+        for button in (getattr(self, "_cancel_btn", None), getattr(self, "_save_btn", None)):
+            if button is not None:
+                button.setMinimumWidth(button_width)
+        gap = _SETTINGS_COLUMN_GAP_NARROW_PX if narrow else _SETTINGS_COLUMN_GAP_PX
+        for attr in ("_generation_columns", "_behavior_columns"):
+            columns = getattr(self, attr, None)
+            if columns:
+                for column in columns:
+                    column.setSpacing(gap)
+        font_size = self._font_size_spin
+        large_font = font_size is not None and font_size.value() >= _SETTINGS_FONT_SIZE_LARGE_PT
+        stacked = narrow or large_font
+        if getattr(self, "_generation_columns", None):
+            self._reflow_columns(self._generation_columns, self._generation_rows, two_columns=not stacked)
+        if getattr(self, "_behavior_columns", None):
+            self._reflow_columns(self._behavior_columns, self._behavior_rows, two_columns=not stacked)
+
+    def _reflow_columns(self, columns: QHBoxLayout, rows: list[tuple], *, two_columns: bool) -> None:
+        """Re-place ``(label, field)`` pairs across one or two column forms.
+
+        ``two_columns`` puts the pairs side by side in reading order
+        (row-major); otherwise every pair stacks into the single column
+        in the same reading order.  No widget is recreated.
+        """
+        if getattr(self, "_reflow_in_progress", False):
+            return
+        stacked = not two_columns
+        # Skip when this group already has the requested shape — resize
+        # storms would otherwise rebuild the rows on every pixel.
+        if id(columns) in self._stacked_state and self._stacked_state[id(columns)] == stacked:
+            return
+        self._stacked_state[id(columns)] = stacked
+        self._reflow_in_progress = True
+        try:
+            for form in columns:
+                for label, field in rows:
+                    form.removeRow(label)
+                    if field is not label:
+                        form.removeRow(field)
+            if two_columns:
+                left, right = columns[0], columns[1]
+                for index, (label, field) in enumerate(rows):
+                    form = left if index % 2 == 0 else right
+                    form.addRow(label, field)
+            else:
+                left = columns[0]
+                for label, field in rows:
+                    left.addRow(label, field)
+        finally:
+            self._reflow_in_progress = False
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_responsive_geometry()
 
     def _build_provider_row(self) -> QHBoxLayout:
         """Build the provider combo + add/remove buttons row."""
@@ -595,48 +934,38 @@ class SettingsDialog(QDialog):
         self._model_combo.setEditable(True)
         self._model_combo.setMinimumWidth(300)
         self._model_combo.setCurrentText(self._config.provider.model)
+        self._model_combo.setToolTip("Model ID sent to the provider. Type any ID the endpoint accepts.")
         model_layout.addWidget(self._model_combo, 1)
 
         self._fetch_btn = QPushButton("Refresh")
         self._fetch_btn.setFixedWidth(70)
         self._fetch_btn.setStyleSheet(get_settings_btn_style())
+        self._fetch_btn.setAccessibleName("Refresh the model list for this connection")
+        self._fetch_btn.setToolTip("Fetch the live model list from this endpoint")
         self._fetch_btn.clicked.connect(lambda: self._fetch_models(explicit=True))
         model_layout.addWidget(self._fetch_btn)
 
         self._model_status = QLabel()
         self._model_status.setStyleSheet(get_hint_status_style())
         self._model_status.setWordWrap(True)
-        model_layout.addWidget(self._model_status)
+        model_layout.addWidget(self._model_status, 1)
         return model_layout
 
-    def _build_generation_group(self) -> QGroupBox:
-        """Build the Generation settings group box."""
-        gen_group = QGroupBox("Generation")
-        gen_form = QFormLayout(gen_group)
+    def _build_generation_group(self) -> QFrame:
+        """Generation section: two equal field columns (G7)."""
+        section = self._make_section("Generation")
+        columns = QHBoxLayout()
+        columns.setSpacing(_SETTINGS_COLUMN_GAP_PX)
+        left = self._make_form()
+        right = self._make_form()
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
 
         self._temp_spin = QDoubleSpinBox()
         self._temp_spin.setRange(0.0, 2.0)
         self._temp_spin.setSingleStep(0.05)
         self._temp_spin.setDecimals(2)
         self._temp_spin.setValue(self._config.provider.temperature)
-        gen_form.addRow("Temperature:", self._temp_spin)
-
-        self._max_tokens_spin = QSpinBox()
-        # Generous initial range. ``_update_generation_defaults()`` refines
-        # the upper bound to the selected model's ``max_output_tokens`` once
-        # the model combo is populated.  Lower bound of 1 matches the
-        # provider/API minimum and ``LucNhanConfig.validate()`` which only
-        # requires positivity.
-        self._max_tokens_spin.setRange(1, 2_000_000)
-        self._max_tokens_spin.setSingleStep(1024)
-        self._max_tokens_spin.setValue(self._config.provider.max_tokens)
-        gen_form.addRow("Max Output Tokens:", self._max_tokens_spin)
-
-        self._context_spin = QSpinBox()
-        self._context_spin.setRange(4096, 2000000)
-        self._context_spin.setSingleStep(10000)
-        self._context_spin.setValue(self._config.provider.context_window)
-        gen_form.addRow("Context Window:", self._context_spin)
 
         # Provider-neutral thinking level.  Item contents come from the
         # per-model level table in ``lucnhan.core.thinking`` and are
@@ -647,23 +976,60 @@ class SettingsDialog(QDialog):
             "Lists the known levels for the selected model; unknown models fall back to "
             "none→ultra.\n'none' disables thinking."
         )
-        gen_form.addRow("Thinking:", self._thinking_combo)
 
-        return gen_group
+        self._max_tokens_spin = QSpinBox()
+        # Generous initial range. ``_update_generation_defaults()`` refines
+        # the upper bound to the selected model's ``max_output_tokens`` once
+        # the model combo is populated.  Lower bound of 1 matches the
+        # provider/API minimum and ``LucNhanConfig.validate()`` which only
+        # requires positivity.
+        self._max_tokens_spin.setRange(1, 2_000_000)
+        self._max_tokens_spin.setSingleStep(1024)
+        self._max_tokens_spin.setValue(self._config.provider.max_tokens)
 
-    def _build_behavior_group(self) -> QGroupBox:
-        """Build the Behavior settings group box."""
-        behavior_group = QGroupBox("Behavior")
-        behavior_form = QFormLayout(behavior_group)
+        self._context_spin = QSpinBox()
+        self._context_spin.setRange(4096, 2000000)
+        self._context_spin.setSingleStep(10000)
+        self._context_spin.setValue(self._config.provider.context_window)
+
+        # Reading order: temperature, thinking, max output, context window.
+        self._generation_rows = [
+            self._form_row("Temperature:", self._temp_spin),
+            self._form_row("Thinking level:", self._thinking_combo),
+            self._form_row("Max output tokens:", self._max_tokens_spin),
+            self._form_row("Context window:", self._context_spin),
+        ]
+        self._generation_columns = [left, right]
+        self._reflow_columns(self._generation_columns, self._generation_rows, two_columns=True)
+        section.layout().addLayout(columns)
+        return section
+
+    def _build_behavior_group(self) -> QFrame:
+        """Behavior section: primary checkboxes + advanced disclosure (G7).
+
+        The four everyday toggles sit in two columns; every limit,
+        retry, review and log-verbosity control moves behind the
+        ``Advanced behavior`` disclosure so the page is not a wall of
+        14 checkboxes.  Nothing is dropped — the disclosure starts
+        expanded so a first-time user still sees every control.
+        """
+        section = self._make_section("Behavior")
+        primary = QHBoxLayout()
+        primary.setSpacing(_SETTINGS_COLUMN_GAP_PX)
+        left = self._make_form()
+        right = self._make_form()
+        primary.addLayout(left, 1)
+        primary.addLayout(right, 1)
+
+        self._advanced_expanded = True
 
         self._auto_context_cb = QCheckBox("Auto-inject binary context into system prompt")
         self._auto_context_cb.setChecked(self._config.auto_context)
-        behavior_form.addRow(self._auto_context_cb)
 
         self._auto_save_cb = QCheckBox("Auto-save sessions")
         self._auto_save_cb.setChecked(self._config.checkpoint_auto_save)
-        behavior_form.addRow(self._auto_save_cb)
 
+        advanced_form = self._make_form()
         self._explore_turns_spin = QSpinBox()
         self._explore_turns_spin.setRange(5, 200)
         self._explore_turns_spin.setValue(self._config.exploration_turn_limit)
@@ -671,7 +1037,7 @@ class SettingsDialog(QDialog):
             "Maximum turns the agent spends in the exploration phase before "
             "forcing a transition (or reporting an error if findings are insufficient)."
         )
-        behavior_form.addRow("Exploration turn limit:", self._explore_turns_spin)
+        advanced_form.addRow("Exploration turn limit:", self._explore_turns_spin)
 
         # --- Rate-limit handling ---
         self._max_retries_spin = QSpinBox()
@@ -680,14 +1046,14 @@ class SettingsDialog(QDialog):
         self._max_retries_spin.setToolTip(
             "Number of retry attempts when the API returns a rate-limit or transient error."
         )
-        behavior_form.addRow("API retry attempts:", self._max_retries_spin)
+        advanced_form.addRow("API retry attempts:", self._max_retries_spin)
 
         self._silent_retry_cb = QCheckBox("Show loading indicator instead of error messages during retries")
         self._silent_retry_cb.setChecked(self._config.silent_retry_mode)
         self._silent_retry_cb.setToolTip(
             "When enabled, rate-limit retries show a subtle text indicator instead of red error messages."
         )
-        behavior_form.addRow(self._silent_retry_cb)
+        advanced_form.addRow(self._silent_retry_cb)
 
         # --- Context preservation ---
         self._preserve_context_cb = QCheckBox("Preserve full context (disable tool result truncation)")
@@ -696,7 +1062,7 @@ class SettingsDialog(QDialog):
             "Disables tool result truncation and message trimming. "
             "Enable for deep RE sessions where losing decompilation context is worse than higher token cost."
         )
-        behavior_form.addRow(self._preserve_context_cb)
+        advanced_form.addRow(self._preserve_context_cb)
         # --- String analysis restriction ---
         self._hide_strings_cb = QCheckBox("Hide strings from analysis (prefer disassembly/decompilation)")
         self._hide_strings_cb.setChecked(bool(getattr(self._config, "hide_strings", False)))
@@ -705,7 +1071,6 @@ class SettingsDialog(QDialog):
             "stale direct call returns an error. The agent must use read_function_disassembly, "
             "read_disassembly, decompile_function, or get_pseudocode to analyze behavior instead."
         )
-        behavior_form.addRow(self._hide_strings_cb)
 
         # --- Raw knowledge memory ---
         self._knowledge_enabled_cb = QCheckBox("Enable raw knowledge memory")
@@ -716,7 +1081,6 @@ class SettingsDialog(QDialog):
             "report Markdown under ``notes/reports/`` next to the IDB. Disable\n"
             "to skip writes entirely and hide the Knowledge tab banner."
         )
-        behavior_form.addRow(self._knowledge_enabled_cb)
 
         # --- API key encryption ---
         from ..core.crypto import is_available as crypto_available
@@ -729,7 +1093,32 @@ class SettingsDialog(QDialog):
             if crypto_available()
             else "Requires the 'cryptography' package (pip install cryptography)."
         )
-        behavior_form.addRow(self._encrypt_keys_cb)
+
+        # Primary two-column block: reading order is row-major.
+        self._behavior_rows = [
+            self._form_row("", self._auto_context_cb),
+            self._form_row("", self._auto_save_cb),
+            self._form_row("", self._knowledge_enabled_cb),
+            self._form_row("", self._encrypt_keys_cb),
+        ]
+        self._behavior_columns = [left, right]
+        self._reflow_columns(self._behavior_columns, self._behavior_rows, two_columns=True)
+        section.layout().addLayout(primary)
+
+        # Advanced disclosure — every limit / retry / review control.
+        self._advanced_toggle = QPushButton("\u25b8  Advanced behavior \u00b7 limits, retries and context")
+        self._advanced_toggle.setCheckable(True)
+        self._advanced_toggle.setChecked(True)
+        self._advanced_toggle.setStyleSheet(get_settings_btn_style())
+        self._advanced_toggle.setToolTip("Show or hide the advanced behavior controls")
+        section.layout().addWidget(self._advanced_toggle)
+        self._advanced_container = QWidget()
+        advanced_layout = QVBoxLayout(self._advanced_container)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.addLayout(advanced_form)
+        advanced_layout.addWidget(self._hide_strings_cb)
+        section.layout().addWidget(self._advanced_container)
+        self._advanced_toggle.toggled.connect(self._set_advanced_visible)
 
         # --- IDAPython docs-review gate (post-error) ---
         self._docs_review_mode_cb = QComboBox()
@@ -746,7 +1135,7 @@ class SettingsDialog(QDialog):
             "can fix the script. This is faster than reviewing every complex script.\n"
             "• Off: no reviewer — you handle all script errors yourself."
         )
-        behavior_form.addRow("IDA docs review mode:", self._docs_review_mode_cb)
+        advanced_form.addRow("IDA docs review mode:", self._docs_review_mode_cb)
 
         # --- IDA Output window verbosity ---
         # Controls which log records appear in IDA's Output window.
@@ -768,7 +1157,7 @@ class SettingsDialog(QDialog):
             "available in 'lucnhan_debug.log' under the Luc Nhan config "
             "directory regardless of this setting."
         )
-        behavior_form.addRow("IDA Output verbosity:", self._ida_output_log_combo)
+        advanced_form.addRow("IDA Output verbosity:", self._ida_output_log_combo)
 
         # --- Multi-tab parallel agent ---
         self._parallel_agent_cb = QCheckBox("Run agents in parallel across tabs")
@@ -778,7 +1167,7 @@ class SettingsDialog(QDialog):
             "switching tabs does not cancel a running agent. Disable for the\n"
             "legacy single-agent behavior (tab switch cancels)."
         )
-        behavior_form.addRow(self._parallel_agent_cb)
+        advanced_form.addRow(self._parallel_agent_cb)
 
         self._parallel_max_spin = QSpinBox()
         self._parallel_max_spin.setRange(1, 20)
@@ -787,14 +1176,28 @@ class SettingsDialog(QDialog):
             "Maximum number of agents that may run simultaneously across all tabs.\n"
             "Extra messages queue and start as slots free up."
         )
-        behavior_form.addRow("Max concurrent agents:", self._parallel_max_spin)
+        advanced_form.addRow("Max concurrent agents:", self._parallel_max_spin)
 
-        return behavior_group
+        return section
 
-    def _build_appearance_group(self) -> QGroupBox:
-        """Build the Appearance settings group box."""
-        appearance_group = QGroupBox("Font")
-        appearance_form = QFormLayout(appearance_group)
+    def _set_advanced_visible(self, expanded: bool) -> None:
+        """Show or hide the advanced behavior block (presentation only)."""
+        self._advanced_expanded = bool(expanded)
+        self._advanced_container.setVisible(bool(expanded))
+        self._advanced_toggle.setText(
+            "\u25be  Advanced behavior \u00b7 limits, retries and context"
+            if expanded
+            else "\u25b8  Advanced behavior \u00b7 limits, retries and context"
+        )
+
+    def _build_appearance_group(self) -> QFrame:
+        """Build the Reading and typography section (G7).
+
+        Theme selector stays wired to ``ThemeManager`` so the change
+        previews live; font controls drive the inline reading sample.
+        """
+        appearance_group = self._make_section("Reading and typography")
+        appearance_form = self._make_form()
 
         self._font_family_combo = QComboBox()
         self._font_family_combo.setEditable(False)
@@ -821,14 +1224,14 @@ class SettingsDialog(QDialog):
             "Font family for chat messages and code blocks. "
             "Leave at 'Inherit from IDA' to use IDA Pro's configured font."
         )
-        appearance_form.addRow("Font family:", self._font_family_combo)
+        appearance_form.addRow(*self._form_row("Font family:", self._font_family_combo))
 
         self._font_size_spin = QSpinBox()
         self._font_size_spin.setRange(0, 72)
         self._font_size_spin.setValue(self._config.font_size_override)
         self._font_size_spin.setSuffix(" pt")
         self._font_size_spin.setToolTip("Font size in points. Set to 0 or leave at default to inherit from IDA Pro.")
-        appearance_form.addRow("Font size:", self._font_size_spin)
+        appearance_form.addRow(*self._form_row("Font size:", self._font_size_spin))
 
         # Theme selector — wired to ThemeManager. The combo has 4
         # entries (auto / dark / light / ida) and updates the manager
@@ -858,13 +1261,24 @@ class SettingsDialog(QDialog):
             "IDA's current Qt palette (no effect when not running in IDA)."
         )
         self._theme_combo.currentIndexChanged.connect(lambda _idx: self._on_theme_changed())
-        appearance_form.addRow("Theme:", self._theme_combo)
+        appearance_form.addRow(*self._form_row("Theme:", self._theme_combo))
+        appearance_group.layout().addLayout(appearance_form)
+        self._appearance_hint = QLabel(
+            "Host modes use IDA's palette in the actual plugin. "
+            "Dark and Light use Luc Nhan's bundled palettes."
+        )
+        self._appearance_hint.setStyleSheet(get_hint_status_style())
+        self._appearance_hint.setWordWrap(True)
+        appearance_group.layout().addWidget(self._appearance_hint)
 
+        # Live preview of the font override (G7: inline reading sample).
+        self._font_family_combo.currentTextChanged.connect(lambda _text: self._refresh_reading_sample())
+        self._font_size_spin.valueChanged.connect(lambda _value: self._refresh_reading_sample())
         return appearance_group
 
     # --- GLM Settings (Task 13) -------------------------------------------
 
-    def _build_glm_group(self) -> QGroupBox:
+    def _build_glm_group(self) -> QFrame:
         """Build the GLM reasoning resilience controls group.
 
         Visible only when the active provider has
@@ -874,15 +1288,15 @@ class SettingsDialog(QDialog):
         and the Z.AI endpoint type).  Repetition/window/meta thresholds
         are not exposed.
         """
-        glm_group = QGroupBox("GLM Reasoning Resilience")
-        glm_form = QFormLayout(glm_group)
+        glm_group = self._make_section("GLM reasoning resilience")
+        glm_form = self._make_form()
 
         # Preserve thinking context across turns
         self._glm_preserve_cb = QCheckBox("Preserve reasoning context across turns")
         self._glm_preserve_cb.setToolTip(
             "When checked, prior reasoning_content is replayed in\nmulti-turn conversations so GLM maintains context."
         )
-        glm_form.addRow(self._glm_preserve_cb)
+        glm_form.addRow(*self._form_row("", self._glm_preserve_cb))
 
         # Degeneration guard
         self._glm_guard_cb = QCheckBox("Enable degeneration guard")
@@ -891,7 +1305,7 @@ class SettingsDialog(QDialog):
             "one-shot recovery (retry without thinking, then with\n"
             "a capped recovery budget)."
         )
-        glm_form.addRow(self._glm_guard_cb)
+        glm_form.addRow(*self._form_row("", self._glm_guard_cb))
 
         # Reasoning token ceiling
         self._glm_ceiling_spin = QSpinBox()
@@ -901,7 +1315,7 @@ class SettingsDialog(QDialog):
         self._glm_ceiling_spin.setToolTip(
             "Estimated reasoning-token hard limit. Aborts a turn before\nit consumes the full max_tokens budget."
         )
-        glm_form.addRow("Reasoning token ceiling:", self._glm_ceiling_spin)
+        glm_form.addRow(*self._form_row("Reasoning token ceiling:", self._glm_ceiling_spin))
 
         # Recovery max tokens
         self._glm_recovery_spin = QSpinBox()
@@ -912,7 +1326,7 @@ class SettingsDialog(QDialog):
             "Total output-token cap for the one-shot recovery request.\n"
             "Clamped to the selected model's max output tokens at dispatch."
         )
-        glm_form.addRow("Recovery token cap:", self._glm_recovery_spin)
+        glm_form.addRow(*self._form_row("Recovery token cap:", self._glm_recovery_spin))
 
         # Endpoint type: Standard API vs Coding Plan.
         # The two Z.AI endpoints use non-interchangeable API keys and
@@ -927,8 +1341,9 @@ class SettingsDialog(QDialog):
             "Changing this updates the API Base URL automatically."
         )
         self._glm_endpoint_combo.currentIndexChanged.connect(self._on_glm_endpoint_changed)
-        glm_form.addRow("Endpoint:", self._glm_endpoint_combo)
+        glm_form.addRow(*self._form_row("Endpoint:", self._glm_endpoint_combo))
 
+        glm_group.layout().addLayout(glm_form)
         # Hidden by default until a GLM-dialect provider is active.
         glm_group.setVisible(False)
         return glm_group
@@ -1568,6 +1983,7 @@ class SettingsDialog(QDialog):
         self._populate_builtin_models()
         self._model_status.setText("Click Refresh to fetch live models.")
         self._model_status.setStyleSheet(get_hint_status_style())
+        self._update_footer_hint()
 
         # Load GLM controls from the (possibly restored) config and
         # refresh visibility based on the new provider's dialect.
