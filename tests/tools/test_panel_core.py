@@ -449,6 +449,7 @@ def _make_panel():
     # explicitly keeps the fixture deterministic.
     panel._history_panel = None
     panel._history_btn = MagicMock()
+    panel._session_strip = MagicMock()
     panel._history_generation = 0
     panel._history_executor = None
     panel._history_poll_timer = None
@@ -540,23 +541,28 @@ class TestSetRunning(unittest.TestCase):
 
 
 class TestUpdateTabBarVisibility(unittest.TestCase):
-    def test_single_tab_hides_bar(self):
+    """The *session strip* container is shown only with 2+ tabs (G3)."""
+
+    def test_single_tab_hides_strip(self):
         panel = _make_panel()
+        panel._session_strip = MagicMock()
         panel._tab_widget.count.return_value = 1
         panel._update_tab_bar_visibility()
-        panel._tab_bar.setVisible.assert_called_with(False)
+        panel._session_strip.setVisible.assert_called_with(False)
 
-    def test_two_tabs_shows_bar(self):
+    def test_two_tabs_shows_strip(self):
         panel = _make_panel()
+        panel._session_strip = MagicMock()
         panel._tab_widget.count.return_value = 2
         panel._update_tab_bar_visibility()
-        panel._tab_bar.setVisible.assert_called_with(True)
+        panel._session_strip.setVisible.assert_called_with(True)
 
-    def test_zero_tabs_hides_bar(self):
+    def test_zero_tabs_hides_strip(self):
         panel = _make_panel()
+        panel._session_strip = MagicMock()
         panel._tab_widget.count.return_value = 0
         panel._update_tab_bar_visibility()
-        panel._tab_bar.setVisible.assert_called_with(False)
+        panel._session_strip.setVisible.assert_called_with(False)
 
 
 class TestOnCloseTab(unittest.TestCase):
@@ -1228,7 +1234,8 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         """Calling ``show_tools_panel`` without arguments opens Knowledge."""
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
-        panel._mode_bar = MagicMock()
+        panel._mode_stack = MagicMock()
+        panel._chat_btn = MagicMock()
         panel._tools_form = None
         panel._tools_btn = MagicMock()
         panel._tools_poll_timer = MagicMock()
@@ -1257,7 +1264,8 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
 
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
-        panel._mode_bar = MagicMock()
+        panel._mode_stack = MagicMock()
+        panel._chat_btn = MagicMock()
         panel._tools_form = None
         panel._tools_btn = MagicMock()
         panel._tools_poll_timer = MagicMock()
@@ -1764,10 +1772,13 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
             source,
             msg=("_build_ui() must create a vertical QSplitter so the user has a real resize handle for the input."),
         )
+        # GUI contract G3: the composer owns the chat splitter, so growing
+        # it takes height *from the transcript above* rather than pushing
+        # the footer off-screen.
         self.assertIn(
-            "self._chat_splitter.addWidget(self._main_splitter)",
+            "self._chat_splitter.addWidget(input_container)",
             source,
-            msg=("_build_ui() must place the main conversation area in the top pane of the chat splitter."),
+            msg=("_build_ui() must place the input section in the chat splitter so the user can drag."),
         )
         self.assertIn(
             "self._chat_splitter.addWidget(input_container)",
@@ -1817,9 +1828,12 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
 
         source = inspect.getsource(InputArea.__init__)
         self.assertIn(
-            "self.setMinimumHeight(60)",
+            "self.setMinimumHeight(38)",
             source,
-            msg=("InputArea must default to a 2-3 line minimum height (60px at 18px line-height with 6px padding)."),
+            msg=(
+                "InputArea must default to the GUI contract G2 composer "
+                "minimum height (38 px); the panel pins the 44 px baseline."
+            ),
         )
         # ``setMaximumHeight`` must not be called on the editor — the
         # vertical QSplitter in the panel owns the upper bound.
@@ -2809,13 +2823,15 @@ class TestHistoryButtonAlwaysVisible(unittest.TestCase):
         """
         import inspect
 
-        src = inspect.getsource(LucNhanPanelCore._build_action_buttons)
-        # ``_history_btn`` must be created and must NOT carry a
-        # ``setVisible(False)`` call (unlike Mutations which hides until
-        # the first mutation lands).
+        src = inspect.getsource(LucNhanPanelCore._build_header)
+        # ``_history_btn`` is created in the header (GUI contract G3) and
+        # must NOT start hidden — unlike Mutations, which hides until the
+        # first mutation lands.  Narrow-dock hiding is presentation-only
+        # and lives in ``_apply_narrow_presentation``.
         self.assertIn("_history_btn", src)
-        # The pattern "self._history_btn.setVisible(False)" must NOT appear.
         self.assertNotIn("self._history_btn.setVisible(False)", src)
+        narrow_src = inspect.getsource(LucNhanPanelCore._apply_narrow_presentation)
+        self.assertIn("self._history_btn", narrow_src)
 
     def test_history_panel_is_added_to_splitter(self) -> None:
         """Source-level guard: ``_build_main_splitter`` adds HistoryPanel as

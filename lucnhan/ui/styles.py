@@ -350,8 +350,11 @@ def build_input_area_stylesheet(tokens: object) -> str:
         f" background-color: {base};"
         f" selection-background-color: {highlight};"
         f" selection-color: {highlight_text};"
-        f" border: 1px solid {mid}; border-radius: 6px;"
-        f" padding: 6px;"
+        # GUI contract G1: 4 px radius, 1 px border.  G2: input padding
+        # 5 / 8 px.
+        f" border: 1px solid {mid}; border-radius: 4px;"
+        f" padding: 5px 8px;"
+        f" font-size: 13px;"
         f"}}"
         f"QPlainTextEdit#input_area QScrollBar {{ background: {base}; }}"
         f"QPlainTextEdit#input_area:focus {{ border-color: {highlight}; }}"

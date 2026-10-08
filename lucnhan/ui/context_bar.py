@@ -40,40 +40,92 @@ def _function_name_at(ea: int) -> str | None:
     return None
 
 
+# GUI contract G3: the single breakpoint for chrome compaction — a panel /
+# dock narrower than this switches to the narrow presentation.
+NARROW_BREAKPOINT_PX = 640
+
+
 class ContextBar(QFrame):
-    """Status bar showing current binary context and session info."""
+    """Context row showing current binary context and session info.
+
+    GUI contract G3: ``CONTEXT`` label -> symbol -> address -> optional
+    binary metadata -> actions.  Address / symbol are the primary context
+    and are never hidden; the model / token-count metadata is secondary
+    and is hidden at the narrow breakpoint (G3) so a narrow dock still
+    reads the binary context.
+    """
+
+    # GUI contract G2: min-height 27 px, padding 4 / 12, gap 9.
+    _ROW_HEIGHT = 27
+    _ROW_MARGIN_H = 12
+    _ROW_MARGIN_V = 4
+    _ROW_SPACING = 9
+    # G3: single narrow breakpoint for chrome compaction.
+    _NARROW_BREAKPOINT_PX = NARROW_BREAKPOINT_PX
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("context_bar")
-        self.setFixedHeight(28)
+        self.setFixedHeight(self._ROW_HEIGHT)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 2, 8, 2)
-        layout.setSpacing(16)
+        layout.setContentsMargins(self._ROW_MARGIN_H, self._ROW_MARGIN_V, self._ROW_MARGIN_H, self._ROW_MARGIN_V)
+        layout.setSpacing(self._ROW_SPACING)
 
-        self._address_label = self._make_pair("Addr:", "\u2014")
-        self._function_label = self._make_pair("Func:", "\u2014")
-        self._model_label = self._make_pair("Model:", "\u2014")
-        self._tokens_label = self._make_pair("Tokens:", "0")
+        # Primary context (never hidden): symbol then address, matching
+        # the contract's label -> symbol -> address order.
+        self._context_title = QLabel("CONTEXT")
+        self._context_title.setObjectName("context_title")
+        layout.addWidget(self._context_title)
 
-        for label, value in (
-            self._address_label,
-            self._function_label,
-            self._model_label,
-            self._tokens_label,
-        ):
+        self._function_label = self._make_pair("", "—")
+        self._address_label = self._make_pair("ADDR:", "—")
+
+        for label, value in (self._function_label, self._address_label):
             layout.addWidget(label)
             layout.addWidget(value)
 
+        # Secondary metadata (hides at the narrow breakpoint).
+        self._model_label = self._make_pair("MODEL:", "—")
+        self._tokens_label = self._make_pair("TOKENS:", "0")
+        for pair in (self._model_label, self._tokens_label):
+            layout.addWidget(pair[0])
+            layout.addWidget(pair[1])
+        self._secondary_pairs = (self._model_label, self._tokens_label)
+
         layout.addStretch()
 
+        self._narrow = False
         self._stopped = False
 
         # Auto-update cursor position
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_cursor)
         self._timer.start(2000)
+
+    def apply_theme(self) -> None:
+        """Push the token-driven context-row QSS from the live palette."""
+        try:
+            from .styles import maybe_host_stylesheet
+            from .theme.widgets_common import get_context_bar_style
+
+            self.setStyleSheet(maybe_host_stylesheet(get_context_bar_style()))
+        except Exception as e:  # never let theming break the context row
+            log_debug(f"ContextBar.apply_theme failed: {e}")
+
+    def set_narrow(self, narrow: bool) -> None:
+        """Compact the row for the narrow dock (GUI contract G3).
+
+        Only *secondary metadata* hides — the symbol and the address stay
+        visible so the primary context is always readable.  Presentation
+        only: no value is reset and no timer restarts.
+        """
+        if self._narrow == narrow:
+            return
+        self._narrow = narrow
+        for pair in self._secondary_pairs:
+            for widget in pair:
+                widget.setVisible(not narrow)
 
     def _make_pair(self, label_text: str, initial: str):
         label = QLabel(label_text)

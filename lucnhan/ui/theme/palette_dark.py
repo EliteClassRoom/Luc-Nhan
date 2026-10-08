@@ -1,4 +1,11 @@
-"""Hardcoded dark theme — VS Code Dark+ inspired, matches existing Luc Nhan look."""
+"""Hardcoded dark theme — compact technical workspace (GUI contract G1).
+
+Flat charcoal surfaces with a single mint accent for navigation / focus /
+primary action.  These constants are the *target* palette of the redesign;
+the live values are resolved through :class:`ThemeTokens` so widgets never
+hardcode a colour.  AUTO / IDA modes ignore this file and follow the host
+``QPalette`` (``palette_ida.py``).
+"""
 
 from __future__ import annotations
 
@@ -6,28 +13,28 @@ from .tokens import ThemeTokens
 
 DARK_TOKENS = ThemeTokens(
     # QPalette-aligned (12)
-    window="#1e1e1e",
-    window_text="#d4d4d4",
-    base="#1e1e1e",
-    alt_base="#252526",
-    text="#d4d4d4",
-    button="#2d2d2d",
-    button_text="#d4d4d4",
-    highlight="#0e639c",
-    highlight_text="#ffffff",
-    mid="#3c3c3c",
-    light="#5a5a5a",
-    dark="#1a1a1a",
+    window="#202427",
+    window_text="#e0e5e7",
+    base="#1b1f21",
+    alt_base="#282d30",
+    text="#e0e5e7",
+    button="#282d30",
+    button_text="#e0e5e7",
+    highlight="#86c7b8",
+    highlight_text="#142621",
+    mid="#363d41",
+    light="#282d30",
+    dark="#1b1f21",
     # Semantic (5)
-    success="#4ec9b0",
-    warning="#dcdcaa",
-    error="#f48771",
-    code_text="#d4d4d4",
-    code_bg="#1a1a1a",
-    # Interaction (3) — accent navigates/focuses, selection unifies list
-    # highlight (was scattered across #264f78/#2d4a4a/#0e639c), muted_text
-    # is the secondary text tone (was ad-hoc #808080).
-    accent="#569cd6",
-    selection="#264f78",
-    muted_text="#9d9d9d",
+    success="#9bc7a7",
+    warning="#dbbd82",
+    error="#e5a0a0",
+    code_text="#e0e5e7",
+    code_bg="#1b1f21",
+    # Interaction (3) — accent drives navigation/focus/primary fill,
+    # selection is the active-nav / selected-row fill, muted_text is the
+    # secondary tone for hints / counts / captions.
+    accent="#86c7b8",
+    selection="#293e38",
+    muted_text="#a0abb0",
 )

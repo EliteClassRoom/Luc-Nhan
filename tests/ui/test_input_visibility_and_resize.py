@@ -235,9 +235,12 @@ class TestInputSizing(unittest.TestCase):
 
         source = inspect.getsource(InputArea.__init__)
         self.assertIn(
-            "self.setMinimumHeight(60)",
+            "self.setMinimumHeight(38)",
             source,
-            msg=("InputArea must default to a 2-3 line minimum height (60px at 18px line-height with 6px padding)."),
+            msg=(
+                "InputArea must default to the GUI contract G2 composer "
+                "minimum height (38 px); the panel pins the 44 px baseline."
+            ),
         )
         # ``setMaximumHeight`` must not be called on the editor — the
         # vertical QSplitter in the panel owns the upper bound.
@@ -273,37 +276,34 @@ class TestChatSplitterShowEventSizes(unittest.TestCase):
     test does not depend on real Qt construction.
     """
 
-    def _make_panel(self, *, total_height: int, input_min: int = 60):
+    def _make_panel(self, *, total_height: int):
         from lucnhan.ui.panel_core import LucNhanPanelCore
 
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._chat_splitter = MagicMock()
         panel._chat_splitter.height.return_value = total_height
-        panel._input_area = MagicMock()
-        panel._input_area.minimumHeight.return_value = input_min
         return panel
 
-    def test_first_show_seeds_two_to_three_line_default(self) -> None:
-        """First ``showEvent`` must call ``setSizes`` with a bottom
-        pane equal to the input minimum (2-3 lines) and a top pane
-        equal to ``total - input_min``.  The user can drag from there.
+    def test_first_show_seeds_composer_baseline(self) -> None:
+        """The one-shot seed pins the composer to its GUI contract G2
+        baseline (44 px editor + action row); the transcript above takes
+        the remainder.  The user can drag from there.
         """
-        panel = self._make_panel(total_height=400, input_min=60)
-        panel.showEvent(MagicMock())
+        panel = self._make_panel(total_height=400)
+        panel._seed_chat_splitter()
         panel._chat_splitter.setSizes.assert_called_once()
         sizes = panel._chat_splitter.setSizes.call_args[0][0]
-        # 60px ≈ 2-3 lines at 18px line-height; the top pane gets
-        # the remainder so the chat fills the page.
-        self.assertEqual(sizes[1], 60)
-        self.assertEqual(sizes[0], 400 - 60)
+        self.assertEqual(sizes[1], 44 + 34)
+        self.assertEqual(sizes[0], 400 - (44 + 34))
 
     def test_second_show_does_not_reset_sizes(self) -> None:
-        """After the first show, subsequent ``showEvent`` calls must
-        NOT clobber the user-dragged sizes with the one-shot default.
+        """After the first seed, later seeds must NOT clobber the
+        user-dragged sizes with the one-shot default.
         """
-        panel = self._make_panel(total_height=400, input_min=60)
-        panel.showEvent(MagicMock())
-        panel.showEvent(MagicMock())
+        panel = self._make_panel(total_height=400)
+        panel._seed_chat_splitter()
+        panel._seed_chat_splitter()
+        panel._seed_chat_splitter()
         self.assertEqual(panel._chat_splitter.setSizes.call_count, 1)
 
 

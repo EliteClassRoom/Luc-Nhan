@@ -65,13 +65,16 @@ def _button_qss(t, hover_bg: str, *, object_name: str | None = None) -> str:
     so a widget-local stylesheet does not leak to sibling buttons.
     """
     sel = f"QPushButton#{object_name}" if object_name else "QPushButton"
+    # GUI contract G1: 4 px radius, 1 px border.  G2: button min-height
+    # 28 px, padding 4 / 9 px, chrome text 12 px, and an accent focus
+    # *outline* (G9) rather than a plain border swap.
     return (
         f"{sel} {{ background: {t.button}; color: {t.button_text}; "
-        f"border: 1px solid {t.mid}; border-radius: 6px; padding: 4px; "
-        f"font-size: inherit; }}"
+        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 9px; "
+        f"min-height: 20px; font-size: 12px; }}"
         f"{sel}:hover {{ background: {hover_bg}; border-color: {t.accent}; }}"
         f"{sel}:pressed {{ background: {t.mid}; }}"
-        f"{sel}:focus {{ border: 1px solid {t.accent}; }}"
+        f"{sel}:focus {{ border: 1px solid {t.accent}; outline: 2px solid {t.accent}; }}"
     )
 
 
@@ -85,11 +88,11 @@ def _cancel_btn_style() -> str:
     t = _tokens()
     return (
         f"QPushButton {{ background: {t.button}; color: {t.error}; "
-        f"border: 1px solid {t.mid}; border-radius: 6px; padding: 4px; "
-        f"font-size: inherit; }}"
+        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 9px; "
+        f"min-height: 20px; font-size: 12px; }}"
         f"QPushButton:hover {{ background: {t.alt_base}; border-color: {t.error}; }}"
         f"QPushButton:pressed {{ background: {t.mid}; }}"
-        f"QPushButton:focus {{ border: 1px solid {t.accent}; }}"
+        f"QPushButton:focus {{ border: 1px solid {t.error}; outline: 2px solid {t.accent}; }}"
     )
 
 
@@ -105,16 +108,86 @@ def _mode_bar_style() -> str:
     )
 
 
-# Tab widget (chat tabs) — selected tab uses selection token
+# === Workspace chrome (GUI contract G2 geometry) =============================
+#
+# All sizes below are Qt *logical* px and follow the contract table: main
+# header min-height 38 px (padding 3 / 10), session strip min-height 31 px
+# (inset 9, gap 7, active underline 2), context row min-height 27 px
+# (padding 4 / 12, gap 9), composer wrapper padding 7 / 10 / 5, footer
+# min-height 25 px (padding 2 / 11).  Type scale: 13 px body, 12 px nav,
+# 11 px context, 10-11 px footer.
+
+
+def _header_frame_style() -> str:
+    """Main header strip (min-height 38 px, padding 3 / 10)."""
+    t = _tokens()
+    return (
+        f"QFrame#panel_header {{ background: {t.window}; border: none; "
+        f"border-bottom: 1px solid {t.mid}; }}"
+        f"QFrame#panel_header QLabel {{ background: transparent; border: none; }}"
+        f"QFrame#panel_header QToolButton {{ background: transparent; border: none; }}"
+    )
+
+
+def _header_title_style() -> str:
+    """``Luc Nhan`` wordmark (13 px, semibold) — inherits the host font."""
+    t = _tokens()
+    return f"color: {t.text}; font-size: 13px; font-weight: 600;"
+
+
+def _header_status_style() -> str:
+    """Agent status label (11 px muted).  Status is never colour-only:
+    the text itself carries the state (GUI contract G1)."""
+    t = _tokens()
+    return f"color: {t.muted_text}; font-size: 11px;"
+
+
+def _context_bar_style() -> str:
+    """Context row (min-height 27 px, padding 4 / 12, gap 9).
+
+    ``CONTEXT`` is one of the few places uppercase is allowed — a small
+    metadata label.  ``ADDR:``/``FUNC:`` keep their shipped spelling.
+    """
+    t = _tokens()
+    return (
+        f"QFrame#context_bar {{ background: {t.window}; border: none; "
+        f"border-bottom: 1px solid {t.mid}; }}"
+        f"QFrame#context_bar QLabel {{ background: transparent; border: none; }}"
+        f"QFrame#context_bar QLabel#context_label {{ color: {t.muted_text}; font-size: 11px; }}"
+        f"QFrame#context_bar QLabel#context_value {{ color: {t.text}; font-size: 11px; }}"
+    )
+
+
+def _footer_style() -> str:
+    """Footer strip (min-height 25 px, padding 2 / 11) pinned below the
+    composer; model/thinking left, token usage right."""
+    t = _tokens()
+    return (
+        f"QFrame#panel_footer {{ background: {t.window}; border: none; "
+        f"border-top: 1px solid {t.mid}; }}"
+        f"QFrame#panel_footer QLabel {{ background: transparent; border: none; }}"
+        f"QFrame#panel_footer QToolButton {{ background: transparent; border: none; }}"
+    )
+
+
+# Session strip (chat tabs) — active tab uses selection fill + accent underline
 def _tab_widget_style() -> str:
     t = _tokens()
     return (
         f"QTabWidget::pane {{ border: none; }}"
-        f"QTabBar {{ background: {t.window}; border: none; }}"
-        f"QTabBar::tab {{ background: {t.alt_base}; color: {t.muted_text}; padding: 2px 8px; "
-        f"border: none; border-right: 1px solid {t.mid}; font-size: inherit; max-width: 140px; }}"
-        f"QTabBar::tab:selected {{ background: {t.base}; color: {t.highlight_text}; }}"
-        f"QTabBar::tab:hover {{ background: {t.button}; }}"
+        # G2: session strip min-height 31 px, inset 9 px, gap 7 px.
+        f"QTabBar {{ background: {t.window}; border: none; "
+        f"border-bottom: 1px solid {t.mid}; }}"
+        f"QTabBar::tab {{ background: transparent; color: {t.muted_text}; "
+        f"padding: 2px 9px; margin: 2px 2px 0 2px; min-width: 40px; "
+        f"border: none; border-bottom: 2px solid transparent; "
+        f"font-size: 12px; max-width: 160px; }}"
+        # G1/G3: active nav = selection fill + accent underline; the label
+        # uses ``text`` (``highlight_text`` is white in light mode and
+        # would be invisible on a near-white surface).
+        f"QTabBar::tab:selected {{ background: {t.selection}; color: {t.text}; "
+        f"border-bottom: 2px solid {t.accent}; }}"
+        f"QTabBar::tab:hover:!selected {{ background: {t.alt_base}; color: {t.text}; }}"
         f"QTabBar::close-button {{ image: none; border: none; padding: 1px; }}"
         f"QTabBar::close-button:hover {{ background: {t.error}; border-radius: 2px; }}"
     )
@@ -377,6 +450,26 @@ def get_cancel_btn_style() -> str:
 
 def get_mode_bar_style() -> str:
     return _mode_bar_style()
+
+
+def get_header_frame_style() -> str:
+    return _header_frame_style()
+
+
+def get_header_title_style() -> str:
+    return _header_title_style()
+
+
+def get_header_status_style() -> str:
+    return _header_status_style()
+
+
+def get_context_bar_style() -> str:
+    return _context_bar_style()
+
+
+def get_footer_style() -> str:
+    return _footer_style()
 
 
 def get_tab_widget_style() -> str:

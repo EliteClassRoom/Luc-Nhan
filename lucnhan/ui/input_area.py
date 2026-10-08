@@ -172,16 +172,12 @@ class InputArea(QPlainTextEdit):
         super().__init__(parent)
         self.setObjectName("input_area")
         self.setPlaceholderText("Ask about this binary... (/ for skills, /modify to patch)")
-        # Two-to-three-line minimum so the editor is comfortably usable
-        # out of the box.  The vertical QSplitter in the panel owns the
-        # upper bound — we deliberately do NOT cap the editor's
+        # GUI contract G2: composer text min-height 38 px (the panel pins
+        # the 44 px baseline).  The vertical QSplitter owns the pane the
+        # editor lives in — we deliberately do NOT cap the editor's
         # maximum height so the user can drag the splitter as tall as
         # they want and only scrolling constrains a single typing run.
-        # Vertical policy is ``Expanding`` so the editor fills the
-        # chat-splitter bottom pane when the user drags the handle
-        # taller (``Preferred`` would leave empty space below the
-        # editor).
-        self.setMinimumHeight(60)
+        self.setMinimumHeight(38)
         # Vertical policy must be ``Expanding`` so the editor fills the
         # chat-splitter bottom pane when the user drags the handle.
         # ``Preferred`` would let the splitter grow the pane but leave

@@ -570,6 +570,8 @@ def _qt_class(name: str) -> type:
         "setWindowTitle": _noop,
         "setWindowModality": _noop,
         "setSizeGripEnabled": _noop,
+        # QToolButton chrome (session-strip '+', header overflow)
+        "setAutoRaise": _noop,
         # Geometry helpers for _HeightCachedLabel
         "width": lambda self: 0,
         "heightForWidth": lambda self, w: 0,

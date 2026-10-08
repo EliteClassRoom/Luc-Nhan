@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from ..state.session import SessionState
 
 from .chat_view import ChatView
-from .context_bar import ContextBar
+from .context_bar import NARROW_BREAKPOINT_PX, ContextBar
 from .export_formatting import (
     _export_format_subagent_log,
     _export_format_tool_args,
@@ -48,6 +48,7 @@ from .qt_compat import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QKeySequence,
     QLabel,
@@ -55,6 +56,7 @@ from .qt_compat import (
     QMessageBox,
     QPushButton,
     QShortcut,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     Qt,
@@ -89,43 +91,87 @@ _HISTORY_EXECUTOR_PREFIX = "lucnhan-history"
 # without the row growing when one button gets a longer label.
 _ACTION_BUTTON_WIDTH = 64
 
-
-def _tab_label():
-    """Higher-contrast tab label color (>=4.5:1 against ``alt_base``).
-
-    A 50/50 text/mid blend (``_muted``) yields ~3.5:1 in light mode and
-    falls under WCAG AA. We shift the blend toward ``text`` (0.35) so
-    unselected tabs stay readable in both light and dark modes.
-    """
-    from .theme.manager import blend_hex
-
-    t = ThemeManager.instance().tokens()
-    return blend_hex(t.text, t.mid, 0.35)
+# GUI contract G2 / G3 — workspace geometry, all values in Qt logical px.
+# Header: min-height 38 px, padding 3 vertical / 10 horizontal, gap 10 px
+# (5 px at the narrow breakpoint).
+_HEADER_MIN_HEIGHT = 38
+_HEADER_GAP = 10
+_HEADER_GAP_NARROW = 5
+# Session strip: min-height 31 px, inset 9 px, gap 7 px.
+_SESSION_STRIP_MIN_HEIGHT = 31
+# Composer text baseline / minimum, and the action-control row.
+_COMPOSER_TEXT_HEIGHT = 44
+_COMPOSER_MIN_HEIGHT = 38
+# Footer: min-height 25 px, padding 2 / 11 px.
+_FOOTER_MIN_HEIGHT = 25
+# Built-in slash commands offered by the composer's ``/ Commands`` button.
+# Mirrors the set ``InputArea.set_skill_slugs`` guarantees is autocompleted.
+_BUILTIN_COMMAND_SLUGS = (
+    "doctor",
+    "explore",
+    "goal",
+    "knowledge",
+    "mcp",
+    "memory",
+    "modify",
+    "plan",
+    "research",
+    "undo",
+    "verify",
+)
+# Tooltip / accessible-name text per action-button attribute.  Single
+# source of truth for the toolbar, the composer row and the overflow menu.
+_ACTION_BUTTON_TOOLTIPS = {
+    "_chat_btn": "Back to the chat workspace",
+    "_send_btn": "Send the message (Enter)",
+    "_cancel_btn": "Stop the running agent (Esc)",
+    "_export_btn": "Export this chat to a file",
+    "_settings_btn": "Open Luc Nhan settings",
+    "_mutations_btn": "Show the mutation log (IDA database edits made by the agent)",
+    "_history_btn": "Show past chat sessions",
+    "_tools_btn": "Open the tools panel",
+}
 
 
 def _small_btn_style() -> str:
+    """Neutral action-button QSS (4 px radius, G1) from live tokens."""
     t = ThemeManager.instance().tokens()
     return (
         f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
-        f"border-radius: 6px; padding: 4px; font-size: 11px; }}"
-        f"QPushButton:hover {{ background: {t.mid}; }}"
+        f"border-radius: 4px; padding: 4px 9px; min-height: 20px; font-size: 12px; }}"
+        f"QPushButton:hover {{ background: {t.mid}; border-color: {t.accent}; }}"
+        f"QPushButton:pressed {{ background: {t.mid}; }}"
+        f"QPushButton:focus {{ border: 1px solid {t.accent}; outline: 2px solid {t.accent}; }}"
     )
 
 
 def _cancel_btn_style() -> str:
+    """Destructive / stop-button QSS (error text, 4 px radius, G1)."""
     from .theme.manager import blend_hex
 
     t = ThemeManager.instance().tokens()
     danger_hover = blend_hex(t.alt_base, t.error, 0.3)
     return (
-        f"QPushButton {{ background: {t.alt_base}; color: {t.error}; border: 1px solid {t.error}; "
-        f"border-radius: 6px; padding: 4px; font-size: 11px; }}"
-        f"QPushButton:hover {{ background: {danger_hover}; }}"
+        f"QPushButton {{ background: {t.alt_base}; color: {t.error}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 4px 9px; min-height: 20px; font-size: 12px; }}"
+        f"QPushButton:hover {{ background: {danger_hover}; border-color: {t.error}; }}"
+        f"QPushButton:pressed {{ background: {danger_hover}; }}"
+        f"QPushButton:focus {{ border: 1px solid {t.error}; outline: 2px solid {t.accent}; }}"
     )
 
 
 class _AddButtonTabBar(QTabBar):
-    """Tab bar with an integrated '+' button positioned after the last tab."""
+    """Session strip: chat tabs plus a trailing ``+`` new-chat button.
+
+    The bar is *hosted* in the panel's own session-strip container next to
+    the ``+`` button instead of living inside the ``QTabWidget``.  Qt hides
+    a tab bar that is not in the tab widget's own layout (and reserves
+    ~30 px of chrome for it), which would either strand New behind the
+    strip's scroll buttons in a narrow dock or inflate the strip height.
+    The tabs themselves stay the ``QTabWidget``'s pages — only the tab
+    strip's chrome moves — so tab switching, close buttons and the export
+    / fork context menu are unchanged.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -138,7 +184,14 @@ class _AddButtonTabBar(QTabBar):
         self._add_btn.setText("+")
         self._add_btn.setAutoRaise(True)
         self._add_btn.setFixedSize(20, 20)
+        self._add_btn.setToolTip("Start a new chat tab (Ctrl+T)")
+        self._add_btn.setAccessibleName("New chat — Start a new chat tab (Ctrl+T)")
         self._add_btn.clicked.connect(self._handle_add_tab)
+        # GUI contract G3: native tab scrolling keeps every session tab
+        # reachable at narrow widths (the preview's "hide inactive tabs"
+        # shortcut is explicitly out of contract).
+        self.setUsesScrollButtons(True)
+        self.setElideMode(Qt.TextElideMode.ElideRight)
         self._apply_styles()
 
     def _apply_styles(self) -> None:
@@ -185,27 +238,6 @@ class _AddButtonTabBar(QTabBar):
             self._export_tab_callback(index)
         elif action == fork_action and self._fork_tab_callback is not None:
             self._fork_tab_callback(index)
-
-    def tabInserted(self, index):
-        super().tabInserted(index)
-        self._reposition()
-
-    def tabRemoved(self, index):
-        super().tabRemoved(index)
-        self._reposition()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._reposition()
-
-    def _reposition(self):
-        count = self.count()
-        if count > 0:
-            rect = self.tabRect(count - 1)
-            y = (self.height() - self._add_btn.height()) // 2
-            self._add_btn.move(rect.right() + 2, max(0, y))
-        else:
-            self._add_btn.move(0, 0)
 
 
 class LucNhanPanelCore(QWidget):
@@ -501,18 +533,6 @@ class LucNhanPanelCore(QWidget):
             # Runtime init completed but no skills found; stop polling.
             self._stop_skills_refresh_timer()
 
-    @property
-    def _MODE_BAR_STYLE_TEMPLATE(self) -> str:
-        """Themed mode-bar (top tab) QSS, regenerated on theme change."""
-        t = ThemeManager.instance().tokens()
-        return (
-            f"QTabBar {{ background: {t.alt_base}; border: none; border-bottom: 1px solid {t.mid}; }}"
-            f"QTabBar::tab {{ background: {t.alt_base}; color: {_tab_label()}; padding: 4px 16px; "
-            f"border: none; border-bottom: 2px solid transparent; font-size: 11px; }}"
-            f"QTabBar::tab:selected {{ color: {t.text}; border-bottom: 2px solid {t.success}; }}"
-            f"QTabBar::tab:hover:!selected {{ color: {t.text}; }}"
-        )
-
     def _dependency_banner_style(self) -> str:
         """Themed QSS for the yellow dependency-warnings banner."""
         from .theme.manager import blend_hex
@@ -531,24 +551,15 @@ class LucNhanPanelCore(QWidget):
         )
 
     def _tab_widget_style(self) -> str:
-        """Themed QSS for the inner tab widget (chat tabs)."""
-        t = ThemeManager.instance().tokens()
-        return (
-            f"QTabWidget::pane {{ border: none; }}"
-            f"QTabBar {{ background: {t.base}; border: none; }}"
-            f"QTabBar::tab {{ background: {t.alt_base}; color: {_tab_label()}; padding: 2px 8px; "
-            f"border: none; border-right: 1px solid {t.mid}; "
-            f"font-size: 11px; max-width: 140px; }}"
-            # ``t.text`` (not ``t.highlight_text``) is used here: in light
-            # mode ``t.base`` is near-white and ``highlight_text`` is
-            # also white, so the selected-tab label would be invisible.
-            # ``t.text`` is dark in light mode and light in dark mode,
-            # so it always contrasts with ``t.base``.
-            f"QTabBar::tab:selected {{ background: {t.base}; color: {t.text}; }}"
-            f"QTabBar::tab:hover {{ background: {t.alt_base}; }}"
-            f"QTabBar::close-button {{ image: none; border: none; padding: 1px; }}"
-            f"QTabBar::close-button:hover {{ background: {t.error}; border-radius: 2px; }}"
-        )
+        """Themed QSS for the session strip (GUI contract G2).
+
+        Delegates to the shared theme builder so the strip uses exactly one
+        stylesheet pipeline; only the object names change here so the QSS
+        stays scoped to this widget.
+        """
+        from .theme.widgets_common import get_tab_widget_style
+
+        return get_tab_widget_style()
 
     def _main_splitter_style(self) -> str:
         """Themed QSS for the main horizontal splitter handle."""
@@ -574,33 +585,48 @@ class LucNhanPanelCore(QWidget):
         self.setObjectName("lucnhan_panel")
         _early_log("panel_core:build_ui:set_object_name:done")
 
+        # GUI contract G3 — workspace composition.  Nested native layouts,
+        # top-to-bottom: header -> session strip -> context row ->
+        # chat/content -> composer -> footer.  The composition layout has no
+        # outer margins or gap: each region owns its padding (G2) so we
+        # never stack an extra gutter on top of the region padding.
         _early_log("panel_core:build_ui:root_layout:entry")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        # A narrow dock (GUI contract G3: 460 px is a supported test width)
+        # must not be forced wide by the children's size hints: the
+        # composer hint, the footer label and the header navigation all
+        # shrink below their preferred width instead.
+        self.setMinimumWidth(320)
         _early_log("panel_core:build_ui:root_layout:done")
 
-        # Top-level mode switcher: Chat | Tools.
-        # Hosts may optionally provide tools in a separate form.
-        _early_log("panel_core:build_ui:mode_bar:entry")
-        self._mode_bar = QTabBar()
-        self._mode_bar.setObjectName("mode_bar")
-        self._mode_bar.setStyleSheet("" if self._use_native_host_theme else self._MODE_BAR_STYLE_TEMPLATE)
-        self._mode_bar.setExpanding(False)
-        self._mode_bar.setDrawBase(False)
-        self._mode_bar.addTab("Chat")
-        self._mode_bar.addTab("Tools")
-        self._mode_bar.currentChanged.connect(self._on_mode_changed)
-        if self._tools_form_factory is not None:
-            self._mode_bar.setVisible(False)
-        layout.addWidget(self._mode_bar)
-        _early_log("panel_core:build_ui:mode_bar:done")
+        # Header: wordmark + status left, Chat / Tools / History / Settings
+        # right, secondary actions in the overflow menu.  The Chat entry is
+        # the ``Chat`` mode of ``_mode_stack`` — the native ``Tools`` nav
+        # button already toggles that stack, so the second, duplicate
+        # ``Chat``/``Tools`` tab bar is gone (GUI contract G3).
+        _early_log("panel_core:build_ui:header:entry")
+        layout.addWidget(self._build_header())
+        _early_log("panel_core:build_ui:header:done")
 
-        # Stacked content: page 0 = chat, page 1 = tools
+        # The ToolsPanel shell is intentionally NOT constructed here.
+        # Doing so would force A2A imports / heavy widget construction at
+        # panel-build time (during the Tools button being pressed at
+        # startup, on the user's main thread).  It is created lazily by
+        # :meth:`_ensure_tools_panel_created` on the first Tools open;
+        # until then page 1 keeps a lightweight placeholder so the page
+        # index stays stable.
+        _early_log("panel_core:build_ui:tools_panel:placeholder")
+        self._tools_panel: ToolsPanel | None = None
+        self._tools_placeholder = QWidget()
+        self._tools_tab_index = -1  # kept for IDA compat
+
+        # Stacked content region: page 0 = chat, page 1 = tools.  It takes
+        # all remaining height (the flex-grow region of GUI contract G3).
         _early_log("panel_core:build_ui:mode_stack:entry")
         self._mode_stack = QStackedWidget()
-        layout.addWidget(self._mode_stack, 1)
-        _early_log("panel_core:build_ui:mode_stack:done")
+        self._mode_stack.setObjectName("content_area")
         _early_log("panel_core:build_ui:dependency_banner:entry")
         self._dependency_banner = QLabel()
         self._dependency_banner.setObjectName("dependency_banner")
@@ -608,21 +634,15 @@ class LucNhanPanelCore(QWidget):
         self._dependency_banner.setStyleSheet(maybe_host_stylesheet(self._dependency_banner_style()))
         if self._dependency_warnings:
             self._dependency_banner.setText("Warnings: " + " ".join(self._dependency_warnings))
-            layout.insertWidget(1, self._dependency_banner)
         else:
             self._dependency_banner.hide()
         _early_log("panel_core:build_ui:dependency_banner:done")
+
         # --- Page 0: Chat ---
-        # The chat page is split vertically between the main conversation
-        # area and the message input so the user can drag the splitter
-        # to grow the input (a real resize handle, not a fixed
-        # maximum).  ``_build_input_section`` returns the existing
-        # HBox of editor + action buttons; the splitter owns its size.
-        _early_log("panel_core:build_ui:chat_page:entry")
-        chat_page = QWidget()
-        chat_layout = QVBoxLayout(chat_page)
-        chat_layout.setContentsMargins(0, 0, 0, 0)
-        chat_layout.setSpacing(0)
+        # The session strip, the context row and the footer are *chrome*
+        # regions and stay outside the Chat/Tools content stack, exactly
+        # like the header.  Only the conversation area flips to the Tools
+        # page, so the composer below it never shifts when navigating.
         _early_log("panel_core:build_ui:tab_widget:entry")
         self._build_tab_widget()
         _early_log("panel_core:build_ui:tab_widget:done")
@@ -632,6 +652,29 @@ class LucNhanPanelCore(QWidget):
         _early_log("panel_core:build_ui:create_initial_tab:entry")
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
         _early_log("panel_core:build_ui:create_initial_tab:done")
+        # Session strip region, then the conversation pages it drives.
+        layout.addWidget(self._session_strip)
+        layout.addWidget(self._tab_widget, 1)
+        _early_log("panel_core:build_ui:session_strip:done")
+
+        # Context row: CONTEXT -> symbol -> address -> metadata.
+        _early_log("panel_core:build_ui:context_bar:entry")
+        self._context_bar = ContextBar()
+        self._context_bar.set_model(self._config.provider.model)
+        self._context_bar.apply_theme()
+        layout.addWidget(self._context_bar)
+        _early_log("panel_core:build_ui:context_bar:done")
+
+        self._mode_stack.addWidget(self._main_splitter)
+        _early_log("panel_core:build_ui:mode_stack_chat_page:done")
+        self._mode_stack.addWidget(self._tools_placeholder)
+        _early_log("panel_core:build_ui:tools_panel:done")
+        layout.addWidget(self._mode_stack, 1)
+        _early_log("panel_core:build_ui:mode_stack:done")
+
+        # Composer below the flex-grow content region.  It keeps the
+        # existing draggable vertical splitter so the user can still grow
+        # it with a real resize handle.
         _early_log("panel_core:build_ui:input_section:entry")
         input_container = self._build_input_section()
         self._chat_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -639,37 +682,21 @@ class LucNhanPanelCore(QWidget):
         self._chat_splitter.setHandleWidth(4)
         self._chat_splitter.setChildrenCollapsible(False)
         self._chat_splitter.setStyleSheet(maybe_host_stylesheet(self._chat_splitter_style()))
-        self._chat_splitter.addWidget(self._main_splitter)
         self._chat_splitter.addWidget(input_container)
+        # The composer absorbs every extra pixel above its contract
+        # baseline; shrinking shows more transcript underneath.
         self._chat_splitter.setStretchFactor(0, 1)
-        self._chat_splitter.setStretchFactor(1, 0)
-        chat_layout.addWidget(self._chat_splitter, 1)
+        self._chat_splitter.setStretchFactor(1, 1)
+        layout.addWidget(self._chat_splitter)
         _early_log("panel_core:build_ui:input_section:done")
-        _early_log("panel_core:build_ui:mode_stack_chat_page:entry")
-        self._mode_stack.addWidget(chat_page)
-        _early_log("panel_core:build_ui:mode_stack_chat_page:done")
 
-        # --- Page 1: Tools (lazily populated on first switch) ---
-        # The ToolsPanel shell is intentionally NOT constructed here.
-        # Doing so would force A2A imports / heavy widget construction
-        # at panel-build time (during the Tools button being pressed
-        # at startup, on the user's main thread).  The actual panel
-        # is created lazily by :meth:`_ensure_tools_panel_created`
-        # the first time the user clicks the Tools button or the
-        # mode bar lands on index 1.  Until then we keep a lightweight
-        # placeholder in the stack so the page index stays stable.
-        _early_log("panel_core:build_ui:tools_panel:placeholder")
-        self._tools_panel: ToolsPanel | None = None
-        self._tools_placeholder = QWidget()
-        self._mode_stack.addWidget(self._tools_placeholder)
-        self._tools_tab_index = -1  # kept for IDA compat
-        _early_log("panel_core:build_ui:tools_panel:done")
+        # Footer: pinned strip below the composer, never scrolls with chat.
+        _early_log("panel_core:build_ui:footer:entry")
+        layout.addWidget(self._build_footer())
+        _early_log("panel_core:build_ui:footer:done")
 
-        _early_log("panel_core:build_ui:context_bar:entry")
-        self._context_bar = ContextBar()
-        self._context_bar.set_model(self._config.provider.model)
-        layout.addWidget(self._context_bar)
-        _early_log("panel_core:build_ui:context_bar:done")
+        self._narrow = False
+        self._apply_narrow_presentation(self.width() <= NARROW_BREAKPOINT_PX)
 
         _early_log("panel_core:build_ui:ui_hooks:entry")
         if self._ui_hooks_factory is not None:
@@ -724,24 +751,34 @@ class LucNhanPanelCore(QWidget):
         ``setSizes`` is meaningless before the widget is laid out, so
         we wait for the first show event.  The user can still drag
         the handle afterwards; ``setSizes`` is a one-shot default, not
-        a clamp.  The bottom pane starts at the input editor's
-        minimum height so 2-3 lines are visible without dragging.
+        a clamp.  The bottom pane starts at the composer's contract
+        baseline (GUI contract G2: 44 px editor + action row) so the user
+        sees the editor and Send/Stop without dragging.
         """
         super().showEvent(event)
+        # ``setSizes`` needs a laid-out splitter, so the one-shot seed runs
+        # after the event loop has applied the panel layout.
+        QTimer.singleShot(0, self._seed_chat_splitter)
+
+    def _seed_chat_splitter(self) -> None:
+        """Pin the composer to its contract baseline, one shot only.
+
+        GUI contract G2: the composer starts at its ~78 px baseline so the
+        user sees the editor plus Send/Stop without dragging.  Any extra
+        height goes to the transcript above it; dragging the handle taller
+        is left to the user (the seed never runs twice).
+        """
         splitter = getattr(self, "_chat_splitter", None)
         if splitter is None or getattr(self, "_chat_splitter_seeded", False):
             return
+        total = splitter.height() or 0
+        if total <= 0:
+            return
         self._chat_splitter_seeded = True
-        total = splitter.height() or 1
-        input_min = 60
-        if getattr(self, "_input_area", None) is not None:
-            try:
-                input_min = max(int(self._input_area.minimumHeight()), 60)
-            except Exception:
-                pass
-        input_size = min(input_min, max(40, total - 80))
-        chat_size = max(40, total - input_size)
-        splitter.setSizes([chat_size, input_size])
+        composer_size = _COMPOSER_TEXT_HEIGHT + 34  # editor baseline + action row
+        composer_size = min(composer_size, max(_COMPOSER_MIN_HEIGHT, total - 80))
+        transcript_size = max(40, total - composer_size)
+        splitter.setSizes([transcript_size, composer_size])
 
     def _install_shortcuts(self) -> None:
         """Wire window-scoped panel shortcuts (Ctrl+T new tab, Ctrl+W close).
@@ -765,20 +802,39 @@ class LucNhanPanelCore(QWidget):
         self._on_close_tab(self._tab_widget.currentIndex())
 
     def _build_tab_widget(self) -> None:
-        """Create the tab widget with custom tab bar."""
+        """Create the session strip and the tab widget whose pages it drives.
+
+        GUI contract G2/G3: the strip is its own region (min-height 31 px,
+        inset 9 px, gap 7 px) holding the tab bar and the ``+`` button; the
+        ``QTabWidget`` below it only owns the conversation pages.
+        """
         self._tab_widget = QTabWidget()
-        self._tab_bar = _AddButtonTabBar()
-        self._tab_widget.setTabBar(self._tab_bar)
+        self._tab_widget.setObjectName("session_pages")
         self._tab_widget.setDocumentMode(True)
         self._tab_widget.setTabsClosable(True)
         self._tab_widget.tabCloseRequested.connect(self._on_close_tab)
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
+        self._tab_widget.setStyleSheet(maybe_host_stylesheet(self._tab_widget_style()))
+
+        # Session strip: tab bar + trailing ``+``, hidden until 2+ tabs.
+        self._session_strip = QFrame()
+        self._session_strip.setObjectName("session_strip")
+        self._session_strip.setMinimumHeight(_SESSION_STRIP_MIN_HEIGHT)
+        self._session_strip.setFixedHeight(_SESSION_STRIP_MIN_HEIGHT)
+        self._session_strip.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self._session_strip_layout = QHBoxLayout(self._session_strip)
+        self._session_strip_layout.setContentsMargins(9, 0, 9, 0)
+        self._session_strip_layout.setSpacing(7)
+
+        self._tab_bar = _AddButtonTabBar()
+        self._tab_widget.setTabBar(self._tab_bar)
+        self._tab_bar.setParent(self._session_strip)
         self._tab_bar.set_add_tab_callback(self._on_new_tab)
         self._tab_bar.set_export_tab_callback(self._on_export_tab)
         self._tab_bar.set_fork_tab_callback(self._on_fork_tab)
-        self._tab_widget.setStyleSheet(maybe_host_stylesheet(self._tab_widget_style()))
         self._tab_bar.setExpanding(False)
-        self._tab_bar.setVisible(False)  # hidden until 2+ tabs
+        self._session_strip_layout.addWidget(self._tab_bar, 1)
+        self._session_strip_layout.addWidget(self._tab_bar._add_btn)
 
     def _build_main_splitter(self) -> QSplitter:
         """Create the horizontal splitter (chat | mutation log | history) and return it.
@@ -797,6 +853,10 @@ class LucNhanPanelCore(QWidget):
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._main_splitter.setObjectName("main_splitter")
         self._main_splitter.setHandleWidth(1)
+        # The conversation pane is the flex-grow region of the workspace
+        # (GUI contract G3); without an explicit Expanding policy the
+        # vertical chat splitter hands the leftover height to the composer.
+        self._main_splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._main_splitter.setStyleSheet(maybe_host_stylesheet(self._main_splitter_style()))
         self._main_splitter.addWidget(self._tab_widget)
 
@@ -831,91 +891,320 @@ class LucNhanPanelCore(QWidget):
         return self._main_splitter
 
     def _build_input_section(self) -> QWidget:
-        """Build the bottom input area with text field and action buttons."""
+        """Build the composer region: editor + Send/Stop + overflow.
+
+        GUI contract G3: the editor spans the full workspace width; Send /
+        Stop sit in a compact action row *below* the editor instead of
+        stealing horizontal space from it, and the secondary actions live
+        in the header's overflow menu — not beside the input.
+        """
         self._input_container = QWidget()
-        input_layout = QHBoxLayout(self._input_container)
-        input_layout.setContentsMargins(8, 4, 8, 4)
+        self._input_container.setObjectName("composer")
+        input_layout = QVBoxLayout(self._input_container)
+        # G2: composer wrapper padding 7 top / 10 horizontal / 5 bottom.
+        # The border-top that separates the composer from the transcript is
+        # painted by the editor's own QSS, so the wrapper itself adds no
+        # chrome.
+        input_layout.setContentsMargins(10, 7, 10, 5)
+        input_layout.setSpacing(0)
 
         self._input_area = InputArea(self._input_container)
         self._input_area.set_submit_callback(self._on_submit)
         self._input_area.set_cancel_callback(self._on_cancel)
         self._input_area.set_skill_slugs(self._ctrl.skill_slugs)
         self._ensure_skills_refresh_timer()
-        input_layout.addWidget(self._input_area, 1)
-        input_layout.addLayout(self._build_action_buttons())
-        return self._input_container
+        # GUI contract G2: composer text baseline 44 px, min 38 px.
+        self._input_area.setFixedHeight(44)
+        input_layout.addWidget(self._input_area)
 
-    def _build_action_buttons(self) -> QHBoxLayout:
-        """Build the horizontal strip of action buttons (Send, Stop, New, Export, etc.)."""
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(4)
+        # Commands left, keyboard hint centre, Send/Stop right.
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 2, 0, 0)
+        action_row.setSpacing(9)
 
+        # Secondary actions that still need a visible control at narrow
+        # widths (GUI contract G3 keeps Mutations out of the overflow).
+        action_row.addLayout(self._build_action_buttons())
+
+        self._commands_btn = QToolButton()
+        self._commands_btn.setText("/ Commands")
+        self._commands_btn.setToolTip("List the available slash commands")
+        self._commands_btn.setAccessibleName("Commands — List the available slash commands")
+        self._commands_btn.clicked.connect(self._on_show_commands)
+        action_row.addWidget(self._commands_btn)
+
+        self._hint_label = QLabel("Enter to send · Shift+Enter for newline")
+        self._hint_label.setObjectName("composer_hint")
+        self._hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Secondary hint: it must never widen the dock, it just disappears
+        # at narrow widths (GUI contract G3).
+        self._hint_label.setMinimumWidth(0)
+        self._hint_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        action_row.addWidget(self._hint_label, 1)
+
+        # Send / Stop — the only buttons that stay beside the composer.
         self._send_btn = QPushButton("Send")
         self._send_btn.setObjectName("send_button")
         self._send_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._send_btn.clicked.connect(self._on_send_clicked)
-        btn_layout.addWidget(self._send_btn)
+        action_row.addWidget(self._send_btn)
         self._cancel_btn = QPushButton("Stop")
         self._cancel_btn.setObjectName("cancel_button")
         self._cancel_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._cancel_btn.setVisible(False)
         self._cancel_btn.clicked.connect(self._on_cancel)
-        btn_layout.addWidget(self._cancel_btn)
-        self._new_btn = QPushButton("New")
-        self._new_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
-        self._new_btn.clicked.connect(self._on_new_tab)
-        btn_layout.addWidget(self._new_btn)
-        self._export_btn = QPushButton("Export")
-        self._export_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
-        self._export_btn.clicked.connect(self._on_export_current)
-        btn_layout.addWidget(self._export_btn)
-        self._settings_btn = QPushButton("Settings")
-        self._settings_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
-        self._settings_btn.clicked.connect(self._on_settings)
-        btn_layout.addWidget(self._settings_btn)
+        action_row.addWidget(self._cancel_btn)
+
+        input_layout.addLayout(action_row)
+        return self._input_container
+
+    def _build_action_buttons(self) -> QHBoxLayout:
+        """Build the *secondary* action row (overflow entries + Mutations).
+
+        The returned strip is empty in the default (wide) presentation —
+        secondary actions live in the header's overflow menu — and gains the
+        Mutations action when the dock is narrow, where the header's
+        right-hand slots are given to ``Chat`` / ``Tools``.
+
+        Only *existing* button instances are used: Send / Stop are built in
+        :meth:`_build_input_section` and every other action reuses the
+        instance created here, so no action ever has two stateful copies.
+        """
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(4)
+
+        # Mutations is the only secondary action the narrow presentation
+        # still shows inline (the header keeps Chat / Tools direct and
+        # moves History / Settings / Export into the overflow menu).
+        # Shown once the first mutation is recorded — see
+        # ``_on_mutation_recorded``.
         self._mutations_btn = QPushButton("Mutations")
+        self._mutations_btn.setObjectName("mutations_button")
         self._mutations_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._mutations_btn.setCheckable(True)
         self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
-        self._mutations_btn.setVisible(False)  # shown when first mutation is recorded
+        self._mutations_btn.setVisible(False)
         btn_layout.addWidget(self._mutations_btn)
-
-        # History button — always visible (spec §6.3, §6.4).  Unlike
-        # Mutations, History is a user-entry point and must not be
-        # hidden behind an event.  Checkable + routes through the
-        # shared right-panel coordinator so it stays mutually
-        # exclusive with Mutation Log.
-        self._history_btn = QPushButton("History")
-        self._history_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
-        self._history_btn.setCheckable(True)
-        self._history_btn.clicked.connect(self._on_toggle_history)
-        btn_layout.addWidget(self._history_btn)
-
-        self._tools_btn = QPushButton("Tools")
-        self._tools_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
-        self._tools_btn.setCheckable(True)
-        self._tools_btn.clicked.connect(self._on_toggle_tools)
-        btn_layout.addWidget(self._tools_btn)
-
+        # Mutations is built after the header, so its tooltip / accessible
+        # name are attached here as well.
         self._apply_action_button_tooltips()
-
-        if self._use_native_host_theme:
-            default_btn_style = build_small_button_stylesheet(self)
-            danger_btn_style = build_small_button_stylesheet(self, danger=True)
-            self._send_btn.setStyleSheet(default_btn_style)
-            self._cancel_btn.setStyleSheet(danger_btn_style)
-            self._new_btn.setStyleSheet(default_btn_style)
-            self._export_btn.setStyleSheet(default_btn_style)
-            self._settings_btn.setStyleSheet(default_btn_style)
-            self._mutations_btn.setStyleSheet(default_btn_style)
-            self._history_btn.setStyleSheet(default_btn_style)
-            self._tools_btn.setStyleSheet(default_btn_style)
-        else:
-            # Apply themed styles so colours track the current ThemeTokens.
-            self._apply_action_button_styles()
 
         btn_layout.addStretch()
         return btn_layout
+
+    # ------------------------------------------------------------------
+    # Header: wordmark + status left, Chat / Tools / History / Settings
+    # right, secondary actions in an overflow menu (GUI contract G3).
+    # ------------------------------------------------------------------
+
+    def _build_header(self) -> QWidget:
+        """Main header strip (min-height 38 px, padding 3 / 10)."""
+        header = QFrame()
+        header.setObjectName("panel_header")
+        header.setMinimumHeight(_HEADER_MIN_HEIGHT)
+        header.setFixedHeight(_HEADER_MIN_HEIGHT)
+        header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self._header = header
+        self._header_layout = QHBoxLayout(header)
+        self._header_layout.setContentsMargins(10, 3, 10, 3)
+        self._header_layout.setSpacing(_HEADER_GAP)
+
+        from .theme.widgets_common import (
+            get_header_status_style,
+            get_header_title_style,
+        )
+
+        self._title_label = QLabel("Luc Nhan")
+        self._title_label.setObjectName("panel_title")
+        self._title_label.setStyleSheet(get_header_title_style())
+        self._header_layout.addWidget(self._title_label)
+
+        self._status_label = QLabel("Ready")
+        self._status_label.setObjectName("panel_status")
+        self._status_label.setStyleSheet(get_header_status_style())
+        self._status_label.setToolTip("Agent status")
+        # The status may be shortened at narrow widths, never clipped
+        # without its tooltip (GUI contract G3).
+        self._status_label.setMinimumWidth(0)
+        self._status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._header_layout.addWidget(self._status_label)
+        self._header_layout.addStretch()
+
+        # Navigation buttons, in the contract's fixed order.  They are
+        # the *same* instances used at the narrow breakpoint; only their
+        # placement changes (hidden at wide, docked in the overflow menu
+        # at narrow).
+        self._chat_btn = self._make_nav_button("Chat", self._on_toggle_chat)
+        self._chat_btn.setChecked(True)
+        self._tools_btn = self._make_nav_button("Tools", self._on_toggle_tools)
+        self._history_btn = self._make_nav_button("History", self._on_toggle_history)
+        self._settings_btn = self._make_nav_button("Settings", self._on_settings)
+        for btn in (self._chat_btn, self._tools_btn, self._history_btn, self._settings_btn):
+            self._header_layout.addWidget(btn)
+
+        self._overflow_btn = QToolButton()
+        self._overflow_btn.setText("⋯")
+        self._overflow_btn.setAutoRaise(True)
+        self._overflow_btn.setToolTip("More actions")
+        self._overflow_btn.setAccessibleName("More actions")
+        self._overflow_btn.clicked.connect(self._show_overflow_menu)
+        self._header_layout.addWidget(self._overflow_btn)
+
+        # Export has no dedicated control any more (GUI contract G3 keeps
+        # it in the overflow, never beside the composer).  A button that
+        # only carries the accessible name / tooltip keeps that contract
+        # and every existing ``_export_btn`` caller working.
+        self._export_btn = QPushButton("Export")
+        self._export_btn.setObjectName("export_button")
+        self._export_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
+        self._export_btn.setVisible(False)
+        self._export_btn.clicked.connect(self._on_export_current)
+
+        self._apply_action_button_tooltips()
+        self._apply_header_styles()
+        return header
+
+    def _make_nav_button(self, label: str, handler: Callable[[], None]) -> QPushButton:
+        """Create one header navigation button bound to *handler*."""
+        btn = QPushButton(label)
+        btn.setObjectName(f"nav_{label.lower()}")
+        btn.setCheckable(True)
+        btn.clicked.connect(handler)
+        return btn
+
+    def _build_footer(self) -> QWidget:
+        """Pinned footer strip (min-height 25 px, padding 2 / 11).
+
+        Left: connection / model / thinking.  Right: context token usage.
+        Both read straight from the existing provider config — no new state
+        and no second copy of the model selection.
+        """
+        from .theme.widgets_common import get_footer_style
+
+        footer = QFrame()
+        footer.setObjectName("panel_footer")
+        footer.setMinimumHeight(_FOOTER_MIN_HEIGHT)
+        footer.setFixedHeight(_FOOTER_MIN_HEIGHT)
+        footer.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self._footer = footer
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(11, 2, 11, 2)
+        footer_layout.setSpacing(8)
+
+        provider = self._config.provider
+        thinking = getattr(provider, "thinking_level", "") or "off"
+        self._footer_left = QLabel(f"{provider.name} / {provider.model} · Thinking {thinking}")
+        self._footer_left.setObjectName("footer_left")
+        self._footer_left.setToolTip(f"{provider.name} / {provider.model}")
+        # Long connection / model names must not widen the dock; the
+        # tooltip keeps the full identity readable (GUI contract G3).
+        self._footer_left.setMinimumWidth(0)
+        self._footer_left.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        footer_layout.addWidget(self._footer_left)
+        footer_layout.addStretch()
+
+        self._footer_tokens = QLabel("—")
+        self._footer_tokens.setObjectName("footer_tokens")
+        self._footer_tokens.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        footer_layout.addWidget(self._footer_tokens)
+        footer.setStyleSheet(maybe_host_stylesheet(get_footer_style()))
+        return footer
+
+    def _update_footer(self) -> None:
+        """Refresh the footer from live config + token state.
+
+        Presentation only — never rebuilds the transcript or a session.
+        """
+        footer_left = getattr(self, "_footer_left", None)
+        if footer_left is not None:
+            provider = self._config.provider
+            thinking = getattr(provider, "thinking_level", "") or "off"
+            text = f"{provider.name} / {provider.model} · Thinking {thinking}"
+            footer_left.setText(text)
+            footer_left.setToolTip(text)
+        footer_tokens = getattr(self, "_footer_tokens", None)
+        if footer_tokens is not None and self._context_bar is not None:
+            footer_tokens.setText(self._context_bar._tokens_label[1].text())
+            footer_tokens.setToolTip("Context tokens used")
+
+    # ------------------------------------------------------------------
+    # Responsive presentation (GUI contract G3)
+    # ------------------------------------------------------------------
+
+    def resizeEvent(self, event) -> None:
+        """Switch chrome presentation at the 640 px breakpoint.
+
+        Resize only changes presentation and visibility: no transcript, no
+        session, no draft, no caret and no runner is touched (GUI contract
+        G3).  The tooltips, accessible names and menu entries stay intact
+        so every relocated action keeps its keyboard/AT access.
+        """
+        super().resizeEvent(event)
+        self._apply_narrow_presentation(self.width() <= NARROW_BREAKPOINT_PX)
+
+    def _apply_narrow_presentation(self, narrow: bool) -> None:
+        """Apply the narrow / wide chrome presentation.
+
+        Wide  : ``Chat``  ``Tools``  ``History``  ``Settings`` + overflow
+        Narrow: ``Tools`` direct, ``History`` / ``Settings`` / ``Export``
+        move into the overflow menu (labels + tooltips preserved), header
+        gap drops to 5 px and the context row hides its secondary metadata.
+        """
+        if getattr(self, "_narrow", None) == narrow:
+            return
+        self._narrow = narrow
+        header_layout = getattr(self, "_header_layout", None)
+        if header_layout is not None:
+            header_layout.setSpacing(_HEADER_GAP_NARROW if narrow else _HEADER_GAP)
+        for btn, wide_visible in (
+            (self._history_btn, True),
+            (self._settings_btn, True),
+        ):
+            btn.setVisible(wide_visible and not narrow)
+        overflow = getattr(self, "_overflow_btn", None)
+        if overflow is not None:
+            overflow.setVisible(True)
+        context_bar = getattr(self, "_context_bar", None)
+        if context_bar is not None:
+            context_bar.set_narrow(narrow)
+
+    def _apply_header_styles(self) -> None:
+        """Push token-driven chrome + navigation styles onto the header."""
+        from .theme.widgets_common import (
+            get_add_tab_btn_style,
+            get_header_frame_style,
+            get_header_status_style,
+            get_header_title_style,
+        )
+
+        host = self._use_native_host_theme
+        self._header.setStyleSheet(maybe_host_stylesheet(get_header_frame_style()))
+        self._title_label.setStyleSheet(maybe_host_stylesheet(get_header_title_style()))
+        self._status_label.setStyleSheet(maybe_host_stylesheet(get_header_status_style()))
+        self._overflow_btn.setStyleSheet(maybe_host_stylesheet(get_add_tab_btn_style()))
+
+        nav_style = build_small_button_stylesheet(self) if host else maybe_host_stylesheet(_small_btn_style())
+        for btn in (self._tools_btn, self._history_btn, self._settings_btn):
+            btn.setStyleSheet(nav_style)
+        if getattr(self, "_mutations_btn", None) is not None:
+            self._mutations_btn.setStyleSheet(nav_style)
+        self._composer_hint_style()
+
+    def _composer_hint_style(self) -> None:
+        """Apply the muted 11 px composer-hint style (G2 secondary hints)."""
+        from .theme.widgets_common import get_hint_status_style
+
+        hint = getattr(self, "_hint_label", None)
+        if hint is not None:
+            hint.setStyleSheet(maybe_host_stylesheet(get_hint_status_style()))
+
+    def _apply_footer_styles(self) -> None:
+        """Push token-driven footer styles from the current theme."""
+        from .theme.widgets_common import get_footer_style
+
+        footer = getattr(self, "_footer", None)
+        if footer is not None:
+            footer.setStyleSheet(maybe_host_stylesheet(get_footer_style()))
 
     def _apply_action_button_tooltips(self) -> None:
         """Attach a one-line tooltip + accessible name to each header action.
@@ -925,29 +1214,68 @@ class LucNhanPanelCore(QWidget):
         Tooltips also double as the accessible description for screen readers
         when an explicit accessible name is present.
         """
-        for btn, tip in (
-            (self._send_btn, "Send the message (Enter)"),
-            (self._cancel_btn, "Stop the running agent (Esc)"),
-            (self._new_btn, "Start a new chat tab (Ctrl+T)"),
-            (self._export_btn, "Export this chat to a file"),
-            (self._settings_btn, "Open Luc Nhan settings"),
-            (self._mutations_btn, "Show the mutation log (IDA database edits made by the agent)"),
-            (self._history_btn, "Show past chat sessions"),
-            (self._tools_btn, "Open the tools panel"),
-        ):
+        for btn, tip in self._iter_action_buttons():
             btn.setToolTip(tip)
             btn.setAccessibleName(f"{btn.text()} — {tip}")
 
+    def _iter_action_buttons(self):
+        """Yield ``(button, tooltip)`` for every workspace action button.
+
+        Single source of truth for tooltips / accessible names / styling so
+        a relocated action can never lose its description.
+        """
+        for attr, tip in _ACTION_BUTTON_TOOLTIPS.items():
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                yield btn, tip
+
+    def _show_overflow_menu(self) -> None:
+        """Show the secondary actions menu (Export / History / Settings).
+
+        The menu is built from the *same* button instances as the header,
+        so an action toggled from here keeps the button's checked state in
+        sync with the pane it opened.
+        """
+        menu = QMenu(self)
+        entries = (
+            ("Export", self._export_btn),
+            ("History", self._history_btn),
+            ("Settings", self._settings_btn),
+            ("Mutations", self._mutations_btn),
+        )
+        actions = {}
+        for label, btn in entries:
+            if btn is None:
+                continue
+            action = menu.addAction(label)
+            action.setCheckable(btn.isCheckable())
+            action.setChecked(btn.isChecked())
+            action.setToolTip(btn.toolTip())
+            # ``clicked`` on the button fires the original handler, so
+            # button/pane state stays in sync with the menu entry.
+            action.triggered.connect(lambda _checked=False, b=btn: b.click())
+            actions[action] = btn
+        chosen = menu.exec(self._overflow_btn.mapToGlobal(self._overflow_btn.rect().bottomLeft()))
+        if chosen is None or chosen not in actions:
+            return
+        # ``triggered`` already delegated to the button's own handler;
+        # this keeps the check state in sync for actions that mirror a
+        # pane toggle without a pressed-state click.
+        btn = actions[chosen]
+        if btn.isCheckable() and btn.isChecked() != chosen.isChecked():
+            btn.setChecked(chosen.isChecked())
+
     def _apply_action_button_styles(self) -> None:
         """Refresh the action-bar button styles from the current theme."""
-        self._send_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
-        self._cancel_btn.setStyleSheet(maybe_host_stylesheet(_cancel_btn_style()))
-        self._new_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
-        self._export_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
-        self._settings_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
-        self._mutations_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
-        self._history_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
-        self._tools_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
+        danger = {self._cancel_btn}
+        for btn in (b for b, _tip in self._iter_action_buttons()):
+            btn.setStyleSheet(maybe_host_stylesheet(_cancel_btn_style() if btn in danger else _small_btn_style()))
+
+    def _on_show_commands(self) -> None:
+        """List the available slash commands in the composer."""
+        slugs = sorted(set(self._ctrl.skill_slugs) | set(_BUILTIN_COMMAND_SLUGS))
+        text = "Available commands:\n" + "\n".join(f"/{slug}" for slug in slugs)
+        QMessageBox.information(self, "Commands", text)
 
     def _on_theme_changed(self, _tokens) -> None:
         """Refresh themed widgets when the user switches the active theme.
@@ -971,8 +1299,11 @@ class LucNhanPanelCore(QWidget):
         if not use_native_host_theme():
             # Re-apply the global QSS template with the new token values.
             self._apply_action_button_styles()
-            if hasattr(self, "_mode_bar") and self._mode_bar is not None:
-                self._mode_bar.setStyleSheet(self._MODE_BAR_STYLE_TEMPLATE)
+            self._apply_header_styles()
+            self._apply_footer_styles()
+            context_bar = getattr(self, "_context_bar", None)
+            if context_bar is not None:
+                context_bar.apply_theme()
             if hasattr(self, "_dependency_banner") and self._dependency_banner is not None:
                 self._dependency_banner.setStyleSheet(maybe_host_stylesheet(self._dependency_banner_style()))
             if hasattr(self, "_tab_widget") and self._tab_widget is not None:
@@ -1033,8 +1364,10 @@ class LucNhanPanelCore(QWidget):
     # --- Tab management ---
 
     def _update_tab_bar_visibility(self) -> None:
-        """Show the tab bar only when there are 2+ tabs."""
-        self._tab_bar.setVisible(self._tab_widget.count() > 1)
+        """Show the session strip only when there are 2+ tabs."""
+        strip = getattr(self, "_session_strip", None)
+        if strip is not None:
+            strip.setVisible(self._tab_widget.count() > 1)
 
     def _create_tab(self, tab_id: str, label: str) -> ChatView:
         """Create a new ChatView and add it as a tab."""
@@ -1454,6 +1787,7 @@ class LucNhanPanelCore(QWidget):
             return
         ctx_window = self._config.provider.context_window or 0
         self._context_bar.set_tokens(value, ctx_window)
+        self._update_footer()
 
     def _update_tab_label(self, tab_id: str) -> None:
         """Update tab label from the first user message."""
@@ -3394,23 +3728,30 @@ class LucNhanPanelCore(QWidget):
         self._history_closing = threading.Event()
 
     def _on_mode_changed(self, index: int) -> None:
-        """Handle the Chat / Tools mode bar switch."""
+        """Switch between the Chat (0) and Tools (1) workspace pages."""
         self._mode_stack.setCurrentIndex(index)
         if index == 1:
             # Lazy: create the shell on first switch, then activate the
             # currently selected sub-tab.  ``_ensure_tools_panel_created``
             # is idempotent so calling it here is safe even if the user
-            # already pressed the Tools button before the mode bar
-            # caught up.
+            # already pressed the Tools button before the stack caught up.
             self._ensure_tools_panel_created()
             if self._tools_panel is not None:
                 self._activate_tools_tab(self._tools_panel._tabs.currentIndex())
             self._tools_btn.setChecked(True)
+            self._chat_btn.setChecked(False)
         else:
             self._tools_btn.setChecked(False)
+            self._chat_btn.setChecked(True)
+
+    def _on_toggle_chat(self) -> None:
+        """Return to the chat workspace from the Tools page."""
+        self._mode_stack.setCurrentIndex(0)
+        self._chat_btn.setChecked(True)
+        self._tools_btn.setChecked(False)
 
     def _on_toggle_tools(self) -> None:
-        """Toggle the Tools view (IDA-docked or embedded mode tab)."""
+        """Toggle the Tools view (IDA-docked or embedded page)."""
         # Lazy shell creation runs before we decide to show/hide.  In
         # the IDA-docked path the panel may already exist (created by
         # an earlier show_tools_panel call); the helper is idempotent.
@@ -3427,9 +3768,16 @@ class LucNhanPanelCore(QWidget):
                 if self._tools_panel is not None:
                     self._activate_tools_tab(self._tools_panel._tabs.currentIndex())
         else:
-            # Toggle mode bar between Chat (0) and Tools (1)
-            current = self._mode_bar.currentIndex()
-            self._mode_bar.setCurrentIndex(1 if current == 0 else 0)
+            # Toggle the workspace stack between Chat (0) and Tools (1)
+            self._mode_stack.setCurrentIndex(1 if self._mode_stack.currentIndex() == 0 else 0)
+            if self._mode_stack.currentIndex() == 1:
+                self._tools_btn.setChecked(True)
+                self._chat_btn.setChecked(False)
+                if self._tools_panel is not None:
+                    self._activate_tools_tab(self._tools_panel._tabs.currentIndex())
+            else:
+                self._tools_btn.setChecked(False)
+                self._chat_btn.setChecked(True)
 
     def show_tools_panel(self, tab_index: int | None = None) -> None:
         """Show the tools view and switch to the given tab.
@@ -3472,7 +3820,8 @@ class LucNhanPanelCore(QWidget):
             self._tools_form.show()
             self._tools_form.set_tab(tab_index)
         else:
-            self._mode_bar.setCurrentIndex(1)
+            self._mode_stack.setCurrentIndex(1)
+            self._chat_btn.setChecked(False)
             if hasattr(self._tools_panel, "_tabs"):
                 self._tools_panel._tabs.setCurrentIndex(tab_index)
         self._tools_btn.setChecked(True)
@@ -3969,3 +4318,15 @@ class LucNhanPanelCore(QWidget):
             "Queue — Queue a follow-up message" if running else "Send — Send the message (Enter)"
         )
         self._cancel_btn.setVisible(running)
+        # Header status carries the real agent state as *text* (never a
+        # bare colour dot — GUI contract G1/G9).
+        status = getattr(self, "_status_label", None)
+        if status is not None:
+            if self._awaiting_button_approval:
+                text = "Waiting for approval"
+            elif running:
+                text = "Running"
+            else:
+                text = "Ready"
+            status.setText(text)
+            status.setToolTip(text)
