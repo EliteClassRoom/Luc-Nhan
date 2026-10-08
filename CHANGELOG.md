@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-10-08
+
 ### Added
 
 - **Read-only emulation inputs and function setup** — `memory_buffers` supplies
