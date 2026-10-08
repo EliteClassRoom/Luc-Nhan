@@ -12,7 +12,11 @@ import time
 import traceback
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..memory.authority import MemoryWriteAuthority
+    from ..memory.service import BinaryMemoryService
 
 from .. import constants
 from ..core.config import RikuganConfig
@@ -378,9 +382,7 @@ def _extract_ask_user_option_label(item: object) -> str | None:
                         stripped = value.strip()
                         if stripped:
                             return stripped
-                    elif value is not None and not isinstance(
-                        value, (list, tuple, dict, set)
-                    ):
+                    elif value is not None and not isinstance(value, (list, tuple, dict, set)):
                         # Primitive scalar (int / float / bool) — stringify so
                         # ``{"value": 1}`` still surfaces as "1". Nested
                         # containers are deliberately rejected: a label whose
@@ -400,13 +402,11 @@ def _extract_ask_user_option_label(item: object) -> str | None:
                 stripped = value.strip()
                 if stripped:
                     return stripped
-            elif value is not None and not isinstance(
-                value, (list, tuple, dict, set)
-            ):
+            elif value is not None and not isinstance(value, (list, tuple, dict, set)):
                 text = str(value).strip()
                 if text:
                     return text
-    except Exception:  # noqa: BLE001 — see docstring; must never raise.
+    except Exception:  # See docstring — this must never raise.
         return None
     return None
 
@@ -489,7 +489,7 @@ def _normalize_ask_user_options(raw: object) -> list[str]:
             # dict, or string). Last-resort probe for a label attribute.
             label = _extract_ask_user_option_label(raw)
             candidates = [label] if label else []
-    except Exception:  # noqa: BLE001 — never let a malformed payload raise.
+    except Exception:  # Never let a malformed payload raise.
         return []
 
     # De-duplicate case-insensitively while preserving first-occurrence
@@ -584,10 +584,20 @@ class AgentLoop:
             compaction_threshold=0.8,
         )
 
-        # Central memory service (set by controller when binary identity is resolved).
-        # When None, save_memory and /memory report central memory unavailable.
-        self.memory_service = None
-        self._memory_authority = None
+        # Central memory service (set by controller when binary identity is
+        # resolved). When None, save_memory and /memory report central memory
+        # unavailable. Children inherit the parent's wiring so a subagent
+        # advertising save_memory can actually write — the WorkspaceStore
+        # serializes every access on an RLock, so sharing one instance across
+        # parent and subagent threads is safe. Anything a child still must not
+        # reach (case switching via /case) stays owned by the controller via
+        # _memory_manager, which is deliberately NOT inherited.
+        self.memory_service: BinaryMemoryService | None = (
+            parent_loop.memory_service if parent_loop is not None else None
+        )
+        self._memory_authority: MemoryWriteAuthority | None = (
+            parent_loop._memory_authority if parent_loop is not None else None
+        )
         # Mutation log for /undo support — typed once (see MutationRecord).
         # Guarded by _mutation_lock: subagent threads append via
         # record_mutations while the loop thread appends in
@@ -3213,6 +3223,7 @@ class BackgroundAgentRunner:
                     "wedged or dead. Daemon thread exiting without "
                     "notifying consumer; UI must detect via timeout."
                 )
+
         try:
             for event in self.agent_loop.run(user_message):
                 if event.type == TurnEventType.TEXT_DELTA:

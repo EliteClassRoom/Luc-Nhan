@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import sys
 import threading
 import unittest
@@ -318,6 +319,61 @@ class TestRunnerMaxTurnsValidation(unittest.TestCase):
             max_turns=12,
         )
         assert runner._max_turns == 12
+
+
+class TestRunnerInheritsCentralMemory(unittest.TestCase):
+    """A child loop must inherit the parent's central-memory wiring.
+
+    ``AgentLoop.__init__`` advertises ``save_memory`` to the LLM whenever
+    ``session.idb_path`` is set (exploration subagents get the parent's
+    path), so a child without ``memory_service`` makes the LLM call a tool
+    that can only ever answer "Central memory is not available in this
+    context." Child loops therefore inherit both the service and the
+    write authority from ``parent_loop``. The parallel
+    ``SubagentManager`` workers have no ``parent_loop`` and stay unwired —
+    they never advertise the tool.
+    """
+
+    def _parent(self, wired: bool) -> _FakeAgentLoop:
+        parent = _FakeAgentLoop.__new__(_FakeAgentLoop)
+        parent._cancelled = threading.Event()
+        # Queues the real AgentLoop constructor inherits from parent_loop.
+        for attr in ("_user_answer_queue", "_tool_approval_queue", "_approval_queue"):
+            setattr(parent, attr, queue.Queue(maxsize=1))
+        parent._always_allow_scripts = False
+        parent.memory_service = object() if wired else None
+        parent._memory_authority = object() if wired else None
+        return parent
+
+    def _build(self, parent: _FakeAgentLoop | None, session: SessionState):
+        """Build a real child AgentLoop through the production constructor."""
+        runner = SubagentRunner(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=RikuganConfig(),
+            host_name="test",
+            parent_loop=parent,
+        )
+        return runner._build_loop(session)
+
+    def test_child_inherits_service_and_authority(self) -> None:
+        parent = self._parent(wired=True)
+        child = self._build(parent, SessionState(idb_path="/tmp/x.i64"))
+        assert child.memory_service is parent.memory_service
+        assert child._memory_authority is parent._memory_authority
+
+    def test_child_does_not_inherit_case_manager(self) -> None:
+        """``_memory_manager`` backs /case; that stays controller-owned."""
+        parent = self._parent(wired=True)
+        parent._memory_manager = object()
+        child = self._build(parent, SessionState(idb_path="/tmp/x.i64"))
+        assert not hasattr(child, "_memory_manager")
+
+    def test_parentless_child_stays_unwired(self) -> None:
+        """Parallel SubagentManager workers get no service and no tool."""
+        child = self._build(None, SessionState())
+        assert child.memory_service is None
+        assert child._memory_authority is None
 
 
 if __name__ == "__main__":
