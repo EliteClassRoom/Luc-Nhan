@@ -2327,13 +2327,24 @@ class TestAdaptivePanePresentation(unittest.TestCase):
         panel._on_close_pane_shortcut()
         self.assertIsNone(panel._pane_name)
 
-    def test_escape_shortcut_is_widget_scoped_not_window_scoped(self) -> None:
-        """A window-scoped Esc would swallow the composer's key entirely."""
+    def test_escape_shortcut_is_scoped_to_the_pane_stack(self) -> None:
+        """The shortcut must be parented to the pane stack, not the panel.
+
+        A window-scoped Esc swallows the composer's key entirely, and a
+        ``WidgetWithChildrenShortcut`` parented to the panel root is just
+        as bad — the composer is one of its descendants, so Qt still
+        consumes Escape before ``InputArea.keyPressEvent`` runs.  Only a
+        scope rooted at the pane stack leaves the composer out.  The
+        real-PySide6 counterpart
+        (``test_escape_in_composer_cancels_instead_of_closing_pane``)
+        proves the key really is delivered.
+        """
         import inspect
 
         src = inspect.getsource(LucNhanPanelCore._install_shortcuts)
         self.assertIn("Qt.ShortcutContext.WidgetWithChildrenShortcut", src)
-        self.assertNotIn("Qt.ShortcutContext.WindowShortcut)\n        close_pane_sc", src)
+        self.assertIn("QShortcut(QKeySequence(Qt.Key.Key_Escape), self._pane_stack)", src)
+        self.assertNotIn("QShortcut(QKeySequence(Qt.Key.Key_Escape), self)", src)
 
     def test_panes_share_one_stack_so_they_cannot_coexist(self) -> None:
         """Source-level guard: the panes live in the pane stack, never as

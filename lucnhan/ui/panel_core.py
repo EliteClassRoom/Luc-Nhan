@@ -847,12 +847,14 @@ class LucNhanPanelCore(QWidget):
         close_tab_sc.activated.connect(self._close_current_tab)
 
         # GUI contract G5: Escape is the narrow-dock equivalent of the
-        # pane's Close button.  Scoped with ``WidgetWithChildrenShortcut``
-        # (NOT ``WindowShortcut``) so the pane only takes the key while it
-        # actually owns focus: when the user is typing in the composer, the
-        # editor's documented Esc-to-cancel handler keeps it.  See
-        # :meth:`_on_close_pane_shortcut` for the full precedence rule.
-        close_pane_sc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        # pane's Close button.  Parented to the *pane stack*, not to the
+        # panel root: a ``WidgetWithChildrenShortcut`` whose parent is the
+        # panel would still contain the composer in its scope, so Qt would
+        # consume Escape at the shortcut layer and the editor's
+        # documented Esc-to-cancel-agent path would never run.  Scoped to
+        # the stack, the pane claims the key only while the pane (or one
+        # of its children) actually holds focus.
+        close_pane_sc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self._pane_stack)
         close_pane_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         close_pane_sc.activated.connect(self._on_close_pane_shortcut)
 
@@ -872,10 +874,13 @@ class LucNhanPanelCore(QWidget):
            pane is not something the user is asking for while typing.
         3. Otherwise → close the pane and hand focus to the opener.
 
-        The shortcut is widget-scoped, so case 2 is also enforced by Qt
-        (the pane never sees the key while the editor has focus).  The
-        explicit check keeps the rule correct in the test harness, where
-        focus is simulated rather than dispatched through Qt.
+        Case 2 is enforced structurally: the shortcut's scope is the pane
+        stack (see :meth:`_install_shortcuts`), which does not contain
+        the composer, so Qt never routes the key here while the editor
+        has focus.  This explicit check is a second line of defence for
+        hosts that route focus differently, and keeps the rule assertable
+        in the stub harness where focus is simulated rather than
+        dispatched by Qt.
         """
         if getattr(self, "_pane_name", None) is None:
             return

@@ -164,6 +164,114 @@ class TestAdaptivePaneGeometry(unittest.TestCase):
         self.assertLessEqual(check_right, self.content.width())
         self.assertTrue(self.history.isVisible())
 
+    # --- Escape routing (GUI contract G5 must not cost the composer Esc)
+    #
+    # These dispatch REAL key events through Qt's shortcut system.  A
+    # scope test alone cannot catch the regression this guards: a
+    # WidgetWithChildrenShortcut parented to the panel root still
+    # contains the composer, so Qt consumes Escape at the shortcut layer
+    # and InputArea.keyPressEvent's cancel path never runs — the stubbed
+    # "pane stayed open" assertion would still have passed.
+
+    @staticmethod
+    def _esc() -> object:
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        return QKeyEvent(
+            QEvent.Type.KeyPress,
+            Qt.Key.Key_Escape,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+    @staticmethod
+    def _press_escape(target) -> None:
+        """Dispatch a REAL Escape through Qt's shortcut + focus chain."""
+        QApplication.sendEvent(target, TestAdaptivePaneGeometry._esc())
+        _app.processEvents()
+
+    def test_escape_in_composer_cancels_instead_of_closing_pane(self) -> None:
+        """Composer focused + pane open: the editor must SEE Escape.
+
+        Asserts the editor actually received the key (a real cancel
+        callback fired), not merely that the pane stayed open.
+        """
+        from PySide6.QtGui import QKeySequence, QShortcut  # Qt6: QShortcut lives in QtGui
+
+        self.stack.setCurrentWidget(self.history)
+        self.stack.setVisible(True)
+        self.history.set_entries([_entry("a", "Analyze Parser")])
+
+        composer = self.composer  # QPlainTextEdit stand-in
+        cancels: list[int] = []
+
+        class _Editor(QPlainTextEdit):
+            """Stands in for ``InputArea``: Esc -> cancel callback."""
+
+            def keyPressEvent(self, event) -> None:  # Qt API name
+                if event.key() == Qt.Key.Key_Escape:
+                    cancels.append(1)
+                    return
+                super().keyPressEvent(event)
+
+        editor = _Editor()
+        self.root.layout().removeWidget(composer)
+        self.root.layout().addWidget(editor)
+
+        # Exactly the production wiring: shortcut parented to the pane
+        # stack, widget-scoped.
+        closes: list[int] = []
+        sc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self.stack)
+        sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc.activated.connect(lambda: closes.append(1))
+
+        self.root.show()
+        editor.setFocus()
+        _app.processEvents()
+        self.assertTrue(editor.hasFocus())
+
+        self._press_escape(editor)
+        self.assertEqual(cancels, [1], "composer must receive Esc and cancel")
+        self.assertEqual(closes, [], "the pane must not consume the composer Esc")
+        self.assertTrue(self.history.isVisible(), "pane must stay open")
+
+    def test_escape_in_pane_closes_it(self) -> None:
+        """Pane focused + pane open: Escape closes the pane."""
+        from PySide6.QtGui import QKeySequence, QShortcut  # Qt6: QShortcut lives in QtGui
+
+        self.stack.setCurrentWidget(self.history)
+        self.stack.setVisible(True)
+        closes: list[int] = []
+        sc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self.stack)
+        sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc.activated.connect(lambda: closes.append(1))
+
+        self.root.show()
+        target = self.history._search  # a real focusable child of the pane
+        target.setFocus()
+        _app.processEvents()
+        self.assertTrue(target.hasFocus())
+
+        self._press_escape(target)
+        self.assertEqual(closes, [1], "pane must receive Esc when it owns focus")
+
+    def test_pane_shortcut_scope_excludes_the_composer(self) -> None:
+        """Structural guard: the scope must not contain the composer.
+
+        This is the regression that made the shortcut swallow the
+        composer's key: the composer is a sibling of the pane stack, so a
+        shortcut parented to anything ABOVE the pane would include it in
+        its WidgetWithChildren scope and Qt would consume Escape before
+        the editor saw it.
+        """
+        import inspect
+
+        from lucnhan.ui.panel_core import LucNhanPanelCore
+
+        src = inspect.getsource(LucNhanPanelCore._install_shortcuts)
+        self.assertIn("QShortcut(QKeySequence(Qt.Key.Key_Escape), self._pane_stack)", src)
+        self.assertNotIn("QShortcut(QKeySequence(Qt.Key.Key_Escape), self)", src)
+
     def test_panes_are_mutually_exclusive(self) -> None:
         self.stack.setCurrentWidget(self.history)
         self.stack.setVisible(True)
