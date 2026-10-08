@@ -298,7 +298,9 @@ class TestApprovalButtonLabels(unittest.TestCase):
                 self.assertNotIn(padded, self._module_src)
 
     def test_labels_present_without_padding(self) -> None:
-        self.assertIn('"Allow"', self._module_src)
+        # G4 renamed the primary action to "Allow once" so it cannot be
+        # misread as a permanent grant; the label is still unpadded.
+        self.assertIn('"Allow once"', self._module_src)
         self.assertIn('"Always Allow"', self._module_src)
         self.assertIn('"Deny"', self._module_src)
 

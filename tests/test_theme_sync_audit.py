@@ -336,19 +336,17 @@ class TestToolCallWidgetThemeRefresh(unittest.TestCase):
         widget.setStyleSheet = MagicMock()  # type: ignore[attr-defined]
         self._qss_calls: dict[str, str] = {}
         for attr in (
-            "_bullet",
             "_name_label",
             "_summary_label",
             "_status_label",
-            "_preview_label",
-            "_result_header",
-            "_result_label",
+            "_status_icon",
         ):
             mock = MagicMock()
             mock.styleSheet.return_value = ""  # initial empty
             widget.__setattr__(attr, mock)
         widget._tool_name = "decompile_function"
         widget._is_error = False
+        widget._state = "running"
         widget._apply_styles()
         # Capture the QSS each label received under the dark theme.
         dark_summary = widget._summary_label.setStyleSheet.call_args.args[0]
@@ -691,11 +689,12 @@ class TestExecutePythonWidgetThemeRefresh(unittest.TestCase):
         tm._apply_now()
         widget = ExecutePythonWidget.__new__(ExecutePythonWidget)
         widget.setStyleSheet = MagicMock()  # type: ignore[attr-defined]
-        for attr in ("_bullet", "_name_label", "_status_icon", "_result_edit"):
+        for attr in ("_name_label", "_status_icon", "_result_edit"):
             mock = MagicMock()
             mock.text.return_value = "" if attr != "_status_icon" else "✓"
             widget.__setattr__(attr, mock)
         widget._is_error = False
+        widget._state = "success"
         widget._apply_styles()
         dark_status = widget._status_icon.setStyleSheet.call_args.args[0]
         self.assertTrue(dark_status, "status icon must have a stylesheet")

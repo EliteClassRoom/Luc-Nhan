@@ -151,12 +151,19 @@ from .theme.widgets_mutation import (  # noqa: E402,F401 — re-export
     get_mutation_undo_btn_style,
     get_tool_approval_allow_btn_style,
     get_tool_approval_always_btn_style,
+    get_tool_approval_body_style,
     get_tool_approval_code_editor_style,
     get_tool_approval_deny_btn_style,
     get_tool_approval_disabled_btn_style,
     get_tool_approval_frame_style,
     get_tool_approval_header_style,
+    get_tool_approval_state_style,
+    get_tool_detail_surface_style,
     get_tool_result_editor_style,
+    get_tool_row_meta_style,
+    get_tool_row_name_style,
+    get_tool_row_style,
+    get_tool_row_target_style,
 )
 
 # Orchestra/delegation/profiles style getters moved to ui/theme/widgets_orchestra.py;

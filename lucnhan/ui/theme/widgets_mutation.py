@@ -75,13 +75,65 @@ def _mutation_count_style() -> str:
 
 
 def _tool_approval_frame_style() -> str:
+    """Warning-border exception card (G4): 1px ``warning``, radius 4.
+
+    Radius 4 is the contract's control radius; the previous 6px read as
+    an oversized card against the 4px buttons inside it.
+    """
     t = _tokens()
-    return f"QFrame#message_question {{ border: 1px solid {t.warning}; border-radius: 6px; background: {t.code_bg}; }}"
+    return f"QFrame#message_question {{ border: 1px solid {t.warning}; border-radius: 4px; background: {t.window}; }}"
 
 
 def _tool_approval_header_style() -> str:
     t = _tokens()
     return f"color: {t.warning}; font-weight: bold; font-size: inherit;"
+
+
+def _tool_approval_state_style() -> str:
+    """Header state chip (``Paused``) — muted caption, 10-11px role (G2)."""
+    t = _tokens()
+    return f"color: {t.muted_text}; font-size: inherit;"
+
+
+def _tool_approval_body_style() -> str:
+    """Description/target line inside the approval card."""
+    t = _tokens()
+    return f"color: {t.text}; font-size: inherit;"
+
+
+def _tool_row_style() -> str:
+    """Compact tool summary row (G2/G4): one row, min-height 30, no card
+    chrome. Padding 5/6, gap 8, radius 4 (control radius)."""
+    return (
+        "QFrame#message_tool { background-color: transparent; border: none; }"
+        "QFrame#message_tool QToolButton#collapse_button { border-radius: 3px; }"
+    )
+
+
+def _tool_row_name_style() -> str:
+    """Tool name — 12px semibold role (G2)."""
+    t = _tokens()
+    return f"color: {t.text}; font-weight: bold; font-size: inherit;"
+
+
+def _tool_row_target_style() -> str:
+    """Target/argument column — 11px monospace (G2)."""
+    t = _tokens()
+    return f'color: {t.muted_text}; font-family: Consolas, "Courier New", monospace; font-size: inherit;'
+
+
+def _tool_row_meta_style() -> str:
+    """Right-hand count/duration — muted caption (G2/G4)."""
+    t = _tokens()
+    return f"color: {t.muted_text}; font-size: inherit;"
+
+
+def _tool_detail_surface_style() -> str:
+    """Expanded detail inset surface (G4): padding 7 top / 10 right-bottom /
+    22 left. Flat ``base`` fill, 1px ``mid`` border, radius 3 (compact badge
+    radius — it is an inset code surface, not a control)."""
+    t = _tokens()
+    return f"QFrame#tool_detail {{ background: {t.base}; border: 1px solid {t.mid}; border-radius: 3px; }}"
 
 
 def _tool_approval_code_editor_style() -> str:
@@ -220,6 +272,34 @@ def get_tool_approval_frame_style() -> str:
 
 def get_tool_approval_header_style() -> str:
     return _tool_approval_header_style()
+
+
+def get_tool_approval_state_style() -> str:
+    return _tool_approval_state_style()
+
+
+def get_tool_approval_body_style() -> str:
+    return _tool_approval_body_style()
+
+
+def get_tool_row_style() -> str:
+    return _tool_row_style()
+
+
+def get_tool_row_name_style() -> str:
+    return _tool_row_name_style()
+
+
+def get_tool_row_target_style() -> str:
+    return _tool_row_target_style()
+
+
+def get_tool_row_meta_style() -> str:
+    return _tool_row_meta_style()
+
+
+def get_tool_detail_surface_style() -> str:
+    return _tool_detail_surface_style()
 
 
 def get_tool_approval_code_editor_style() -> str:

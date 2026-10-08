@@ -18,12 +18,12 @@ ensure_pyside6_stubs()
 sys.modules.pop("lucnhan.ui.tool_widgets", None)
 
 from lucnhan.ui.tool_widgets import (
-    _DEFAULT_TOOL_COLOR,
     _build_approval_header,
     _format_tool_group_label,
     _format_tool_summary,
+    _row_target_text,
+    _status_style,
     _strip_mcp_prefix,
-    _tool_color,
     _truncate_preview,
 )
 
@@ -52,26 +52,50 @@ class TestStripMcpPrefix(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _tool_color
+# _status_style
 # ---------------------------------------------------------------------------
 
 
-class TestToolColor(unittest.TestCase):
-    def test_known_analysis_tool(self):
-        color = _tool_color("decompile_function")
-        self.assertEqual(color, "#4ec9b0")  # teal
+class TestStatusStyle(unittest.TestCase):
+    """Tool rows carry state as a glyph AND a word, never colour alone
+    (GUI contract G9). The QSS only chooses the tone; the non-colour
+    carrier lives in the widget's icon/label text."""
 
-    def test_known_mutation_tool(self):
-        color = _tool_color("rename_function")
-        self.assertEqual(color, "#c586c0")  # magenta
+    def setUp(self):
+        from lucnhan.ui.styles import get_tool_colors
 
-    def test_unknown_tool_gets_default(self):
-        color = _tool_color("zzz_unknown_tool")
-        self.assertEqual(color, _DEFAULT_TOOL_COLOR)
+        self.colors = get_tool_colors()
 
-    def test_mcp_prefixed_tool(self):
-        color = _tool_color("mcp__bn__decompile_function")
-        self.assertEqual(color, "#4ec9b0")  # still teal after stripping prefix
+    def test_each_state_maps_to_its_own_role(self):
+        success = _status_style(self.colors, "success")
+        error = _status_style(self.colors, "error")
+        running = _status_style(self.colors, "running")
+        self.assertIn(self.colors["status_success"], success)
+        self.assertIn(self.colors["status_error"], error)
+        self.assertIn(self.colors["status_spinner"], running)
+
+    def test_discarded_is_neutral_not_error(self):
+        discarded = _status_style(self.colors, "discarded")
+        self.assertIn(self.colors["preview"], discarded)
+        self.assertNotIn(self.colors["status_error"], discarded)
+
+
+# ---------------------------------------------------------------------------
+# _row_target_text
+# ---------------------------------------------------------------------------
+
+
+class TestRowTargetText(unittest.TestCase):
+    """The target column is one line, elided, and keeps the real value
+    in the tooltip (GUI contract G4)."""
+
+    def test_multiline_summary_becomes_one_line(self):
+        self.assertEqual(_row_target_text("line one\nline two"), "line one line two")
+
+    def test_long_summary_is_elided(self):
+        text = _row_target_text("a" * 500)
+        self.assertLessEqual(len(text), 120)
+        self.assertTrue(text.endswith("…"))
 
 
 # ---------------------------------------------------------------------------

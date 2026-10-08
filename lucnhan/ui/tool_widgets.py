@@ -10,12 +10,14 @@ from typing import ClassVar
 from .. import constants
 from .message_widgets import _HeightCachedLabel
 from .qt_compat import (
+    QApplication,
     QColor,
     QFont,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QSizePolicy,
     QSyntaxHighlighter,
     Qt,
     QTextCharFormat,
@@ -28,13 +30,20 @@ from .qt_compat import (
 from .styles import (
     get_tool_approval_allow_btn_style,
     get_tool_approval_always_btn_style,
+    get_tool_approval_body_style,
     get_tool_approval_code_editor_style,
     get_tool_approval_deny_btn_style,
     get_tool_approval_disabled_btn_style,
     get_tool_approval_frame_style,
     get_tool_approval_header_style,
+    get_tool_approval_state_style,
     get_tool_colors,
+    get_tool_detail_surface_style,
     get_tool_result_editor_style,
+    get_tool_row_meta_style,
+    get_tool_row_name_style,
+    get_tool_row_style,
+    get_tool_row_target_style,
 )
 from .theme.applicator import bind_theme, disconnect_theme
 from .theme.manager import ThemeManager
@@ -45,22 +54,33 @@ _MAX_RESULT_DISPLAY = 3000
 #: scrolls. Mirrors the code editor's 15-line cap.
 _RESULT_MAX_LINES = 15
 _TOOL_PREVIEW_LINES = 3
+#: GUI contract G2 — tool summary row geometry.
+_TOOL_ROW_MIN_HEIGHT = 30
+#: GUI contract G4 — the expanded detail inset pads 7 top / 10 right-bottom /
+#: 22 left so nested code reads as a block without a nested card.
+_TOOL_DETAIL_MARGINS = (7, 10, 22, 10)  # (top, right, left, bottom)
+#: Characters kept in the elided target column. Qt elides the rest with
+#: ``…``; the full text always reaches the row tooltip.
+_TOOL_TARGET_MAX_CHARS = 120
 
 
 # ---------------------------------------------------------------------------
-# Tool card styling — border/background QSS for ToolCallWidget containers.
-# Ported from the fork so tool calls render as bordered cards (matching the
-# fork's appearance) instead of unbounded frames.
+# Tool row styling (GUI contract G2/G4)
+#
+# A tool activity row is ONE compact row — chevron, status glyph, tool
+# name, elided monospace target, right-hand status/count — with no card
+# chrome. The bordered card look is what G4 replaced; the only bordered
+# surface left in a tool row is the expanded detail inset.
 # ---------------------------------------------------------------------------
 
 
 def _tool_bg(t) -> str:
-    """Card background color for a tool call (alt-base tier)."""
-    return t.alt_base
+    """Background color for the expanded detail surface (base tier)."""
+    return t.base
 
 
 def _tool_border(t) -> str:
-    """Card border color for a tool call (mid tier)."""
+    """Border color for the expanded detail surface (mid tier)."""
     return t.mid
 
 
@@ -68,14 +88,14 @@ def _tool_card_css(
     *,
     accent: str | None = None,
     background: str | None = None,
-    radius: int = 6,
-    object_name: str = "message_tool",
+    radius: int = 3,
+    object_name: str = "tool_detail",
 ) -> str:
-    """Border/background QSS for a tool-call card container.
+    """Border/background QSS for an expanded tool-detail inset (G4).
 
-    Targets the widget's object name (``#message_tool``) so the rule only
-    applies to the card itself, not its child labels. Recomputed on
-    ``themeChanged`` by :meth:`ToolCallWidget._apply_card_style`.
+    Only the expanded detail is a bordered surface now. ``accent`` /
+    ``background`` stay accepted so callers can paint a highlighted
+    surface without rebuilding the QSS by hand.
     """
     t = ThemeManager.instance().tokens()
     border = accent or _tool_border(t)
@@ -98,64 +118,6 @@ def _strip_mcp_prefix(name: str) -> str:
     return name
 
 
-# ---------------------------------------------------------------------------
-# Tool-specific colors (by base name — MCP prefix is stripped before lookup)
-# ---------------------------------------------------------------------------
-_TOOL_COLORS: dict[str, str] = {}
-
-# Analysis (read-only) -> teal/cyan
-for _t in (
-    "decompile_function",
-    "read_disassembly",
-    "read_function_disassembly",
-    "get_binary_info",
-    "list_imports",
-    "list_exports",
-    "list_functions",
-    "search_functions",
-    "list_strings",
-    "search_strings",
-    "get_string_at",
-    "list_segments",
-    "xrefs_to",
-    "xrefs_from",
-    "function_xrefs",
-    "get_microcode",
-    "get_microcode_block",
-    "get_cursor_position",
-    "get_current_function",
-):
-    _TOOL_COLORS[_t] = "#4ec9b0"  # teal/cyan
-
-# Modification -> magenta/purple
-for _t in (
-    "rename_function",
-    "rename_variable",
-    "rename_address",
-    "set_type",
-    "set_function_prototype",
-    "set_comment",
-    "set_function_comment",
-    "create_struct",
-    "create_enum",
-    "nop_microcode",
-    "install_microcode_optimizer",
-    "redecompile_function",
-    "apply_struct_to_address",
-    "apply_type_to_variable",
-):
-    _TOOL_COLORS[_t] = "#c586c0"  # magenta/purple
-
-# Exploration -> gold/amber
-for _t in ("exploration_report", "phase_transition"):
-    _TOOL_COLORS[_t] = "#d7ba7d"
-
-# Scripting -> green
-for _t in (constants.EXECUTE_PYTHON_TOOL_NAME,):
-    _TOOL_COLORS[_t] = "#6a9955"
-
-_DEFAULT_TOOL_COLOR = "#569cd6"  # blue
-
 _TOOL_GROUP_LABELS: dict[str, tuple[str, str]] = {
     "decompile_function": ("Decompiled", "function"),
     "read_disassembly": ("Disassembled", "function"),
@@ -168,9 +130,166 @@ _TOOL_GROUP_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
-def _tool_color(name: str) -> str:
-    """Look up tool color by base name (MCP prefix stripped)."""
-    return _TOOL_COLORS.get(_strip_mcp_prefix(name), _DEFAULT_TOOL_COLOR)
+# ---------------------------------------------------------------------------
+# Summary-row primitives (shared by ToolCallWidget/ToolBatchWidget/
+# ToolGroupWidget — GUI contract G4)
+#
+# The row order is fixed by G4: disclosure chevron -> status/icon -> tool
+# name -> target/argument (monospace, elided) -> result count/status right.
+# Status is carried by a glyph AND a word, never by colour alone (G9), so
+# every terminal state gets a distinct, readable pair.
+# ---------------------------------------------------------------------------
+
+#: ``(icon, right-hand text)`` per state. The icon is the non-colour
+#: carrier required by G9; the text is what a screen reader reads.
+STATE_RUNNING = ("…", "Running")
+STATE_SUCCESS = ("✓", "Done")
+STATE_ERROR = ("✗", "Failed")
+STATE_DISCARDED = ("⊘", "Skipped")
+STATE_APPROVAL = ("⏸", "Paused")
+
+
+def _row_target_text(summary: str) -> str:
+    """Collapse a tool summary to one elided-ready line (G4)."""
+    flat = " ".join(summary.split())
+    if len(flat) > _TOOL_TARGET_MAX_CHARS:
+        flat = flat[: _TOOL_TARGET_MAX_CHARS - 1] + "…"
+    return flat
+
+
+def _row_status_colors() -> dict[str, str]:
+    """Status colours from the shared tool-colour mapping.
+
+    ``get_tool_colors`` is branch-keyed off ``is_dark_theme`` and already
+    carries the success/error/spinner/preview roles, so no new palette
+    (and no hardcoded hex) is introduced here.
+    """
+    return get_tool_colors()
+
+
+def _status_style(tool_colors: dict[str, str], state: str) -> str:
+    """QSS for the status icon + right-hand status text of one state."""
+    key = {
+        "running": "status_spinner",
+        "success": "status_success",
+        "error": "status_error",
+        "discarded": "preview",
+    }.get(state, "preview")
+    return f"color: {tool_colors.get(key, tool_colors['preview'])}; font-size: inherit;"
+
+
+def _make_detail_frame() -> QFrame:
+    """Build the inset detail surface used for expanded tool output (G4).
+
+    Flat ``base`` fill with a 1px ``mid`` border and radius 3 (the
+    compact inset radius from G1), padding 7 top / 10 right-bottom /
+    22 left so nested code reads as a block rather than a nested card.
+    """
+    frame = QFrame()
+    frame.setObjectName("tool_detail")
+    frame.setStyleSheet(get_tool_detail_surface_style())
+    return frame
+
+
+def _make_detail_layout(parent: QWidget) -> QVBoxLayout:
+    """Vertical layout with the G4 inset paddings for a detail surface."""
+    layout = QVBoxLayout(parent)
+    top, right, left, bottom = _TOOL_DETAIL_MARGINS
+    layout.setContentsMargins(left, top, right, bottom)
+    layout.setSpacing(4)
+    return layout
+
+
+def _make_result_actions(
+    text: str,
+    *,
+    on_raw: Callable[[], None],
+    on_copy: Callable[[], None],
+) -> tuple[QWidget, QHBoxLayout]:
+    """Raw / Copy actions, bottom-right of an expanded detail surface (G4).
+
+    Two flat caption-height buttons sharing one QSS keep the strip
+    unobtrusive; they are appended after a stretch so they land at the
+    bottom-right of the detail surface.
+    """
+    container = QWidget()
+    row = QHBoxLayout(container)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(8)
+    row.addStretch()
+
+    t = ThemeManager.instance().tokens()
+    btn_css = (
+        f"QToolButton {{ color: {t.muted_text}; background: transparent; "
+        f"border: 1px solid {t.mid}; border-radius: 3px; padding: 2px 8px; "
+        f"font-size: inherit; }}"
+        f"QToolButton:hover {{ background: {t.alt_base}; color: {t.text}; }}"
+        f"QToolButton:focus {{ border: 1px solid {t.accent}; }}"
+    )
+
+    raw_btn = QToolButton()
+    raw_btn.setText("Raw")
+    raw_btn.setToolTip("Show the unformatted tool output")
+    raw_btn.setAccessibleName("Show raw tool output")
+    raw_btn.setStyleSheet(btn_css)
+    raw_btn.clicked.connect(on_raw)
+    row.addWidget(raw_btn)
+
+    copy_btn = QToolButton()
+    copy_btn.setText("Copy")
+    copy_btn.setToolTip("Copy the tool output to the clipboard")
+    copy_btn.setAccessibleName("Copy tool output to clipboard")
+    copy_btn.setStyleSheet(btn_css)
+    copy_btn.clicked.connect(on_copy)
+    row.addWidget(copy_btn)
+
+    del text
+    return container, row
+
+
+def _copy_to_clipboard(text: str) -> None:
+    """Copy *text* to the system clipboard (best effort, main thread)."""
+    try:
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
+    except RuntimeError:  # pragma: no cover — clipboard may be gone at teardown
+        pass
+
+
+class _ElidedLabel(QLabel):
+    """Single-line QLabel that elides with ``…`` instead of clipping.
+
+    Qt's QLabel clips at the widget boundary without an ellipsis and QSS
+    ``text-overflow`` is not honoured for QLabel, so the elided string is
+    recomputed from the live font metrics on every width change (G2/G4).
+    The full text is kept for the row tooltip — that is where G4 wants
+    the complete, already-sanitised argument to live.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full_text = ""
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setTextFormat(Qt.TextFormat.PlainText)
+
+    def set_full_text(self, text: str) -> None:
+        """Set the complete text; the label shows the elided form."""
+        self._full_text = text or ""
+        self.setToolTip(self._full_text)
+        self._refresh_elide()
+
+    def _refresh_elide(self) -> None:
+        width = self.width()
+        if width <= 0:
+            super().setText(self._full_text)
+            return
+        super().setText(self.fontMetrics().elidedText(self._full_text, Qt.TextElideMode.ElideRight, width - 2))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_elide()
 
 
 def _build_approval_header(tool_name: str) -> str:
@@ -477,10 +596,18 @@ class _SharedSpinnerTimer:
 
 
 class ToolCallWidget(QFrame):
-    """Compact tool call display.
+    """Compact tool activity row (GUI contract G2/G4).
 
-    Shows:  ● tool_name  summary_text
-    With a collapsible detail section for args and result.
+    Row order is fixed by G4: ``chevron -> status icon -> tool name ->
+    target (monospace, elided) -> status/count right``. One row, 30 px
+    minimum, no card chrome. The expanded detail is an inset code surface
+    that is **built on first expand** — args/result text is not measured
+    or wrapped while the row is collapsed, so a chat full of tool calls
+    stays cheap to lay out.
+
+    Status is carried by a glyph *and* a word (``Failed`` / ``Done`` /
+    ``Running`` / ``Skipped``) so the state survives greyscale and colour
+    vision deficiency (G9).
     """
 
     _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -488,141 +615,128 @@ class ToolCallWidget(QFrame):
     def __init__(self, tool_name: str, tool_call_id: str, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("message_tool")
+        self.setMinimumHeight(_TOOL_ROW_MIN_HEIGHT)
         self._tool_name = tool_name
         self._tool_call_id = tool_call_id
         self._args_text = ""
         self._result_text = ""
         self._is_error = False
         self._expanded = False
+        self._details_built = False
         self._spin_idx = 0
+        self._state = "running"
+        #: Duration only when the host actually measured one — never a
+        #: fabricated number (G4: "only real data").
+        self._duration_s: float | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 3, 6, 3)
+        # G2: tool summary padding 5 / 6 px, gap 8 px.
+        layout.setContentsMargins(6, 5, 6, 5)
         layout.setSpacing(2)
 
         layout.addLayout(self._build_header(tool_name))
-        _SharedSpinnerTimer.get().register(self)
-        layout.addWidget(self._build_preview())
-        layout.addWidget(self._build_detail_section())
+        # Detail container starts empty; ``_toggle`` fills it on first
+        # expand so nothing is rendered (or height-measured) while collapsed.
+        self._detail_holder = QWidget()
+        self._detail_holder.setVisible(False)
+        layout.addWidget(self._detail_holder)
 
-        # Bordered card background. Subscribed *after* the header is built
-        # so an early themeChanged signal finds the widget fully constructed.
-        # ``bind_theme`` runs the apply callback synchronously so the
-        # initial paint already reflects the live tokens.
+        _SharedSpinnerTimer.get().register(self)
+        # Subscribed *after* the header is built so an early themeChanged
+        # signal finds the widget fully constructed. ``bind_theme`` runs the
+        # apply callback synchronously so the initial paint already
+        # reflects the live tokens.
         bind_theme(self, self._apply_styles)
 
+    # ------------------------------------------------------------------
+    # Styling
+    # ------------------------------------------------------------------
+
     def _apply_styles(self, _tokens: object = None) -> None:
-        """Re-apply card QSS and refresh every child label colour.
+        """Re-apply row QSS and refresh every child label colour.
 
-        The previous implementation only refreshed the outer card QSS;
-        the bullet / name / summary / status / result labels kept
-        their construction-time colours, so a theme switch on a card
-        already on screen left the header glyphs and result text in
-        the previous palette.  This method re-reads both the tool
-        colour (``_TOOL_COLORS`` — kept token-independent because it
-        is brand-specific) and the helper-palette colours (preview,
-        status spinner / error / success) so the entire card paints
-        against the active theme.
-
-        ``_tokens`` is accepted for the ``bind_theme`` contract; the
-        callback always reads ``ThemeManager.tokens()`` itself so the
-        hookup works regardless of which signal path delivered the
-        refresh (Qt ``Signal`` carries the token; ``_DummySignal`` in
-        the headless fallback does not).
+        Re-runs on ``themeChanged``. ``_tokens`` is accepted for the
+        ``bind_theme`` contract; the callback always reads the live
+        tokens itself so the hookup works regardless of which signal
+        path delivered the refresh (Qt ``Signal`` carries the token;
+        ``_DummySignal`` in the headless fallback does not).
         """
-        self.setStyleSheet(_tool_card_css())
-        tool_colors = get_tool_colors()
-        color = _tool_color(self._tool_name)
-        # Bullet / name share the brand colour and don't depend on
-        # success / error state.
-        if getattr(self, "_bullet", None) is not None:
-            self._bullet.setStyleSheet(f"color: {color}; font-size: inherit;")
+        self.setStyleSheet(get_tool_row_style())
+        tool_colors = _row_status_colors()
         if getattr(self, "_name_label", None) is not None:
-            self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: inherit;")
+            self._name_label.setStyleSheet(get_tool_row_name_style())
         if getattr(self, "_summary_label", None) is not None:
-            self._summary_label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit; margin-left: 6px;")
-        # Status label colour depends on the current state — match
-        # the logic in ``set_result`` / ``mark_done`` so a theme
-        # switch on an in-flight call preserves the spinner colour
-        # and a finished call preserves its ✓ / ✗ outcome.
-        if getattr(self, "_status_label", None) is not None:
-            text = self._status_label.text()
-            if text == "✗":
-                color_key = "status_error"
-            elif text in ("✓", "✓0", "✓1"):
-                color_key = "status_success"
-            else:
-                color_key = "status_spinner"
-            self._status_label.setStyleSheet(f"color: {tool_colors[color_key]}; font-size: inherit;")
-        # Preview label (collapsed-state args).
+            self._summary_label.setStyleSheet(get_tool_row_target_style())
+        self._apply_status_style(tool_colors)
         if getattr(self, "_preview_label", None) is not None:
-            self._preview_label.setStyleSheet(
-                f"color: {tool_colors['preview']}; font-size: inherit; margin-left: 28px;"
-            )
-        # Result header + result label follow the same status colour
-        # mapping as the status label, so a finished error result
-        # stays red and a successful result stays green.
-        if getattr(self, "_result_header", None) is not None:
-            self._result_header.setStyleSheet(
-                f"color: {tool_colors['result_header']}; font-size: inherit; font-weight: bold;"
-            )
-        if getattr(self, "_result_label", None) is not None:
-            if self._is_error:
-                self._result_label.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
-            else:
-                # Result text uses the same muted preview colour as the
-                # collapsed state so dark/light consistency is preserved.
-                self._result_label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit;")
+            self._preview_label.setStyleSheet(get_tool_row_target_style())
+
+    def _apply_status_style(self, tool_colors: dict[str, str] | None = None) -> None:
+        """Paint the status icon + right-hand status text from the state.
+
+        Keeps the spinner / success / error / discarded mapping in ONE
+        place so a theme switch preserves the current outcome instead of
+        reverting an in-flight or finished call to the default colour.
+        """
+        colors = tool_colors or _row_status_colors()
+        qss = _status_style(colors, self._state)
+        for name in ("_status_icon", "_status_label"):
+            lbl = getattr(self, name, None)
+            if lbl is not None:
+                lbl.setStyleSheet(qss)
+
+    # ------------------------------------------------------------------
+    # Builders
+    # ------------------------------------------------------------------
 
     def _build_header(self, tool_name: str) -> QHBoxLayout:
-        """Build the compact header row: toggle ● name  summary  status."""
+        """Build the one-line summary row per G4."""
         display_name = _strip_mcp_prefix(tool_name)
-        color = _tool_color(tool_name)
-        tool_colors = get_tool_colors()
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(0)
+        header_layout.setSpacing(8)
 
         self._toggle_btn = QToolButton()
         self._toggle_btn.setObjectName("collapse_button")
         self._toggle_btn.setText("▶")
         self._toggle_btn.setFixedSize(14, 14)
+        self._toggle_btn.setToolTip("Show the full tool arguments and output")
+        self._toggle_btn.setAccessibleName(f"Expand {display_name} details")
         self._toggle_btn.clicked.connect(self._toggle)
         header_layout.addWidget(self._toggle_btn)
 
-        self._bullet = QLabel("●")
-        self._bullet.setStyleSheet(f"color: {color}; font-size: inherit;")
-        self._bullet.setFixedWidth(14)
-        header_layout.addWidget(self._bullet)
+        self._status_icon = QLabel(STATE_RUNNING[0])
+        self._status_icon.setFixedWidth(14)
+        self._status_icon.setAccessibleName("Tool status")
+        header_layout.addWidget(self._status_icon)
 
         self._name_label = QLabel(display_name)
-        self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: inherit;")
+        self._name_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._name_label.setStyleSheet(get_tool_row_name_style())
         header_layout.addWidget(self._name_label)
 
-        self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit; margin-left: 6px;")
+        self._summary_label = _ElidedLabel()
+        self._summary_label.setStyleSheet(get_tool_row_target_style())
         header_layout.addWidget(self._summary_label, 1)
 
-        self._status_label = QLabel(self._SPINNER_FRAMES[0])
-        self._status_label.setStyleSheet(f"color: {tool_colors['status_spinner']}; font-size: inherit;")
+        self._status_label = QLabel(STATE_RUNNING[1])
+        self._status_label.setStyleSheet(get_tool_row_meta_style())
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self._status_label)
+
+        self._apply_status_style()
 
         return header_layout
 
-    def _build_preview(self) -> QLabel:
-        """Build the preview label (truncated args, shown when collapsed)."""
-        self._preview_label = _make_preview_label()
-        return self._preview_label
-
     def _build_detail_section(self) -> QWidget:
-        """Build the expandable detail area (args + result)."""
-        tool_colors = get_tool_colors()
+        """Build the expanded detail surface (args + result + Raw/Copy).
 
-        self._detail_widget = QWidget()
-        self._detail_layout = QVBoxLayout(self._detail_widget)
-        self._detail_layout.setContentsMargins(28, 2, 0, 2)
-        self._detail_layout.setSpacing(2)
+        Called only from ``_toggle`` on the first expand, which is what
+        keeps raw/table/code content out of the layout while collapsed.
+        """
+        detail = _make_detail_frame()
+        detail_layout = _make_detail_layout(detail)
 
         self._args_label = _HeightCachedLabel()
         self._args_label.setObjectName("tool_content")
@@ -633,14 +747,13 @@ class ToolCallWidget(QFrame):
                 | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
             )
         )
-        self._detail_layout.addWidget(self._args_label)
+        detail_layout.addWidget(self._args_label)
 
-        self._result_header = QLabel("Result:")
-        self._result_header.setStyleSheet(
-            f"color: {tool_colors['result_header']}; font-size: inherit; font-weight: bold;"
-        )
+        self._result_header = QLabel("Result")
+        self._result_header.setTextFormat(Qt.TextFormat.PlainText)
+        self._result_header.setStyleSheet(get_tool_row_name_style())
         self._result_header.setVisible(False)
-        self._detail_layout.addWidget(self._result_header)
+        detail_layout.addWidget(self._result_header)
 
         self._result_label = _HeightCachedLabel()
         self._result_label.setObjectName("tool_content")
@@ -652,15 +765,75 @@ class ToolCallWidget(QFrame):
             )
         )
         self._result_label.setVisible(False)
-        self._detail_layout.addWidget(self._result_label)
+        detail_layout.addWidget(self._result_label)
 
-        self._detail_widget.setVisible(False)
-        return self._detail_widget
+        actions, _row = _make_result_actions(
+            self._result_text,
+            on_raw=self._on_raw,
+            on_copy=self._on_copy,
+        )
+        self._raw_btn_row = actions
+        detail_layout.addWidget(actions)
+
+        holder_layout = QVBoxLayout(self._detail_holder)
+        holder_layout.setContentsMargins(0, 0, 0, 0)
+        holder_layout.setSpacing(0)
+        holder_layout.addWidget(detail)
+
+        self._render_detail_text()
+        return detail
+
+    # ------------------------------------------------------------------
+    # Detail rendering (lazy)
+    # ------------------------------------------------------------------
+
+    def _render_detail_text(self) -> None:
+        """Fill the (already built) detail surface from the stored text.
+
+        Called when the detail is first built and again whenever new
+        args/result text arrives *while expanded*, so a collapsed row
+        never measures or wraps text it is not showing.
+        """
+        if not self._details_built:
+            return
+        display = (
+            self._args_text[:_MAX_ARGS_DISPLAY] + "..." if len(self._args_text) > _MAX_ARGS_DISPLAY else self._args_text
+        )
+        self._args_label.setText(display)
+        self._args_label.pin_height()
+        if self._result_text:
+            result = self._result_text
+            display_res = (
+                result[:_MAX_RESULT_DISPLAY] + "\n... (truncated)" if len(result) > _MAX_RESULT_DISPLAY else result
+            )
+            self._result_label.setText(display_res)
+            self._result_label.pin_height()
+            self._result_label.setVisible(True)
+            self._result_header.setVisible(True)
+        if self._is_error:
+            self._result_label.setStyleSheet(f"color: {_row_status_colors()['status_error']}; font-size: inherit;")
+
+    def _on_raw(self) -> None:
+        """Reveal the untruncated result text inside the detail surface."""
+        if not self._details_built:
+            return
+        self._result_label.setText(self._result_text)
+        self._result_label.pin_height()
+        self._result_label.setVisible(True)
+
+    def _on_copy(self) -> None:
+        """Copy the tool output (args + result) to the clipboard."""
+        parts = [p for p in (self._args_text.strip(), self._result_text.strip()) if p]
+        _copy_to_clipboard("\n\n".join(parts))
+
+    # ------------------------------------------------------------------
+    # Spinner / expand
+    # ------------------------------------------------------------------
 
     def _spin_tick(self) -> None:
         """Advance the spinner animation frame."""
         self._spin_idx = (self._spin_idx + 1) % len(self._SPINNER_FRAMES)
-        self._status_label.setText(self._SPINNER_FRAMES[self._spin_idx])
+        self._status_icon.setText(self._SPINNER_FRAMES[self._spin_idx])
 
     def _stop_spinner(self) -> None:
         """Unregister from the shared spinner timer."""
@@ -668,60 +841,65 @@ class ToolCallWidget(QFrame):
 
     def _toggle(self) -> None:
         self._expanded = not self._expanded
-        self._detail_widget.setVisible(self._expanded)
-        self._preview_label.setVisible(not self._expanded and bool(self._args_text))
+        if self._expanded and not self._details_built:
+            self._build_detail_section()
+            self._details_built = True
+        self._detail_holder.setVisible(self._expanded)
         self._toggle_btn.setText("▼" if self._expanded else "▶")
+        self._toggle_btn.setAccessibleName(
+            f"{'Collapse' if self._expanded else 'Expand'} {_strip_mcp_prefix(self._tool_name)} details"
+        )
+
+    def _set_state(self, state: str, detail: str = "") -> None:
+        """Apply a terminal/in-flight state to icon + right-hand text."""
+        self._state = state
+        icon, text = {
+            "running": STATE_RUNNING,
+            "success": STATE_SUCCESS,
+            "error": STATE_ERROR,
+            "discarded": STATE_DISCARDED,
+        }.get(state, STATE_RUNNING)
+        self._status_icon.setText(icon)
+        self._status_label.setText(text)
+        self._apply_status_style()
+
+    def _set_meta(self, text: str) -> None:
+        """Show measured extra info (duration, result counts) on the right."""
+        if text:
+            self._status_label.setText(text)
+            self._status_label.setToolTip(text)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def set_arguments(self, args_text: str) -> None:
         self._args_text = args_text
-        # Update summary
-        summary = _format_tool_summary(self._tool_name, args_text)
-        if summary:
-            self._summary_label.setText(summary)
-        # Preview (truncated)
-        if args_text.strip():
-            self._preview_label.setText(_truncate_preview(args_text.strip()))
-            self._preview_label.pin_height()
-            self._preview_label.setVisible(not self._expanded)
-        # Full args in detail area
-        display = args_text[:_MAX_ARGS_DISPLAY] + "..." if len(args_text) > _MAX_ARGS_DISPLAY else args_text
-        self._args_label.setText(display)
-        self._args_label.pin_height()
+        # Elided target column; the full, sanitised text lives in the
+        # tooltip (G4) and in the expanded detail.
+        self._summary_label.set_full_text(_row_target_text(_format_tool_summary(self._tool_name, args_text)))
+        if self._expanded:
+            self._render_detail_text()
 
     def append_args_delta(self, delta: str) -> None:
         self._args_text += delta
-        # Don't update preview during streaming — wait for set_arguments
+        # Don't update the target column during streaming — wait for
+        # ``set_arguments`` when the JSON is complete (a half-parsed
+        # value would render as a truncated or wrong target).
 
     def set_result(self, result: str, is_error: bool = False) -> None:
         self._stop_spinner()
         self._result_text = result
         self._is_error = is_error
-        tool_colors = get_tool_colors()
-        display = result[:_MAX_RESULT_DISPLAY] + "\n... (truncated)" if len(result) > _MAX_RESULT_DISPLAY else result
-        self._result_label.setText(display)
-        self._result_label.pin_height()
-        self._result_label.setVisible(True)
-        self._result_header.setVisible(True)
-        if is_error:
-            self._result_label.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
-            self._status_label.setText("✗")
-            self._status_label.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
-            self._bullet.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
-            # Auto-expand on error
-            self._expanded = True
-            self._detail_widget.setVisible(True)
-            self._preview_label.setVisible(False)
-            self._toggle_btn.setText("▼")
-        else:
-            self._status_label.setText("✓")
-            self._status_label.setStyleSheet(f"color: {tool_colors['status_success']}; font-size: inherit;")
+        self._set_state("error" if is_error else "success")
+        self._set_meta(_describe_result(result, is_error))
+        if self._expanded:
+            self._render_detail_text()
 
     def mark_done(self) -> None:
         self._stop_spinner()
-        tool_colors = get_tool_colors()
-        if self._status_label.text() not in ("✓", "✗"):
-            self._status_label.setText("✓")
-            self._status_label.setStyleSheet(f"color: {tool_colors['status_success']}; font-size: inherit;")
+        if self._state == "running":
+            self._set_state("success")
 
     def mark_discarded(self, reason: str = "discarded") -> None:
         """Stop the spinner and set a neutral terminal glyph without result.
@@ -731,25 +909,34 @@ class ToolCallWidget(QFrame):
         so the user understands why the call has no result.
         """
         self._stop_spinner()
-        tool_colors = get_tool_colors()
-        self._status_label.setText("⊘")
-        self._status_label.setStyleSheet(
-            f"color: {tool_colors.get('status_warning', tool_colors.get('preview', '#888'))}; font-size: inherit;"
-        )
-        self._bullet.setStyleSheet(
-            f"color: {tool_colors.get('status_warning', tool_colors.get('preview', '#888'))}; font-size: inherit;"
-        )
-        self._result_header.setVisible(True)
-        self._result_label.setText(f"({reason})")
-        self._result_label.setStyleSheet(
-            f"color: {tool_colors.get('preview', '#888')}; font-style: italic; font-size: inherit;"
-        )
-        self._result_label.setVisible(True)
-        self._result_label.pin_height()
+        self._set_state("discarded")
+        self._set_meta(f"Skipped — {reason}")
 
     def hide_preview(self) -> None:
-        """Hide the args preview (used when preview budget exhausted)."""
-        self._preview_label.setVisible(False)
+        """No-op retained for ChatView tool-grouping compatibility.
+
+        Collapsed tool rows no longer carry a separate preview label: the
+        args preview is the target column in the summary row and the full
+        text lives in the detail surface, so grouping needs no extra step.
+        """
+        return
+
+
+def _describe_result(result: str, is_error: bool) -> str:
+    """Right-hand meta text for a finished call.
+
+    Only real data: a failed call gets ``Failed`` plus the first line of
+    the error (G9 wants the reason next to the operation, not only a
+    colour), a successful call reports line/char counts so the row shows
+    output size without expanding.
+    """
+    if is_error:
+        first = result.strip().splitlines()[0] if result.strip() else ""
+        return f"Failed — {_trunc(first, 48)}" if first else "Failed"
+    lines = len(result.splitlines()) if result.strip() else 0
+    if not lines:
+        return "Done"
+    return f"Done — {lines} line{'s' if lines != 1 else ''}"
 
 
 # ---------------------------------------------------------------------------
@@ -760,13 +947,16 @@ class ToolCallWidget(QFrame):
 class ToolBatchWidget(QFrame):
     """Groups consecutive calls to the same tool.
 
-    Shows:  ● tool_name  (N calls)
-    With preview of the first call's args.
+    Same one-row G4 shape as :class:`ToolCallWidget`; the right-hand
+    column carries the live count so a batched run reads without being
+    expanded. ``add_call`` / ``set_result_for_call`` keep their
+    ordering and batching semantics — only the presentation changed.
     """
 
     def __init__(self, tool_name: str, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("message_tool")
+        self.setMinimumHeight(_TOOL_ROW_MIN_HEIGHT)
         self._tool_name = tool_name
         self._count = 0
         self._expanded = False
@@ -777,126 +967,116 @@ class ToolBatchWidget(QFrame):
         self._entry_labels: list[QLabel] = []
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 3, 6, 3)
+        layout.setContentsMargins(6, 5, 6, 5)
         layout.setSpacing(2)
 
         layout.addLayout(self._build_header(tool_name))
-        layout.addWidget(self._build_preview())
-        layout.addWidget(self._build_detail_section())
+        self._detail_holder = QWidget()
+        self._detail_holder.setVisible(False)
+        layout.addWidget(self._detail_holder)
 
-        # Bordered card background (same as ToolCallWidget). Applied after
-        # the header is built; refreshed on theme change.
         bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
-        """Refresh card QSS plus every child label colour on theme change.
+        """Refresh row QSS plus every child label colour on theme change.
 
-        Mirrors :meth:`ToolCallWidget._apply_styles` so a theme
-        switch updates the brand-coloured bullet / name, the muted
-        count label, and the status icon all at once.  Per-call
-        entry labels (added by ``add_call``) are also re-painted
-        against the current preview colour so the detail rows stay
-        consistent with the header.
+        Mirrors :meth:`ToolCallWidget._apply_styles` so a theme switch
+        updates the tool name, the elided target, the count and the
+        status together.
         """
-        self.setStyleSheet(_tool_card_css())
-        tool_colors = get_tool_colors()
-        color = _tool_color(self._tool_name)
-        if getattr(self, "_bullet", None) is not None:
-            self._bullet.setStyleSheet(f"color: {color}; font-size: inherit;")
+        self.setStyleSheet(get_tool_row_style())
         if getattr(self, "_name_label", None) is not None:
-            self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: inherit;")
-        if getattr(self, "_count_label", None) is not None:
-            self._count_label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit; margin-left: 6px;")
+            self._name_label.setStyleSheet(get_tool_row_name_style())
+        if getattr(self, "_summary_label", None) is not None:
+            self._summary_label.setStyleSheet(get_tool_row_target_style())
+        tool_colors = _row_status_colors()
+        if getattr(self, "_status_icon", None) is not None:
+            self._status_icon.setStyleSheet(_status_style(tool_colors, self._state))
         if getattr(self, "_status_label", None) is not None:
-            text = self._status_label.text()
-            if text.startswith("✗") or "✗" in text:
-                color_key = "status_error"
-            elif text.startswith("✓") or "✓" in text:
-                color_key = "status_success"
-            else:
-                color_key = "status_spinner"
-            self._status_label.setStyleSheet(f"color: {tool_colors[color_key]}; font-size: inherit;")
-        # Preview label.
-        if getattr(self, "_preview_label", None) is not None:
-            self._preview_label.setStyleSheet(
-                f"color: {tool_colors['preview']}; font-size: inherit; margin-left: 28px;"
-            )
+            self._status_label.setStyleSheet(_status_style(tool_colors, self._state))
         # Per-call detail entries.
         for entry in getattr(self, "_entry_labels", []):
-            entry.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit;")
+            entry.setStyleSheet(get_tool_row_target_style())
 
     def _build_header(self, tool_name: str) -> QHBoxLayout:
-        """Build the compact header row: toggle ● name  count  status."""
+        """Build the one-line batch row: chevron, status, name, count."""
         display_name = _strip_mcp_prefix(tool_name)
-        color = _tool_color(tool_name)
-        tool_colors = get_tool_colors()
+        self._state = "running"
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(0)
+        header_layout.setSpacing(8)
 
         self._toggle_btn = QToolButton()
         self._toggle_btn.setObjectName("collapse_button")
         self._toggle_btn.setText("▶")
         self._toggle_btn.setFixedSize(14, 14)
+        self._toggle_btn.setToolTip("Show every call in this batch")
+        self._toggle_btn.setAccessibleName(f"Expand {display_name} batch")
         self._toggle_btn.clicked.connect(self._toggle)
         header_layout.addWidget(self._toggle_btn)
 
-        self._bullet = QLabel("●")
-        self._bullet.setStyleSheet(f"color: {color}; font-size: inherit;")
-        self._bullet.setFixedWidth(14)
-        header_layout.addWidget(self._bullet)
+        self._status_icon = QLabel(STATE_RUNNING[0])
+        self._status_icon.setFixedWidth(14)
+        self._status_icon.setAccessibleName("Batch status")
+        header_layout.addWidget(self._status_icon)
 
         self._name_label = QLabel(display_name)
-        self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: inherit;")
+        self._name_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._name_label.setStyleSheet(get_tool_row_name_style())
         header_layout.addWidget(self._name_label)
 
-        self._count_label = QLabel("")
-        self._count_label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit; margin-left: 6px;")
-        header_layout.addWidget(self._count_label, 1)
+        self._summary_label = _ElidedLabel()
+        self._summary_label.setStyleSheet(get_tool_row_target_style())
+        header_layout.addWidget(self._summary_label, 1)
 
-        self._status_label = QLabel("…")
-        self._status_label.setStyleSheet(f"color: {tool_colors['status_spinner']}; font-size: inherit;")
+        self._status_label = QLabel("0 calls")
+        self._status_label.setStyleSheet(get_tool_row_meta_style())
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self._status_label)
 
+        self._apply_status_style()
         return header_layout
 
-    def _build_preview(self) -> QLabel:
-        """Build the preview label for the first call's args."""
-        self._preview_label = _make_preview_label()
-        return self._preview_label
+    def _apply_status_style(self, tool_colors: dict[str, str] | None = None) -> None:
+        colors = tool_colors or _row_status_colors()
+        if getattr(self, "_status_icon", None) is not None:
+            self._status_icon.setStyleSheet(_status_style(colors, self._state))
+        if getattr(self, "_status_label", None) is not None:
+            self._status_label.setStyleSheet(get_tool_row_meta_style())
 
     def _build_detail_section(self) -> QWidget:
-        """Build the expandable detail area for all calls."""
-        self._detail_widget = QWidget()
-        self._detail_layout = QVBoxLayout(self._detail_widget)
-        self._detail_layout.setContentsMargins(28, 2, 0, 2)
-        self._detail_layout.setSpacing(4)
-        self._detail_widget.setVisible(False)
-        return self._detail_widget
+        """Build the expanded detail surface listing every call."""
+        detail = _make_detail_frame()
+        self._detail_layout = _make_detail_layout(detail)
+        holder_layout = QVBoxLayout(self._detail_holder)
+        holder_layout.setContentsMargins(0, 0, 0, 0)
+        holder_layout.setSpacing(0)
+        holder_layout.addWidget(detail)
+        return detail
 
     def add_call(self, tool_call_id: str, args_text: str = "") -> None:
-        """Add another call to this batch."""
+        """Add another call to this batch.
+
+        Collapsed batches record the call id only — the per-call entry
+        label is created on expand (G4: detail content is built on
+        demand, never up front).
+        """
         self._count += 1
         self._tool_call_ids.append(tool_call_id)
-        self._count_label.setText(f"({self._count} calls)")
-        tool_colors = get_tool_colors()
+        self._update_status()
+        if not getattr(self, "_detail_layout", None):
+            return
 
         if self._count == 1 and args_text.strip():
             self._first_args = args_text
-            summary = _format_tool_summary(self._tool_name, args_text)
-            # For first call, show summary alongside count
-            preview = _truncate_preview(args_text.strip())
-            self._preview_label.setText(preview)
-            self._preview_label.pin_height()
-            self._preview_label.setVisible(not self._expanded)
+            self._summary_label.set_full_text(_row_target_text(_format_tool_summary(self._tool_name, args_text)))
 
-        # Add entry in detail area
         summary = _format_tool_summary(self._tool_name, args_text) if args_text else ""
-        entry = QLabel(f"#{self._count}: {summary}" if summary else f"#{self._count}")
-        entry.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit;")
-        entry.setWordWrap(True)
-        self._entry_labels.append(entry)  # prevent Shiboken GC
+        entry = _ElidedLabel()
+        entry.setFull_text(f"#{self._count}: {summary}" if summary else f"#{self._count}")
+        entry.setStyleSheet(get_tool_row_target_style())
+        self._entry_labels.append(entry)
         self._detail_layout.addWidget(entry)
 
     def set_args_for_call(self, tool_call_id: str, args_text: str) -> None:
@@ -911,17 +1091,11 @@ class ToolBatchWidget(QFrame):
 
         if idx == 0 and not self._first_args:
             self._first_args = args_text
-            preview = _truncate_preview(args_text.strip())
-            self._preview_label.setText(preview)
-            self._preview_label.pin_height()
-            self._preview_label.setVisible(not self._expanded)
+            self._summary_label.set_full_text(_row_target_text(_format_tool_summary(self._tool_name, args_text)))
 
-        # Update detail entry
-        summary = _format_tool_summary(self._tool_name, args_text)
-        item = self._detail_layout.itemAt(idx)
-        if item and item.widget():
-            label_text = f"#{idx + 1}: {summary}" if summary else f"#{idx + 1}"
-            item.widget().setText(label_text)
+        if idx < len(self._entry_labels):
+            summary = _format_tool_summary(self._tool_name, args_text)
+            self._entry_labels[idx].set_full_text(f"#{idx + 1}: {summary}" if summary else f"#{idx + 1}")
 
     def set_result_for_call(self, tool_call_id: str, result: str, is_error: bool) -> None:
         """Record a result for one call in the batch."""
@@ -932,23 +1106,52 @@ class ToolBatchWidget(QFrame):
         self._update_status()
 
     def _update_status(self) -> None:
-        tool_colors = get_tool_colors()
+        """Right-hand column: call count + progress, then the real outcome.
+
+        The outcome is derived from the recorded results, not from a
+        separate state flag, so a batch that already has an error always
+        reads "Failed" (icon + word, never colour alone — G9).
+        """
         done = len(self._results) + len(self._errors)
-        if done >= self._count:
-            if self._errors:
-                self._status_label.setText(f"✓{len(self._results)} ✗{len(self._errors)}")
-                self._status_label.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
-            else:
-                self._status_label.setText("✓")
-                self._status_label.setStyleSheet(f"color: {tool_colors['status_success']}; font-size: inherit;")
+        if done >= self._count and self._count:
+            self._state = "error" if self._errors else "success"
         else:
-            self._status_label.setText(f"{done}/{self._count}")
+            self._state = "running"
+        icon, count_text = {
+            "running": (STATE_RUNNING[0], f"{done}/{self._count}"),
+            "success": (STATE_SUCCESS[0], "All done"),
+            "error": (STATE_ERROR[0], "Failed"),
+        }[self._state]
+        self._status_icon.setText(icon)
+        self._status_label.setText(f"{self._count} call{'s' if self._count != 1 else ''} · {count_text}")
+        self._apply_status_style()
 
     def _toggle(self) -> None:
         self._expanded = not self._expanded
-        self._detail_widget.setVisible(self._expanded)
-        self._preview_label.setVisible(not self._expanded and bool(self._first_args))
+        if self._expanded and not getattr(self, "_detail_layout", None):
+            self._build_detail_section()
+            # Calls that arrived while collapsed were never rendered; add
+            # their entries now so expanding shows the whole batch.
+            self._render_entries()
+        self._detail_holder.setVisible(self._expanded)
         self._toggle_btn.setText("▼" if self._expanded else "▶")
+
+    def _render_entries(self) -> None:
+        """Create one entry label per recorded call (expansion only)."""
+        while self._detail_layout.count():
+            item = self._detail_layout.takeAt(0)
+            widget = item.widget() if item else None
+            if widget is not None:
+                widget.deleteLater()
+        self._entry_labels = []
+        for idx, tool_call_id in enumerate(self._tool_call_ids):
+            del tool_call_id
+            summary = _format_tool_summary(self._tool_name, self._first_args) if idx == 0 and self._first_args else ""
+            entry = _ElidedLabel()
+            entry.set_full_text(f"#{idx + 1}: {summary}" if summary else f"#{idx + 1}")
+            entry.setStyleSheet(get_tool_row_target_style())
+            self._entry_labels.append(entry)
+            self._detail_layout.addWidget(entry)
 
     @property
     def tool_name(self) -> str:
@@ -965,40 +1168,52 @@ class ToolBatchWidget(QFrame):
 
 
 class ToolGroupWidget(QFrame):
-    """Collapsible group for a consecutive run of tool calls."""
+    """Collapsible group for a consecutive run of tool calls.
+
+    One row like every other tool surface (G2/G4): chevron, status icon,
+    group label, and a right-hand count of real completed/error calls.
+    """
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("message_tool")
+        self.setMinimumHeight(_TOOL_ROW_MIN_HEIGHT)
         self._expanded = False
         self._count = 0
         self._done = 0
         self._errors = 0
+        self._state = "running"
         self._tool_names: list[str] = []
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 3, 6, 3)
-        layout.setSpacing(0)
+        layout.setContentsMargins(6, 5, 6, 5)
+        layout.setSpacing(2)
 
-        # Header: ▶ <summary label>  ✓
+        # Header: chevron, status, label, count.
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(6)
+        header_layout.setSpacing(8)
 
         self._toggle_btn = QToolButton()
         self._toggle_btn.setObjectName("collapse_button")
         self._toggle_btn.setText("▶")
         self._toggle_btn.setFixedSize(14, 14)
+        self._toggle_btn.setToolTip("Show the tool calls in this run")
+        self._toggle_btn.setAccessibleName("Expand grouped tool calls")
         self._toggle_btn.clicked.connect(self._toggle)
         header_layout.addWidget(self._toggle_btn)
 
-        tool_colors = get_tool_colors()
+        self._status_icon = QLabel(STATE_RUNNING[0])
+        self._status_icon.setFixedWidth(14)
+        self._status_icon.setAccessibleName("Group status")
+        header_layout.addWidget(self._status_icon)
+
         self._label = QLabel("0 tools called")
-        self._label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit; font-weight: bold;")
+        self._label.setTextFormat(Qt.TextFormat.PlainText)
         header_layout.addWidget(self._label, 1)
 
         self._status_label = QLabel("")
-        self._status_label.setStyleSheet(f"color: {tool_colors['status_spinner']}; font-size: inherit;")
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self._status_label)
 
         layout.addLayout(header_layout)
@@ -1006,7 +1221,7 @@ class ToolGroupWidget(QFrame):
         # Container for child widgets (hidden by default)
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
-        self._body_layout.setContentsMargins(8, 2, 0, 2)
+        self._body_layout.setContentsMargins(22, 4, 0, 4)
         self._body_layout.setSpacing(2)
         self._body.setVisible(False)
         layout.addWidget(self._body)
@@ -1018,25 +1233,20 @@ class ToolGroupWidget(QFrame):
         bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
-        """Re-apply header label QSS from the live tokens.
+        """Re-apply header QSS from the live tokens on theme change.
 
         Mirrors the colour-mapping logic used in
         :meth:`_update_status` so a theme switch preserves the
-        spin / success / error distinction already on the status
-        label.
+        running / success / error distinction on the status label.
         """
-        tool_colors = get_tool_colors()
+        self.setStyleSheet(get_tool_row_style())
         if getattr(self, "_label", None) is not None:
-            self._label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit; font-weight: bold;")
+            self._label.setStyleSheet(get_tool_row_name_style())
+        tool_colors = _row_status_colors()
+        if getattr(self, "_status_icon", None) is not None:
+            self._status_icon.setStyleSheet(_status_style(tool_colors, self._state))
         if getattr(self, "_status_label", None) is not None:
-            text = self._status_label.text()
-            if text.startswith("✗") or "✗" in text:
-                color_key = "status_error"
-            elif text.startswith("✓") or "✓" in text:
-                color_key = "status_success"
-            else:
-                color_key = "status_spinner"
-            self._status_label.setStyleSheet(f"color: {tool_colors[color_key]}; font-size: inherit;")
+            self._status_label.setStyleSheet(get_tool_row_meta_style())
 
     def add_widget(self, widget: QWidget, tool_name: str = "") -> None:
         """Add a tool widget into this group."""
@@ -1044,6 +1254,7 @@ class ToolGroupWidget(QFrame):
         self._tool_names.append(tool_name)
         self._body_layout.addWidget(widget)
         self._update_label()
+        self._update_status()
 
     def notify_result(self, is_error: bool = False) -> None:
         """Called when a tool inside this group finishes."""
@@ -1056,18 +1267,14 @@ class ToolGroupWidget(QFrame):
         self._label.setText(_format_tool_group_label(self._tool_names))
 
     def _update_status(self) -> None:
-        tool_colors = get_tool_colors()
         if self._done >= self._count:
-            if self._errors:
-                ok = self._done - self._errors
-                self._status_label.setText(f"✓{ok} ✗{self._errors}")
-                self._status_label.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
-            else:
-                self._status_label.setText("✓")
-                self._status_label.setStyleSheet(f"color: {tool_colors['status_success']}; font-size: inherit;")
+            icon, text = (STATE_ERROR[0], "Failed") if self._errors else (STATE_SUCCESS[0], "All done")
+            self._state = "error" if self._errors else "success"
         else:
-            self._status_label.setText(f"{self._done}/{self._count}")
-            self._status_label.setStyleSheet(f"color: {tool_colors['status_spinner']}; font-size: inherit;")
+            icon, text = STATE_RUNNING[0], f"{self._done}/{self._count}"
+            self._state = "running"
+        self._status_icon.setText(icon)
+        self._status_label.setText(text)
 
     def _toggle(self) -> None:
         self._expanded = not self._expanded
@@ -1196,9 +1403,27 @@ class _PythonHighlighter(QSyntaxHighlighter):
 
 
 class ToolApprovalWidget(QFrame):
-    """Displays a tool approval request with syntax-highlighted code preview."""
+    """Script/tool approval request (GUI contract G4).
 
-    approved = Signal(str, str)  # (tool_call_id, "allow" or "deny")
+    Structure, in order: header (real operation + ``Approval required`` +
+    state ``Paused``) -> description/target -> READ-ONLY code preview ->
+    explanation -> action strip, bottom-right, **Deny left, Allow once
+    right**.
+
+    Two invariants the gate depends on:
+
+    * ``Always Allow`` never appears for ``execute_python``. The widget is
+      the only path to the agent's ``allow_all`` decision, and the loop
+      reads that as "skip the prompt for every later script this
+      session" (``AgentLoop._always_allow_scripts``). The contract
+      forbids an always-allow affordance for scripts, so the button is
+      hidden for exactly that tool and for nothing else.
+    * The buttons disable themselves before the decision signal fires
+      (``_disable_buttons`` first), so a double click cannot submit two
+      decisions into the approval queue.
+    """
+
+    approved = Signal(str, str)  # (tool_call_id, "allow"/"allow_all"/"deny")
 
     def __init__(
         self,
@@ -1212,13 +1437,16 @@ class ToolApprovalWidget(QFrame):
         self.setObjectName("message_question")
         self.setStyleSheet(get_tool_approval_frame_style())
         self._tool_call_id = tool_call_id
+        self._tool_name = tool_name
+        #: Gate: no always-allow for scripts (see class docstring).
+        self._is_script = tool_name == constants.EXECUTE_PYTHON_TOOL_NAME
+        self._decided = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(8)
 
-        self._header = QLabel(_build_approval_header(tool_name))
-        self._header.setStyleSheet(get_tool_approval_header_style())
-        layout.addWidget(self._header)
+        layout.addLayout(self._build_header())
 
         # ``description`` is the human-readable summary of what the tool
         # will do (e.g. "rename sub_1000 → process_data"). The agent
@@ -1229,38 +1457,66 @@ class ToolApprovalWidget(QFrame):
         if description and description.strip():
             desc_label = QLabel(description.strip())
             desc_label.setWordWrap(True)
-            desc_label.setStyleSheet("font-weight: bold; font-size: inherit;")
+            desc_label.setStyleSheet(get_tool_approval_body_style())
             layout.addWidget(desc_label)
 
         code = self._extract_code(args_text)
         code_lines = code.strip().splitlines() if code.strip() else []
+        self._code = code
 
         if code.strip():
-            # Only label the preview "Python code" when there is code to
+            # Only label the preview "Python script" when there is code to
             # show. For mutating tools without a ``code`` field the
             # description above already says what will happen.
-            self._info = QLabel(f"Python code — {len(code_lines)} line{'s' if len(code_lines) != 1 else ''}")
-            # Default fallback matches the legacy ``#808080`` so a
-            # paint that races the first theme emit still reads;
-            # ``_apply_styles`` overwrites it with the live
-            # ``muted_text`` token.
-            self._info.setStyleSheet("color: #808080; font-size: inherit;")
+            self._info = QLabel(f"Script — {len(code_lines)} line{'s' if len(code_lines) != 1 else ''}")
+            self._info.setStyleSheet(get_tool_row_meta_style())
             layout.addWidget(self._info)
 
         editor = self._build_code_editor(code, code_lines)
         if editor is not None:
             layout.addWidget(editor)
 
+        layout.addWidget(self._build_explanation())
         layout.addLayout(self._build_approval_buttons())
 
         # Subscribe to theme changes so the frame border, header,
-        # info label, code editor, and allow/always/deny buttons
-        # all repaint when the user switches palettes.  Disabled
-        # button visuals are also refreshed, but we have to be
-        # careful: ``_apply_styles`` must NOT promote a disabled
-        # button back to its active style.  See the runtime state
-        # check below.
+        # info label, code editor, and allow/deny buttons all repaint
+        # when the user switches palettes.  Disabled button visuals are
+        # also refreshed, but we have to be careful: ``_apply_styles``
+        # must NOT promote a disabled button back to its active style.
+        # See the runtime state check below.
         bind_theme(self, self._apply_styles)
+
+    # ------------------------------------------------------------------
+    # Builders
+    # ------------------------------------------------------------------
+
+    def _build_header(self) -> QHBoxLayout:
+        """Operation + 'Approval required' left, state 'Paused' right."""
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+
+        self._header = QLabel(_build_approval_header(self._tool_name))
+        self._header.setTextFormat(Qt.TextFormat.PlainText)
+        self._header.setStyleSheet(get_tool_approval_header_style())
+        header.addWidget(self._header, 1)
+
+        self._state_label = QLabel(f"{STATE_APPROVAL[0]} {STATE_APPROVAL[1]}")
+        self._state_label.setStyleSheet(get_tool_approval_state_style())
+        self._state_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        header.addWidget(self._state_label)
+        return header
+
+    def _build_explanation(self) -> QWidget:
+        """Why the gate exists, in plain words, next to the buttons."""
+        explanation = QLabel(
+            "Review the operation above. Deny stops the tool; Allow once runs it exactly "
+            "one time. The agent stays paused until you decide."
+        )
+        explanation.setWordWrap(True)
+        explanation.setStyleSheet(get_tool_approval_body_style())
+        return explanation
 
     def _apply_styles(self, _tokens: object = None) -> None:
         """Refresh every visual element of the approval widget.
@@ -1271,28 +1527,25 @@ class ToolApprovalWidget(QFrame):
         style, and ``_apply_styles`` must not overwrite that.  We
         read ``isEnabled()`` before re-applying each button's
         stylesheet so a button that was clicked (now disabled with
-        "Allowed" / "Always Allowed" / "Denied" text) stays in the
-        disabled style.
+        "Allowed" / "Denied" text) stays in the disabled style.
         """
-        from .theme.manager import ThemeManager
-
         try:
-            t = ThemeManager.instance().tokens()
+            ThemeManager.instance().tokens()
         except Exception:
             return
         # Frame / header.
         self.setStyleSheet(get_tool_approval_frame_style())
         if getattr(self, "_header", None) is not None:
             self._header.setStyleSheet(get_tool_approval_header_style())
-        # Info label: use ``muted_text`` (AA on both window and
-        # alt_base) instead of the hardcoded ``#808080``.
+        if getattr(self, "_state_label", None) is not None:
+            self._state_label.setStyleSheet(get_tool_approval_state_style())
+        # Info label: ``muted_text`` (AA on both window and alt_base).
         if getattr(self, "_info", None) is not None:
-            self._info.setStyleSheet(f"color: {t.muted_text}; font-size: inherit;")
+            self._info.setStyleSheet(get_tool_row_meta_style())
         # Code editor.
         if getattr(self, "_code_edit", None) is not None:
             self._code_edit.setStyleSheet(get_tool_approval_code_editor_style())
-        # Buttons — preserve disabled state if the user already
-        # decided.
+        # Buttons — preserve disabled state if the user already decided.
         if getattr(self, "_allow_btn", None) is not None:
             if self._allow_btn.isEnabled():
                 self._allow_btn.setStyleSheet(get_tool_approval_allow_btn_style())
@@ -1323,7 +1576,11 @@ class ToolApprovalWidget(QFrame):
             return args_text
 
     def _build_code_editor(self, code: str, lines: list) -> QPlainTextEdit | None:
-        """Build a read-only syntax-highlighted code editor, or None if no code."""
+        """Build the READ-ONLY code preview, or None if there is no code.
+
+        Full script is kept: the height cap only adds a scroll region, it
+        never truncates the text, and the font is never shrunk (G4).
+        """
         if not code.strip():
             return None
         self._code_edit = QPlainTextEdit()
@@ -1338,55 +1595,82 @@ class ToolApprovalWidget(QFrame):
         return self._code_edit
 
     def _build_approval_buttons(self) -> QHBoxLayout:
-        """Build the Allow / Always Allow / Deny button row."""
+        """Action strip, bottom-right: Deny left, Allow once right (G4)."""
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
-        self._allow_btn = QToolButton()
-        # QSS already carries ``padding: 4px 16px`` — a plain label keeps
-        # the text centered and stops whitespace reaching screen readers.
-        self._allow_btn.setText("Allow")
-        self._allow_btn.setStyleSheet(get_tool_approval_allow_btn_style())
-        self._allow_btn.clicked.connect(self._on_allow)
-        btn_layout.addWidget(self._allow_btn)
-
-        self._always_btn = QToolButton()
-        self._always_btn.setText("Always Allow")
-        self._always_btn.setStyleSheet(get_tool_approval_always_btn_style())
-        self._always_btn.clicked.connect(self._on_always_allow)
-        btn_layout.addWidget(self._always_btn)
-
         self._deny_btn = QToolButton()
         self._deny_btn.setText("Deny")
+        self._deny_btn.setToolTip("Refuse this operation")
+        self._deny_btn.setAccessibleName("Deny this operation")
         self._deny_btn.setStyleSheet(get_tool_approval_deny_btn_style())
         self._deny_btn.clicked.connect(self._on_deny)
         btn_layout.addWidget(self._deny_btn)
 
+        self._always_btn = QToolButton()
+        self._always_btn.setText("Always Allow")
+        self._always_btn.setToolTip("Allow this tool without asking again this session")
+        self._always_btn.setAccessibleName("Always allow this tool this session")
+        self._always_btn.setStyleSheet(get_tool_approval_always_btn_style())
+        self._always_btn.clicked.connect(self._on_always_allow)
+        btn_layout.addWidget(self._always_btn)
+
+        self._allow_btn = QToolButton()
+        self._allow_btn.setText("Allow once")
+        self._allow_btn.setToolTip("Run this operation exactly one time")
+        self._allow_btn.setAccessibleName("Allow this operation once")
+        self._allow_btn.setStyleSheet(get_tool_approval_allow_btn_style())
+        self._allow_btn.clicked.connect(self._on_allow)
+        btn_layout.addWidget(self._allow_btn)
+
+        # The agent skips every later prompt once it sees 'allow_all', so a
+        # script must never be able to set that flag (G4 / brief gate).
+        self._always_btn.setVisible(not self._is_script)
+
         btn_layout.addStretch()
         return btn_layout
 
-    def _disable_buttons(self):
-        self._allow_btn.setEnabled(False)
-        self._always_btn.setEnabled(False)
-        self._deny_btn.setEnabled(False)
+    # ------------------------------------------------------------------
+    # Decisions
+    # ------------------------------------------------------------------
+
+    def _disable_buttons(self) -> None:
+        """Close the gate before emitting, so a double click cannot submit twice."""
+        self._decided = True
+        for btn in (self._allow_btn, self._always_btn, self._deny_btn):
+            btn.setEnabled(False)
 
     def _on_allow(self):
+        if self._decided:
+            return
         self._disable_buttons()
         self._allow_btn.setText("Allowed")
         self._allow_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        self._set_state_text("Allowed")
         self.approved.emit(self._tool_call_id, "allow")
 
     def _on_always_allow(self):
+        if self._decided:
+            return
         self._disable_buttons()
         self._always_btn.setText("Always Allowed")
         self._always_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        self._set_state_text("Allowed")
         self.approved.emit(self._tool_call_id, "allow_all")
 
     def _on_deny(self):
+        if self._decided:
+            return
         self._disable_buttons()
         self._deny_btn.setText("Denied")
         self._deny_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        self._set_state_text("Denied")
         self.approved.emit(self._tool_call_id, "deny")
+
+    def _set_state_text(self, text: str) -> None:
+        """Swap the header state from 'Paused' to the decision taken."""
+        if getattr(self, "_state_label", None) is not None:
+            self._state_label.setText(text)
 
 
 # ---------------------------------------------------------------------------
@@ -1412,16 +1696,20 @@ class ExecutePythonWidget(QFrame):
     def __init__(self, tool_call_id: str, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("message_tool")
+        self.setMinimumHeight(_TOOL_ROW_MIN_HEIGHT)
         self._tool_call_id = tool_call_id
         self._code = ""
+        self._result_text = ""
         self._buttons_visible = False
         self._status_visible = False
         self._status_text = ""
         self._is_error = False
         self._blocked = False
+        self._decided = False
+        self._state = "running"
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 3, 6, 3)
+        layout.setContentsMargins(6, 5, 6, 5)
         layout.setSpacing(2)
 
         layout.addLayout(self._build_header())
@@ -1438,18 +1726,14 @@ class ExecutePythonWidget(QFrame):
     # ------------------------------------------------------------------
 
     def _apply_styles(self, _tokens: object = None) -> None:
-        """Re-apply card QSS and refresh child label colours on theme change."""
-        self.setStyleSheet(_tool_card_css())
-        tool_colors = get_tool_colors()
-        color = _tool_color(constants.EXECUTE_PYTHON_TOOL_NAME)
-        if getattr(self, "_bullet", None) is not None:
-            self._bullet.setStyleSheet(f"color: {color}; font-size: inherit;")
+        """Re-apply row QSS and refresh child label colours on theme change."""
+        self.setStyleSheet(get_tool_row_style())
+        tool_colors = _row_status_colors()
         if getattr(self, "_name_label", None) is not None:
-            self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: inherit;")
+            self._name_label.setStyleSheet(get_tool_row_name_style())
         status_icon = getattr(self, "_status_icon", None)
         if status_icon is not None and status_icon.text():
-            key = "status_error" if getattr(self, "_is_error", False) else "status_success"
-            status_icon.setStyleSheet(f"color: {tool_colors[key]}; font-size: inherit;")
+            status_icon.setStyleSheet(_status_style(tool_colors, self._state))
         result_edit = getattr(self, "_result_edit", None)
         if result_edit is not None:
             result_color = tool_colors["status_error"] if getattr(self, "_is_error", False) else None
@@ -1465,44 +1749,65 @@ class ExecutePythonWidget(QFrame):
         disconnect_theme(self)
 
     def _build_header(self) -> QHBoxLayout:
-        tool_colors = get_tool_colors()
-        color = _tool_color(constants.EXECUTE_PYTHON_TOOL_NAME)
+        """Same one-row summary shape as ToolCallWidget (G2/G4).
 
+        The script itself is NOT in the summary row — a script can be
+        hundreds of lines. The row carries the tool name plus the real
+        line count, and the full (never truncated) script lives in the
+        read-only editor below it.
+        """
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(0)
+        header.setSpacing(8)
 
-        # Indent aligned with the toggle button width in other tool cards
-        # so the bullet sits at the same column.
+        # Indent aligned with the toggle button column in ToolCallWidget
+        # so the name sits at the same x.
         indent = QLabel("")
         indent.setFixedWidth(14)
         header.addWidget(indent)
 
-        self._bullet = QLabel("●")
-        self._bullet.setStyleSheet(f"color: {color}; font-size: inherit;")
-        self._bullet.setFixedWidth(14)
-        header.addWidget(self._bullet)
-
-        self._name_label = QLabel(_strip_mcp_prefix(constants.EXECUTE_PYTHON_TOOL_NAME))
-        self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: inherit;")
-        header.addWidget(self._name_label)
-
-        header.addStretch()
-
-        self._status_icon = QLabel("")
-        self._status_icon.setStyleSheet(f"color: {tool_colors['status_spinner']}; font-size: inherit;")
+        self._status_icon = QLabel(STATE_RUNNING[0])
+        self._status_icon.setFixedWidth(14)
+        self._status_icon.setAccessibleName("Script status")
         header.addWidget(self._status_icon)
 
+        self._name_label = QLabel(_strip_mcp_prefix(constants.EXECUTE_PYTHON_TOOL_NAME))
+        self._name_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._name_label.setStyleSheet(get_tool_row_name_style())
+        header.addWidget(self._name_label)
+
+        self._script_meta = _ElidedLabel()
+        self._script_meta.setStyleSheet(get_tool_row_target_style())
+        header.addWidget(self._script_meta, 1)
+
+        self._status_label_right = QLabel(STATE_RUNNING[1])
+        self._status_label_right.setStyleSheet(get_tool_row_meta_style())
+        self._status_label_right.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        header.addWidget(self._status_label_right)
+
         return header
+
+    def _set_state(self, state: str, text: str | None = None) -> None:
+        """Paint the row icon + right-hand word for one state (G9)."""
+        self._state = state
+        icon, default_text = {
+            "running": STATE_RUNNING,
+            "success": STATE_SUCCESS,
+            "error": STATE_ERROR,
+            "discarded": STATE_DISCARDED,
+        }.get(state, STATE_RUNNING)
+        self._status_icon.setText(icon)
+        self._status_label_right.setText(text or default_text)
+        self._apply_styles()
 
     def _build_code_section(self) -> QWidget:
         section = QWidget()
         layout = QVBoxLayout(section)
-        layout.setContentsMargins(28, 2, 0, 2)
+        layout.setContentsMargins(22, 4, 0, 4)
         layout.setSpacing(2)
 
         self._code_info_label = QLabel("")
-        self._code_info_label.setStyleSheet("color: #808080; font-size: inherit;")
+        self._code_info_label.setStyleSheet(get_tool_row_meta_style())
         self._code_info_label.setVisible(False)
         layout.addWidget(self._code_info_label)
 
@@ -1553,26 +1858,41 @@ class ExecutePythonWidget(QFrame):
         return wrapper
 
     def _build_approval_buttons(self) -> QHBoxLayout:
+        """Action strip, bottom-right: Deny left, Allow once right (G4).
+
+        ``Always Allow`` is hidden here unconditionally: this widget is
+        only ever used for ``execute_python``, and the loop reads an
+        ``allow_all`` decision as "skip the prompt for every later
+        script", which the contract forbids for scripts.
+        """
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
-        self._allow_btn = QToolButton()
-        self._allow_btn.setText("Allow")
-        self._allow_btn.setStyleSheet(get_tool_approval_allow_btn_style())
-        self._allow_btn.clicked.connect(self._on_allow)
-        btn_layout.addWidget(self._allow_btn)
-
-        self._always_btn = QToolButton()
-        self._always_btn.setText("Always Allow")
-        self._always_btn.setStyleSheet(get_tool_approval_always_btn_style())
-        self._always_btn.clicked.connect(self._on_always_allow)
-        btn_layout.addWidget(self._always_btn)
-
         self._deny_btn = QToolButton()
         self._deny_btn.setText("Deny")
+        self._deny_btn.setToolTip("Refuse this script")
+        self._deny_btn.setAccessibleName("Deny this script")
         self._deny_btn.setStyleSheet(get_tool_approval_deny_btn_style())
         self._deny_btn.clicked.connect(self._on_deny)
         btn_layout.addWidget(self._deny_btn)
+
+        self._always_btn = QToolButton()
+        self._always_btn.setText("Always Allow")
+        self._always_btn.setToolTip("Allow this tool without asking again this session")
+        self._always_btn.setAccessibleName("Always allow this tool this session")
+        self._always_btn.setStyleSheet(get_tool_approval_always_btn_style())
+        self._always_btn.clicked.connect(self._on_always_allow)
+        btn_layout.addWidget(self._always_btn)
+        # Gate: no always-allow for scripts.
+        self._always_btn.setVisible(False)
+
+        self._allow_btn = QToolButton()
+        self._allow_btn.setText("Allow once")
+        self._allow_btn.setToolTip("Run this script exactly one time")
+        self._allow_btn.setAccessibleName("Allow this script once")
+        self._allow_btn.setStyleSheet(get_tool_approval_allow_btn_style())
+        self._allow_btn.clicked.connect(self._on_allow)
+        btn_layout.addWidget(self._allow_btn)
 
         btn_layout.addStretch()
 
@@ -1587,17 +1907,13 @@ class ExecutePythonWidget(QFrame):
         return wrapper
 
     def _build_result_block(self) -> QWidget:
-        tool_colors = get_tool_colors()
-        self._result_block = QFrame()
-        self._result_block.setStyleSheet(_tool_card_css())
-        layout = QVBoxLayout(self._result_block)
-        layout.setContentsMargins(6, 3, 6, 3)
-        layout.setSpacing(2)
+        """Script output on the G4 inset code surface, with Raw/Copy right."""
+        self._result_block = _make_detail_frame()
+        layout = _make_detail_layout(self._result_block)
 
-        self._result_header_label = QLabel("Result:")
-        self._result_header_label.setStyleSheet(
-            f"color: {tool_colors['result_header']}; font-weight: bold; font-size: inherit;"
-        )
+        self._result_header_label = QLabel("Output")
+        self._result_header_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._result_header_label.setStyleSheet(get_tool_row_name_style())
         self._result_header_label.setVisible(False)
         layout.addWidget(self._result_header_label)
 
@@ -1607,8 +1923,32 @@ class ExecutePythonWidget(QFrame):
         self._result_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         layout.addWidget(self._result_edit)
 
+        actions, _row = _make_result_actions(
+            "",
+            on_raw=self._on_raw,
+            on_copy=self._on_copy,
+        )
+        self._raw_btn_row = actions
+        layout.addWidget(actions)
+
         self._result_block.setVisible(False)
         return self._result_block
+
+    def _on_raw(self) -> None:
+        """Show the untruncated script output."""
+        self._result_edit.setPlainText(self._result_text)
+        self._fit_result_height()
+
+    def _on_copy(self) -> None:
+        """Copy the script output to the clipboard."""
+        _copy_to_clipboard(self._result_text)
+
+    def _fit_result_height(self) -> None:
+        display = self._result_edit.toPlainText()
+        lines = display.splitlines() if display.strip() else []
+        visible = max(min(len(lines), _RESULT_MAX_LINES), 1)
+        line_height = self._result_edit.fontMetrics().lineSpacing()
+        self._result_edit.setFixedHeight(line_height * visible + 16)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1619,8 +1959,11 @@ class ExecutePythonWidget(QFrame):
         self._code_edit.setPlainText(code)
         lines = code.strip().splitlines() if code.strip() else []
         if lines:
-            self._code_info_label.setText(f"Python code — {len(lines)} line{'s' if len(lines) != 1 else ''}")
+            count = f"{len(lines)} line{'s' if len(lines) != 1 else ''}"
+            self._code_info_label.setText(f"Script — {count}")
             self._code_info_label.setVisible(True)
+            # Real line count in the summary row (G4: only real data).
+            self._script_meta.set_full_text(f"{count} of Python")
             visible = min(len(lines), 15)
             line_height = self._code_edit.fontMetrics().lineSpacing()
             self._code_edit.setFixedHeight(line_height * visible + 16)
@@ -1629,6 +1972,7 @@ class ExecutePythonWidget(QFrame):
         else:
             self._code_info_label.setVisible(False)
             self._code_edit.setVisible(False)
+            self._script_meta.set_full_text("")
             self._code_section().setVisible(False)
 
     def append_args_delta(self, delta: str) -> None:
@@ -1655,21 +1999,27 @@ class ExecutePythonWidget(QFrame):
         reasons: tuple[str, ...] = (),
         summary: str = "",
     ) -> None:
+        """Render the docs-review status line (on_error semantics unchanged).
+
+        ``blocked`` still hard-hides the approval buttons, ``failed``
+        still leaves them up for a manual decision, and the ``✗`` prefix
+        in ``_status_text`` is what :meth:`show_approval_buttons` keys
+        off — those three rules are the docs-review contract and are
+        unchanged here.
+        """
         self._status_visible = True
-        tool_colors = get_tool_colors()
+        tool_colors = _row_status_colors()
         if state == "running":
-            self._status_text = "\U0001f50d Reviewing script..."
+            self._status_text = "Reviewing script..."
             if reasons:
                 self._status_text += f" (complex: {', '.join(reasons[:3])})"
             self._status_label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit;")
-            self._status_icon.setText("⟳")
             self._status_detail.setVisible(False)
         elif state == "approved":
             self._status_text = "✓ Docs review passed"
             self._status_label.setStyleSheet(
                 f"color: {tool_colors['status_success']}; font-size: inherit; opacity: 0.7;"
             )
-            self._status_icon.setText("✓")
             self._status_detail.setVisible(False)
         elif state == "blocked":
             self._blocked = True
@@ -1677,7 +2027,6 @@ class ExecutePythonWidget(QFrame):
             self._status_label.setStyleSheet(
                 f"color: {tool_colors['status_error']}; font-weight: bold; font-size: inherit;"
             )
-            self._status_icon.setText("✗")
             self._status_detail.setText(summary or "The reviewer flagged the script.")
             self._status_detail.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
             self._status_detail.setVisible(True)
@@ -1686,7 +2035,6 @@ class ExecutePythonWidget(QFrame):
         elif state == "failed":
             self._status_text = f"⚠ Docs review error — review manually. ({summary})"
             self._status_label.setStyleSheet(f"color: {tool_colors['status_spinner']}; font-size: inherit;")
-            self._status_icon.setText("⚠")
             self._status_detail.setVisible(False)
             # FAILED keeps buttons visible so the user can still approve.
         else:
@@ -1702,14 +2050,14 @@ class ExecutePythonWidget(QFrame):
             # Keep buttons hidden if currently hard-blocked by docs gate.
             self._buttons_visible = True
             self._buttons_container.setVisible(True)
+            # G4/G9: the row says the agent is waiting on a human.
+            self._set_state("running", text=f"{STATE_APPROVAL[0]} {STATE_APPROVAL[1]}")
 
     def mark_done(self) -> None:
         """Mark the call complete (used by history restore). Safe to call
         multiple times."""
-        if self._status_icon.text() not in ("✓", "✗"):
-            tool_colors = get_tool_colors()
-            self._status_icon.setText("✓")
-            self._status_icon.setStyleSheet(f"color: {tool_colors['status_success']}; font-size: inherit;")
+        if self._state == "running":
+            self._set_state("success")
 
     def mark_discarded(self, reason: str = "discarded") -> None:
         """Stop the lifecycle and set a neutral terminal glyph without result.
@@ -1718,22 +2066,15 @@ class ExecutePythonWidget(QFrame):
         the call was started but dropped (truncated args, degenerated
         JSON) instead of executed.
         """
-        tool_colors = get_tool_colors()
-        self._status_icon.setText("⊘")
-        self._status_icon.setStyleSheet(
-            f"color: {tool_colors.get('status_warning', tool_colors.get('preview', '#888'))}; font-size: inherit;"
-        )
-        self._bullet.setStyleSheet(
-            f"color: {tool_colors.get('status_warning', tool_colors.get('preview', '#888'))}; font-size: inherit;"
-        )
+        self._set_state("discarded", text=f"Skipped — {reason}")
         # Hide approval buttons — no result will arrive.
         self._buttons_visible = False
         if hasattr(self, "_buttons_container"):
             self._buttons_container.setVisible(False)
         # Show a short status line instead of a result.
+        self._result_text = f"({reason})"
         self._result_header_label.setVisible(True)
-        self._result_edit.setPlainText(f"({reason})")
-        self._result_edit.setStyleSheet(f"color: {tool_colors.get('preview', '#888')}; font-style: italic;")
+        self._result_edit.setPlainText(self._result_text)
         self._result_block.setVisible(True)
 
     def hide_preview(self) -> None:
@@ -1746,8 +2087,9 @@ class ExecutePythonWidget(QFrame):
         return
 
     def set_result(self, result: str, is_error: bool = False) -> None:
-        tool_colors = get_tool_colors()
+        tool_colors = _row_status_colors()
         self._is_error = is_error
+        self._result_text = result
         # When the docs gate blocked the script, the loop emits a TOOL_RESULT
         # carrying the reviewer summary as an error. That summary already
         # lives in the status detail line — rendering a separate result block
@@ -1758,10 +2100,7 @@ class ExecutePythonWidget(QFrame):
             return
         display = result[:_MAX_RESULT_DISPLAY] + "\n... (truncated)" if len(result) > _MAX_RESULT_DISPLAY else result
         self._result_edit.setPlainText(display)
-        lines = display.splitlines() if display.strip() else []
-        visible = max(min(len(lines), _RESULT_MAX_LINES), 1)
-        line_height = self._result_edit.fontMetrics().lineSpacing()
-        self._result_edit.setFixedHeight(line_height * visible + 16)
+        self._fit_result_height()
         self._result_header_label.setVisible(True)
         self._result_block.setVisible(True)
         # Hide approval buttons after result arrives.
@@ -1770,13 +2109,10 @@ class ExecutePythonWidget(QFrame):
 
         if is_error:
             self._result_edit.setStyleSheet(get_tool_result_editor_style(tool_colors["status_error"]))
-            self._status_icon.setText("✗")
-            self._status_icon.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
-            self._bullet.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
+            self._set_state("error", text=_describe_result(result, True))
         else:
             self._result_edit.setStyleSheet(get_tool_result_editor_style())
-            self._status_icon.setText("✓")
-            self._status_icon.setStyleSheet(f"color: {tool_colors['status_success']}; font-size: inherit;")
+            self._set_state("success", text=_describe_result(result, False))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -1787,24 +2123,34 @@ class ExecutePythonWidget(QFrame):
         return self.layout().itemAt(1).widget()
 
     def _disable_buttons(self) -> None:
+        self._decided = True
         self._allow_btn.setEnabled(False)
         self._always_btn.setEnabled(False)
         self._deny_btn.setEnabled(False)
 
     def _on_allow(self) -> None:
+        if self._decided:
+            return
         self._disable_buttons()
         self._allow_btn.setText("Allowed")
         self._allow_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        self._set_state("success", text="Allowed")
         self.approved.emit(self._tool_call_id, "allow")
 
     def _on_always_allow(self) -> None:
+        if self._decided:
+            return
         self._disable_buttons()
         self._always_btn.setText("Always Allowed")
         self._always_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        self._set_state("success", text="Allowed")
         self.approved.emit(self._tool_call_id, "allow_all")
 
     def _on_deny(self) -> None:
+        if self._decided:
+            return
         self._disable_buttons()
         self._deny_btn.setText("Denied")
         self._deny_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        self._set_state("error", text="Denied")
         self.approved.emit(self._tool_call_id, "deny")
