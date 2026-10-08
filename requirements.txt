@@ -1,5 +1,5 @@
 anthropic>=0.125.0
-openai>=2.0.0
+openai>=2.54.0
 google-genai>=2.0.0
 mcp>=1.28.0
 ida-domain>=0.5.0
