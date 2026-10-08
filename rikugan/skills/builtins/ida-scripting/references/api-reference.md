@@ -101,10 +101,14 @@ class MyVisitor(ida_hexrays.ctree_visitor_t):
         # CV_FAST = no parent tracking
         # CV_PARENTS = track parents (slower)
         # CV_POST = post-order
+
     def visit_insn(self, insn):  # cinsn_t
         return 0  # 0=continue
+
     def visit_expr(self, expr):  # cexpr_t
         return 0
+
+
 visitor = MyVisitor()
 visitor.apply_to(cfunc.body, None)
 ```
@@ -190,9 +194,11 @@ class MyOpt(ida_hexrays.optinsn_t):
     def func(self, blk, insn, optflags):
         # Return number of changes made
         return 0
+
+
 opt = MyOpt()
-opt.install()   # activate
-opt.remove()    # deactivate
+opt.install()  # activate
+opt.remove()  # deactivate
 ```
 
 **Generating microcode at specific maturity:**
@@ -201,8 +207,7 @@ func = ida_funcs.get_func(ea)
 mbr = ida_hexrays.mba_ranges_t(func)
 hf = ida_hexrays.hexrays_failure_t()
 ida_hexrays.mark_cfunc_dirty(func.start_ea)
-mba = ida_hexrays.gen_microcode(mbr, hf, None,
-    ida_hexrays.DECOMP_NO_WAIT, ida_hexrays.MMAT_GLBOPT1)
+mba = ida_hexrays.gen_microcode(mbr, hf, None, ida_hexrays.DECOMP_NO_WAIT, ida_hexrays.MMAT_GLBOPT1)
 ```
 
 ### Type System (ida_typeinf) — Complete Reference
@@ -210,8 +215,8 @@ mba = ida_hexrays.gen_microcode(mbr, hf, None,
 **tinfo_t construction:**
 ```python
 tif = ida_typeinf.tinfo_t()
-tif.parse("int *")                      # from C string
-tif = ida_typeinf.tinfo_t("DWORD")     # from named type
+tif.parse("int *")  # from C string
+tif = ida_typeinf.tinfo_t("DWORD")  # from named type
 tif.create_simple_type(ida_typeinf.BT_INT32)  # from constant
 ```
 
@@ -241,7 +246,8 @@ tif.set_named_type(None, "MyStruct")
 tif = ida_typeinf.tinfo_t()
 edt = ida_typeinf.enum_type_data_t()
 edm = ida_typeinf.edm_t()
-edm.name = "VAL_A"; edm.value = 0
+edm.name = "VAL_A"
+edm.value = 0
 edt.push_back(edm)
 tif.create_enum(edt)
 tif.set_named_type(None, "MyEnum")
@@ -331,7 +337,7 @@ ida_kernwin.info("Info popup")
 
 # Input
 name = ida_kernwin.ask_str("default", 0, "Prompt:")
-yn = ida_kernwin.ask_yn(1, "Sure?")    # returns 1/0/-1
+yn = ida_kernwin.ask_yn(1, "Sure?")  # returns 1/0/-1
 
 # Navigation
 ea = ida_kernwin.get_screen_ea()
@@ -341,12 +347,15 @@ ida_kernwin.jumpto(ea)
 ida_kernwin.show_wait_box("Working...")
 ida_kernwin.hide_wait_box()
 
+
 # Custom action
 class Handler(ida_kernwin.action_handler_t):
     def activate(self, ctx):
         return 1
+
     def update(self, ctx):
         return ida_kernwin.AST_ENABLE_ALWAYS
+
 
 desc = ida_kernwin.action_desc_t("id", "Label", Handler(), "Ctrl+M", "Tooltip", -1)
 ida_kernwin.register_action(desc)
@@ -360,8 +369,11 @@ ida_kernwin.attach_action_to_menu("Edit/", "id", ida_kernwin.SETMENU_APP)
 class MyUI(ida_kernwin.UI_Hooks):
     def screen_ea_changed(self, ea, prev_ea):
         return 0
+
     def populating_widget_popup(self, widget, popup):
         ida_kernwin.attach_action_to_popup(widget, popup, "my:action")
+
+
 hooks = MyUI()
 hooks.hook()
 ```
@@ -371,8 +383,11 @@ hooks.hook()
 class MyHR(ida_hexrays.Hexrays_Hooks):
     def maturity(self, cfunc, maturity):
         return 0
+
     def func_printed(self, cfunc):
         return 0
+
+
 hooks = MyHR()
 hooks.hook()
 ```
@@ -382,8 +397,11 @@ hooks.hook()
 class MyIDB(ida_idp.IDB_Hooks):
     def renamed(self, ea, new_name, is_local):
         return 0
+
     def auto_empty(self):
         return 0
+
+
 hooks = MyIDB()
 hooks.hook()
 ```
@@ -392,13 +410,13 @@ hooks.hook()
 
 ```python
 node = ida_netnode.netnode("$my_data", 0, True)  # create=True
-node.hashset("key", "value")           # store string
-val = node.hashstr("key")              # retrieve
-node.altset(0, 42)                     # store int
-val = node.altval(0)                   # retrieve
-node.setblob(data, 0, "B")            # store binary
-data = node.getblob(0, "B")           # retrieve
-node.kill()                            # delete
+node.hashset("key", "value")  # store string
+val = node.hashstr("key")  # retrieve
+node.altset(0, 42)  # store int
+val = node.altval(0)  # retrieve
+node.setblob(data, 0, "B")  # store binary
+data = node.getblob(0, "B")  # retrieve
+node.kill()  # delete
 ```
 
 ### Database Info (ida_ida / ida_nalt)

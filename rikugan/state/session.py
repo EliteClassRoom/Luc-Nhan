@@ -171,10 +171,7 @@ class SessionState:
             # provider rejects the orphaned tool result (OpenAI/Anthropic
             # both 400). The walk never reaches the head: tail_start >= 1.
             tail_start = max(1, len(self.messages) - keep_last_n)
-            while (
-                tail_start < len(self.messages)
-                and self.messages[tail_start].role == Role.TOOL
-            ):
+            while tail_start < len(self.messages) and self.messages[tail_start].role == Role.TOOL:
                 tail_start += 1
             head = self.messages[:1]
             tail = self.messages[tail_start:]

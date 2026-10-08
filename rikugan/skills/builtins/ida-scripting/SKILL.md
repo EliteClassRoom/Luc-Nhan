@@ -189,7 +189,7 @@ except process-execution modules (`subprocess`, `os.system`, `os.exec*` — bloc
 # Iterate functions
 for ea in idautils.Functions():
     name = ida_funcs.get_func_name(ea)
-    func = ida_funcs.get_func(ea)        # func_t or None — check before .start_ea
+    func = ida_funcs.get_func(ea)  # func_t or None — check before .start_ea
     # func.start_ea, func.end_ea, func.flags
 
 # Iterate instructions in a function
@@ -201,7 +201,7 @@ for head in idautils.FuncItems(func_ea):
 # Cross-references
 for xref in idautils.XrefsTo(ea, ida_xref.XREF_ALL):
     print(f"{xref.frm:#x} -> {xref.to:#x} type={xref.type}")
-for ref in idautils.CodeRefsTo(ea, False):   # False = no flow
+for ref in idautils.CodeRefsTo(ea, False):  # False = no flow
     ...
 for ref in idautils.DataRefsTo(ea):
     ...
@@ -225,14 +225,18 @@ try:
 except ida_hexrays.DecompilationFailure:
     pass
 
+
 # Walk the ctree (decompiled AST)
 class CallVisitor(ida_hexrays.ctree_visitor_t):
     def __init__(self):
         super().__init__(ida_hexrays.CV_FAST)
+
     def visit_expr(self, e):
         if e.op == ida_hexrays.cot_call:
             print(f"Call at {e.ea:#x}")
         return 0
+
+
 cfunc = ida_hexrays.decompile(ea)
 CallVisitor().apply_to(cfunc.body, None)
 
@@ -260,8 +264,8 @@ print(node.hashstr("key"))
 # Offsets are in BITS — multiply byte values by 8.
 tif = ida_typeinf.tinfo_t()
 tif.create_udt(ida_typeinf.udt_type_data_t(), ida_typeinf.BTF_STRUCT)  # empty struct shell
-tif.add_udm("field1", "int", offset=0 * 8)        # byte 0 -> bit 0
-tif.add_udm("field2", "char *", offset=4 * 8)     # pointer field at byte 4
+tif.add_udm("field1", "int", offset=0 * 8)  # byte 0 -> bit 0
+tif.add_udm("field2", "char *", offset=4 * 8)  # pointer field at byte 4
 tif.set_named_type(ida_typeinf.get_idati(), "MyStruct", ida_typeinf.NTF_REPLACE)
 
 # Build a struct — explicit way (full control over size/flags per member)
@@ -269,10 +273,10 @@ udt = ida_typeinf.udt_type_data_t()
 m = ida_typeinf.udm_t()
 m.name = "field1"
 t = ida_typeinf.tinfo_t()
-t.create_simple_type(ida_typeinf.BT_INT32)   # NOT tinfo_t(BT_INT32) — unreliable
+t.create_simple_type(ida_typeinf.BT_INT32)  # NOT tinfo_t(BT_INT32) — unreliable
 m.type = t
-m.offset = 0 * 8    # byte 0 -> bit 0
-m.size = 4 * 8      # 4 bytes -> 32 bits
+m.offset = 0 * 8  # byte 0 -> bit 0
+m.size = 4 * 8  # 4 bytes -> 32 bits
 udt.push_back(m)
 tif = ida_typeinf.tinfo_t()
 tif.create_udt(udt, ida_typeinf.BTF_STRUCT)
@@ -284,10 +288,10 @@ for udm in tif.iter_struct():
 
 # Build a tinfo_t from a C declaration — avoids manual BT_*/BTF_* construction.
 # Constructor parses the declaration directly (til defaults to get_idati()).
-fnptr_t = ida_typeinf.tinfo_t("int (*)(void *, size_t)")   # function pointer
+fnptr_t = ida_typeinf.tinfo_t("int (*)(void *, size_t)")  # function pointer
 # Or step-by-step via parse() (also takes til=None, pt_flags=0):
 arr_t = ida_typeinf.tinfo_t()
-arr_t.parse("char[16]")                                    # fixed array type
+arr_t.parse("char[16]")  # fixed array type
 
 # Apply a C declaration directly (for well-known C types)
 ida_typeinf.apply_cdecl(ida_typeinf.get_idati(), ea, "int __cdecl func(int a, char *b)")
@@ -304,9 +308,12 @@ back to classic `ida_*` modules.
 
 ```python
 from ida_domain import Database as db
-for f in db.functions: print(f.name)
-db.names[ea] = "new_name"          # rename
-for x in db.xrefs.to(ea): print(x)
+
+for f in db.functions:
+    print(f.name)
+db.names[ea] = "new_name"  # rename
+for x in db.xrefs.to(ea):
+    print(x)
 data = db.read(ea, size)
 cfunc = db.decompile(ea)
 ```

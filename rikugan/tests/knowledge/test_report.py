@@ -247,9 +247,7 @@ class TestConversationAppendix(unittest.TestCase):
         from rikugan.memory import report as report_module
 
         msgs = [self._msg("user", f"msg-{i}") for i in range(50)]
-        appendix = report_module._build_conversation_appendix(
-            msgs, max_messages=3
-        )
+        appendix = report_module._build_conversation_appendix(msgs, max_messages=3)
         self.assertIn("msg-0", appendix)
         self.assertIn("msg-2", appendix)
         self.assertNotIn("msg-3", appendix)
@@ -259,20 +257,14 @@ class TestConversationAppendix(unittest.TestCase):
         from rikugan.memory import report as report_module
 
         msgs = [self._msg("user", "x" * 40) for _ in range(10)]
-        appendix = report_module._build_conversation_appendix(
-            msgs, max_messages=100, max_chars=120
-        )
+        appendix = report_module._build_conversation_appendix(msgs, max_messages=100, max_chars=120)
         self.assertIn("truncated", appendix)
 
     def test_empty_input_returns_empty_string(self):
         from rikugan.memory import report as report_module
 
-        self.assertEqual(
-            report_module._build_conversation_appendix(None), ""
-        )
-        self.assertEqual(
-            report_module._build_conversation_appendix([]), ""
-        )
+        self.assertEqual(report_module._build_conversation_appendix(None), "")
+        self.assertEqual(report_module._build_conversation_appendix([]), "")
 
 
 class TestSynthesizeReportIncludesAppendix(unittest.TestCase):
@@ -343,7 +335,6 @@ class TestSynthesizeReportIncludesAppendix(unittest.TestCase):
         self.assertNotIn("Conversation Context", prompt)
         self.assertIn("<knowledge_report_pack>", prompt)
 
-
     def test_executive_scope_filters(self):
         ctx = build_report_context(self.store, self.paths, scope="executive")
         self.assertIn("Executive Summary", ctx.sections)
@@ -358,6 +349,7 @@ class TestSynthesizeReportIncludesAppendix(unittest.TestCase):
 
     def test_verified_hypothesis_bullet_renders_claim_and_citations(self):
         from rikugan.memory.schema import KnowledgeMemory
+
         self.store.upsert_memory(
             KnowledgeMemory(
                 id="mem:hyp:ioc:claim",
@@ -517,6 +509,7 @@ class TestReportSanitization(unittest.TestCase):
         # admits) so the sanitized hostile content actually reaches
         # ``to_prompt_text`` for the [FILTERED] check to apply.
         from rikugan.memory.schema import KnowledgeMemory
+
         self.store.upsert_memory(
             KnowledgeMemory(
                 id="mem:hyp:hostile",
@@ -545,6 +538,7 @@ class TestReportSanitization(unittest.TestCase):
         # blow the pack budget.
         huge = "A" * 5000
         from rikugan.memory.schema import KnowledgeMemory
+
         self.store.upsert_memory(
             KnowledgeMemory(
                 id="mem:hyp:long",

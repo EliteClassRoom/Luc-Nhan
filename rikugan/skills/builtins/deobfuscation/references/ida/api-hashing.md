@@ -47,8 +47,8 @@ The simplest variant. Resolves hashes to names and annotates the disassembly. Do
 Open the binary in IDA, find the API resolver function, locate the hash algorithm sub-function. Get the bytes:
 
 ```python
-HASHCODE_START = 0x1007030D   # inclusive
-HASHCODE_END   = 0x1007051E   # exclusive
+HASHCODE_START = 0x1007030D  # inclusive
+HASHCODE_END = 0x1007051E  # exclusive
 hash_code = ida_bytes.get_bytes(HASHCODE_START, HASHCODE_END - HASHCODE_START)
 ```
 
@@ -88,8 +88,12 @@ It also reads `EDI` and `ESI` (used by code outside the snippet — they must be
 import struct
 from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
 from unicorn.x86_const import (
-    UC_X86_REG_EAX, UC_X86_REG_EBP, UC_X86_REG_EDI, UC_X86_REG_ESI,
+    UC_X86_REG_EAX,
+    UC_X86_REG_EBP,
+    UC_X86_REG_EDI,
+    UC_X86_REG_ESI,
 )
+
 
 def calculate_hash(string: bytes, hash_code: bytes, seed: int = 0xB801FCDA) -> int:
     """Emulate the sample's hash algorithm on `string`, return the hash."""
@@ -133,11 +137,12 @@ import pefile
 
 API_HASH_DLLS = ("kernel32.dll", "ntdll.dll")
 
+
 def build_api_dict(dll_dir=r"C:\Windows\System32") -> dict:
     api_dict = {}
     for dll in API_HASH_DLLS:
         try:
-            pe = pefile.PE(fr"{dll_dir}\{dll}")
+            pe = pefile.PE(rf"{dll_dir}\{dll}")
             for sym in pe.DIRECTORY_ENTRY_EXPORT.symbols:
                 if sym.name:
                     api_dict[calculate_hash(sym.name, hash_code)] = sym.name
@@ -163,8 +168,8 @@ Original IIJ annotation script (IDA 8.x and earlier):
 ```python
 import idaapi, idautils, idc
 
-API_RESOLVER_FN = 0x10067C3A     # address of the resolver function
-ENUM_NAME       = "APIHASH"
+API_RESOLVER_FN = 0x10067C3A  # address of the resolver function
+ENUM_NAME = "APIHASH"
 
 # Create the enum once. Members will be added on demand below.
 enum = idc.get_enum(ENUM_NAME)
@@ -258,11 +263,12 @@ CODE = bytes.fromhex(
     "D15B5F5E8BC1C1E80F33C1"
 )
 
+
 def emulate_murmurhash2(data: bytes, seed: int = 32) -> int:
     CODE_OFFSET = 0x1000000
-    LIBNAME     = 0x7000000
-    STACK_BASE  = 0x00300000
-    STACK_SIZE  = 0x00100000
+    LIBNAME = 0x7000000
+    STACK_BASE = 0x00300000
+    STACK_SIZE = 0x00100000
 
     mu = unicorn.Uc(unicorn.UC_ARCH_X86, unicorn.UC_MODE_32)
     mu.mem_map(CODE_OFFSET, 4 * 1024 * 1024)
@@ -293,6 +299,7 @@ import os, json, pefile
 
 HASH_DICT_PATH = r"c:\murmurhash2_hashes_dict.json"
 
+
 def dump_hash_dlls(dlls_dir: str = "dlls/") -> dict:
     """Walk `dlls_dir`, hash every export of every DLL via emulate_murmurhash2."""
     api_dict = {}
@@ -316,6 +323,7 @@ def dump_hash_dlls(dlls_dir: str = "dlls/") -> dict:
                 # string carries the DLL info needed by patch_apicall.
                 api_dict[str(h)] = f"{filename[:-4]}_{exp.name.decode()}"
     return api_dict
+
 
 if __name__ == "__main__":
     api_dict = dump_hash_dlls()
@@ -351,7 +359,8 @@ The walker looks for `mov ecx`, `mov edi`, `mov esi`. The `< 0x10` heuristic on 
 ```python
 import idautils, idc
 
-HASHES_DICT: dict = {}      # populated by setup()
+HASHES_DICT: dict = {}  # populated by setup()
+
 
 def setup(hashes_dict_file: str) -> None:
     global HASHES_DICT
@@ -373,7 +382,7 @@ def resolve_all_APIs(resolve_ea: int) -> list:
         curr_ea = ref
         api_hash = 0
 
-        for _ in range(30):                # walk back up to 30 instructions
+        for _ in range(30):  # walk back up to 30 instructions
             prev = idc.PrevHead(curr_ea)
             insn = idc.GetDisasm(prev).replace(" ", "")
 
@@ -422,16 +431,14 @@ def patch_apicall(addr: int, apicall: str) -> bool:
     Returns True on success.
     """
     # 1. Force-load the DLL via AppCall if it isn't loaded yet.
-    loadlib = Appcall.proto(
-        "kernel32_LoadLibraryA", "int __stdcall loadlib(const char *fn);"
-    )
+    loadlib = Appcall.proto("kernel32_LoadLibraryA", "int __stdcall loadlib(const char *fn);")
 
     apiaddr = idc.LocByName(apicall)
     if apiaddr == 0xFFFFFFFF:
         loadlib(f"{apicall.split('_')[0]}.dll")
         apiaddr = idc.LocByName(apicall)
         if apiaddr == 0xFFFFFFFF:
-            return False                           # still not loaded — skip
+            return False  # still not loaded — skip
 
     # 2. Patch the call: 0xE8 <rel32>.
     # & 0xFFFFFFFF is mandatory — Python ints are arbitrary precision,
@@ -451,15 +458,15 @@ def patch_apicall(addr: int, apicall: str) -> bool:
 
         if "movecx" in insn or "movedx" in insn:
             operand_type = idc.GetOpType(prev, 1)
-            param        = idc.GetOperandValue(prev, 1)
+            param = idc.GetOperandValue(prev, 1)
 
-            if operand_type not in (1, 2, 5):     # register / memory / imm
+            if operand_type not in (1, 2, 5):  # register / memory / imm
                 curr_ea = prev
                 continue
 
             if param < 0x10:
                 # 2-byte mov (e.g. 8B CE  mov ecx, esi)
-                if "eax" not in insn:             # don't NOP a result-mov
+                if "eax" not in insn:  # don't NOP a result-mov
                     patch_nops(prev, 2)
             else:
                 # 5-byte mov (e.g. B9 D6 3F B0 78  mov ecx, 78B03FD6h)
@@ -484,7 +491,7 @@ After this runs, the binary is fully deobfuscated: every `call ResolveApiByHash`
 
 ```python
 setup(r"c:\murmurhash2_hashes_dict.json")
-patches = resolve_all_APIs(0x004082D3)      # EA of ResolveApiByHash
+patches = resolve_all_APIs(0x004082D3)  # EA of ResolveApiByHash
 patch_apicall_wrapper(patches)
 ```
 
@@ -536,9 +543,11 @@ import idautils
 import ida_bytes
 import idc
 
+
 def get_xref_list(fn_addr):
     """Return every address in the binary that has an xref TO fn_addr."""
     return [addr.frm for addr in idautils.XrefsTo(fn_addr)]
+
 
 # Example: 0x025A28 is the decryptor in the Guloader sample at
 # SHA256 e3a8356689b97653261ea6b75ca911bc65f523025f15649e87b1aef0071ae107
@@ -561,7 +570,7 @@ def get_string_fn(ptr_addr):
     while limit_count < 10000:
         ptr_addr = idc.prev_head(ptr_addr)
         if ida_bytes.is_code(ida_bytes.get_full_flags(ptr_addr)):
-            if idc.print_insn_mnem(ptr_addr) == 'call':
+            if idc.print_insn_mnem(ptr_addr) == "call":
                 out = idc.get_operand_value(ptr_addr, 0)
                 break
         limit_count += 1
@@ -576,6 +585,7 @@ The 10 000-instruction bound is paranoia; in practice the loader is one or two i
 import unicorn, unicorn.x86_const as x86
 import struct
 
+
 def xor_crypt(data, key):
     """Repeating-key XOR. Length-prefixed buffers come out plaintext; UTF-16
     strings need `.decode('utf-16')` after this."""
@@ -584,6 +594,7 @@ def xor_crypt(data, key):
         out[i] = b ^ key[i % len(key)]
     return bytes(out)
 
+
 # 1) Collect every string-decryptor xref, and for each one find the loader.
 xref_list = get_xref_list(DECRYPTOR_ADDR)
 str_fn_list = []
@@ -591,6 +602,7 @@ for xref in xref_list:
     fn = get_string_fn(xref)
     if fn is not None:
         str_fn_list.append(fn)
+
 
 # 2) Run each loader through Unicorn. After emu_start returns, ARG_BUFF
 #    contains the encoded data and the function (which the loader then
@@ -611,20 +623,21 @@ def emulate_loader(fn_addr):
     uc.mem_map(ARG_BUFF, 0x1000, unicorn.UC_PROT_ALL)
 
     # Fake-return sentinel -> emu_start stops on ret
-    uc.mem_write(STACK, struct.pack('<I', 0xDEADBEEF))
+    uc.mem_write(STACK, struct.pack("<I", 0xDEADBEEF))
     uc.emu_start(CODE + fn_addr, 0xDEADBEEF, 0, 0)
 
     raw = bytes(uc.mem_read(ARG_BUFF, 0x1000))
-    length = struct.unpack('<I', raw[:4])[0]
-    return raw[4:4 + length]
+    length = struct.unpack("<I", raw[:4])[0]
+    return raw[4 : 4 + length]
+
 
 # 3) For each loader, emulate it, then XOR-decrypt (key is per-sample).
 results = []
 for fn in str_fn_list:
     try:
         enc = emulate_loader(fn)
-        ptxt = xor_crypt(enc, key).replace(b'\x00', b'')
-        results.append(ptxt.decode('utf-8', errors='replace'))
+        ptxt = xor_crypt(enc, key).replace(b"\x00", b"")
+        results.append(ptxt.decode("utf-8", errors="replace"))
     except Exception:
         pass
 

@@ -2603,9 +2603,7 @@ class RikuganPanelCore(QWidget):
             # the panel actually shows rows.  ``_history_pending`` was
             # cleared by the drain before this apply runs, so the
             # refresh submit is accepted by the single-flight guard.
-            user_showing_history = (
-                self._history_panel is not None and self._history_panel.isVisible()
-            )
+            user_showing_history = self._history_panel is not None and self._history_panel.isVisible()
             if user_showing_history:
                 self._start_history_list_request()
                 return
@@ -2719,9 +2717,7 @@ class RikuganPanelCore(QWidget):
             # ``set_loading`` spinner (set by ``_start_history_list_request``)
             # is replaced by the real entry list as soon as we reach
             # ``set_entries`` further down.
-            user_showing_history = (
-                self._history_panel is not None and self._history_panel.isVisible()
-            )
+            user_showing_history = self._history_panel is not None and self._history_panel.isVisible()
             if not user_showing_history:
                 if status is HistoryRequestStatus.LISTED and result.entries:
                     sorted_entries = sorted(

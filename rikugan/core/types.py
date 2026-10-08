@@ -363,6 +363,7 @@ class StreamChunk:
     # Provider-specific raw response parts (e.g. Gemini parts with thought_signatures).
     raw_parts: Any = None
 
+
 # ---------------------------------------------------------------------------
 # User approval / decision protocol
 # ---------------------------------------------------------------------------

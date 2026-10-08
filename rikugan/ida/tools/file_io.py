@@ -40,9 +40,7 @@ class _FileToolError(ValueError):
 def _resolve_root() -> Path:
     db = get_database_path()
     if not db:
-        raise _FileToolError(
-            "no analyzed binary/IDB available; cannot resolve file root"
-        )
+        raise _FileToolError("no analyzed binary/IDB available; cannot resolve file root")
     return Path(db).resolve().parent
 
 
@@ -214,9 +212,7 @@ def write_file(
         if not candidate.is_file():
             return f"Error: refusing to overwrite non-regular file: {'/'.join(parts)}"
         if not overwrite:
-            return (
-                f"Error: file already exists; pass overwrite=true to replace: {'/'.join(parts)}"
-            )
+            return f"Error: file already exists; pass overwrite=true to replace: {'/'.join(parts)}"
 
     parent = candidate.parent
     try:

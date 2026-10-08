@@ -48,9 +48,11 @@ from ida_domain import Database
 from ida_domain.hooks import DecompilerHooks
 import ida_hexrays
 
+
 class MyHook(DecompilerHooks):
     def locopt(self, mba):
-        if mba.maturity >= 6: return 0  # NEVER at MMAT_LVARS
+        if mba.maturity >= 6:
+            return 0  # NEVER at MMAT_LVARS
         # Full mba_t access — iterate blocks, modify instructions
         return 0
 
@@ -61,6 +63,7 @@ class MyHook(DecompilerHooks):
     def glbopt(self, mba):
         # Runs during global optimization
         return 0
+
 
 hook = MyHook()
 with Database.open(hooks=[hook]) as db:

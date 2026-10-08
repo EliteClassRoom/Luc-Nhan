@@ -78,6 +78,7 @@ Find every match in the raw `.text` blob with a regex that uses byte-level wildc
 
 ```python
 import re
+
 rule = re.compile(rb"\x8A\x44.{2,3}|\x8A\x84.{2,6}")
 matches = list(rule.finditer(data))
 # Expect ~100 matches in a Conti sample; expect ~10-20% false positives.
@@ -91,6 +92,7 @@ Take ~500 bytes before the match (heuristic — increase for long strings) and r
 
 ```python
 import capstone
+
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
 md.detail = True
 md.skipdata = True
@@ -101,9 +103,11 @@ disasm_list = list(md.disasm(data_block, 0, len(data_block)))
 offset = disasm_list_reversed_first_insn.operands[1].value.mem.disp
 
 for insn in reversed(disasm_list):
-    if (insn.mnemonic == "mov"
-            and insn.operands[0].type == capstone.x86.X86_OP_MEM
-            and insn.operands[0].value.mem.disp == offset):
+    if (
+        insn.mnemonic == "mov"
+        and insn.operands[0].type == capstone.x86.X86_OP_MEM
+        and insn.operands[0].value.mem.disp == offset
+    ):
         prologue_addr = insn.address
         break
 ```
@@ -149,14 +153,19 @@ The `edi/ebx/ecx = 0x7F` preset is mandatory — see "Why `UC_ERR_EXCEPTION`" be
 ```python
 from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
 from unicorn.x86_const import (
-    UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EBP,
-    UC_X86_REG_EDI, UC_X86_REG_ESI, UC_X86_REG_ESP,
+    UC_X86_REG_EBX,
+    UC_X86_REG_ECX,
+    UC_X86_REG_EBP,
+    UC_X86_REG_EDI,
+    UC_X86_REG_ESI,
+    UC_X86_REG_ESP,
 )
+
 
 def unicorn_block(block):
     mu = Uc(UC_ARCH_X86, UC_MODE_32)
     ADDRESS = 0x1000000
-    mu.mem_map(ADDRESS, 4 * 1024 * 1024, 0x7)         # UC_PROT_ALL
+    mu.mem_map(ADDRESS, 4 * 1024 * 1024, 0x7)  # UC_PROT_ALL
     mu.mem_write(ADDRESS, block)
     # Pre-set every register that could plausibly be an IDIV divisor.
     mu.reg_write(UC_X86_REG_ESI, 0x7F)
@@ -240,6 +249,7 @@ The counter register varies — `eax / ecx / edx / ebx / esi / edi` — and the 
 
 ```python
 import re
+
 egg = rb"[\x40-\x43\x46]\x83[\xf8-\xfb\xfe].[\x72\x7c]."
 #                ^inc    ^cmp    ^imm   ^jb/jl ^displacement
 ```
@@ -298,8 +308,7 @@ def filter_bytes(data):
             last_jump = insn.address + insn.size
             if insn.operands[0].value.imm > len(data):
                 # Forward jump out of the chunk -- NOP it.
-                out = (data[:insn.address] + b"\x90" * insn.size
-                       + data[insn.address + insn.size:])
+                out = data[: insn.address] + b"\x90" * insn.size + data[insn.address + insn.size :]
     return code_start, out[code_start:]
 ```
 
@@ -319,9 +328,7 @@ def trace(uc, address, size, user_data):
     # The loop's terminator is `cmp <reg>, <string_size>; jb`.
     # Hook on the cmp -- first occurrence snapshots the stack, second
     # occurrence walks the stack to find what changed since the snapshot.
-    if (insn.mnemonic == "cmp"
-            and insn.operands[1].type == X86_OP_IMM
-            and insn.operands[1].value.imm == g_string_size):
+    if insn.mnemonic == "cmp" and insn.operands[1].type == X86_OP_IMM and insn.operands[1].value.imm == g_string_size:
         if stack_snapshot is None:
             # First iteration: the loop has just written byte 0; snapshot
             # the stack to use as a "before" reference.
@@ -351,7 +358,7 @@ class EmulatorData:
     def __init__(self):
         self.base = 0x00400000
         self.text_section_rva = ...
-        self.data_section_rva = None      # populated only if present
+        self.data_section_rva = None  # populated only if present
         self.data_section_size = None
         self.data_section_data = None
         self.rdata_section_rva = None

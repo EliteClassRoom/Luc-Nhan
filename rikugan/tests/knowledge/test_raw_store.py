@@ -223,9 +223,7 @@ class TestCommitHypothesisVerdicts(unittest.TestCase):
 
     def test_commit_hypothesis_verdicts_upserts_and_appends(self):
         self.store.upsert_memory(make_mem(mem_id="mem:hyp:1"))
-        self.store.commit_hypothesis_verdicts(
-            {"mem:hyp:1": self._updated()}, [self._obs("obs:test1")]
-        )
+        self.store.commit_hypothesis_verdicts({"mem:hyp:1": self._updated()}, [self._obs("obs:test1")])
         stored = next(m for m in self.store.list_memories() if m.id == "mem:hyp:1")
         self.assertEqual(stored.status, "verified")
         self.assertEqual(stored.verdict_claim, "Confirmed.")
@@ -243,9 +241,7 @@ class TestCommitHypothesisVerdicts(unittest.TestCase):
 
         with patch.object(type(self.store), "_write_jsonl_atomic", staticmethod(flaky)):
             with self.assertRaises(OSError):
-                self.store.commit_hypothesis_verdicts(
-                    {"mem:hyp:1": self._updated()}, [self._obs("obs:test2")]
-                )
+                self.store.commit_hypothesis_verdicts({"mem:hyp:1": self._updated()}, [self._obs("obs:test2")])
         stored = next(m for m in self.store.list_memories() if m.id == "mem:hyp:1")
         self.assertEqual(stored.status, "unverified")  # snapshot restored
         self.assertEqual(self.store.list_observations(), [])

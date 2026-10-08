@@ -49,6 +49,7 @@ class TurnEventType(str, Enum):
     RECOVERY_START = "recovery_start"
     TOOL_CALL_DISCARDED = "tool_call_discarded"
 
+
 @dataclass
 class TurnEvent:
     type: TurnEventType
@@ -486,7 +487,6 @@ class TurnEvent:
                 "citations": list(citations),
             },
         )
-
 
     @staticmethod
     def reasoning_event(text: str) -> TurnEvent:

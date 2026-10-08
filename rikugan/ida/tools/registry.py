@@ -44,7 +44,6 @@ _BOOT_TOOL_MODULES = (
 )
 
 
-
 # ---------------------------------------------------------------------------
 # Advanced tool modules — imported lazily on first tool schema build.
 # These pull in decompiler, microcode, types, scripting, and web modules.

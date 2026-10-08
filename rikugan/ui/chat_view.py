@@ -88,6 +88,7 @@ _RESTORE_DRAIN_BATCH = 30
 # only 2+ consecutive calls get grouped into a collapsible widget.
 _TOOL_GROUP_MIN_CALLS = 2
 
+
 def _is_hidden_system_user_message(content: str) -> bool:
     """Internal system hints are persisted as user messages but not shown in UI."""
     if not content:
@@ -198,6 +199,7 @@ def _estimate_user_height(text: str) -> int:
     lines = text.count("\n") + 1
     # ~16px per wrapped line
     return max(40, min(600, 32 + lines * 16))
+
 
 def _plan_step_done_status(outcome: str) -> str:
     """Map ``plan_step_done`` outcome text to the ``PlanStepWidget`` status.
@@ -351,8 +353,6 @@ class RestoreWorker(QThread):
             # sentinel — ``_on_worker_finished`` is the cleanup path.
             if not self._stop_requested:
                 self.queue.put((_RESTORE_KIND_FINISHED, None))
-
-
 
     @staticmethod
     def _build_spec(
@@ -1308,9 +1308,7 @@ class ChatView(QScrollArea):
                 # to the matching ``PlanStepWidget`` status so the step
                 # reads as "stopped at limit" rather than "done" when
                 # the per-step turn budget was exhausted.
-                self._plan_view.set_step_status(
-                    event.plan_step_index, _plan_step_done_status(event.text)
-                )
+                self._plan_view.set_step_status(event.plan_step_index, _plan_step_done_status(event.text))
             self._scroll_to_bottom()
 
     def _handle_exploration_event(self, event: TurnEvent) -> None:
@@ -2202,7 +2200,9 @@ class ChatView(QScrollArea):
         # already cleaned up in ``_on_chunk_ready`` (height 0 + deleteLater),
         # so any leftover here is a skip, not a leak.
         self._in_restore = False
-        log_debug(f"HIST-TRACE restore-finished: gen={generation} leftover_placeholders={len(self._placeholders)}")  # TEMP-DIAG
+        log_debug(
+            f"HIST-TRACE restore-finished: gen={generation} leftover_placeholders={len(self._placeholders)}"
+        )  # TEMP-DIAG
         # The worker is done — stop the drain timer.  ``_drain_restore_queue``
         # also stops on the sentinel path, but stopping here covers the
         # case where the drain is mid-batch and the safety-net

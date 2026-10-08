@@ -35,6 +35,8 @@ def _skill_popup_height(slug_count: int) -> int:
     """
     visible = min(max(slug_count, 1), _SKILL_POPUP_MAX_VISIBLE)
     return min(_SKILL_POPUP_MAX_HEIGHT, visible * _SKILL_POPUP_ROW_HEIGHT + 8)
+
+
 def _skill_popup_style() -> str:
     """Inline QSS for the ``_SkillPopup`` — always applied, never gated on host theme.
 
@@ -83,12 +85,8 @@ class _SkillPopup(QFrame):
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._container = QWidget(self._scroll)
         self._layout = QVBoxLayout(self._container)
         self._layout.setContentsMargins(0, 0, 0, 0)

@@ -150,7 +150,7 @@ def copy_mop(src):
 ### After Any Modification
 
 ```python
-blk.mark_lists_dirty()       # After modifying any block
+blk.mark_lists_dirty()  # After modifying any block
 # In block optimizer, if you made cross-block changes:
 # mba.mark_chains_dirty()    # (access via blk.mba if available)
 ```
@@ -159,9 +159,17 @@ blk.mark_lists_dirty()       # After modifying any block
 
 ```python
 _COND_OPCODES = {
-    m_jcnd, m_jz, m_jnz,
-    m_jg, m_jl, m_jge, m_jle,
-    m_ja, m_jae, m_jb, m_jbe,
+    m_jcnd,
+    m_jz,
+    m_jnz,
+    m_jg,
+    m_jl,
+    m_jge,
+    m_jle,
+    m_ja,
+    m_jae,
+    m_jb,
+    m_jbe,
 }
 ```
 
@@ -181,6 +189,7 @@ class MyVisitor(ida_hexrays.minsn_visitor_t):
         # inspect ins, blk
         return 0  # 0 = continue visiting
 
+
 v = MyVisitor()
 mba.for_all_topinsns(v)
 ```
@@ -189,9 +198,9 @@ mba.for_all_topinsns(v)
 
 ```python
 def get_instruction_ea(ins):
-    if hasattr(ins, 'ea'):
+    if hasattr(ins, "ea"):
         return ins.ea
-    if hasattr(ins, 'ip'):
+    if hasattr(ins, "ip"):
         return ins.ip
     return None
 ```
@@ -201,8 +210,8 @@ def get_instruction_ea(ins):
 When microcode-level modification is insufficient, use `execute_python`:
 
 ```python
-ida_bytes.patch_byte(ea, 0x90)           # NOP one byte
-ida_bytes.patch_bytes(ea, b"\x90" * 5)   # NOP sled
+ida_bytes.patch_byte(ea, 0x90)  # NOP one byte
+ida_bytes.patch_bytes(ea, b"\x90" * 5)  # NOP sled
 ```
 
 Or through ida-domain:

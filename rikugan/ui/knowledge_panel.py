@@ -70,6 +70,7 @@ def _hypothesis_status_label(memory) -> str:
     status = str(_getattr(memory, "status", "unverified") or "unverified")
     return _STATUS_LABELS.get(status, f"? {status}")
 
+
 class KnowledgePanel(QWidget):
     """Browser widget for the raw knowledge store.
 
@@ -128,9 +129,7 @@ class KnowledgePanel(QWidget):
 
         # Main table
         self._table = QTableWidget(0, 6)
-        self._table.setHorizontalHeaderLabels(
-            ["Type", "ID/Title", "Tags/Predicate", "Status", "Confidence", "Updated"]
-        )
+        self._table.setHorizontalHeaderLabels(["Type", "ID/Title", "Tags/Predicate", "Status", "Confidence", "Updated"])
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)

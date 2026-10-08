@@ -348,9 +348,7 @@ class SafeModule:
             # the wrapped module's own (which would leak the deny set).
             return object.__getattribute__(self, "__dir__")
         if name in _DENY_ATTR_NAMES:
-            raise AttributeError(
-                f"Blocked — access to disallowed module attribute '{name}'"
-            )
+            raise AttributeError(f"Blocked — access to disallowed module attribute '{name}'")
         wrapped = object.__getattribute__(self, "_wrapped")
         value = getattr(wrapped, name)
         return _wrap_module(value)

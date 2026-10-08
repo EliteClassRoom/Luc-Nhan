@@ -16,14 +16,7 @@ from __future__ import annotations
 
 import unittest
 
-_BODY = (
-    "**Report draft**\n\n"
-    "# Draft\n\n"
-    "```c\n"
-    "int main(void) {return 0;}\n"
-    "```\n\n"
-    "Trailing line about entry."
-)
+_BODY = "**Report draft**\n\n# Draft\n\n```c\nint main(void) {return 0;}\n```\n\nTrailing line about entry."
 
 
 class TestLegacyMarkdownFences(unittest.TestCase):
@@ -51,7 +44,6 @@ class TestLegacyMarkdownFences(unittest.TestCase):
         self.assertRegex(out, r"<div[^>]*white-space:pre-wrap[^>]*>int main")
         # NUL sentinels from the placeholder registry must never leak.
         self.assertNotIn("\x00", out)
-
 
 
 class TestMdToHtmlDispatch(unittest.TestCase):

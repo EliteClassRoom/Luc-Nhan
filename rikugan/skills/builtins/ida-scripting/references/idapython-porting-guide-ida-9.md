@@ -1543,7 +1543,7 @@ The following code can be used as an example of how to replace ida_struct.get_me
 def get_member_by_fullname(fullname):
     udm = ida_typeinf.udm_t()
     idx = ida_typeinf.get_udm_by_fullname(udm, fullname)
-    if  idx == -1:
+    if idx == -1:
         return None
     else:
         return udm
@@ -1614,15 +1614,15 @@ def list_struct_members2(name):
     tif = ida_typeinf.tinfo_t()
     if not tif.get_named_type(til, name, ida_typeinf.BTF_STRUCT, True, False):
         print(f"'{name}' is not a structure")
-    elif  tif.is_typedef():
+    elif tif.is_typedef():
         print(f"'{name}' is not a (non typedefed) structure.")
     else:
         udt = ida_typeinf.udt_type_data_t()
         if tif.get_udt_details(udt):
             idx = 0
-            print(f'Listing the {name} structure {udt.size()} field names:')
+            print(f"Listing the {name} structure {udt.size()} field names:")
             for udm in udt:
-                print(f'Field {idx}: {udm.name}')
+                print(f"Field {idx}: {udm.name}")
                 idx += 1
         else:
             print(f"Unable to get udt details for structure '{name}'")
@@ -1642,12 +1642,12 @@ def list_enum_members(name):
         edt = ida_typeinf.enum_type_data_t()
         if tif.get_enum_details(edt):
             idx = 0
-            bitfield = ''
+            bitfield = ""
             if edt.is_bf():
-                bitfield = '(bitfield)'
+                bitfield = "(bitfield)"
             print(f"Listing the '{name}' {bitfield} enum {edt.size()} field names:")
             for edm in edt:
-                print(f'Field {idx}: {edm.name} = {edm.value}')
+                print(f"Field {idx}: {edm.name} = {edm.value}")
                 idx += 1
         else:
             print(f"Unable to get udt details for enum '{name}'")
@@ -1663,20 +1663,20 @@ if func:
     if ida_frame.get_func_frame(frame_tif, func):
         frame_udt = ida_typeinf.udt_type_data_t()
         if frame_tif.get_udt_details(frame_udt):
-            print('List frame information:')
-            print('-----------------------')
-            print(f'{func_name} @ {func.start_ea:x} framesize {frame_tif.get_size():x}')
-            print(f'Local variable size: {func.frsize:x}')
-            print(f'Saved registers: {func.frregs:x}')
-            print(f'Argument size: {func.argsize:x}')
-            print('{')
+            print("List frame information:")
+            print("-----------------------")
+            print(f"{func_name} @ {func.start_ea:x} framesize {frame_tif.get_size():x}")
+            print(f"Local variable size: {func.frsize:x}")
+            print(f"Saved registers: {func.frregs:x}")
+            print(f"Argument size: {func.argsize:x}")
+            print("{")
             idx = 0
             for udm in frame_udt:
-                print(f'\t[{idx}] {udm.name}: soff={udm.offset//8:x} eof={udm.end()//8:x} {udm.type.dstr()}')
+                print(f"\t[{idx}] {udm.name}: soff={udm.offset // 8:x} eof={udm.end() // 8:x} {udm.type.dstr()}")
                 idx += 1
-            print('}')
+            print("}")
 else:
-    print(f'{here():x} is not inside a function.')
+    print(f"{here():x} is not inside a function.")
 ```
 
 ### List stack variables xrefs
@@ -1684,41 +1684,42 @@ else:
 ```python
 func = ida_funcs.get_func(here())
 if func:
-    print(f'Function @ {func.start_ea:x}')
+    print(f"Function @ {func.start_ea:x}")
 
     frame_tif = ida_typeinf.tinfo_t()
     if ida_frame.get_func_frame(frame_tif, func):
-        print('Frame found')
+        print("Frame found")
         nmembers = frame_tif.get_udt_nmembers()
-        print(f'Frame has {nmembers} members')
+        print(f"Frame has {nmembers} members")
 
         if nmembers > 0:
             frame_udt = ida_typeinf.udt_type_data_t()
             if frame_tif.get_udt_details(frame_udt):
-
                 for frame_udm in frame_udt:
                     start_off = frame_udm.begin() // 8
                     end_off = frame_udm.end() // 8
                     xreflist = ida_frame.xreflist_t()
                     ida_frame.build_stkvar_xrefs(xreflist, func, start_off, end_off)
                     size = xreflist.size()
-                    print(f'{frame_udm.name} stack variable starts @ {start_off:x}, ends @ {end_off:x}, xref size: {size}')
+                    print(
+                        f"{frame_udm.name} stack variable starts @ {start_off:x}, ends @ {end_off:x}, xref size: {size}"
+                    )
 
                     for idx in range(size):
                         match xreflist[idx].type:
                             case ida_xref.dr_R:
-                                type = 'READ'
+                                type = "READ"
                             case ida_xref.dr_W:
-                                type = 'WRITE'
+                                type = "WRITE"
                             case _:
-                                type = 'UNK'
-                        print(f'\t[{idx}]: xref @ {xreflist[idx].ea:x} of type {type}')
+                                type = "UNK"
+                        print(f"\t[{idx}]: xref @ {xreflist[idx].ea:x} of type {type}")
             else:
-                print('Unable to get the frame details.')
+                print("Unable to get the frame details.")
         else:
-            print('No members found.')
+            print("No members found.")
 else:
-    print('No function under the cursor')
+    print("No function under the cursor")
 ```
 
 ### Create a structure with parsing
@@ -1734,59 +1735,58 @@ struct_str = """struct pcap_hdr_s {
         uint32_t network;        /* data link type */
 };"""
 tif = ida_typeinf.tinfo_t()
-if tif.get_named_type(None, 'pcap_hdr_s'):
-    ida_typeinf.del_named_type(None, 'pcap_hdr_s', ida_typeinf.NTF_TYPE)
+if tif.get_named_type(None, "pcap_hdr_s"):
+    ida_typeinf.del_named_type(None, "pcap_hdr_s", ida_typeinf.NTF_TYPE)
 ida_typeinf.idc_parse_types(struct_str, 0)
-if not tif.get_named_type(None, 'pcap_hdr_s'):
-    print('Unable to retrieve pcap_hdr_s structure')
+if not tif.get_named_type(None, "pcap_hdr_s"):
+    print("Unable to retrieve pcap_hdr_s structure")
 ```
 
 ### Create a structure member by member
 
 ```python
 tif = ida_typeinf.tinfo_t()
-if tif.get_named_type(None, 'pcaprec_hdr_s'):
-    ida_typeinf.del_named_type(None, 'pcaprec_hdr_s', ida_typeinf.NTF_TYPE)
-field_list = [('ts_sec', ida_typeinf.BTF_UINT32),
-             ('ts_usec', ida_typeinf.BTF_UINT32),
-             ('incl_len', ida_typeinf.BTF_UINT32),
-             ('orig_len', ida_typeinf.BTF_UINT32)]
+if tif.get_named_type(None, "pcaprec_hdr_s"):
+    ida_typeinf.del_named_type(None, "pcaprec_hdr_s", ida_typeinf.NTF_TYPE)
+field_list = [
+    ("ts_sec", ida_typeinf.BTF_UINT32),
+    ("ts_usec", ida_typeinf.BTF_UINT32),
+    ("incl_len", ida_typeinf.BTF_UINT32),
+    ("orig_len", ida_typeinf.BTF_UINT32),
+]
 udt = ida_typeinf.udt_type_data_t()
 udm = ida_typeinf.udm_t()
-for (name, type) in field_list:
+for name, type in field_list:
     udm.name = name
     udm.type = ida_typeinf.tinfo_t(type)
     udt.push_back(udm)
 if tif.create_udt(udt):
-    tif.set_named_type(None, 'pcaprec_hdr_s')
-
+    tif.set_named_type(None, "pcaprec_hdr_s")
 ```
 
 ### Create a union member by member
 
 ```python
 tif = ida_typeinf.tinfo_t()
-if tif.get_named_type(None, 'my_union'):
-    ida_typeinf.del_named_type(None, 'my_union', ida_typeinf.NTF_TYPE)
+if tif.get_named_type(None, "my_union"):
+    ida_typeinf.del_named_type(None, "my_union", ida_typeinf.NTF_TYPE)
 tif = ida_typeinf.tinfo_t()
 udt = ida_typeinf.udt_type_data_t()
-field_list = [('member1', ida_typeinf.BTF_INT32),
-              ('member2', ida_typeinf.BTF_CHAR),
-              ('member3', ida_typeinf.BTF_FLOAT)]
+field_list = [("member1", ida_typeinf.BTF_INT32), ("member2", ida_typeinf.BTF_CHAR), ("member3", ida_typeinf.BTF_FLOAT)]
 udt.is_union = True
 udm = ida_typeinf.udm_t()
-for (name, type) in field_list:
+for name, type in field_list:
     udm.name = name
     udm.type = ida_typeinf.tinfo_t(type)
     udt.push_back(udm)
-tif.get_named_type(None, 'pcap_hdr_s')
+tif.get_named_type(None, "pcap_hdr_s")
 if tif.create_ptr(tif):
-    udm.name = 'header_ptr'
+    udm.name = "header_ptr"
     udm.type = tif
     udt.push_back(udm)
     tif.clear()
     tif.create_udt(udt, ida_typeinf.BTF_UNION)
-    tif.set_named_type(None, 'my_union')
+    tif.set_named_type(None, "my_union")
 ```
 
 ### Create a bitmask enum
@@ -1794,7 +1794,7 @@ if tif.create_ptr(tif):
 ```python
 edt = ida_typeinf.enum_type_data_t()
 edm = ida_typeinf.edm_t()
-for name, value in [('field1', 1), ('field2', 2), ('field3', 4)]:
+for name, value in [("field1", 1), ("field2", 2), ("field3", 4)]:
     edm.name = name
     edm.value = value
     edt.push_back(edm)
@@ -1802,7 +1802,7 @@ for name, value in [('field1', 1), ('field2', 2), ('field3', 4)]:
 tif = ida_typeinf.tinfo_t()
 if tif.create_enum(edt):
     tif.set_enum_is_bitmask(ida_typeinf.tinfo_t.ENUMBM_ON)
-    tif.set_named_type(None, 'bmenum')
+    tif.set_named_type(None, "bmenum")
 ```
 
 ### Create an array
@@ -1813,7 +1813,7 @@ if tif.create_enum(edt):
 tif = ida_typeinf.tinfo_t(ida_typeinf.BTF_INT)
 if tif.create_array(tif, 5, 0):
     type = tif._print()
-    tif.set_named_type(None, 'my_int_array1')
+    tif.set_named_type(None, "my_int_array1")
 ```
 
 #### Example 2
@@ -1826,7 +1826,7 @@ atd.elem_type = ida_typeinf.tinfo_t(ida_typeinf.BTF_INT)
 tif = ida_typeinf.tinfo_t()
 if tif.create_array(atd):
     type = tif._print()
-    tif.set_named_type(None, 'my_int_array2')
+    tif.set_named_type(None, "my_int_array2")
 ```
 
 ### Log local type events
@@ -1837,25 +1837,26 @@ class lt_logger_hooks_t(ida_idp.IDB_Hooks):
         ida_idp.IDB_Hooks.__init__(self)
         self.inhibit_log = 0
 
-    def _log(self, msg=''):
+    def _log(self, msg=""):
         if self.inhibit_log <= 0:
-            print(f'>>> lt_logger_hooks_t: {msg}' if msg else '>>> lt_logger_hooks_t event')
+            print(f">>> lt_logger_hooks_t: {msg}" if msg else ">>> lt_logger_hooks_t event")
         return 0
 
     def lt_udm_created(self, udtname, udm):
-        msg = f'UDM {udm.name} has been created in UDT {udtname}'
+        msg = f"UDM {udm.name} has been created in UDT {udtname}"
         return self._log(msg)
 
     def lt_udm_deleted(self, udtname, udm_tid):
-        msg = f'UDM tid {udm_tid:x} has been deleted from {udtname}'
+        msg = f"UDM tid {udm_tid:x} has been deleted from {udtname}"
         return self._log(msg)
 
     def lt_udm_renamed(self, udtname, udm, oldname):
-        msg = f'UDM {oldname} from UDT {udtname} has been renamed to {udm.name}'
+        msg = f"UDM {oldname} from UDT {udtname} has been renamed to {udm.name}"
         return self._log(msg)
 
     def lt_udm_changed(self, udtname, udm_tid, udmold, udmnew):
         return self._log()
+
 
 # Remove an existing hook on second run
 try:
@@ -1873,7 +1874,7 @@ except:
     lthook = lt_logger_hooks_t()
     lthook.hook()
 
-print(f'Local type IDB hook {idp_hook_stat}installed. Run the script again to {idp_hook_stat2}install')
+print(f"Local type IDB hook {idp_hook_stat}installed. Run the script again to {idp_hook_stat2}install")
 ```
 
 ### Log frame events
@@ -1884,22 +1885,23 @@ class frame_logger_hooks_t(ida_idp.IDB_Hooks):
         ida_idp.IDB_Hooks.__init__(self)
         self.inhibit_log = 0
 
-    def _log(self, msg=''):
+    def _log(self, msg=""):
         if self.inhibit_log <= 0:
-            print(f'>>> frame_logger_hooks_t: {msg}' if msg else '>>> frame_logger_hooks_t event')
+            print(f">>> frame_logger_hooks_t: {msg}" if msg else ">>> frame_logger_hooks_t event")
         return 0
 
     def frame_udm_created(self, func_ea, udm):
-        return self._log(f'UDM {udm.name} created in frame at {func_ea:x}')
+        return self._log(f"UDM {udm.name} created in frame at {func_ea:x}")
 
     def frame_udm_deleted(self, func_ea, udm_tid, udm):
-        return self._log(f'UDM tid {udm_tid:x} deleted from frame at {func_ea:x}')
+        return self._log(f"UDM tid {udm_tid:x} deleted from frame at {func_ea:x}")
 
     def frame_udm_renamed(self, func_ea, udm, oldname):
-        return self._log(f'UDM {oldname} renamed to {udm.name} in frame at {func_ea:x}')
+        return self._log(f"UDM {oldname} renamed to {udm.name} in frame at {func_ea:x}")
 
     def frame_udm_changed(self, func_ea, udm_tid, udmold, udmnew):
-        return self._log(f'UDM changed in frame at {func_ea:x}')
+        return self._log(f"UDM changed in frame at {func_ea:x}")
+
 
 # Remove an existing hook on second run
 try:
@@ -1917,5 +1919,5 @@ except:
     framehook = frame_logger_hooks_t()
     framehook.hook()
 
-print(f'Frame IDB hook {frame_idp_hook_stat}installed. Run the script again to {frame_idp_hook_stat2}install')
+print(f"Frame IDB hook {frame_idp_hook_stat}installed. Run the script again to {frame_idp_hook_stat2}install")
 ```

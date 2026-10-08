@@ -38,13 +38,14 @@ a known key, extract both operands and compute the flag directly.
 checks, matrix transforms), extract constraints and write a z3 solver:
 ```python
 from z3 import *
+
 s = Solver()
-flag = [BitVec(f'c{i}', 8) for i in range(N)]
+flag = [BitVec(f"c{i}", 8) for i in range(N)]
 # Add constraints from decompiled validation...
 s.add(...)
 if s.check() == sat:
     m = s.model()
-    print(''.join(chr(m[c].as_long()) for c in flag))
+    print("".join(chr(m[c].as_long()) for c in flag))
 ```
 
 **Transformation reversal:** If the input goes through a series of

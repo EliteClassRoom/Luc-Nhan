@@ -232,7 +232,7 @@ SubAgentSpec(
     model="claude-sonnet-4-20250514",
     max_steps=15,
     name="OpenSSL Vulnerability Research",
-    mode="normal"  # or "research" for exploration+notes
+    mode="normal",  # or "research" for exploration+notes
 )
 ```
 
@@ -315,12 +315,12 @@ From [`mcp/config.py`](mcp/config.py:19):
 ```python
 @dataclass
 class MCPServerConfig:
-    name: str           # e.g., "minimax"
-    command: str        # e.g., "npx"
-    args: list[str]     # e.g., ["-y", "@minimax/mcp-server"]
-    env: dict[str, str] # environment variables
-    enabled: bool       # whether server is active
-    timeout: float      # handshake timeout (default: 30.0)
+    name: str  # e.g., "minimax"
+    command: str  # e.g., "npx"
+    args: list[str]  # e.g., ["-y", "@minimax/mcp-server"]
+    env: dict[str, str]  # environment variables
+    enabled: bool  # whether server is active
+    timeout: float  # handshake timeout (default: 30.0)
 ```
 
 ---
@@ -413,7 +413,7 @@ delegate_task(
     tools=["mcp__minimax__web_search", "mcp__minimax__understand_image"],
     model="claude-sonnet-4-20250514",
     max_steps=15,
-    mode="research"
+    mode="research",
 )
 ```
 
@@ -429,7 +429,7 @@ agent_id = manager.spawn(
     name="Crypto Vuln Research",
     task="Research recent vulnerabilities in OpenSSL 1.1.1",
     agent_type="web_researcher",
-    max_turns=15
+    max_turns=15,
 )
 ```
 
@@ -446,10 +446,10 @@ mcp_manager.start_servers(registry)
 client = mcp_manager.get_client("minimax")
 if client:
     result = client.call_tool("web_search", {"query": "OpenSSL CVE 2024"})
-    result = client.call_tool("understand_image", {
-        "image": "https://example.com/chart.png",
-        "query": "What cryptographic algorithm is shown?"
-    })
+    result = client.call_tool(
+        "understand_image",
+        {"image": "https://example.com/chart.png", "query": "What cryptographic algorithm is shown?"},
+    )
 ```
 
 ---

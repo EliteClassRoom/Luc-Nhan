@@ -247,11 +247,7 @@ def _write_exploration_to_sqlite(
         entity_refs.append(f"func:0x{int(address):x}")
     cat = (category or "general").strip().lower() or "general"
     tags = [cat] if cat else ["general"]
-    resolved_title = (
-        title.strip()
-        if isinstance(title, str) and title.strip()
-        else _memory_title(summary)
-    )
+    resolved_title = title.strip() if isinstance(title, str) and title.strip() else _memory_title(summary)
     resolved_confidence = (
         float(confidence)
         if confidence is not None and 0.0 <= float(confidence) <= 1.0
@@ -259,9 +255,7 @@ def _write_exploration_to_sqlite(
     )
     mem_status = status if cat == "hypothesis" else "unverified"
     mem_verdict = verdict_claim if cat == "hypothesis" else ""
-    mem_citations = (
-        list(verification_citations or []) if cat == "hypothesis" else None
-    )
+    mem_citations = list(verification_citations or []) if cat == "hypothesis" else None
     try:
         memory_service.save_exploration_finding(
             None,
@@ -348,9 +342,7 @@ def _write_exploration_to_jsonl(
     # else is recorded as unverified until ``/verify`` promotes it.
     mem_status = status if cat == "hypothesis" else "unverified"
     mem_verdict = verdict_claim if cat == "hypothesis" else ""
-    mem_citations = (
-        list(verification_citations or []) if cat == "hypothesis" else []
-    )
+    mem_citations = list(verification_citations or []) if cat == "hypothesis" else []
     mem_verified = bool(cat == "hypothesis" and mem_status == "verified")
     memory = KnowledgeMemory(
         id=mem_id,
@@ -428,7 +420,12 @@ def ingest_exploration_finding(
     """
     if memory_service is not None:
         _write_exploration_to_sqlite(
-            memory_service, category, summary, address, relevance, evidence,
+            memory_service,
+            category,
+            summary,
+            address,
+            relevance,
+            evidence,
             status=status,
             verdict_claim=verdict_claim,
             verification_citations=verification_citations,
@@ -441,15 +438,26 @@ def ingest_exploration_finding(
         return
     try:
         _write_exploration_to_jsonl(
-            store, paths, category, summary, address, relevance, evidence, function_name,
-            memory_id=memory_id, status=status, verdict_claim=verdict_claim,
+            store,
+            paths,
+            category,
+            summary,
+            address,
+            relevance,
+            evidence,
+            function_name,
+            memory_id=memory_id,
+            status=status,
+            verdict_claim=verdict_claim,
             verification_citations=verification_citations,
-            title=title, confidence=confidence,
+            title=title,
+            confidence=confidence,
         )
     except Exception as e:
         from ..core.logging import log_error
 
         log_error(f"JSONL exploration write failed: {e}")
+
 
 def _normalize_addr_for_id(address: int | None) -> str:
     """Deprecated: thin wrapper kept for back-compat.
@@ -458,7 +466,6 @@ def _normalize_addr_for_id(address: int | None) -> str:
     directly so ID formatting is uniform across the module.
     """
     return normalize_address(address)
-
 
 
 def _entity_id_for(category: str, entity_type: str, address: int | None, name: str) -> str:

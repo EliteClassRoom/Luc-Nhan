@@ -65,20 +65,19 @@ Distilled from the paper's listings 3 and 4 (Appendix B). Iterate every basic bl
 # OBB: large BB, ends in fixed jump, second-to-last instruction is `mov imm`.
 if instr_count >= 3 and is_mov_imm(second_last_instr) and is_jump_fixed(last_instr):
     block = {
-        'type': 'obb',
-        'next_state': second_last_instr.Op2.value,   # the immediate being stored
-        'bb': bb,
+        "type": "obb",
+        "next_state": second_last_instr.Op2.value,  # the immediate being stored
+        "bb": bb,
     }
 # DBB: small BB (2–3 insns), last is conditional jump, second-to-last is `cmp`.
-elif instr_count in [2, 3] and second_last_instr.itype == idaapi.NN_cmp \
-        and is_conditional_jump(last_instr):
+elif instr_count in [2, 3] and second_last_instr.itype == idaapi.NN_cmp and is_conditional_jump(last_instr):
     succs = bb.succs()
-    true_value  = extract_state_var_value(next(succs))   # the imm in the *true* BB's `mov [state_var], <imm>`
+    true_value = extract_state_var_value(next(succs))  # the imm in the *true* BB's `mov [state_var], <imm>`
     false_value = extract_state_var_value(next(succs))
     block = {
-        'type': 'dbb',
-        'next_state': [true_value, false_value],
-        'bb': bb,
+        "type": "dbb",
+        "next_state": [true_value, false_value],
+        "bb": bb,
     }
 ```
 
@@ -142,9 +141,7 @@ uc = unicorn.Uc(unicorn.UC_ARCH_X86, unicorn.UC_MODE_64)
 # ... map_segments(uc), set up stack, write args ...
 
 # One-line BB trace.
-uc.hook_add(unicorn.UC_HOOK_BLOCK,
-            lambda uc, address, size, ud: ud.append(address),
-            executed)
+uc.hook_add(unicorn.UC_HOOK_BLOCK, lambda uc, address, size, ud: ud.append(address), executed)
 
 uc.emu_start(func_ea, 0, timeout=10 * 60 * 1_000_000)
 print(f"Executed {len(executed)} BBs:", [hex(a) for a in executed])
@@ -161,13 +158,14 @@ def get_bb_start_ea(address, flow_chart):
         if block.start_ea <= address < block.end_ea:
             return block.start_ea
 
+
 def instruction_hook(uc, address, size, user_data):
     user_data["inst_ctr"] += 1
-    bb_start = get_bb_start_ea(address, user_data['flow_chart'])
-    if bb_start != user_data['current_bb']:
-        user_data['executed_blocks'].append(bb_start)
-        user_data['current_bb'] = bb_start
-    if user_data["inst_ctr"] >= 10_000:    # safety cap
+    bb_start = get_bb_start_ea(address, user_data["flow_chart"])
+    if bb_start != user_data["current_bb"]:
+        user_data["executed_blocks"].append(bb_start)
+        user_data["current_bb"] = bb_start
+    if user_data["inst_ctr"] >= 10_000:  # safety cap
         uc.emu_stop()
 ```
 

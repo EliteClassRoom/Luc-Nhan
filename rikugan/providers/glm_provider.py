@@ -70,6 +70,7 @@ class GLMProvider(OpenAIProvider):
     # ``_fetch_models_live`` keeps ``glm-5.2`` / ``glm-5.1`` ids when
     # listing live models from the Z.AI endpoint.
     _MODEL_ID_PREFIXES: tuple[str, ...] = ("glm-",)
+
     def __init__(
         self,
         api_key: str = "",

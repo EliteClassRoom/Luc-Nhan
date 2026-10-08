@@ -17,6 +17,7 @@ output, and returns the raw RST source (~5–15 KB per module).
 
 ```python
 import os
+
 doc_path = os.path.join(..., "data", "idapython-docs", "ida_bytes.rst.txt")
 with open(doc_path) as f:
     content = f.read()

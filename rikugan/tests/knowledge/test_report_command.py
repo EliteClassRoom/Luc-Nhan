@@ -63,6 +63,7 @@ def _seed_verified_memory(store, paths) -> KnowledgeMemory:
     store.upsert_memory(mem)
     return mem
 
+
 class TestReportCommandEventSequence(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp()
@@ -197,12 +198,8 @@ class TestReportCommandEventSequence(unittest.TestCase):
 
         loop = self._build_loop()
         # Seed a fake chat history: a USER and an ASSISTANT message.
-        loop.session.add_message(
-            Message(role=Role.USER, content="Tell me about the entry point")
-        )
-        loop.session.add_message(
-            Message(role=Role.ASSISTANT, content="The entry point is at 0x401000.")
-        )
+        loop.session.add_message(Message(role=Role.USER, content="Tell me about the entry point"))
+        loop.session.add_message(Message(role=Role.ASSISTANT, content="The entry point is at 0x401000."))
         seen_context: list = []
 
         def fake_synth(*_args, **kwargs):
@@ -399,6 +396,7 @@ class TestReportDraftFencing(unittest.TestCase):
             self.assertIn("Report draft", first.text)
             self.assertIn("(truncated", first.text)
         return first
+
     def test_draft_with_inner_fence_round_trips(self) -> None:
         body = "# Draft\n\ntext\n\n```c\nint main(void) {}\n```\n"
         first = self._drive_draft_only(body)
@@ -429,11 +427,7 @@ class TestReportDraftFencing(unittest.TestCase):
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])
 
-        body = (
-            "# Draft\n\n"
-            "```c\nint main(void) {return 0;}\n```\n\n"
-            "Trailing line about entry."
-        )
+        body = "# Draft\n\n```c\nint main(void) {return 0;}\n```\n\nTrailing line about entry."
         first = self._drive_draft_only(body)
         self.assertTrue(first.text.startswith("**Report draft**"))
         # Inner fence present, no outer wrapper.
@@ -514,7 +508,6 @@ class TestReportDraftFencing(unittest.TestCase):
         # Trailing line also survives in the widget's full text for
         # restoration / re-render.
         self.assertIn("Trailing line about entry.", asst[0].full_text())
-
 
     def test_plain_draft_body_visible_in_widget(self) -> None:
         """Regression for the "heading visible, body empty" failure
@@ -647,9 +640,6 @@ class TestReportDraftFencing(unittest.TestCase):
         self.assertEqual(events[0].type, TurnEventType.ERROR)
         self.assertIn("empty", events[0].error.lower())
 
-
-
-
     def test_long_body_with_inner_fence_is_balanced_in_widget(self) -> None:
         """Regression: a >1500-char body whose inner code fence
         spans the truncation cap must yield a balanced preview (no
@@ -680,9 +670,7 @@ class TestReportDraftFencing(unittest.TestCase):
             "- Network beacon every 60 seconds\n\n"
             "## Key Functions\n\n"
             "### rc4_ksa @ 0x401000\n\n"
-            "```c\n"
-            + ("    // long line of source to push past the 1500-char cap\n" * 30)
-            + "```\n\n"
+            "```c\n" + ("    // long line of source to push past the 1500-char cap\n" * 30) + "```\n\n"
             "Trailing line about the entry.\n"
         )
         first = self._drive_draft_only(body)
@@ -692,8 +680,7 @@ class TestReportDraftFencing(unittest.TestCase):
         self.assertEqual(
             fence_count % 2,
             0,
-            f"preview has an unbalanced fence: {fence_count!r} markers in "
-            f"{first.text!r}",
+            f"preview has an unbalanced fence: {fence_count!r} markers in {first.text!r}",
         )
         self.assertIn("Report draft", first.text)
         self.assertIn("(truncated", first.text)
@@ -721,6 +708,7 @@ class TestReportDraftFencing(unittest.TestCase):
         # structural truncation this fails because the opening fence
         # never gets a closing fence in the visible window.
         import re as _re
+
         pre_opens = len(_re.findall(r"white-space:pre-wrap", html))
         len(_re.findall(r"</div>", html))
         # Sanity: there IS a pre block OR there isn't one (we may have
@@ -740,4 +728,3 @@ class TestReportDraftFencing(unittest.TestCase):
             "Executive Summary" in html,
             "rendered HTML lost the executive heading",
         )
-

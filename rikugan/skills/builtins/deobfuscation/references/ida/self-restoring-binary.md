@@ -63,33 +63,34 @@ from unicorn import Uc, UC_ARCH_X86, UC_MODE_64, UC_HOOK_CODE
 from unicorn.x86_const import UC_X86_REG_RIP
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
 
-uc  = Uc(UC_ARCH_X86, UC_MODE_64)
-md  = Cs(CS_ARCH_X86, CS_MODE_64)
+uc = Uc(UC_ARCH_X86, UC_MODE_64)
+md = Cs(CS_ARCH_X86, CS_MODE_64)
 md.detail = True
 
 # out_buf mirrors the input binary; we patch it as we go.
-out_buf     = bytearray(input_bytes)
-popfq_flag  = [False]      # mutable container so the closure can write
-captured    = []           # addresses we've already deobfuscated
+out_buf = bytearray(input_bytes)
+popfq_flag = [False]  # mutable container so the closure can write
+captured = []  # addresses we've already deobfuscated
+
 
 def hook(uc, address, size, _ud):
     raw = bytes(uc.mem_read(address, size))
-    insn = next(md.disasm(raw, address))   # one instruction per call
+    insn = next(md.disasm(raw, address))  # one instruction per call
 
     if insn.mnemonic == "pushfq":
         popfq_flag[0] = True
-        out_buf[address:address+size] = b"\x90" * size    # NOP the marker
+        out_buf[address : address + size] = b"\x90" * size  # NOP the marker
 
     elif insn.mnemonic == "popfq":
         popfq_flag[0] = False
-        out_buf[address:address+size] = b"\x90" * size
+        out_buf[address : address + size] = b"\x90" * size
 
     elif popfq_flag[0] and address not in captured:
         # INSIDE the obfuscation window: this is plaintext code.
         # Capture its bytes, but skip execution (see Step 2).
-        out_buf[address:address+size] = raw
+        out_buf[address : address + size] = raw
         captured.append(address)
-        uc.reg_write(UC_X86_REG_RIP, address + size)      # <-- the key trick
+        uc.reg_write(UC_X86_REG_RIP, address + size)  # <-- the key trick
 
         if insn.mnemonic == "call":
             target = int(insn.op_str, 16)
@@ -100,7 +101,7 @@ def hook(uc, address, size, _ud):
 
     else:
         # OUTSIDE the window: this is obfuscation glue. NOP it.
-        out_buf[address:address+size] = b"\x90" * size
+        out_buf[address : address + size] = b"\x90" * size
 ```
 
 ### Step 2: capture in-window, skip execution
@@ -134,14 +135,14 @@ Non-PLT calls (calls to other obfuscated functions in the binary) get pushed to 
 The main loop dispatches each non-PLT call as a separate `emu_start` call, accumulating captures across all of them:
 
 ```python
-call_addrs = [0x43E0]                              # entry into the first obfuscated block
+call_addrs = [0x43E0]  # entry into the first obfuscated block
 
 while call_addrs:
     target = call_addrs.pop()
     if target in captured:
-        continue                                    # idempotency guard
+        continue  # idempotency guard
     try:
-        uc.emu_start(target, 0x900D)                # bounded by the binary's exit point
+        uc.emu_start(target, 0x900D)  # bounded by the binary's exit point
     except Exception as e:
         print(f"Error at {hex(uc.reg_read(UC_X86_REG_RIP))}: {e}")
         break

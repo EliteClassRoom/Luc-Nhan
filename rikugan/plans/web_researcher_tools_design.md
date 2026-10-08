@@ -110,6 +110,7 @@ Create tools that directly use the MCP client without the `mcp__` prefix.
 def web_search(query: Annotated[str, "Search query"]) -> str:
     """Search the web for information."""
     from ..mcp.manager import MCPManager
+
     client = MCPManager.get_instance().get_client("minimax")
     if not client:
         raise ToolError("MCP client 'minimax' not available")
@@ -197,11 +198,11 @@ DEFAULT_MCP_SERVER = "minimax"
 
 def _get_mcp_client(server_name: str = DEFAULT_MCP_SERVER):
     """Get an MCP client by server name.
-    
+
     Returns the client if available and healthy, None otherwise.
     """
     from ..mcp.manager import MCPManager
-    
+
     # MCPManager is typically accessed via singleton or dependency injection
     # This function provides a clean interface for tool handlers
     try:
@@ -211,26 +212,26 @@ def _get_mcp_client(server_name: str = DEFAULT_MCP_SERVER):
             return client
     except Exception as e:
         log_debug(f"Failed to get MCP client {server_name}: {e}")
-    
+
     return None
 
 
 @tool(
     name="web_search",
     description="Search the web for information. Use this when you need to find current events, "
-                "technical documentation, or other information from the internet.",
+    "technical documentation, or other information from the internet.",
     category="web",
     timeout=WEB_SEARCH_TIMEOUT,
 )
 def web_search(query: Annotated[str, "The search query to find information"]) -> str:
     """Search the web for information.
-    
+
     Args:
         query: The search query string
-        
+
     Returns:
         Search results as a formatted string
-        
+
     Raises:
         ToolError: If the MCP client is unavailable or the search fails
     """
@@ -239,11 +240,11 @@ def web_search(query: Annotated[str, "The search query to find information"]) ->
         raise ToolError(
             f"Web search unavailable: MCP client '{DEFAULT_MCP_SERVER}' not connected. "
             "Please ensure the MCP server is configured and running.",
-            tool_name="web_search"
+            tool_name="web_search",
         )
-    
+
     log_debug(f"web_search: query={query!r}")
-    
+
     try:
         result = client.call_tool("web_search", {"query": query})
         log_debug(f"web_search: result_len={len(result)}")
@@ -255,7 +256,7 @@ def web_search(query: Annotated[str, "The search query to find information"]) ->
 @tool(
     name="understand_image",
     description="Analyze an image (from URL or base64) and answer questions about it. "
-                "Use this to examine screenshots, diagrams, charts, or any image content.",
+    "Use this to examine screenshots, diagrams, charts, or any image content.",
     category="web",
     timeout=UNDERSTAND_IMAGE_TIMEOUT,
 )
@@ -264,14 +265,14 @@ def understand_image(
     query: Annotated[str, "Question or analysis request about the image"],
 ) -> str:
     """Analyze an image and answer questions about it.
-    
+
     Args:
         image: Image source - either a URL pointing to an image, or base64 encoded image data
         query: The question or analysis request about the image
-        
+
     Returns:
         Analysis results as a formatted string
-        
+
     Raises:
         ToolError: If the MCP client is unavailable or image analysis fails
     """
@@ -280,11 +281,11 @@ def understand_image(
         raise ToolError(
             f"Image analysis unavailable: MCP client '{DEFAULT_MCP_SERVER}' not connected. "
             "Please ensure the MCP server is configured and running.",
-            tool_name="understand_image"
+            tool_name="understand_image",
         )
-    
+
     log_debug(f"understand_image: image_len={len(image)}, query={query!r}")
-    
+
     try:
         result = client.call_tool("understand_image", {"image": image, "query": query})
         log_debug(f"understand_image: result_len={len(result)}")
@@ -355,7 +356,7 @@ The web tools are registered via the standard `@tool` decorator pattern:
 
 from . import base
 from . import functions
-from . import web          # NEW: Web search and image understanding tools
+from . import web  # NEW: Web search and image understanding tools
 from .cache import ToolResultCache
 from .registry import ToolRegistry
 
@@ -517,10 +518,7 @@ async def run_agent_loop():
 def web_search(query: str) -> str:
     client = _get_mcp_client()
     if client is None:
-        raise ToolError(
-            "Web search unavailable: MCP client not connected",
-            tool_name="web_search"
-        )
+        raise ToolError("Web search unavailable: MCP client not connected", tool_name="web_search")
     try:
         return client.call_tool("web_search", {"query": query})
     except MCPConnectionError as e:
@@ -567,6 +565,7 @@ For `understand_image`, URLs should be validated to prevent SSRF:
 def _validate_url(url: str) -> bool:
     """Validate that URL is safe to fetch."""
     from urllib.parse import urlparse
+
     parsed = urlparse(url)
     # Block private IP ranges, localhost, etc.
     return parsed.scheme in ("http", "https")
@@ -640,6 +639,7 @@ Add caching for repeated queries:
 from .cache import ToolResultCache
 
 _cache = ToolResultCache()
+
 
 @tool(name="web_search", category="web")
 def web_search(query: str) -> str:

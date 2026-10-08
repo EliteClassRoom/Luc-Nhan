@@ -53,6 +53,8 @@ class MyVisitor(ida_hexrays.minsn_visitor_t):
         ins = self.curins
         # self.blk is the containing block
         return 0
+
+
 mba.for_all_topinsns(visitor)
 
 # Rewire a goto to point to a different block
@@ -106,7 +108,7 @@ ins.d.erase()
 blk.mark_lists_dirty()
 
 # Z3 proof sketch
-x = z3.BitVec('x', 32)
+x = z3.BitVec("x", 32)
 solver = z3.Solver()
 solver.add(z3.Not(expression_always_true))
 assert solver.check() == z3.unsat  # proven
@@ -221,8 +223,9 @@ Byte-level problem, byte-level fix. Use `execute_python`.
 
 ```python
 import ida_bytes
-ida_bytes.patch_byte(junk_ea, 0x90)         # NOP one junk byte
-ida_bytes.patch_bytes(start, b"\x90" * n)    # NOP range
+
+ida_bytes.patch_byte(junk_ea, 0x90)  # NOP one junk byte
+ida_bytes.patch_bytes(start, b"\x90" * n)  # NOP range
 # Then redefine the function if needed:
 # ida_funcs.del_func(func_ea); idc.add_func(func_ea)
 ```
