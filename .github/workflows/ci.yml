@@ -120,8 +120,10 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      # bandit is not a desloppify dependency: without it the `security` detector
+      # skips Python checks entirely and the PR security gate below passes vacuously.
       - name: Install desloppify
-        run: pip install desloppify
+        run: pip install desloppify bandit
 
       - name: Run objective scan
         run: desloppify scan --profile objective --no-badge
