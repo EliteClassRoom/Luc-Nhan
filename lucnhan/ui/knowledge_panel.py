@@ -127,8 +127,14 @@ class KnowledgePanel(QWidget):
         self._counts_label.setStyleSheet(get_placeholder_style())
         main_layout.addWidget(self._counts_label)
 
-        # Main table
+        # Main table — G8: record table in the middle region, selected record
+        # detail BELOW it (never a sidebar column).
+        self._records_title = QLabel("Records")
+        self._records_title.setObjectName("tools_section_title")
+        main_layout.addWidget(self._records_title)
+
         self._table = QTableWidget(0, 6)
+        self._table.setObjectName("tools_table")
         self._table.setHorizontalHeaderLabels(["Type", "ID/Title", "Tags/Predicate", "Status", "Confidence", "Updated"])
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -145,8 +151,13 @@ class KnowledgePanel(QWidget):
         self._table.itemSelectionChanged.connect(self._on_row_selected)
         main_layout.addWidget(self._table, 3)
 
-        # Detail pane
+        # Detail pane — thin border, below the table (G8).
+        self._detail_title = QLabel("Selected record")
+        self._detail_title.setObjectName("tools_section_title")
+        main_layout.addWidget(self._detail_title)
+
         self._detail = QPlainTextEdit()
+        self._detail.setObjectName("tools_detail")
         self._detail.setReadOnly(True)
         self._detail.setPlaceholderText("Select a row to see its raw JSON / content.")
         main_layout.addWidget(self._detail, 2)
@@ -369,6 +380,7 @@ class KnowledgePanel(QWidget):
         rows = self._table.selectionModel().selectedRows()
         if not rows:
             self._detail.setPlainText("")
+            self._detail_title.setText("Selected record")
             return
         idx = rows[0].row()
         cell = self._table.item(idx, 0)
@@ -381,6 +393,7 @@ class KnowledgePanel(QWidget):
             self._detail.setPlainText(json.dumps(raw, indent=2, ensure_ascii=False, default=str))
         except Exception:
             self._detail.setPlainText(str(raw))
+        self._detail_title.setText(f"Selected record — {self._table.item(idx, 1).text()}")
 
 
 def _getattr(obj, name: str, default=None):

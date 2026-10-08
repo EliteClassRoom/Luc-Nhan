@@ -40,7 +40,7 @@ from .qt_compat import (
     QColor,
     QComboBox,
     QEvent,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -57,6 +57,7 @@ from .qt_compat import (
     QWidget,
     Signal,
 )
+from .theme.widgets_common import get_tools_section_style
 
 # Role constants — store the ExternalAgentConfig on the QListWidgetItem
 # (UserRole) and the task_id on QTableWidgetItem cells (UserRole + 1).
@@ -380,12 +381,39 @@ class A2ABridgeWidget(QWidget):
 
     # -- Pane builders -------------------------------------------------------
 
-    def _build_agents_pane(self) -> QGroupBox:
-        """Top: list of discovered external agents + refresh button."""
-        box = QGroupBox("Available Agents")
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
+    def _make_section(self, title: str) -> tuple:
+        """Flat G8 section block: title + 1 px separator, no card chrome."""
+        section = QFrame()
+        section.setObjectName("tools_section")
+        section.setStyleSheet(get_tools_section_style())
+        outer = QVBoxLayout(section)
+        outer.setContentsMargins(0, 8, 0, 8)
+        outer.setSpacing(4)
+        heading = QLabel(title)
+        heading.setObjectName("tools_section_title")
+        outer.addWidget(heading)
+        return section, outer
+
+    def _build_agents_pane(self) -> QFrame:
+        """Top: discovered agents (name / transport / availability)."""
+        box, layout = self._make_section("Available agents")
+
+        # Toolbar above the list, in G8 action order: Refresh is the only
+        # control here, the count stays right-aligned beside it.
+        bar = QHBoxLayout()
+        bar.setSpacing(4)
+        self._refresh_agents_btn = QPushButton("Refresh")
+        self._refresh_agents_btn.setToolTip("Re-scan PATH for claude / codex and reload orchestra.toml")
+        self._refresh_agents_btn.setAccessibleName("Refresh the list of external agents")
+        _safe_connect(self._refresh_agents_btn, "clicked", self._refresh_agents)
+        bar.addWidget(self._refresh_agents_btn)
+        bar.addStretch(1)
+        self._agent_count_label = QLabel("0 agents")
+        # Right-aligned so the count pushes against the section's right
+        # edge, which is what G2 asks of count labels.
+        self._agent_count_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        bar.addWidget(self._agent_count_label)
+        layout.addLayout(bar)
 
         self._agent_list = QListWidget()
         self._agent_list.setAlternatingRowColors(True)
@@ -397,30 +425,28 @@ class A2ABridgeWidget(QWidget):
         _safe_connect(self._agent_list, "itemDoubleClicked", self._on_agent_double_clicked)
         layout.addWidget(self._agent_list, 1)
 
-        bar = QHBoxLayout()
-        self._refresh_agents_btn = QPushButton("Refresh")
-        self._refresh_agents_btn.setToolTip("Re-scan PATH for claude / codex and reload orchestra.toml")
-        _safe_connect(self._refresh_agents_btn, "clicked", self._refresh_agents)
-        bar.addWidget(self._refresh_agents_btn)
-        self._agent_count_label = QLabel("0 agents")
-        # Right-align the count label so it pushes against the
-        # right edge of the agents pane.
-        self._agent_count_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        bar.addWidget(self._agent_count_label, 1)
-        layout.addLayout(bar)
+        # Explicit discovery state (G9): idle / loading / empty / error.
+        # Never a fake row — discovery only runs when the user asks.
+        self._discovery_status = QLabel("Not discovered yet. Click Refresh to scan for external agents.")
+        self._discovery_status.setObjectName("tools_detail_status")
+        self._discovery_status.setWordWrap(True)
+        self._discovery_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._discovery_status)
         return box
 
-    def _build_delegate_pane(self) -> QGroupBox:
+    def _build_delegate_pane(self) -> QFrame:
         """Middle: target agent selector + task text + context toggle + send."""
-        box = QGroupBox("Delegate Task")
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(6, 6, 6, 6)
+        box, layout = self._make_section("Delegate task")
         layout.setSpacing(6)
 
-        # Agent picker
+        # Agent picker — target row stays full width so the target name
+        # stays readable at any dock width (G2/G8).
         agent_row = QHBoxLayout()
-        agent_row.addWidget(QLabel("Target:"))
+        target_label = QLabel("Target")
+        target_label.setObjectName("tools_section_title")
+        agent_row.addWidget(target_label)
         self._target_combo = QComboBox()
+        self._target_combo.setAccessibleName("Target external agent")
         # ``setSizePolicy`` isn't in the qt_stubs; use _safe_call to
         # skip in test environments.
         _safe_call(
@@ -437,10 +463,13 @@ class A2ABridgeWidget(QWidget):
         self._task_edit.setPlaceholderText(
             "Describe what the external agent should do. Be specific — the external agent has no Luc Nhan tool access."
         )
+        self._task_edit.setAccessibleName("Task description for the external agent")
         self._task_edit.setMinimumHeight(80)
         layout.addWidget(self._task_edit, 1)
 
-        # Options
+        # Options — context toggle left, Send Task right (G8 primary
+        # action stays in the action strip, never a default-on side
+        # effect).
         opt_row = QHBoxLayout()
         self._include_context_check = QCheckBox("Include current binary context")
         # Disabled: the widget used to forward a "not implemented"
@@ -448,7 +477,8 @@ class A2ABridgeWidget(QWidget):
         # silently misled users (the external agent answered with no
         # context). Leave the control visible-but-off with an honest
         # tooltip until the dispatcher path that injects real context
-        # is wired in. See C5 / Phase 2.
+        # is wired in. See C5 / Phase 2.  G8 is explicit that a UI
+        # redesign grants no new powers, so this stays disabled.
         self._include_context_check.setEnabled(False)
         self._include_context_check.setChecked(False)
         self._include_context_check.setToolTip(
@@ -460,19 +490,26 @@ class A2ABridgeWidget(QWidget):
         opt_row.addStretch(1)
         self._send_btn = QPushButton("Send Task")
         self._send_btn.setDefault(True)
+        self._send_btn.setAccessibleName("Send the task to the selected external agent")
         _safe_connect(self._send_btn, "clicked", self._on_send_clicked)
         opt_row.addWidget(self._send_btn)
         layout.addLayout(opt_row)
+
+        self._context_hint = QLabel(
+            "Binary-context injection is unavailable — describe the context in the task instead."
+        )
+        self._context_hint.setWordWrap(True)
+        self._context_hint.setStyleSheet("color: palette(mid);")
+        layout.addWidget(self._context_hint)
         return box
 
-    def _build_history_pane(self) -> QGroupBox:
+    def _build_history_pane(self) -> QFrame:
         """Bottom: history of past + in-flight delegations."""
-        box = QGroupBox("Task History")
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(6, 6, 6, 6)
+        box, layout = self._make_section("Task history")
         layout.setSpacing(4)
 
         self._history_table = QTableWidget(0, 5)
+        self._history_table.setObjectName("tools_table")
         self._history_table.setHorizontalHeaderLabels(["Time", "Agent", "Task", "Status", "Result"])
         # Sanity guard: ``_COL_*`` constants and the header order are
         # now declared in one block above; if anyone reorders this
@@ -500,17 +537,28 @@ class A2ABridgeWidget(QWidget):
         bar = QHBoxLayout()
         self._cancel_btn = QPushButton("Cancel Selected")
         self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setAccessibleName("Cancel the selected in-flight task")
         _safe_connect(self._cancel_btn, "clicked", self._on_cancel_clicked)
         bar.addWidget(self._cancel_btn)
         self._view_output_btn = QPushButton("View Output")
         self._view_output_btn.setEnabled(False)
+        self._view_output_btn.setAccessibleName("Show the full output of the selected task")
         _safe_connect(self._view_output_btn, "clicked", self._on_view_output_clicked)
         bar.addWidget(self._view_output_btn)
         bar.addStretch(1)
         self._clear_history_btn = QPushButton("Clear")
+        self._clear_history_btn.setAccessibleName("Clear the task history")
         _safe_connect(self._clear_history_btn, "clicked", self._on_clear_history_clicked)
         bar.addWidget(self._clear_history_btn)
         layout.addLayout(bar)
+
+        # Explicit empty state (G9): a heading-length line, never fake
+        # history rows.
+        self._history_status = QLabel("No delegated tasks yet.")
+        self._history_status.setWordWrap(True)
+        self._history_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._history_status)
+        self._history_table.setVisible(False)
         return box
 
     # -- Agent list management -----------------------------------------------
@@ -521,6 +569,11 @@ class A2ABridgeWidget(QWidget):
         Bail out silently if the underlying Qt widgets were already deleted
         (e.g. a PaletteChange arriving after the panel was torn down) —
         Shiboken raises ``RuntimeError`` on access to a deleted C++ object.
+
+        Discovery policy is unchanged: discovery only ever runs when the
+        user presses Refresh.  The widget now just reports the outcome
+        explicitly — loading, empty, or error — instead of leaving a
+        stale count (G9).
         """
         try:
             self._agent_list.clear()
@@ -533,9 +586,32 @@ class A2ABridgeWidget(QWidget):
         # but keeping the list empty + repopulating it below also
         # works for the stub path.
         self._target_combo_agents = []
-        agents = self._dispatcher.discover()
+        status = getattr(self, "_discovery_status", None)
+        if status is not None:
+            status.setText("Scanning for external agents…")
+        self._refresh_agents_btn.setEnabled(False)
+        try:
+            agents = self._dispatcher.discover()
+        except Exception as exc:
+            # Persistent error next to the operation, with the Refresh
+            # button still there to retry (G9).  Never swallow it into
+            # a toast.
+            self._agent_count_label.setText("0 agents")
+            self._send_btn.setEnabled(False)
+            if status is not None:
+                status.setText(f"Discovery failed: {exc}")
+            return
+        finally:
+            self._refresh_agents_btn.setEnabled(True)
         for agent in agents:
-            label = f"{agent.name}  ({agent.transport})"
+            # G8 wants agent / transport / availability to be readable
+            # per row.  ``endpoint`` is the only availability signal the
+            # config carries (a2a endpoints vs subprocess transports),
+            # so we show the real value rather than inventing a state.
+            availability = agent.endpoint or agent.model
+            label = f"{agent.name} · {agent.transport}"
+            if availability:
+                label = f"{label} · {availability}"
             list_item = QListWidgetItem(label)
             list_item.setData(Qt.ItemDataRole.UserRole, agent)  # stash the config
             self._agent_list.addItem(list_item)
@@ -559,6 +635,14 @@ class A2ABridgeWidget(QWidget):
         count = len(agents)
         self._agent_count_label.setText(f"{count} agent{'s' if count != 1 else ''}")
         self._send_btn.setEnabled(count > 0)
+        if status is not None:
+            # Explicit empty state (G9): one sentence + the real action
+            # (Refresh is already the toolbar control above).
+            status.setText(
+                "No external agents found on PATH or in orchestra.toml. Click Refresh to rescan."
+                if count == 0
+                else ""
+            )
 
     def _on_agent_double_clicked(self, item: QListWidgetItem) -> None:
         """Double-click selects the same agent in the delegate combo."""
@@ -639,6 +723,7 @@ class A2ABridgeWidget(QWidget):
         )
         self._history[task_id] = row
         self._append_history_row(row)
+        self._sync_history_empty_state()
 
         cancel_event = threading.Event()
         runner = _A2ATaskRunner(
@@ -899,6 +984,15 @@ class A2ABridgeWidget(QWidget):
         self._history_table.setRowCount(0)
         for row in self._history.values():
             self._append_history_row(row)
+        self._sync_history_empty_state()
+
+    def _sync_history_empty_state(self) -> None:
+        """Swap between the history table and its explicit empty line."""
+        empty = not self._history
+        status = getattr(self, "_history_status", None)
+        if status is not None:
+            status.setVisible(empty)
+        self._history_table.setVisible(not empty)
 
     def _refresh_button_states(self) -> None:
         """Enable cancel only if there's an in-flight task selected."""

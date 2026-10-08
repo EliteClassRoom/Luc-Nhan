@@ -199,7 +199,11 @@ class ToolsPanel(QWidget):
             self._on_tab_changed(index)
         btn = getattr(self, "_nav_buttons", [])
         if index < len(btn):
+            # ``ensureWidgetVisible`` lives on the QScrollArea, not on
+            # the button's direct parent (the inner row) — walk up.
             parent = btn[index].parentWidget()
+            while parent is not None and not hasattr(parent, "ensureWidgetVisible"):
+                parent = parent.parentWidget()
             if parent is not None:
                 parent.ensureWidgetVisible(btn[index], 0, 0)
 

@@ -63,31 +63,39 @@ class AgentTreeWidget(QWidget):
 
         self._kill_btn = QPushButton("Kill Selected")
         self._kill_btn.setStyleSheet(get_agent_btn_style())
+        self._kill_btn.setAccessibleName("Cancel the selected running agents")
         self._kill_btn.clicked.connect(self._on_kill_selected)
         toolbar.addWidget(self._kill_btn)
 
         self._clean_btn = QPushButton("Clean")
         self._clean_btn.setStyleSheet(get_agent_btn_style())
         self._clean_btn.setToolTip("Remove selected finished agents (or all finished if none selected)")
+        self._clean_btn.setAccessibleName("Remove finished agents from the list")
         self._clean_btn.clicked.connect(self._on_clean)
         toolbar.addWidget(self._clean_btn)
 
         self._filter_combo = QComboBox()
         self._filter_combo.setFixedWidth(130)
         self._filter_combo.setStyleSheet(get_agent_combo_style())
+        self._filter_combo.setAccessibleName("Filter agents by category")
         self._filter_combo.addItems(["All Agents", "General", "Bulk Rename"])
         self._filter_combo.currentTextChanged.connect(self._apply_filter)
         toolbar.addWidget(self._filter_combo)
 
         toolbar.addStretch()
 
+        # G8: running / completed counts stay right-aligned in the
+        # toolbar, above the table (region order: controls + counts right
+        # -> dense table -> selected output preview below).
         self._status_label = QLabel("0 running / 0 completed")
         self._status_label.setStyleSheet(get_agent_status_label_style())
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         toolbar.addWidget(self._status_label)
 
         main_layout.addLayout(toolbar)
 
-        # Tree widget
+        # Tree widget — G8 keeps the real AgentTree hierarchy, does not
+        # flatten rows to mimic a sample table.
         self._tree = QTreeWidget()
         self._tree.setObjectName("agent_tree")
         self._tree.setStyleSheet(get_agent_tree_style())
@@ -105,7 +113,13 @@ class AgentTreeWidget(QWidget):
         self._tree.itemSelectionChanged.connect(self._on_item_selected)
         main_layout.addWidget(self._tree)
 
-        # Output preview
+        # Output preview — G8 puts the selected agent's output BELOW the
+        # table, with a thin border and no nested card.  The heading
+        # names the selected agent so the region is never ambiguous.
+        self._preview_title = QLabel("Selected agent output")
+        self._preview_title.setStyleSheet(get_agent_status_label_style())
+        main_layout.addWidget(self._preview_title)
+
         self._preview = QTextEdit()
         self._preview.setObjectName("agent_preview")
         self._preview.setReadOnly(True)
@@ -233,6 +247,7 @@ class AgentTreeWidget(QWidget):
         # Auto-update preview if this agent is selected
         selected = self._tree.selectedItems()
         if selected and selected[0].data(0, Qt.ItemDataRole.UserRole) == info.agent_id:
+            self._preview_title.setText(f"Output — {info.name}")
             self._preview.setPlainText(info.summary or "(no output yet)")
 
     def _apply_filter(self, _text: str = "") -> None:
@@ -255,12 +270,15 @@ class AgentTreeWidget(QWidget):
         items = self._tree.selectedItems()
         if not items:
             self._preview.clear()
+            self._preview_title.setText("Selected agent output")
             return
         agent_id = items[0].data(0, Qt.ItemDataRole.UserRole)
         info = self._agents.get(agent_id)
         if info:
+            self._preview_title.setText(f"Output — {info.name}")
             self._preview.setPlainText(info.summary or "(no output yet)")
         else:
+            self._preview_title.setText("Selected agent output")
             self._preview.clear()
 
     def _update_status_counts(self) -> None:

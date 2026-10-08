@@ -675,7 +675,12 @@ class SettingsDialog(QDialog):
             # Re-selecting the current page still runs the lazy loader.
             self._on_page_changed_lazy(index)
         btn = self._subnav_buttons[title]
+        # ``ensureWidgetVisible`` lives on the QScrollArea, and the
+        # button's direct parent is the inner row, so walk up until we
+        # find something that actually implements it.
         scroll = btn.parentWidget()
+        while scroll is not None and not hasattr(scroll, "ensureWidgetVisible"):
+            scroll = scroll.parentWidget()
         if scroll is not None:
             # Keep the current item visible in a narrow, scrolled strip.
             scroll.ensureWidgetVisible(btn, 0, 0)
@@ -1904,7 +1909,13 @@ class SettingsDialog(QDialog):
         try:
             kind, provider_name, data = result
             # Ignore stale results from previous provider selections.
-            if provider_name != self._provider_combo.currentText():
+            # Read the connection name BEFORE the model combo is touched:
+            # ``QComboBox.currentText`` falls back to the stored config
+            # model whenever the box holds no selected item, so reading
+            # it after an earlier restore can report the previous model
+            # instead of the connection the user is looking at.
+            current = self._provider_combo.currentText()
+            if provider_name != current:
                 return
             if kind == "models":
                 self._on_models_ready(data, fetched_for=provider_name)
@@ -2144,6 +2155,14 @@ class SettingsDialog(QDialog):
                 # branch below.
                 preserved_id = (current_id or previous_text or "").strip()
                 if preserved_id:
+                    # Clear the index BEFORE appending the preserved row.
+                    # ``QComboBox.clear()`` auto-selects index 0 on the
+                    # first subsequent ``addItem``, so a later
+                    # ``setCurrentIndex(preserved)`` is a silent no-op and
+                    # the dialog would display one model while saving
+                    # another — the exact "custom model ID overwritten by a
+                    # late catalog" failure G7 forbids.
+                    self._model_combo.setCurrentIndex(-1)
                     self._model_combo.addItem(preserved_id, preserved_id)
                     self._model_combo.setCurrentIndex(self._model_combo.count() - 1)
                 else:
@@ -2163,9 +2182,12 @@ class SettingsDialog(QDialog):
                 # the dialog to display "llama3.1" but save "gpt-4o".
                 preserved_id = (current_id or previous_text or "").strip()
                 if preserved_id:
+                    # Same index-clear as the live-fetch branch above.
+                    self._model_combo.setCurrentIndex(-1)
                     self._model_combo.addItem(preserved_id, preserved_id)
                     self._model_combo.setCurrentIndex(self._model_combo.count() - 1)
                 else:
+                    self._model_combo.setCurrentIndex(-1)
                     self._model_combo.setCurrentText("")
         finally:
             self._model_combo.blockSignals(blocker)
@@ -2247,18 +2269,18 @@ class SettingsDialog(QDialog):
         return self._model_combo.currentText().strip()
 
     def _set_manual_model_text(self, model_id: str) -> None:
-        """Set the editable model combo text without leaving stale
-        ``itemData`` from a previous provider selected.
+        """Select the editable combo's line-edit text as the model ID.
 
-        An editable ``QComboBox`` can keep ``currentIndex()`` pointing at
-        a stale item whose ``itemData`` belongs to a different provider,
-        even while the line edit visually shows the intended value.
-        Because ``_get_selected_model_id()`` prefers ``itemData(idx)``
-        whenever the index is valid, pressing OK in that state would save
-        the previous provider's model instead of the intended one.  By
-        forcing ``currentIndex`` to ``-1`` first, the accessor falls back
-        to the visible text and the stale itemData can never reach the
-        save path.
+        An editable ``QComboBox`` keeps two independent pieces of state:
+        the selected item index (whose ``itemData`` wins in
+        ``_get_selected_model_id``) and the line edit's visible text.
+        Writing ``setEditText`` alone leaves ``currentIndex()`` pointing
+        at a stale item, so the dialog would *display* one model and
+        *save* another.
+
+        A negative index means "typed, not one of the listed items" —
+        the accessor then falls back to the visible text, which is
+        exactly what a manually typed or preserved custom model ID needs.
         """
         # Blocking signals during the multi-step combo mutation prevents
         # the ordering-changed/currentTextChanged feedback loop from
