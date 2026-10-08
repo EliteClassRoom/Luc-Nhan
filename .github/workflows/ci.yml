@@ -34,8 +34,12 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      # Pinned to the version in uv.lock: an unpinned ``pip install ruff``
+      # drifts ahead of the dev environment and reformats files that
+      # ``ruff format`` locally leaves alone (or vice versa), so the gate
+      # fails for a version skew instead of a real style violation.
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.16.10
 
       - name: Format check
         run: python -m ruff format --check rikugan/
@@ -92,6 +96,13 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install PySide6
+
+      # PySide6's Qt libraries link libEGL/libGL at import time. Without
+      # them every test module that imports rikugan.ui.* dies during
+      # collection with "ImportError: libEGL.so.1", which hides the real
+      # test results behind an import failure.
+      - name: Install Qt runtime libs
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1
 
       - name: Run tests
         run: python -m pytest --tb=short -q
