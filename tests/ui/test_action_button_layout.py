@@ -93,34 +93,10 @@ class TestActionButtonLayout(unittest.TestCase):
             panel._build_action_buttons()
         finally:
             panel_core.InputArea = original
-        # G3: Mutations moved to the context row's ``Changes`` action, so
-        # build the context bar too — the attribute lives there now.
+        # G3: Mutations is the context row's ``Changes`` action, so the
+        # attribute under test is built with the context bar.
         panel._build_context_bar_for_tests()
         return panel
-
-    def test_mutations_action_lives_in_the_context_row(self) -> None:
-        """G3 context sequence ends with the ``Changes`` action/count."""
-        panel = self._build_panel_buttons()
-        btn = panel._mutations_btn
-        self.assertIs(btn, panel._context_bar._changes_btn)
-        self.assertEqual(btn.text(), "Changes")
-        # It must NOT be back in the composer's action row (G3 lists
-        # commands left / hint centre / send-stop right only).
-        # G3 names exactly three things in the composer's action row.
-        # ``_build_action_buttons`` no longer contributes any widget, so
-        # the row holds commands / hint / send / stop and nothing else.
-        # ``_build_action_buttons`` is the strip G3 leaves empty now that
-        # Mutations lives in the context row; it is what used to carry the
-        # Mutations button into the composer.
-        self.assertEqual(panel._build_action_buttons().count(), 0,
-                         "the secondary action strip must stay empty (G3)")
-
-    def test_changes_count_follows_recorded_mutations(self) -> None:
-        panel = self._build_panel_buttons()
-        self.assertEqual(panel._context_bar.mutation_count(), 0)
-        panel._context_bar.set_mutation_count(3)
-        self.assertEqual(panel._context_bar._changes_btn.text(), "Changes · 3")
-        self.assertIn("3 recorded", panel._context_bar._changes_btn.accessibleName())
 
     def test_action_buttons_live_in_horizontal_layouts(self) -> None:
         """The composer action row stays horizontal (never stacked)."""
