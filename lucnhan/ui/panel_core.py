@@ -1165,13 +1165,18 @@ class LucNhanPanelCore(QWidget):
                 chat_view = self._active_chat_view()
                 if chat_view:
                     chat_view.clear_chat()
-                self._update_token_display(0)
+                self._reset_token_display()
                 self._update_tab_label(self._ctrl.active_tab_id)
                 return
             # "yes" — fall through to create a new tab
         tab_id = self._ctrl.create_tab()
         self._create_tab(tab_id, "New Chat")
         self._ctrl.switch_tab(tab_id)
+        # The new tab starts on a fresh SessionState whose usage is zero, so
+        # the bar must be reset explicitly — ``switch_tab``'s no-arg refresh
+        # path reads the (now zero) session, but the displayed value is
+        # deduped against the previous tab's, so it would not change.
+        self._reset_token_display()
 
     def _on_fork_tab(self, index: int) -> None:
         """Fork (duplicate) a session into a new tab."""
@@ -1366,6 +1371,9 @@ class LucNhanPanelCore(QWidget):
         streaming usage events do not pound the context bar at 30+ Hz. A
         ``token_count`` of ``None`` (the no-arg refresh path used after tab
         switches and restore) flushes any pending value first.
+
+        ``0`` is a meaningful value — it is what a fresh session must show —
+        so it is passed through rather than treated as "no value".
         """
         if self._context_bar is None:
             return
@@ -1381,6 +1389,33 @@ class LucNhanPanelCore(QWidget):
             )
         self._schedule_token_display(token_count)
 
+    def _reset_token_display(self) -> None:
+        """Force the context bar back to zero after a session reset.
+
+        ``_schedule_token_display``'s dedupe remembers the last value it
+        *displayed*, which after a fresh session is stale — a reset must
+        clear that memory or the bar keeps showing the old session's usage
+        until the next non-zero value happens to differ from it. The pending
+        timer is cancelled first so an in-flight value from the discarded
+        session cannot land after the reset.
+
+        Never raises: this runs from ``new_chat`` / IDB-switch teardown paths,
+        where failing to repaint the bar must not abort the reset itself.
+        """
+
+        try:
+            timer = self._token_display_timer
+            if timer is not None:
+                timer.stop()
+            self._pending_token_display = None
+            self._last_token_display_value = -1
+            if self._context_bar is None:
+                return
+            ctx_window = self._config.provider.context_window or 0
+            self._context_bar.set_tokens(0, ctx_window)
+        except Exception as e:  # pragma: no cover - teardown must not raise
+            log_debug(f"_reset_token_display failed: {e}")
+
     def _schedule_token_display(self, token_count: int) -> None:
         """Schedule a token-display update at most every 100ms.
 
@@ -1388,9 +1423,9 @@ class LucNhanPanelCore(QWidget):
         coalescing matters most during streaming: a single LLM turn can
         emit dozens of ``USAGE_UPDATE`` events, and each ``set_tokens``
         triggers a layout pass in :class:`ContextBar` that becomes a
-        perceptible UI hitches on slower machines.
+        perceptible UI hitch on slower machines.
         """
-        if token_count <= 0 or token_count == self._last_token_display_value:
+        if token_count < 0 or token_count == self._last_token_display_value:
             return
         self._pending_token_display = token_count
         if self._token_display_timer is not None and self._token_display_timer.isActive():
@@ -1649,6 +1684,10 @@ class LucNhanPanelCore(QWidget):
         # switch.  No auto-restore — the user opens History
         # explicitly when they want a previous chat.
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
+        # Fresh-by-default after an IDB switch: the new session's usage is
+        # zero, so the bar must be reset rather than deduped against the
+        # previous binary's value.
+        self._reset_token_display()
         # Rebind the Knowledge tab to the newly opened binary's store.
         self._on_knowledge_event_refresh("database_changed")
 

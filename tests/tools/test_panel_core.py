@@ -839,6 +839,95 @@ class TestUpdateTokenDisplay(unittest.TestCase):
         mock_cb.set_tokens.assert_called_once_with(5000, 200000)
 
 
+class TestResetTokenDisplay(unittest.TestCase):
+    """A fresh session must show zero, not the previous session's usage.
+
+    Regression: ``_schedule_token_display`` deduped against the last value it
+    *displayed*, and ``_update_token_display(0)`` was dropped outright by the
+    ``token_count <= 0`` guard. Starting a new session therefore left the bar
+    showing the old session's context size until a later value happened to
+    differ from it.
+    """
+
+    def test_reset_clears_bar_after_busy_session(self):
+        panel = _make_panel()
+        mock_cb = MagicMock()
+        panel._context_bar = mock_cb
+        panel._config.provider.context_window = 200000
+
+        panel._update_token_display(95000)
+        panel._flush_pending_token_display()
+        self.assertEqual(mock_cb.set_tokens.call_args_list[-1].args, (95000, 200000))
+
+        panel._reset_token_display()
+        self.assertEqual(mock_cb.set_tokens.call_args_list[-1].args, (0, 200000))
+
+    def test_reset_clears_dedupe_memory(self):
+        """After a reset, the same value must be displayable again.
+
+        Guards the dedupe state, not just the label: if reset left
+        ``_last_token_display_value`` at the old number, a subsequent session
+        that happened to reach the same token count would silently not
+        repaint.
+        """
+        panel = _make_panel()
+        mock_cb = MagicMock()
+        panel._context_bar = mock_cb
+        panel._config.provider.context_window = 200000
+
+        panel._update_token_display(95000)
+        panel._flush_pending_token_display()
+        panel._reset_token_display()
+        mock_cb.reset_mock()
+
+        panel._update_token_display(95000)
+        panel._flush_pending_token_display()
+        mock_cb.set_tokens.assert_called_once_with(95000, 200000)
+
+    def test_reset_discards_pending_value_from_discarded_session(self):
+        """An in-flight debounced value from the old session must not land.
+
+        The timer may still hold a value queued moments before the reset; if it
+        flushed afterwards the bar would jump back to the old session's usage.
+        The pending slot is seeded directly because the real ``QTimer`` can
+        fire eagerly under stubs, which would flush it before the reset runs.
+        """
+        panel = _make_panel()
+        mock_cb = MagicMock()
+        panel._context_bar = mock_cb
+        panel._config.provider.context_window = 200000
+
+        panel._pending_token_display = 80000  # queued, not yet flushed
+
+        panel._reset_token_display()
+        self.assertIsNone(panel._pending_token_display)
+
+        panel._flush_pending_token_display()
+        # Only the reset's own set_tokens(0, …) is recorded — the stale 80000
+        # must not have been painted.
+        self.assertEqual(mock_cb.set_tokens.call_args_list[-1].args, (0, 200000))
+
+    def test_zero_is_a_displayable_value(self):
+        """``_update_token_display(0)`` must reach the bar, not be dropped.
+
+        The ``<= 0`` guard conflated "no value" with the legitimate value
+        zero; only negatives are now rejected.
+        """
+        panel = _make_panel()
+        mock_cb = MagicMock()
+        panel._context_bar = mock_cb
+        panel._config.provider.context_window = 200000
+
+        panel._update_token_display(0)
+        panel._flush_pending_token_display()
+        mock_cb.set_tokens.assert_called_once_with(0, 200000)
+
+    def test_reset_is_safe_when_context_bar_none(self):
+        panel = _make_panel()
+        panel._context_bar = None
+        panel._reset_token_display()  # must not raise
+
+
 # ---------------------------------------------------------------------------
 # _create_tab — must connect real ChatView signals, not call
 # nonexistent methods (see review of the async chat restore
