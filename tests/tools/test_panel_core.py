@@ -1779,14 +1779,14 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
         self.assertIn(
             "self._chat_splitter.addWidget(self._mode_stack)",
             source,
-            msg=(
-                "_build_ui() must place the content region in the top pane of the chat splitter."
-            ),
+            msg=("_build_ui() must place the content region in the top pane of the chat splitter."),
         )
         self.assertIn(
             "self._chat_splitter.addWidget(input_container)",
             source,
-            msg=("_build_ui() must place the input section in the bottom pane of the chat splitter so the user can drag."),
+            msg=(
+                "_build_ui() must place the input section in the bottom pane of the chat splitter so the user can drag."
+            ),
         )
         # The tab widget must stay inside the horizontal splitter — adding
         # it to the root layout would steal the chat pane and blank the
