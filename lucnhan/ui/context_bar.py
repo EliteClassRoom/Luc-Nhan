@@ -192,6 +192,14 @@ class ContextBar(QFrame):
             text += f" ({pct}%)"
         self._tokens_label[1].setText(text)
 
+    def changes_button(self) -> QPushButton:
+        """The row's ``Changes`` action — the panel's Mutations entry point.
+
+        Public accessor: ``panel_core`` wires this button's ``clicked`` to
+        the mutation-log handler and must not reach into a private widget.
+        """
+        return self._changes_btn
+
     def set_mutation_count(self, count: int) -> None:
         """Show how many reversible mutations this session recorded."""
         self._mutation_count = max(0, int(count))

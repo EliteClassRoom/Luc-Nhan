@@ -2200,15 +2200,26 @@ class TestAdaptivePanePresentation(unittest.TestCase):
         panel._history_panel.set_overlay_presentation.assert_called_with(False)
 
     def test_wide_open_pane_gets_the_nominal_split(self) -> None:
-        """G2: 295 px nominal pane, the rest to the conversation."""
+        """G2: 295 px nominal pane, the rest to the conversation.
+
+        The pin lives on the pane stack itself (it is not in the splitter),
+        so ``setSizes`` must NOT be called — that call only ever moved a
+        splitter that never owned the stack.
+        """
         panel = self._panel(panel_width=1000)
         panel._show_right_panel("history")
-        panel._main_splitter.setSizes.assert_called_with([1000 - _PANE_NOMINAL_WIDTH, _PANE_NOMINAL_WIDTH])
+        panel._pane_stack.setMinimumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._pane_stack.setMaximumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._main_splitter.setSizes.assert_not_called()
 
     def test_wide_closed_pane_does_not_resize_the_splitter(self) -> None:
         panel = self._panel()
         panel._apply_pane_presentation(False)
         panel._main_splitter.setSizes.assert_not_called()
+        # Wide presentation always pins the nominal column; the pin is what
+        # sizes the pane now that it is not a splitter child.
+        panel._pane_stack.setMinimumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._pane_stack.setMaximumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
 
     def test_open_pane_survives_the_breakpoint_transition(self) -> None:
         """Resizing must not close or recreate the pane (G5)."""
@@ -2344,15 +2355,22 @@ class TestAdaptivePanePresentation(unittest.TestCase):
         self.assertNotIn("QShortcut(QKeySequence(Qt.Key.Key_Escape), self)", src)
 
     def test_panes_share_one_stack_so_they_cannot_coexist(self) -> None:
-        """Source-level guard: the panes live in the pane stack, never as
-        siblings of the conversation in the splitter (G5)."""
-        import inspect
-
-        src = inspect.getsource(LucNhanPanelCore._build_main_splitter)
-        self.assertIn("self._build_pane_stack()", src)
-        self.assertEqual(src.count("self._main_splitter.addWidget("), 2)
-        self.assertNotIn("self._main_splitter.addWidget(self._history_panel)", src)
-        self.assertNotIn("self._main_splitter.addWidget(self._mutation_panel)", src)
+        """G5: History and Mutations live in ONE stack, and that stack is
+        not a splitter child — ``_build_ui`` puts it in the content HBox
+        beside the conversation, where the width pin is the sizing rule."""
+        panel = self._panel(panel_width=1000)
+        panel._show_right_panel("history")
+        # Exactly one pane page is live, so History and Mutations cannot
+        # coexist on screen (G5).  ``_pane_stack`` is a MagicMock here, so
+        # assert the coordinator's own single-name state instead.
+        self.assertEqual(panel._pane_name, "history")
+        # Adding the panes (or the stack) to the splitter would give one
+        # widget two parents' worth of sizing rules.
+        splitter_children = [panel._main_splitter.widget(i)
+                             for i in range(panel._main_splitter.count())]
+        self.assertNotIn(panel._pane_stack, splitter_children)
+        self.assertNotIn(panel._history_panel, splitter_children)
+        self.assertNotIn(panel._mutation_panel, splitter_children)
 
 
 class TestHistoryStartListRequest(unittest.TestCase):

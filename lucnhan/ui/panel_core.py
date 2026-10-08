@@ -715,7 +715,7 @@ class LucNhanPanelCore(QWidget):
         _early_log("panel_core:build_ui:context_bar:entry")
         self._context_bar = ContextBar()
         self._context_bar.set_model(self._config.provider.model)
-        self._mutations_btn = self._context_bar._changes_btn
+        self._mutations_btn = self._context_bar.changes_button()
         self._mutations_btn.setCheckable(True)
         self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
         self._context_bar.apply_theme()
@@ -964,10 +964,9 @@ class LucNhanPanelCore(QWidget):
         self._context_bar = ContextBar()
         if getattr(self, "_config", None) is not None:
             self._context_bar.set_model(self._config.provider.model)
-        self._mutations_btn = self._context_bar._changes_btn
+        self._mutations_btn = self._context_bar.changes_button()
         self._mutations_btn.setCheckable(True)
         self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
-        self._apply_action_button_tooltips()
         self._context_bar.apply_theme()
         return self._context_bar
 
@@ -1025,10 +1024,14 @@ class LucNhanPanelCore(QWidget):
         # G5: one stack, one visible page — the panes can never be
         # active at the same time, in either presentation.
         self._build_pane_stack()
-        self._main_splitter.addWidget(self._pane_stack)
-
-        self._main_splitter.setStretchFactor(0, 3)
-        self._main_splitter.setStretchFactor(1, 1)
+        # NOTE: the pane stack is deliberately NOT added here. ``_build_ui``
+        # puts it in the content-area HBox beside the conversation, where
+        # ``_apply_pane_presentation`` pins it to the G2 nominal width
+        # (min == max at wide, released at narrow).  Adding it to the
+        # splitter too would give one widget two parents' worth of sizing
+        # rules, and ``setSizes`` on a stack the splitter does not own does
+        # nothing.
+        self._main_splitter.setStretchFactor(0, 1)
 
         return self._main_splitter
 
@@ -1036,12 +1039,11 @@ class LucNhanPanelCore(QWidget):
         """Stack the two auxiliary panes over one another (G5).
 
         The stack is a *sibling* of the content stack inside the same
-        content-area wrapper (see :meth:`_build_ui`), so at wide width
-        the splitter gives it the G2 nominal pane width and at narrow
-        width the wrapper simply keeps both children at full width and
-        the stack covers the conversation.  Neither transition moves a
-        widget between parents, so the running agent, transcript and
-        draft are never disturbed.
+        content-area wrapper (see :meth:`_build_ui`), so at wide width the
+        wrapper's width pin gives it the G2 nominal pane width and at
+        narrow width that pin is released and the stack covers the
+        conversation.  Neither transition moves a widget between parents, so
+        the running agent, transcript and draft are never disturbed.
         """
         stack = QStackedWidget()
         stack.setObjectName("aux_pane_stack")
@@ -1401,13 +1403,6 @@ class LucNhanPanelCore(QWidget):
         if trigger is not None:
             trigger.setText(self._footer_trigger_text())
             trigger.setToolTip(self._footer_tooltip())
-        footer_left = getattr(self, "_footer_left", None)
-        if footer_left is not None:
-            provider = self._config.provider
-            thinking = getattr(provider, "thinking_level", "") or "off"
-            text = f"{provider.name} / {provider.model} · Thinking {thinking}"
-            footer_left.setText(text)
-            footer_left.setToolTip(text)
         footer_tokens = getattr(self, "_footer_tokens", None)
         if footer_tokens is not None and self._context_bar is not None:
             footer_tokens.setText(self._context_bar.tokens_text())
@@ -1538,10 +1533,8 @@ class LucNhanPanelCore(QWidget):
             # Geometry hints changed, so the cached split is stale.
             if layout is not None:
                 layout.invalidate()
-        if stack is not None and not narrow and getattr(self, "_pane_name", None) is not None:
-            splitter = getattr(self, "_main_splitter", None)
-            if splitter is not None:
-                splitter.setSizes([max(splitter.width() - _PANE_NOMINAL_WIDTH, 1), _PANE_NOMINAL_WIDTH])
+        # The wide width pin above is the whole sizing rule: the stack is
+        # not in the splitter, so there is nothing to split.
         history = getattr(self, "_history_panel", None)
         if history is not None and hasattr(history, "set_overlay_presentation"):
             history.set_overlay_presentation(narrow)

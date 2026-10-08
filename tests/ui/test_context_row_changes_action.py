@@ -84,11 +84,11 @@ class TestContextRowChangesAction(unittest.TestCase):
         from PySide6.QtCore import Qt
 
         bar, panel = _panel_with_context_row()
-        self.assertIs(panel._mutations_btn, bar._changes_btn)
-        self.assertEqual(bar._changes_btn.text(), "Changes")
-        self.assertTrue(bar._changes_btn.toolTip())
-        self.assertIn("mutation", bar._changes_btn.accessibleName().lower())
-        self.assertEqual(bar._changes_btn.focusPolicy(), Qt.FocusPolicy.StrongFocus)
+        self.assertIs(panel._mutations_btn, bar.changes_button())
+        self.assertEqual(bar.changes_button().text(), "Changes")
+        self.assertTrue(bar.changes_button().toolTip())
+        self.assertIn("mutation", bar.changes_button().accessibleName().lower())
+        self.assertEqual(bar.changes_button().focusPolicy(), Qt.FocusPolicy.StrongFocus)
 
     def test_changes_survives_the_narrow_breakpoint(self) -> None:
         """G3 only lets *secondary metadata* hide at narrow, not actions."""
@@ -98,7 +98,7 @@ class TestContextRowChangesAction(unittest.TestCase):
         # only meaningful once the ancestor chain is visible).
         self.assertTrue(bar._model_label[0].isHidden(), "MODEL: hides at narrow")
         self.assertTrue(bar._tokens_label[0].isHidden(), "TOKENS: hides at narrow")
-        self.assertFalse(bar._changes_btn.isHidden(), "Changes must stay reachable")
+        self.assertFalse(bar.changes_button().isHidden(), "Changes must stay reachable")
         bar.set_narrow(False)
         self.assertFalse(bar._model_label[0].isHidden(), "MODEL: returns when wide")
 
@@ -107,10 +107,10 @@ class TestContextRowChangesAction(unittest.TestCase):
         self.assertEqual(bar.mutation_count(), 0)
         bar.set_mutation_count(3)
         self.assertEqual(bar.mutation_count(), 3)
-        self.assertEqual(bar._changes_btn.text(), "Changes · 3")
-        self.assertIn("3 recorded", bar._changes_btn.accessibleName())
+        self.assertEqual(bar.changes_button().text(), "Changes · 3")
+        self.assertIn("3 recorded", bar.changes_button().accessibleName())
         bar.set_mutation_count(1)
-        self.assertEqual(bar._changes_btn.text(), "Changes · 1")
+        self.assertEqual(bar.changes_button().text(), "Changes · 1")
 
     def test_changes_style_survives_the_workspace_sweeps(self) -> None:
         """MANDATORY-1: the context row owns this button's chrome.
@@ -131,7 +131,7 @@ class TestContextRowChangesAction(unittest.TestCase):
         bar.apply_theme()
 
         self.assertEqual(
-            bar._changes_btn.styleSheet(),
+            bar.changes_button().styleSheet(),
             "",
             "no widget-level stylesheet may override the context row",
         )
@@ -139,16 +139,16 @@ class TestContextRowChangesAction(unittest.TestCase):
         self.assertIn("font-size: 11px", bar.styleSheet())
 
         # Label / description must be the ContextBar's own, exactly once.
-        self.assertEqual(bar._changes_btn.text(), "Changes")
-        name = bar._changes_btn.accessibleName()
+        self.assertEqual(bar.changes_button().text(), "Changes")
+        name = bar.changes_button().accessibleName()
         self.assertEqual(name, "Changes \u2014 show the mutation log (0 recorded)")
-        self.assertEqual(bar._changes_btn.toolTip(), "Show the mutation log (IDA database edits made by the agent)")
+        self.assertEqual(bar.changes_button().toolTip(), "Show the mutation log (IDA database edits made by the agent)")
 
         # And the rendered button must fit the fixed-height row (G2: 27 px).
         bar.resize(900, ContextBar._ROW_HEIGHT)
-        bar._changes_btn.ensurePolished()
+        bar.changes_button().ensurePolished()
         self.assertLessEqual(
-            bar._changes_btn.sizeHint().height(),
+            bar.changes_button().sizeHint().height(),
             ContextBar._ROW_HEIGHT,
             "the Changes action must not overflow the 27 px context row",
         )
@@ -158,7 +158,7 @@ class TestContextRowChangesAction(unittest.TestCase):
         bar, panel = _panel_with_context_row()
         seen: list[str] = []
         panel._mutations_btn.clicked.connect(lambda: seen.append("clicked"))
-        bar._changes_btn.click()
+        bar.changes_button().click()
         self.assertEqual(seen, ["clicked"])
 
 

@@ -440,8 +440,12 @@ class ModelPicker(QFrame):
         self._selection = choice
         if self.item_for(choice.connection_name, choice.model_id) is None:
             # The configured model is not in any fetched catalog yet —
-            # it still has to be a real, selectable row.
+            # it still has to be a real, selectable row (G6's unfetched
+            # state).  The thinking combo still has to be filled: it is the
+            # first thing the popup shows, and returning early here left it
+            # empty until the user picked a row or reopened the popup.
             self._sync_rows()
+            self._refresh_thinking()
             return
         self._restore_identity(choice)
         self._refresh_thinking()
@@ -602,8 +606,11 @@ class ModelPicker(QFrame):
         self._trigger = anchor
         width = self._popup_width(anchor)
         height = min(MAX_HEIGHT, max(self._tree.sizeHint().height() + 120, 160))
+        # G6 nominal width is 360 px, clamped to dock-24 / screen-24.  Do
+        # NOT call ``adjustSize()``: it overrides this with the layout's
+        # size hint (282 px at a 1100 px dock), which silently discarded the
+        # nominal width and crowded the thinking combo against the edge.
         self.resize(width, height)
-        self.adjustSize()
         x, y = self._anchor_point(anchor, width)
         self.move(x, y)
         self.show()
