@@ -125,7 +125,7 @@ _ACTION_BUTTON_TOOLTIPS = {
     "_cancel_btn": "Stop the running agent (Esc)",
     "_export_btn": "Export this chat to a file",
     "_settings_btn": "Open Luc Nhan settings",
-    "_mutations_btn": "Show the mutation log (IDA database edits made by the agent)",
+    "_mutations_btn": "Changes — show the mutation log (IDA database edits made by the agent)",
     "_history_btn": "Show past chat sessions",
     "_tools_btn": "Open the tools panel",
 }
@@ -140,6 +140,23 @@ def _small_btn_style() -> str:
         f"QPushButton:hover {{ background: {t.mid}; border-color: {t.accent}; }}"
         f"QPushButton:pressed {{ background: {t.mid}; }}"
         f"QPushButton:focus {{ border: 1px solid {t.accent}; outline: 2px solid {t.accent}; }}"
+    )
+
+
+def _tool_button_style() -> str:
+    """Neutral QSS for ``QToolButton`` controls (G1, same tokens as above).
+
+    Qt matches QSS selectors by class, so the ``QPushButton``-scoped rules
+    never reach a ``QToolButton`` — the composer's ``/ Commands``, Send and
+    Stop controls would otherwise stay unstyled.
+    """
+    t = ThemeManager.instance().tokens()
+    return (
+        f"QToolButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 4px 9px; min-height: 20px; font-size: 12px; }}"
+        f"QToolButton:hover {{ background: {t.mid}; border-color: {t.accent}; }}"
+        f"QToolButton:pressed {{ background: {t.mid}; }}"
+        f"QToolButton:focus {{ border: 1px solid {t.accent}; outline: 2px solid {t.accent}; }}"
     )
 
 
@@ -687,10 +704,16 @@ class LucNhanPanelCore(QWidget):
         layout.addWidget(self._session_strip)
         _early_log("panel_core:build_ui:session_strip:done")
 
-        # Context row: CONTEXT -> symbol -> address -> metadata.
+        # Context row: CONTEXT -> symbol -> address -> metadata -> Changes
+        # (GUI contract G3).  The ``Changes`` action opens Mutations and is
+        # built here because it belongs to the context row's sequence.
         _early_log("panel_core:build_ui:context_bar:entry")
         self._context_bar = ContextBar()
         self._context_bar.set_model(self._config.provider.model)
+        self._mutations_btn = self._context_bar._changes_btn
+        self._mutations_btn.setCheckable(True)
+        self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
+        self._apply_action_button_tooltips()
         self._context_bar.apply_theme()
         layout.addWidget(self._context_bar)
         _early_log("panel_core:build_ui:context_bar:done")
@@ -926,6 +949,24 @@ class LucNhanPanelCore(QWidget):
         self._session_strip_layout.addWidget(self._tab_bar, 1)
         self._session_strip_layout.addWidget(self._tab_bar._add_btn)
 
+    def _build_context_bar_for_tests(self) -> ContextBar:
+        """Build just the context row, for the lightweight panel harnesses.
+
+        ``_build_ui`` inlines the construction; the tests that only exercise
+        the header / composer wiring need the context bar's ``Changes``
+        action without the full (config-loading, controller-creating)
+        ``__init__``.  Wiring is identical to ``_build_ui``.
+        """
+        self._context_bar = ContextBar()
+        if getattr(self, "_config", None) is not None:
+            self._context_bar.set_model(self._config.provider.model)
+        self._mutations_btn = self._context_bar._changes_btn
+        self._mutations_btn.setCheckable(True)
+        self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
+        self._apply_action_button_tooltips()
+        self._context_bar.apply_theme()
+        return self._context_bar
+
     def _build_main_splitter(self) -> QSplitter:
         """Create the horizontal splitter (chat | auxiliary pane) and return it.
 
@@ -1100,10 +1141,9 @@ class LucNhanPanelCore(QWidget):
     def _build_action_buttons(self) -> QHBoxLayout:
         """Build the *secondary* action row (overflow entries + Mutations).
 
-        The returned strip is empty in the default (wide) presentation —
-        secondary actions live in the header's overflow menu — and gains the
-        Mutations action when the dock is narrow, where the header's
-        right-hand slots are given to ``Chat`` / ``Tools``.
+        The returned strip is empty: every secondary action lives in the
+        header (wide) or its overflow menu (narrow), and Mutations moved to
+        the context row's ``Changes`` action (GUI contract G3).
 
         Only *existing* button instances are used: Send / Stop are built in
         :meth:`_build_input_section` and every other action reuses the
@@ -1112,22 +1152,9 @@ class LucNhanPanelCore(QWidget):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(4)
 
-        # Mutations is the only secondary action the narrow presentation
-        # still shows inline (the header keeps Chat / Tools direct and
-        # moves History / Settings / Export into the overflow menu).
-        # Shown once the first mutation is recorded — see
-        # ``_on_mutation_recorded``.
-        self._mutations_btn = QPushButton("Mutations")
-        self._mutations_btn.setObjectName("mutations_button")
-        self._mutations_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
-        self._mutations_btn.setCheckable(True)
-        self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
-        self._mutations_btn.setVisible(False)
-        btn_layout.addWidget(self._mutations_btn)
-        # Mutations is built after the header, so its tooltip / accessible
-        # name are attached here as well.
-        self._apply_action_button_tooltips()
-
+        # G3's composer action row is: commands left, keyboard hint centre,
+        # send/stop right.  Mutations lives in the CONTEXT row as its
+        # ``Changes`` action (built with the context bar) — not here.
         btn_layout.addStretch()
         return btn_layout
 
@@ -1564,8 +1591,8 @@ class LucNhanPanelCore(QWidget):
         nav_style = build_small_button_stylesheet(self) if host else maybe_host_stylesheet(_small_btn_style())
         for btn in (self._tools_btn, self._history_btn, self._settings_btn):
             btn.setStyleSheet(nav_style)
-        if getattr(self, "_mutations_btn", None) is not None:
-            self._mutations_btn.setStyleSheet(nav_style)
+        # ``_mutations_btn`` lives in the context row now and is styled by
+        # ``ContextBar.apply_theme``; do not repaint it as header chrome.
         self._composer_hint_style()
 
     def _composer_hint_style(self) -> None:
@@ -1629,7 +1656,6 @@ class LucNhanPanelCore(QWidget):
             ("Export", self._export_btn),
             ("History", self._history_btn),
             ("Settings", self._settings_btn),
-            ("Mutations", self._mutations_btn),
         )
         actions = {}
         for label, btn in entries:
@@ -1660,7 +1686,7 @@ class LucNhanPanelCore(QWidget):
             btn.setStyleSheet(maybe_host_stylesheet(_cancel_btn_style() if btn in danger else _small_btn_style()))
         commands = getattr(self, "_commands_btn", None)
         if commands is not None:
-            commands.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
+            commands.setStyleSheet(maybe_host_stylesheet(_tool_button_style()))
 
     def _on_show_commands(self) -> None:
         """List the available slash commands in the composer."""
@@ -2758,8 +2784,8 @@ class LucNhanPanelCore(QWidget):
             reversible=meta.get("reversible", False),
         )
         self._mutation_panel.add_mutation(record)
-        # Show the mutations button once the first mutation is recorded
-        self._mutations_btn.setVisible(True)
+        # The context row's ``Changes`` action carries the live count.
+        self._context_bar.set_mutation_count(self._mutation_panel.entry_count())
 
     def _on_toggle_mutation_log(self) -> None:
         """Toggle visibility of the mutation log panel.

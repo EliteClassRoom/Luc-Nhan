@@ -160,6 +160,16 @@ def _context_bar_style() -> str:
         f"QFrame#context_bar QLabel {{ background: transparent; border: none; }}"
         f"QFrame#context_bar QLabel#context_label {{ color: {t.muted_text}; font-size: 11px; }}"
         f"QFrame#context_bar QLabel#context_value {{ color: {t.text}; font-size: 11px; }}"
+        # G3 context-row ``Changes`` action: flat neutral control, accent
+        # on hover/focus, muted text so it never competes with the symbol
+        # or the address.
+        f"QFrame#context_bar QPushButton#context_changes_btn {{ background: transparent; "
+        f"color: {t.muted_text}; border: 1px solid transparent; border-radius: 4px; "
+        f"padding: 0 6px; font-size: 11px; }}"
+        f"QFrame#context_bar QPushButton#context_changes_btn:hover {{ color: {t.text}; "
+        f"border-color: {t.mid}; }}"
+        f"QFrame#context_bar QPushButton#context_changes_btn:focus {{ color: {t.accent}; "
+        f"border-color: {t.accent}; outline: 2px solid {t.accent}; }}"
     )
 
 
@@ -618,6 +628,17 @@ def _settings_btn_style() -> str:
 
 def get_small_btn_style() -> str:
     return _small_btn_style()
+
+
+def get_tool_button_style() -> str:
+    """``QToolButton`` variant of :func:`get_small_btn_style`.
+
+    Qt matches QSS selectors by class, so the ``QPushButton``-scoped small
+    button rule never applies to a ``QToolButton`` (the composer's
+    ``/ Commands``, Send and Stop controls).  Same tokens, same geometry.
+    """
+    t = _tokens()
+    return _button_qss(t, t.alt_base, selector="QToolButton")
 
 
 def get_cancel_btn_style() -> str:

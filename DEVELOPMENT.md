@@ -162,12 +162,15 @@ for every `python` / `pytest` / `ruff` / `mypy` invocation — do not fall back 
 a global Python, and do not install a second Qt into the IDAPython venv to make
 a stubbed suite go green.
 
-Evidence lives in `.superpowers/sdd/<slice>/`: `<slice>-smoke-ida.json` for the
-check results, `screenshots/*.png` for native grabs, `evidence/*.txt` for
-captured `pytest` / `ruff` / `mypy` output, and the benchmark JSON artifacts
-kept alongside them for audit. Screenshots must record the **logical viewport,
-DPI, theme and font** in the companion JSON — the HTML mockup PNGs under
-`design-preview/` are composition references, never native proof.
+Each run writes its artifacts to a scratch directory of your choosing (this
+repo's gitignored `.superpowers/sdd/<slice>/` is the convention the redesign
+used): a `<slice>-smoke-ida.json` with the check results, `screenshots/*.png`
+for the native grabs, `evidence/*.txt` for captured `pytest` / `ruff` / `mypy`
+output, and the benchmark JSON kept alongside it for audit. These are local run
+artifacts — **not** repository documentation, and nothing in this project
+should link to them as if they were. Screenshots must record the **logical
+viewport, DPI, theme and font** in the companion JSON — the HTML mockup PNGs
+under `design-preview/` are composition references, never native proof.
 
 ### DPI 150%
 

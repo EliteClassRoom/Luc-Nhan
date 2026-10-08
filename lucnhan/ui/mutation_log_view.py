@@ -229,6 +229,10 @@ class MutationLogPanel(QFrame):
         self._entries.append(entry)
         self._update_count()
 
+    def entry_count(self) -> int:
+        """How many mutation records the log currently holds."""
+        return len(self._entries)
+
     def remove_last(self, count: int = 1) -> None:
         """Remove the last N entries (after undo)."""
         for _ in range(min(count, len(self._entries))):

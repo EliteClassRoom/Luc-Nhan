@@ -169,6 +169,8 @@ class TestActionButtonTooltips(unittest.TestCase):
         panel._ctrl = type("_Ctrl", (), {"skill_slugs": []})()
         panel._build_header()
         panel._build_action_buttons()
+        # G3: Mutations is the context row's ``Changes`` action now.
+        panel._build_context_bar_for_tests()
         return panel
 
     def _panel_with_composer(self):
@@ -206,6 +208,8 @@ class TestActionButtonTooltips(unittest.TestCase):
             panel._build_header()
             panel._build_input_section()
             panel._build_action_buttons()
+            # G3: Mutations is the context row's ``Changes`` action now.
+            panel._build_context_bar_for_tests()
         finally:
             panel_core.InputArea = original
         return panel

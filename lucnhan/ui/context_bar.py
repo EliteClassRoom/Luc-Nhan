@@ -13,9 +13,11 @@ from .qt_compat import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     Qt,
     QTimer,
     QWidget,
+    Signal,
 )
 
 if is_ida():
@@ -55,6 +57,8 @@ class ContextBar(QFrame):
     reads the binary context.
     """
 
+    changes_requested = Signal()
+
     # GUI contract G2: min-height 27 px, padding 4 / 12, gap 9.
     _ROW_HEIGHT = 27
     _ROW_MARGIN_H = 12
@@ -92,6 +96,21 @@ class ContextBar(QFrame):
         self._secondary_pairs = (self._model_label, self._tokens_label)
 
         layout.addStretch()
+
+        # G3 context row: label -> symbol -> address -> optional binary
+        # metadata -> ``Changes`` action/count.  Changes opens Mutations; it
+        # is a real action, not a setting, and carries the live record
+        # count.  It is NOT part of the secondary metadata that collapses
+        # at the narrow breakpoint, so it stays reachable there too.
+        self._changes_btn = QPushButton("Changes")
+        self._changes_btn.setObjectName("context_changes_btn")
+        self._changes_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._changes_btn.setToolTip("Show the mutation log (IDA database edits made by the agent)")
+        self._changes_btn.setAccessibleName("Changes — show the mutation log")
+        self._changes_btn.clicked.connect(self.changes_requested.emit)
+        layout.addWidget(self._changes_btn)
+        self._mutation_count = 0
+        self._update_changes_label()
 
         self._narrow = False
         self._stopped = False
@@ -174,6 +193,25 @@ class ContextBar(QFrame):
             pct = min(int(count * 100 / context_window), 100)
             text += f" ({pct}%)"
         self._tokens_label[1].setText(text)
+
+    def set_mutation_count(self, count: int) -> None:
+        """Show how many reversible mutations this session recorded."""
+        self._mutation_count = max(0, int(count))
+        self._update_changes_label()
+
+    def mutation_count(self) -> int:
+        return self._mutation_count
+
+    def _update_changes_label(self) -> None:
+        count = self._mutation_count
+        text = "Changes" if count <= 0 else f"Changes · {count}"
+        self._changes_btn.setText(text)
+        self._changes_btn.setToolTip(
+            "Show the mutation log (IDA database edits made by the agent)"
+            if count <= 0
+            else f"Show {count} recorded database edit{'s' if count != 1 else ''}"
+        )
+        self._changes_btn.setAccessibleName(f"Changes — show the mutation log ({count} recorded)")
 
     def tokens_text(self) -> str:
         """The context-token summary as displayed (e.g. ``4.2k (2%)``).

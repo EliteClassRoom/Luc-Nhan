@@ -39,8 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Development documentation for the native smoke and benchmark procedure, its
-  evidence layout, and its known limits (`.superpowers/sdd/`).
+- Development documentation for the native smoke and benchmark procedure and
+  its known limits, in `DEVELOPMENT.md` under **Native GUI smoke &
+  benchmark**.
 
 - **The Luc Nhan rename is now complete end to end.** The display name was
   already Luc Nhan; the code, packaging and on-disk artifacts now follow. The
