@@ -20,6 +20,7 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from ..constants import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE
 from ..core.config import LucNhanConfig
 from ..core.host import get_database_instance_id, set_database_instance_id
 from ..core.logging import log_debug, log_error, log_info, log_warning
@@ -376,6 +377,135 @@ class SessionControllerBase:
         """True if the given tab's agent is currently running."""
         runner = self._runners.get(tab_id)
         return runner is not None and runner.agent_loop.is_running
+
+    # --- Model / thinking selection (footer picker commit path) ---
+
+    def select_model(self, connection_name: str, model_id: str, thinking_level: str) -> None:
+        """Commit a (connection, model, thinking-level) selection.
+
+        This is the *only* commit point for the footer model picker, so
+        every invariant holds here regardless of which UI triggered it:
+
+        * ``ValueError`` — unknown connection, blank model ID, or a
+          thinking level outside the registry list for that model.  A
+          custom/manual model ID is always valid; it does not have to
+          appear in a fetched catalog.
+        * ``RuntimeError`` — an agent is running **in any tab**.  The
+          check runs at commit time, after staging and immediately
+          before the config is written, so an agent that starts while
+          the popup is open still wins the race.
+        * Persistence errors propagate untouched.  The provider and the
+          per-connection snapshot are rolled back to their pre-call
+          values, so the footer/panel keeps showing the previous
+          selection and the previous config file is still on disk.
+
+        The commit lands on the same ``LucNhanConfig`` instance the
+        panel and Settings hold — no object swap, which would leave
+        those owners reading stale values.  No MCP reload, skill
+        reload, tool reset, SDK/provider construction or
+        ``update_settings()`` happens here; the next turn reuses the
+        cached provider through ``ProviderRegistry.get_or_create``,
+        which already invalidates on an ``extra`` change.
+        """
+        from ..core.thinking import get_thinking_levels
+
+        name = (connection_name or "").strip()
+        if not name:
+            raise ValueError("Connection name must not be empty")
+        if name != self.config.provider.name and name not in self.config.providers:
+            raise ValueError(f"Unknown connection: {name!r}")
+        model = (model_id or "").strip()
+        if not model:
+            raise ValueError("Model ID must not be empty")
+        levels = get_thinking_levels(model)
+        level = (thinking_level or "").strip()
+        if level not in levels:
+            raise ValueError(
+                f"Thinking level {thinking_level!r} is not supported by model {model!r} (allowed: {', '.join(levels)})"
+            )
+
+        # Stage on snapshots: ``candidate`` is the provider as it will be
+        # after the commit, ``previous`` is the provider as it is now.
+        # Nothing is written until ``save()`` succeeded, so a failed
+        # write cannot leave the footer showing a selection that was
+        # never stored.
+        previous = copy.deepcopy(self.config.provider)
+        previous_saved = copy.deepcopy(self.config.providers.get(previous.name, {}))
+        target_existed = name in self.config.providers
+        target_saved = copy.deepcopy(self.config.providers.get(name, {}))
+        candidate = copy.deepcopy(self.config.provider)
+        candidate.name = name
+        candidate.model = model
+        if name != previous.name:
+            saved = self.config.providers.get(name, {})
+            candidate.api_key = saved.get("api_key", "")
+            candidate.api_base = saved.get("api_base", "")
+            candidate.temperature = saved.get("temperature", DEFAULT_TEMPERATURE)
+            candidate.max_tokens = saved.get("max_tokens", DEFAULT_MAX_TOKENS)
+            candidate.context_window = saved.get("context_window", DEFAULT_CONTEXT_WINDOW)
+            candidate.extra = copy.deepcopy(saved.get("extra", {}))
+        extra = candidate.extra
+        if not isinstance(extra, dict):
+            extra = {}
+        previous_thinking = extra.get("thinking")
+        preserve = previous_thinking.get("preserve", True) if isinstance(previous_thinking, dict) else True
+        extra["thinking"] = {
+            "enabled": level != "none",
+            "reasoning_effort": level,
+            "preserve": preserve if isinstance(preserve, bool) else True,
+        }
+        candidate.extra = extra
+
+        # Busy guard at commit time — an agent may have started while the
+        # popup was open, in this tab or any other. Checked before the
+        # save so a rejected selection never reaches disk.
+        if self.is_agent_running:
+            raise RuntimeError("Cannot change the model while an agent is running")
+
+        live = self.config.provider
+        self._apply_provider(candidate)
+        try:
+            # ``save()`` snapshots the active provider into
+            # ``config.providers`` and writes the file atomically.
+            self.config.save()
+        except Exception:
+            # Persistence failed — put the provider and both per-connection
+            # snapshots back exactly as they were (G9 "Save pending/failure":
+            # the footer keeps the old selection). The file on disk was
+            # never replaced.
+            self.config.providers[previous.name] = previous_saved
+            if name != previous.name:
+                if target_existed:
+                    self.config.providers[name] = target_saved
+                else:
+                    self.config.providers.pop(name, None)
+            self._apply_provider(previous)
+            raise
+        # Idle sessions follow the existing global semantics of
+        # ``update_settings`` (every session tracks the active
+        # provider/model); a busy tab cannot reach this point — the guard
+        # above rejects any running agent.
+        for session in self._sessions.values():
+            session.provider_name = live.name
+            session.model_name = live.model
+
+    def _apply_provider(self, source: Any) -> None:
+        """Copy every ``ProviderConfig`` field of *source* onto the live provider.
+
+        In-place on purpose: the panel, Settings and this controller all
+        hold a reference to the same ``LucNhanConfig``, so replacing
+        ``config.provider`` would leave those owners reading stale
+        values.
+        """
+        live = self.config.provider
+        live.name = source.name
+        live.model = source.model
+        live.api_key = source.api_key
+        live.api_base = source.api_base
+        live.temperature = source.temperature
+        live.max_tokens = source.max_tokens
+        live.context_window = source.context_window
+        live.extra = source.extra
 
     def get_runner(self, tab_id: str | None = None) -> BackgroundAgentRunner | None:
         """Return the runner for *tab_id* (defaults to the active tab).

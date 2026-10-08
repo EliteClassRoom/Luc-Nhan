@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import lucnhan.core.config as config_module
 from lucnhan.core.config import LucNhanConfig
 
@@ -245,3 +247,71 @@ def test_garbage_context_window_is_rejected_not_loaded() -> None:
     })
     from lucnhan.constants import DEFAULT_CONTEXT_WINDOW
     assert cfg.provider.context_window == DEFAULT_CONTEXT_WINDOW
+
+
+# --------------------------------------------------------------------
+# Atomic save boundary — a partial write must never destroy the previous
+# config now that every footer model/thinking commit persists.
+# --------------------------------------------------------------------
+
+
+def test_save_writes_through_atomic_replace(tmp_path: Path, monkeypatch) -> None:
+    """save() swaps a temp file from the same directory into place."""
+    cfg = _config(tmp_path)
+    calls: list[tuple[str, str]] = []
+
+    from lucnhan.core import atomic_io
+
+    real_replace = atomic_io.atomic_replace
+
+    def _spy(src, dst):
+        calls.append((str(src), str(dst)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(atomic_io, "atomic_replace", _spy)
+
+    cfg.save()
+
+    assert len(calls) == 1
+    src, dst = calls[0]
+    assert Path(dst) == Path(cfg.config_path)
+    # Same directory as the target, otherwise os.replace is cross-device.
+    assert Path(src).parent == Path(cfg.config_path).parent
+    # The temp file is consumed by the replace.
+    assert not Path(src).exists()
+
+
+def test_save_failure_keeps_previous_file_and_removes_temp(tmp_path: Path, monkeypatch) -> None:
+    cfg = _config(tmp_path)
+    cfg.save()
+    before = (tmp_path / CONFIG_FILE).read_bytes()
+
+    from lucnhan.core import atomic_io
+
+    def _boom(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(atomic_io, "atomic_replace", _boom)
+
+    with pytest.raises(OSError):
+        cfg.provider.model = "gpt-4o-mini"
+        cfg.save()
+
+    assert (tmp_path / CONFIG_FILE).read_bytes() == before
+    assert [p.name for p in tmp_path.iterdir()] == [CONFIG_FILE]
+
+
+def test_save_failure_on_first_write_leaves_no_file_or_temp(tmp_path: Path, monkeypatch) -> None:
+    cfg = _config(tmp_path)
+
+    from lucnhan.core import atomic_io
+
+    def _boom(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(atomic_io, "atomic_replace", _boom)
+
+    with pytest.raises(OSError):
+        cfg.save()
+
+    assert list(tmp_path.iterdir()) == []
