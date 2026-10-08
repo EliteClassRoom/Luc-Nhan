@@ -13,16 +13,16 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.mcp.bridge import _mcp_schema_to_parameters, register_mcp_tools
-from rikugan.mcp.client import MCPClient
-from rikugan.mcp.config import MCPServerConfig, load_mcp_config, save_mcp_config
-from rikugan.mcp.manager import MCPManager
-from rikugan.mcp.protocol import (
+from lucnhan.mcp.bridge import _mcp_schema_to_parameters, register_mcp_tools
+from lucnhan.mcp.client import MCPClient
+from lucnhan.mcp.config import MCPServerConfig, load_mcp_config, save_mcp_config
+from lucnhan.mcp.manager import MCPManager
+from lucnhan.mcp.protocol import (
     MCPToolSchema,
     decode_jsonrpc_response,
     encode_jsonrpc_request,
 )
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.tools.registry import ToolRegistry
 
 
 class TestMCPConfig(unittest.TestCase):
@@ -296,8 +296,8 @@ class TestMCPStartTimeout(unittest.TestCase):
 
         try:
             with (
-                patch("rikugan.mcp.client.MCPClient", FakeClient),
-                patch("rikugan.mcp.bridge.register_mcp_tools", lambda client, registry, prefix="": 0),
+                patch("lucnhan.mcp.client.MCPClient", FakeClient),
+                patch("lucnhan.mcp.bridge.register_mcp_tools", lambda client, registry, prefix="": 0),
             ):
                 mgr._start_one(config, ToolRegistry(), None, generation=mgr._generation)
             self.assertEqual(seen.get("timeout"), 60.0)

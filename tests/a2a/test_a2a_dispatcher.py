@@ -27,33 +27,33 @@ import unittest
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any
 
-# Install the IDA fakes before the first ``rikugan.*`` import, exactly like
-# every other module-scope rikugan importer in this tree: the import chain
-# reaches ``ida_*`` (``rikugan.agent.a2a.dispatcher``), and importing those
+# Install the IDA fakes before the first ``lucnhan.*`` import, exactly like
+# every other module-scope lucnhan importer in this tree: the import chain
+# reaches ``ida_*`` (``lucnhan.agent.a2a.dispatcher``), and importing those
 # before the fakes exist caches a degraded module state that a later
 # ``install_ida_mocks()`` cannot repair for the rest of the session.
 from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.a2a import A2ADispatcher
-from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
-from rikugan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.agent.a2a import A2ADispatcher
+from lucnhan.agent.a2a.types import A2AEvent, ExternalAgentConfig
+from lucnhan.agent.turn import TurnEvent, TurnEventType
 
 if TYPE_CHECKING:
-    # Annotations only. ``rikugan.ui.a2a_widget`` imports ``PySide6`` at
+    # Annotations only. ``lucnhan.ui.a2a_widget`` imports ``PySide6`` at
     # module scope and this file is collected before the first
     # ``tests.qt_stubs`` installer (``tests/a2a`` sorts ahead of
     # ``tests/ida_ui``), so a module-scope import here would bind the real
     # Qt classes for the whole session and turn every later
     # ``ensure_pyside6_stubs()`` into a no-op. The runtime import happens
     # per test through :func:`_a2a_runner` instead.
-    from rikugan.ui.a2a_widget import _A2ATaskEvent, _A2ATaskRunner
+    from lucnhan.ui.a2a_widget import _A2ATaskEvent, _A2ATaskRunner
 
 
 def _a2a_runner() -> tuple[Any, Any, Any]:
     """Import the Qt-backed task runner on first use (see note above)."""
-    from rikugan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent, _A2ATaskRunner
+    from lucnhan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent, _A2ATaskRunner
 
     return _A2ARunnerEventType, _A2ATaskEvent, _A2ATaskRunner
 

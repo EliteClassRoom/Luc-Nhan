@@ -12,12 +12,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.skills.loader import (
+from lucnhan.skills.loader import (
     _parse_frontmatter,
     _split_frontmatter,
     discover_skills,
 )
-from rikugan.skills.registry import SkillRegistry
+from lucnhan.skills.registry import SkillRegistry
 
 
 class TestFrontmatterParser(unittest.TestCase):
@@ -296,7 +296,7 @@ class TestSkillRegistry(unittest.TestCase):
 
     def test_report_skill_is_discoverable(self):
         # The /report built-in skill must be discovered from
-        # rikugan/skills/builtins/report/ with the documented slug
+        # lucnhan/skills/builtins/report/ with the documented slug
         # and description, so the migration from a hard-coded
         # autocomplete entry to a real registered skill is locked in.
         reg = SkillRegistry()

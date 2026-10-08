@@ -1,4 +1,4 @@
-"""Tests for pure-logic helpers in rikugan.ui.tool_widgets.
+"""Tests for pure-logic helpers in lucnhan.ui.tool_widgets.
 
 Isolates the testable business-logic functions from Qt widget code
 by installing PySide6 stubs before importing the module.
@@ -15,9 +15,9 @@ from tests.qt_stubs import ensure_pyside6_stubs
 ensure_pyside6_stubs()
 
 # Ensure the real module is loaded even if another test stubbed it.
-sys.modules.pop("rikugan.ui.tool_widgets", None)
+sys.modules.pop("lucnhan.ui.tool_widgets", None)
 
-from rikugan.ui.tool_widgets import (
+from lucnhan.ui.tool_widgets import (
     _DEFAULT_TOOL_COLOR,
     _build_approval_header,
     _format_tool_group_label,

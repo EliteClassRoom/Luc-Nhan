@@ -6,15 +6,15 @@ import os
 import sys
 import unittest
 
-# Install mocks before importing Rikugan modules
+# Install mocks before importing Luc Nhan modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.errors import ToolNotFoundError
-from rikugan.tools.base import tool
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.core.errors import ToolNotFoundError
+from lucnhan.tools.base import tool
+from lucnhan.tools.registry import ToolRegistry
 
 
 class TestToolSubstitution(unittest.TestCase):
@@ -27,7 +27,7 @@ class TestToolSubstitution(unittest.TestCase):
     """
 
     def test_suggest_substitutions_returns_structured_matches(self):
-        from rikugan.tools.tool_substitution import suggest_substitutions
+        from lucnhan.tools.tool_substitution import suggest_substitutions
 
         # A wrapper that does nothing but list imports.
         script = """
@@ -51,7 +51,7 @@ for i in range(nimps):
             self.assertTrue(s.hint)  # non-empty
 
     def test_suggest_substitutions_no_match_returns_empty(self):
-        from rikugan.tools.tool_substitution import suggest_substitutions
+        from lucnhan.tools.tool_substitution import suggest_substitutions
 
         # Legitimate compute that does not match any dedicated tool.
         script = """
@@ -66,7 +66,7 @@ print(s.check())
     def test_suggest_substitutions_ignores_comments_and_strings(self):
         """Comments and string literals mentioning APIs must not trigger
         false positives — only actual call sites should be matched."""
-        from rikugan.tools.tool_substitution import suggest_substitutions
+        from lucnhan.tools.tool_substitution import suggest_substitutions
 
         # Real call to list_imports API inside a string must be ignored.
         script = """
@@ -80,7 +80,7 @@ print(msg)
             self.assertNotIn("msg = ", s.hint)  # no hint should claim we matched the string
 
     def test_format_suggestions_for_agent_renders_table(self):
-        from rikugan.tools.tool_substitution import (
+        from lucnhan.tools.tool_substitution import (
             format_suggestions_for_agent,
             suggest_substitutions,
         )
@@ -99,14 +99,14 @@ nimps = ida_nalt.get_import_module_qty()
                 self.assertIn(s.tool_name, rendered)
 
     def test_format_suggestions_for_agent_mentions_guard(self):
-        """The preamble must identify itself as Rikugan's substitution guard.
+        """The preamble must identify itself as Luc Nhan's substitution guard.
 
         Without this context, the LLM has no way to know that the
-        ``[rikugan]`` block came from a built-in guard layer (vs. a
+        ``[lucnhan]`` block came from a built-in guard layer (vs. a
         stale system message or a malformed script output) and may
         ignore it as noise.
         """
-        from rikugan.tools.tool_substitution import Suggestion, format_suggestions_for_agent
+        from lucnhan.tools.tool_substitution import Suggestion, format_suggestions_for_agent
 
         sugg = [
             Suggestion(
@@ -117,8 +117,8 @@ nimps = ida_nalt.get_import_module_qty()
         ]
         rendered = format_suggestions_for_agent(sugg)
         # Identity markers — the LLM should be able to tell this came
-        # from Rikugan's guard, not from a user message.
-        self.assertIn("[rikugan]", rendered)
+        # from Luc Nhan's guard, not from a user message.
+        self.assertIn("[lucnhan]", rendered)
         self.assertIn("guard", rendered.lower())
 
 
@@ -127,10 +127,10 @@ class TestPromptMentionsNewTools(unittest.TestCase):
     tools actually registered. When new dedicated tools are added
     (search_imports, imports_by_module), the prompt must (1) mention them
     so the LLM considers them, and (2) acknowledge the substitution
-    guard layer so the [rikugan] preamble is not treated as noise."""
+    guard layer so the [lucnhan] preamble is not treated as noise."""
 
     def test_ida_tool_usage_mentions_search_variants(self):
-        from rikugan.agent.prompts.ida import _IDA_TOOL_USAGE
+        from lucnhan.agent.prompts.ida import _IDA_TOOL_USAGE
 
         text = _IDA_TOOL_USAGE.lower()
         # Both new dedicated tools must be reachable from the prompt.
@@ -138,13 +138,13 @@ class TestPromptMentionsNewTools(unittest.TestCase):
         self.assertIn("imports_by_module", text)
 
     def test_ida_api_discipline_acknowledges_substitution_guard(self):
-        from rikugan.agent.prompts.base import IDA_API_DISCIPLINE_SECTION
+        from lucnhan.agent.prompts.base import IDA_API_DISCIPLINE_SECTION
 
         text = IDA_API_DISCIPLINE_SECTION.lower()
         # The discipline section is the right home for "what to do when
-        # you see the [rikugan] substitution hint" because it already
+        # you see the [lucnhan] substitution hint" because it already
         # owns the "is there a built-in tool?" pre-write checklist.
-        self.assertIn("[rikugan]", text)
+        self.assertIn("[lucnhan]", text)
         self.assertIn("substitution", text)
 
     def test_contributed_mappings_recognize_wrapper_scripts(self):
@@ -155,7 +155,7 @@ class TestPromptMentionsNewTools(unittest.TestCase):
         minimal wrapper script that should yield at least one suggestion
         pointing at the dedicated tool.
         """
-        from rikugan.tools.tool_substitution import suggest_substitutions
+        from lucnhan.tools.tool_substitution import suggest_substitutions
 
         cases = [
             # (script, expected_tool_name)
@@ -192,8 +192,8 @@ class TestToolCatalog(unittest.TestCase):
     recall what each tool does without reading the full schema."""
 
     def test_format_tools_catalog_groups_by_category(self):
-        from rikugan.agent.system_prompt import format_tools_catalog
-        from rikugan.tools.base import tool
+        from lucnhan.agent.system_prompt import format_tools_catalog
+        from lucnhan.tools.base import tool
 
         @tool(category="database", description="List every imported function.")
         def list_imports() -> str:
@@ -223,7 +223,7 @@ class TestToolCatalog(unittest.TestCase):
         self.assertIn("Jump to an address", catalog)
 
     def test_format_tools_catalog_handles_empty_list(self):
-        from rikugan.agent.system_prompt import format_tools_catalog
+        from lucnhan.agent.system_prompt import format_tools_catalog
 
         # Empty input must not raise and must produce a stable section header.
         result = format_tools_catalog([])
@@ -233,8 +233,8 @@ class TestToolCatalog(unittest.TestCase):
         """build_system_prompt with a tool catalog should render the
         categorized table, not the comma-separated names list."""
 
-        from rikugan.agent.system_prompt import build_system_prompt
-        from rikugan.tools.base import tool
+        from lucnhan.agent.system_prompt import build_system_prompt
+        from lucnhan.tools.base import tool
 
         @tool(category="database", description="List every imported function.")
         def list_imports() -> str:
@@ -303,7 +303,7 @@ class TestToolDecorator(unittest.TestCase):
             """Fails."""
             raise ValueError("boom")
 
-        from rikugan.core.errors import ToolError
+        from lucnhan.core.errors import ToolError
 
         with self.assertRaises(ToolError):
             failing_tool()
@@ -317,7 +317,7 @@ class TestToolDecorator(unittest.TestCase):
         confusion: the model passes ``count`` to a tool that only takes
         ``address``.
         """
-        from rikugan.core.errors import ToolValidationError
+        from lucnhan.core.errors import ToolValidationError
 
         @tool(name="read_function_disassembly")
         def read_function_disassembly(address: str) -> str:
@@ -418,13 +418,13 @@ class TestBuiltinTools(unittest.TestCase):
     """Test that built-in tools are loadable (using mocks)."""
 
     def test_navigation_tools(self):
-        from rikugan.ida.tools.navigation import get_cursor_position
+        from lucnhan.ida.tools.navigation import get_cursor_position
 
         result = get_cursor_position()
         self.assertTrue(result.startswith("0x"))
 
     def test_database_tools_loadable(self):
-        from rikugan.ida.tools import database
+        from lucnhan.ida.tools import database
 
         self.assertTrue(hasattr(database, "get_binary_info"))
 
@@ -432,7 +432,7 @@ class TestBuiltinTools(unittest.TestCase):
         """search_imports should substring-match import names across all modules."""
         from unittest.mock import patch
 
-        from rikugan.ida.tools import database
+        from lucnhan.ida.tools import database
 
         # Two modules: kernel32 has CreateFileA/W, user32 has MessageBoxA.
         TEST_DATA = {
@@ -471,7 +471,7 @@ class TestBuiltinTools(unittest.TestCase):
     def test_search_imports_no_matches_returns_clear_message(self):
         from unittest.mock import patch
 
-        from rikugan.ida.tools import database
+        from lucnhan.ida.tools import database
 
         with (
             patch.object(database.ida_nalt, "get_import_module_qty", return_value=1),
@@ -486,7 +486,7 @@ class TestBuiltinTools(unittest.TestCase):
         """imports_by_module should return imports only from the named DLL."""
         from unittest.mock import patch
 
-        from rikugan.ida.tools import database
+        from lucnhan.ida.tools import database
 
         TEST_DATA = {
             0: [(0x1000, "CreateFileA", -1)],
@@ -512,7 +512,7 @@ class TestBuiltinTools(unittest.TestCase):
     def test_imports_by_module_missing_module_returns_message(self):
         from unittest.mock import patch
 
-        from rikugan.ida.tools import database
+        from lucnhan.ida.tools import database
 
         with (
             patch.object(database.ida_nalt, "get_import_module_qty", return_value=1),
@@ -532,7 +532,7 @@ class TestBuiltinTools(unittest.TestCase):
         The suggestion layer is suggest-only: the script still runs. The
         test asserts the suggestion appears in the output, NOT that
         execution was blocked."""
-        from rikugan.ida.tools import scripting
+        from lucnhan.ida.tools import scripting
 
         wrapper_script = """
 import ida_nalt
@@ -543,7 +543,7 @@ print("count:", nimps)
         output = scripting.execute_python(code=wrapper_script)
 
         # Suggestion preamble must appear.
-        self.assertIn("[rikugan]", output)
+        self.assertIn("[lucnhan]", output)
         self.assertIn("list_imports", output)
         # The dedicated-tool name appears in the suggestion.
         self.assertIn("dedicated tool", output.lower())
@@ -551,7 +551,7 @@ print("count:", nimps)
     def test_execute_python_no_suggestion_for_legitimate_script(self):
         """Compute that has no dedicated tool equivalent must NOT trigger
         the suggestion layer (false-positive guard)."""
-        from rikugan.ida.tools import scripting
+        from lucnhan.ida.tools import scripting
 
         legitimate = """
 import struct
@@ -562,7 +562,7 @@ print(struct.unpack("<I", buf[:4])[0])
         output = scripting.execute_python(code=legitimate)
 
         # Suggestion preamble must NOT appear for unrelated compute.
-        self.assertNotIn("[rikugan]", output)
+        self.assertNotIn("[lucnhan]", output)
 
     def test_database_tool_descriptions_are_substantial(self):
         """Each database tool description must give the LLM actionable context.
@@ -572,8 +572,8 @@ print(struct.unpack("<I", buf[:4])[0])
         description must (1) describe the output shape and (2) point to a
         sibling tool when relevant (search/filter variants).
         """
-        from rikugan.ida.tools import database
-        from rikugan.tools.base import ToolDefinition
+        from lucnhan.ida.tools import database
+        from lucnhan.tools.base import ToolDefinition
 
         def _collect(module: object) -> list[ToolDefinition]:
             defs: list[ToolDefinition] = []

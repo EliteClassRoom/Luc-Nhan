@@ -1,4 +1,4 @@
-"""Tests for rikugan.core.profile — analysis profiles."""
+"""Tests for lucnhan.core.profile — analysis profiles."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.profile import (
+from lucnhan.core.profile import (
     BUILTIN_PROFILES,
     DEFAULT_PROFILE,
     IOC_FILTER_CATEGORIES,

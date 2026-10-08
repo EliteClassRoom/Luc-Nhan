@@ -23,16 +23,16 @@ import unittest
 from concurrent.futures import Future
 
 # ``core.host`` snapshots the host at first import. Install IDA mocks before
-# importing Rikugan so collection order cannot freeze it in standalone mode.
+# importing Luc Nhan so collection order cannot freeze it in standalone mode.
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role
-from rikugan.state.history import SessionHistory
-from rikugan.state.session import SessionState
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import Message, Role
+from lucnhan.state.history import SessionHistory
+from lucnhan.state.session import SessionState
 
 
 def _make_session(message_count: int = 3) -> SessionState:
@@ -52,8 +52,8 @@ class TestFlushSaves(unittest.TestCase):
     def setUp(self) -> None:
         import tempfile
 
-        self._tmp = tempfile.mkdtemp(prefix="rikugan-hist-flush-")
-        self._config = RikuganConfig()
+        self._tmp = tempfile.mkdtemp(prefix="lucnhan-hist-flush-")
+        self._config = LucNhanConfig()
         self._config._config_dir = self._tmp
         self._history = SessionHistory(self._config)
 
@@ -84,8 +84,8 @@ class TestSaveSessionAsync(unittest.TestCase):
     def setUp(self) -> None:
         import tempfile
 
-        self._tmp = tempfile.mkdtemp(prefix="rikugan-hist-test-")
-        self._config = RikuganConfig()
+        self._tmp = tempfile.mkdtemp(prefix="lucnhan-hist-test-")
+        self._config = LucNhanConfig()
         self._config._config_dir = self._tmp
         self._history = SessionHistory(self._config)
 

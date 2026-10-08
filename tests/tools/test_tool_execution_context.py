@@ -19,15 +19,15 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.errors import ToolError
-from rikugan.tools.base import ParameterSchema, ToolDefinition, tool
-from rikugan.tools.execution import (
+from lucnhan.core.errors import ToolError
+from lucnhan.tools.base import ParameterSchema, ToolDefinition, tool
+from lucnhan.tools.execution import (
     ToolExecutionContext,
     get_execution_context,
     run_on_host_thread,
     tool_execution_context,
 )
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.tools.registry import ToolRegistry
 
 _HOST_WAIT = 5.0
 

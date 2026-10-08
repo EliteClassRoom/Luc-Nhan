@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import unittest
 
-from rikugan.tools.traceback_classifier import (
+from lucnhan.tools.traceback_classifier import (
     TracebackClassification,
     classify_traceback,
 )

@@ -1,10 +1,10 @@
-"""Tests for rikugan.agent.bulk_renamer pure logic (no LLM/threading)."""
+"""Tests for lucnhan.agent.bulk_renamer pure logic (no LLM/threading)."""
 
 from __future__ import annotations
 
 import pytest
 
-from rikugan.agent.bulk_renamer import (
+from lucnhan.agent.bulk_renamer import (
     BulkRenamerEngine,
     RenameJob,
     RenameStatus,

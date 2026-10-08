@@ -16,8 +16,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.ida.tools import function_index
-from rikugan.ida.tools.function_index import (
+from lucnhan.ida.tools import function_index
+from lucnhan.ida.tools.function_index import (
     FunctionEntry,
     find_containing_function,
     function_count,

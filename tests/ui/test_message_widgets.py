@@ -17,7 +17,7 @@ class TestSplitThinking(unittest.TestCase):
 
     def test_basic_thinking_block(self):
         """Single <think>...</think> block extracts cleanly."""
-        from rikugan.ui.message_widgets import _split_thinking
+        from lucnhan.ui.message_widgets import _split_thinking
 
         text = "<think>Let me analyze this.</think>The function is a handler."
         thinking, visible = _split_thinking(text)
@@ -26,7 +26,7 @@ class TestSplitThinking(unittest.TestCase):
 
     def test_thinking_block_with_surrounding_text(self):
         """Text before and after a <think>...</think> block is preserved."""
-        from rikugan.ui.message_widgets import _split_thinking
+        from lucnhan.ui.message_widgets import _split_thinking
 
         text = "Let me check this. <think>Checking the binary structure.</think>And here's the result."
         thinking, visible = _split_thinking(text)
@@ -35,7 +35,7 @@ class TestSplitThinking(unittest.TestCase):
 
     def test_multiple_thinking_blocks(self):
         """Multiple <think>...</think> blocks get joined with newlines."""
-        from rikugan.ui.message_widgets import _split_thinking
+        from lucnhan.ui.message_widgets import _split_thinking
 
         text = "<think>First thought.</think>Something.<think>Second thought.</think>End."
         thinking, visible = _split_thinking(text)
@@ -44,7 +44,7 @@ class TestSplitThinking(unittest.TestCase):
 
     def test_no_thinking_block(self):
         """Text with no thinking blocks: thinking is empty, visible is the full text."""
-        from rikugan.ui.message_widgets import _split_thinking
+        from lucnhan.ui.message_widgets import _split_thinking
 
         text = "Just regular output without any thinking."
         thinking, visible = _split_thinking(text)
@@ -53,7 +53,7 @@ class TestSplitThinking(unittest.TestCase):
 
     def test_unclosed_thinking_tag(self):
         """Unclosed <think> at end (streaming in progress) → partial thinking + visible before."""
-        from rikugan.ui.message_widgets import _split_thinking
+        from lucnhan.ui.message_widgets import _split_thinking
 
         text = "Some text before. <think>Still thinking here"
         thinking, visible = _split_thinking(text)
@@ -62,7 +62,7 @@ class TestSplitThinking(unittest.TestCase):
 
     def test_only_unclosed_thinking(self):
         """Only an unclosed thinking tag: thinking is the partial content, visible is empty."""
-        from rikugan.ui.message_widgets import _split_thinking
+        from lucnhan.ui.message_widgets import _split_thinking
 
         text = "<think>Just thinking, no close yet"
         thinking, visible = _split_thinking(text)
@@ -71,7 +71,7 @@ class TestSplitThinking(unittest.TestCase):
 
     def test_empty_thinking_block(self):
         """Empty <think>...</think>: thinking is empty, visible is the rest."""
-        from rikugan.ui.message_widgets import _split_thinking
+        from lucnhan.ui.message_widgets import _split_thinking
 
         text = "<think></think>No thinking content."
         thinking, visible = _split_thinking(text)
@@ -80,7 +80,7 @@ class TestSplitThinking(unittest.TestCase):
 
     def test_thoughtful_content_with_markdown(self):
         """Thinking block may contain markdown-like content; visible is rendered after."""
-        from rikugan.ui.message_widgets import _split_thinking
+        from lucnhan.ui.message_widgets import _split_thinking
 
         text = "<think>**analysis**: Looking at *function* `main`.</think>Output here."
         thinking, visible = _split_thinking(text)
@@ -101,7 +101,7 @@ class TestExtractVisibleText(unittest.TestCase):
     def test_no_thinking_preserves_trailing_whitespace(self):
         """Trailing whitespace is preserved (so the next chunk's leading
         space is not the only separator)."""
-        from rikugan.ui.message_widgets import _extract_visible_text
+        from lucnhan.ui.message_widgets import _extract_visible_text
 
         text = "I am "
         self.assertEqual(_extract_visible_text(text), "I am ")
@@ -109,7 +109,7 @@ class TestExtractVisibleText(unittest.TestCase):
     def test_no_thinking_preserves_leading_whitespace(self):
         """Leading whitespace of a mid-stream chunk is preserved so it
         can concatenate correctly with the previous chunk's content."""
-        from rikugan.ui.message_widgets import _extract_visible_text
+        from lucnhan.ui.message_widgets import _extract_visible_text
 
         text = " about"
         self.assertEqual(_extract_visible_text(text), " about")
@@ -118,7 +118,7 @@ class TestExtractVisibleText(unittest.TestCase):
         """For '<think>A</think> B' the leading space of the visible
         portion is preserved (the original LLM stream had a space
         between the think close and the next word)."""
-        from rikugan.ui.message_widgets import _extract_visible_text
+        from lucnhan.ui.message_widgets import _extract_visible_text
 
         text = "<think>A</think> B"
         self.assertEqual(_extract_visible_text(text), " B")
@@ -128,7 +128,7 @@ class TestExtractVisibleText(unittest.TestCase):
         sits at a space must concatenate to a single space, not
         'I amthinking' (which is what ``_split_thinking`` produced
         when its stripped visible was appended per chunk)."""
-        from rikugan.ui.message_widgets import _extract_visible_text
+        from lucnhan.ui.message_widgets import _extract_visible_text
 
         chunks = ["I am ", "thinking", " about", " code"]
         accumulated = "".join(_extract_visible_text(c) for c in chunks)
@@ -136,14 +136,14 @@ class TestExtractVisibleText(unittest.TestCase):
 
     def test_unclosed_thinking_strips_post_open_tag(self):
         """Unclosed <think> returns only the visible portion BEFORE the tag."""
-        from rikugan.ui.message_widgets import _extract_visible_text
+        from lucnhan.ui.message_widgets import _extract_visible_text
 
         text = "Some text before. <think>Still thinking here"
         self.assertEqual(_extract_visible_text(text), "Some text before. ")
 
     def test_empty_string(self):
         """Empty input → empty output."""
-        from rikugan.ui.message_widgets import _extract_visible_text
+        from lucnhan.ui.message_widgets import _extract_visible_text
 
         self.assertEqual(_extract_visible_text(""), "")
 
@@ -152,32 +152,32 @@ class TestExtractThinkingText(unittest.TestCase):
     """Tests for the unstripped thinking-content helper."""
 
     def test_single_block(self):
-        from rikugan.ui.message_widgets import _extract_thinking_text
+        from lucnhan.ui.message_widgets import _extract_thinking_text
 
         text = "<think>Reasoning here.</think>Visible text."
         self.assertEqual(_extract_thinking_text(text), "Reasoning here.")
 
     def test_multiple_blocks_joined(self):
-        from rikugan.ui.message_widgets import _extract_thinking_text
+        from lucnhan.ui.message_widgets import _extract_thinking_text
 
         text = "<think>First.</think>X<think>Second.</think>Y"
         self.assertEqual(_extract_thinking_text(text), "First.\n\nSecond.")
 
     def test_strips_inner_block_whitespace(self):
         """Leading/trailing whitespace INSIDE the <think> block is stripped."""
-        from rikugan.ui.message_widgets import _extract_thinking_text
+        from lucnhan.ui.message_widgets import _extract_thinking_text
 
         text = "<think>\n  Thinking content.\n</think>Visible."
         self.assertEqual(_extract_thinking_text(text), "Thinking content.")
 
     def test_unclosed_thinking_keeps_partial(self):
-        from rikugan.ui.message_widgets import _extract_thinking_text
+        from lucnhan.ui.message_widgets import _extract_thinking_text
 
         text = "Some text. <think>Still thinking here"
         self.assertEqual(_extract_thinking_text(text), "Still thinking here")
 
     def test_no_thinking_returns_empty(self):
-        from rikugan.ui.message_widgets import _extract_thinking_text
+        from lucnhan.ui.message_widgets import _extract_thinking_text
 
         self.assertEqual(_extract_thinking_text("Just visible."), "")
 
@@ -205,7 +205,7 @@ class TestAssistantMessageWidgetUI(unittest.TestCase):
         accumulated to ``"I amthinkingaboutcode"`` instead of
         ``"I am thinking about code"``.
         """
-        from rikugan.ui.message_widgets import (
+        from lucnhan.ui.message_widgets import (
             AssistantMessageWidget,
             _extract_visible_text,
         )
@@ -229,7 +229,7 @@ class TestKnowledgeContextWidget(unittest.TestCase):
         self.qapp = qapp
 
     def test_label_is_retrieved_knowledge_not_subagent(self):
-        from rikugan.ui.message_widgets import KnowledgeContextWidget
+        from lucnhan.ui.message_widgets import KnowledgeContextWidget
 
         items = [
             {"kind": "memory", "id": "mem:crypto:0x401000:abc", "title": "RC4 decrypts"},
@@ -245,7 +245,7 @@ class TestKnowledgeContextWidget(unittest.TestCase):
         self.assertEqual(text, "Retrieved Knowledge")
 
     def test_renders_up_to_three_item_labels(self):
-        from rikugan.ui.message_widgets import KnowledgeContextWidget
+        from lucnhan.ui.message_widgets import KnowledgeContextWidget
 
         items = [
             {"kind": "memory", "title": "alpha"},

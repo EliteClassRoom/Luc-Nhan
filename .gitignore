@@ -22,7 +22,7 @@ scorecard.png
 .kilo/plans/
 .superpowers
 
-rikugan/.kilo/
+lucnhan/.kilo/
 
 .kilo/
 
@@ -64,8 +64,8 @@ perf.log
 MagicMock/
 
 # Atomic-write remnants in bundle directory
-rikugan/data/**/*.tmp
-rikugan/data/**/*.tmp.*
+lucnhan/data/**/*.tmp
+lucnhan/data/**/*.tmp.*
 
 # CocoIndex Code (ccc)
 /.cocoindex_code/

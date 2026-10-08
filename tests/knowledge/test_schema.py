@@ -1,4 +1,4 @@
-"""Tests for rikugan.memory.schema dataclass contracts.
+"""Tests for lucnhan.memory.schema dataclass contracts.
 
 Covers the legacy ``verified=True`` round-trip invariant: records
 written before the ``/verify`` flow (which carry ``verified=True``
@@ -14,7 +14,7 @@ from a legacy ``verified=True`` flag, contradicting the documented
 
 from __future__ import annotations
 
-from rikugan.memory.schema import KnowledgeMemory
+from lucnhan.memory.schema import KnowledgeMemory
 
 
 def _memory_dict(**overrides) -> dict:

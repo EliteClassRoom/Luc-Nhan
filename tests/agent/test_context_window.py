@@ -1,9 +1,9 @@
-"""Tests for rikugan.agent.context_window (compact_messages)."""
+"""Tests for lucnhan.agent.context_window (compact_messages)."""
 
 from __future__ import annotations
 
-from rikugan.agent.context_window import ContextWindowManager
-from rikugan.core.types import Message, Role, ToolCall, ToolResult
+from lucnhan.agent.context_window import ContextWindowManager
+from lucnhan.core.types import Message, Role, ToolCall, ToolResult
 
 
 def system_msg() -> Message:

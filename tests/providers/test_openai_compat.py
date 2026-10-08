@@ -21,9 +21,9 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from tests import purge_rikugan_stubs
+from tests import purge_lucnhan_stubs
 
-purge_rikugan_stubs()
+purge_lucnhan_stubs()
 
 ENV_KEY = "sk-real-openai-secret"
 
@@ -35,7 +35,7 @@ ENV_KEY = "sk-real-openai-secret"
 
 def test_compat_never_inherits_openai_env_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
-    from rikugan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
 
     p = OpenAICompatProvider(api_key="", api_base="https://api.z.ai/v1")
     assert p.api_key != ENV_KEY
@@ -44,7 +44,7 @@ def test_compat_never_inherits_openai_env_key(monkeypatch):
 
 def test_glm_never_inherits_openai_env_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     p = GLMProvider(api_key="")
     assert p.api_key != ENV_KEY
@@ -54,7 +54,7 @@ def test_glm_never_inherits_openai_env_key(monkeypatch):
 def test_openai_provider_keeps_env_fallback(monkeypatch):
     """Direct OpenAIProvider (api.openai.com) keeps env auto-discovery."""
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
-    from rikugan.providers.openai_provider import OpenAIProvider
+    from lucnhan.providers.openai_provider import OpenAIProvider
 
     p = OpenAIProvider(api_key="")
     assert p.api_key == ENV_KEY
@@ -62,7 +62,7 @@ def test_openai_provider_keeps_env_fallback(monkeypatch):
 
 def test_compat_explicit_key_still_wins(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
-    from rikugan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
 
     p = OpenAICompatProvider(api_key="sk-explicit", api_base="https://api.z.ai/v1")
     assert p.api_key == "sk-explicit"
@@ -70,7 +70,7 @@ def test_compat_explicit_key_still_wins(monkeypatch):
 
 def test_glm_explicit_key_still_wins(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     p = GLMProvider(api_key="sk-explicit")
     assert p.api_key == "sk-explicit"
@@ -89,7 +89,7 @@ def _fake_openai_module(monkeypatch) -> MagicMock:
 
 def test_compat_client_uses_placeholder_without_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
-    from rikugan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
 
     fake = _fake_openai_module(monkeypatch)
     p = OpenAICompatProvider(api_key="", api_base="https://api.z.ai/v1")
@@ -99,7 +99,7 @@ def test_compat_client_uses_placeholder_without_key(monkeypatch):
 
 def test_glm_client_uses_placeholder_without_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
-    from rikugan.providers.glm_provider import GLMProvider
+    from lucnhan.providers.glm_provider import GLMProvider
 
     fake = _fake_openai_module(monkeypatch)
     p = GLMProvider(api_key="")
@@ -112,7 +112,7 @@ def test_glm_client_uses_placeholder_without_key(monkeypatch):
 
 def test_compat_client_uses_explicit_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
-    from rikugan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
 
     fake = _fake_openai_module(monkeypatch)
     p = OpenAICompatProvider(api_key="sk-explicit", api_base="https://api.z.ai/v1")
@@ -126,7 +126,7 @@ def test_compat_default_constructor_never_leaks_env_key_to_sdk(monkeypatch):
     must reach the SDK kwargs even when no base URL is configured.
     """
     monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
-    from rikugan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
 
     fake = _fake_openai_module(monkeypatch)
     p = OpenAICompatProvider(api_key="", api_base="")
@@ -155,7 +155,7 @@ _MINIMAX_LISTING = [
 def _compat_with_listing(ids, api_base="https://api.minimax.io/v1"):
     from types import SimpleNamespace
 
-    from rikugan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
 
     p = OpenAICompatProvider(api_key="sk-test", api_base=api_base, model="MiniMax-M3")
     p._client = SimpleNamespace(
@@ -198,7 +198,7 @@ def test_lag_models_are_scoped_to_the_matching_host():
 def test_lag_model_reachable_when_endpoint_fails():
     """When ``/v1/models`` errors out entirely, the lag entries keep the
     plan-gated model selectable instead of collapsing to one echo entry."""
-    from rikugan.providers.openai_compat import OpenAICompatProvider
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
 
     p = OpenAICompatProvider(api_key="sk-test", api_base="https://api.minimax.io/v1", model="MiniMax-M3")
     p._client = None  # no openai SDK installed -> list_models raises, caught

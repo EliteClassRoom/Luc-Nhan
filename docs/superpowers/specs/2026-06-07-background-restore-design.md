@@ -6,7 +6,7 @@
 
 ## Problem Statement
 
-Rikugan persists chat sessions as JSON. When a user opens a large session
+Luc Nhan persists chat sessions as JSON. When a user opens a large session
 (50–200+ messages) or switches to an existing tab, `ChatView.restore_from_messages`
 runs synchronously on the main thread. Profiling shows:
 
@@ -85,7 +85,7 @@ without locks because frozen dataclasses are effectively immutable.
 
 ### Components
 
-#### 1. `MessageSpec` (frozen dataclass, in `rikugan/ui/chat_view.py`)
+#### 1. `MessageSpec` (frozen dataclass, in `lucnhan/ui/chat_view.py`)
 
 ```python
 @dataclass(frozen=True)
@@ -126,7 +126,7 @@ boundaries. (The codebase already uses `Signal(object)` for `ThemeTokens`
 in `theme/manager.py:246`, confirming PySide6's queued-connection
 serialization handles frozen dataclasses without metatype registration.)
 
-#### 2. `ChatRestoreWorker(QThread)` (new file `rikugan/ui/chat_restore_worker.py`)
+#### 2. `ChatRestoreWorker(QThread)` (new file `lucnhan/ui/chat_restore_worker.py`)
 
 ```python
 class ChatRestoreWorker(QThread):
@@ -176,7 +176,7 @@ class ChatRestoreWorker(QThread):
 and the height estimator. It is exported alongside the worker so it
 can be unit-tested without spinning up a thread.
 
-#### 3. `MessagePlaceholder` (new widget, in `rikugan/ui/chat_view.py`)
+#### 3. `MessagePlaceholder` (new widget, in `lucnhan/ui/chat_view.py`)
 
 A lightweight `QFrame` that:
 
@@ -193,7 +193,7 @@ to it. Because it is so cheap, the cost of inserting 200 of them is
 small (~50–100 ms total) and runs in small batches with main-thread
 yields between them.
 
-#### 4. Height estimator (function, in `rikugan/ui/chat_view.py`)
+#### 4. Height estimator (function, in `lucnhan/ui/chat_view.py`)
 
 ```python
 _CHARS_PER_LINE = 80
@@ -234,7 +234,7 @@ The estimate is **approximate** — empirical tests show ±20% error on
 realistic content, which is acceptable. A future improvement can
 fine-tune constants from real session data.
 
-#### 5. `ChatView` changes (in `rikugan/ui/chat_view.py`)
+#### 5. `ChatView` changes (in `lucnhan/ui/chat_view.py`)
 
 New attributes:
 
@@ -505,13 +505,13 @@ that the worker overhead would be a net loss.
 
 ## Files Touched
 
-- `rikugan/ui/chat_view.py` — add `MessageSpec`, `MessagePlaceholder`,
+- `lucnhan/ui/chat_view.py` — add `MessageSpec`, `MessagePlaceholder`,
   `_build_spec`, `_estimate_message_height`, `restore_from_messages_async`,
   `_on_spec_ready`, `_on_chunk_finished`, `_on_restore_finished`,
   `_on_restore_error`, `_on_worker_finished`,
   `_ensure_viewport_rendered`, scroll listener.
-- `rikugan/ui/chat_restore_worker.py` — new file: `ChatRestoreWorker`.
-- `rikugan/ui/panel_core.py` — migrate 2 of 3 call sites
+- `lucnhan/ui/chat_restore_worker.py` — new file: `ChatRestoreWorker`.
+- `lucnhan/ui/panel_core.py` — migrate 2 of 3 call sites
   (`_restore_messages_if_needed` and the legacy restore).
   Add the threshold constant and the migration logic.
 - `tests/ui/test_chat_restore.py` — new file: unit tests.

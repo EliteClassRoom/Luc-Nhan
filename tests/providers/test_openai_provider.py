@@ -14,7 +14,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.types import (
+from lucnhan.core.types import (
     LLMRequestContext,
     Message,
     Role,
@@ -24,7 +24,7 @@ from rikugan.core.types import (
 
 
 def _make_provider():
-    from rikugan.providers.openai_provider import OpenAIProvider
+    from lucnhan.providers.openai_provider import OpenAIProvider
 
     return OpenAIProvider(api_key="test-key", model="gpt-test")
 
@@ -308,14 +308,14 @@ class TestOpenAINormalizeResponse(unittest.TestCase):
 
 class TestOpenAIHandleApiError(unittest.TestCase):
     def test_generic_error_raises_provider_error(self):
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         p = _make_provider()
         with self.assertRaises(ProviderError):
             p._handle_api_error(RuntimeError("something broke"))
 
     def test_context_length_string(self):
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         p = _make_provider()
         with self.assertRaises(ProviderError):
@@ -667,7 +667,7 @@ class TestOpenAIThinkingLevelWire(unittest.TestCase):
     """
 
     def _make(self, extra=None):
-        from rikugan.providers.openai_provider import OpenAIProvider
+        from lucnhan.providers.openai_provider import OpenAIProvider
 
         return OpenAIProvider(api_key="test-key", model="gpt-test", extra=extra)
 
@@ -714,8 +714,8 @@ class TestOpenAIThinkingLevelWire(unittest.TestCase):
     def test_compat_and_ollama_inherit_the_behavior(self) -> None:
         """The OpenAI-compatible adapters forward ``extra`` through their
         ``**kwargs`` and must pick the level up with no code of their own."""
-        from rikugan.providers.ollama_provider import OllamaProvider
-        from rikugan.providers.openai_compat import OpenAICompatProvider
+        from lucnhan.providers.ollama_provider import OllamaProvider
+        from lucnhan.providers.openai_compat import OpenAICompatProvider
 
         extra = {"thinking": {"enabled": True, "reasoning_effort": "medium"}}
         for provider in (
@@ -749,7 +749,7 @@ class TestReasoningEffortAutoDrop(unittest.TestCase):
     )
 
     def _make(self):
-        from rikugan.providers.openai_provider import OpenAIProvider
+        from lucnhan.providers.openai_provider import OpenAIProvider
 
         return OpenAIProvider(
             api_key="test-key",

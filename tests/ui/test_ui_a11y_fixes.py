@@ -31,10 +31,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 def _purge_rk_ui_modules() -> None:
-    """Drop rikugan.ui modules so tests get the real implementations,
+    """Drop lucnhan.ui modules so tests get the real implementations,
     not stubs installed by sibling test files."""
     for name in list(sys.modules):
-        if name == "rikugan.ui" or name.startswith("rikugan.ui."):
+        if name == "lucnhan.ui" or name.startswith("lucnhan.ui."):
             del sys.modules[name]
 
 
@@ -70,9 +70,9 @@ class TestAssistantRoleContrast(unittest.TestCase):
 
     def setUp(self) -> None:
         _purge_rk_ui_modules()
-        from rikugan.ui.message_widgets import _assistant_role
-        from rikugan.ui.theme.palette_dark import DARK_TOKENS
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
+        from lucnhan.ui.message_widgets import _assistant_role
+        from lucnhan.ui.theme.palette_dark import DARK_TOKENS
+        from lucnhan.ui.theme.palette_light import LIGHT_TOKENS
 
         self._assistant_role = _assistant_role
         self._dark = DARK_TOKENS
@@ -111,9 +111,9 @@ class TestPanelKeyboardShortcuts(unittest.TestCase):
         _purge_rk_ui_modules()
         import inspect
 
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        self._src = inspect.getsource(RikuganPanelCore)
+        self._src = inspect.getsource(LucNhanPanelCore)
 
     def test_new_tab_shortcut_registered(self) -> None:
         self.assertIn("QShortcut", self._src)
@@ -159,11 +159,11 @@ class TestActionButtonTooltips(unittest.TestCase):
 
         ensure_pyside6_stubs()
         _purge_rk_ui_modules()
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
         # Skip the heavyweight __init__ (config load, controller, timers).
         # We only exercise the two widget-building methods under test.
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._use_native_host_theme = False
         panel._build_action_buttons()
         return panel
@@ -206,7 +206,7 @@ class TestContextBarTruncation(unittest.TestCase):
         _purge_rk_ui_modules()
         import inspect
 
-        from rikugan.ui.context_bar import ContextBar
+        from lucnhan.ui.context_bar import ContextBar
 
         self._src = inspect.getsource(ContextBar)
 
@@ -233,7 +233,7 @@ class TestApprovalButtonLabels(unittest.TestCase):
         _purge_rk_ui_modules()
         import inspect
 
-        from rikugan.ui import tool_widgets
+        from lucnhan.ui import tool_widgets
 
         # Both ToolApprovalWidget and ExecutePythonWidget build the same
         # Allow / Always Allow / Deny row with the same padding hack — pin

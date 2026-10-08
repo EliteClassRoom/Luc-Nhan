@@ -20,16 +20,16 @@ install_ida_mocks()
 # _tool_definition attributes into the registry.
 import importlib
 
-import rikugan.ida.tools.database as _db_mod
-import rikugan.ida.tools.microcode as _mc_mod
-import rikugan.ida.tools.microcode_optim as _mco_mod
+import lucnhan.ida.tools.database as _db_mod
+import lucnhan.ida.tools.microcode as _mc_mod
+import lucnhan.ida.tools.microcode_optim as _mco_mod
 
 importlib.reload(_mco_mod)
 importlib.reload(_mc_mod)
 importlib.reload(_db_mod)
 
-from rikugan.ida.tools.registry import create_default_registry
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.ida.tools.registry import create_default_registry
+from lucnhan.tools.registry import ToolRegistry
 
 
 class TestDefaultRegistryCreation(unittest.TestCase):
@@ -154,13 +154,13 @@ class TestRegistryExecution(unittest.TestCase):
         self.assertIn("sub_1000", result)
 
     def test_execute_unknown_tool_raises(self):
-        from rikugan.core.errors import ToolNotFoundError
+        from lucnhan.core.errors import ToolNotFoundError
 
         with self.assertRaises(ToolNotFoundError):
             self.registry.execute("nonexistent_tool_xyz", {})
 
     def test_execute_wrong_args_raises(self):
-        from rikugan.core.errors import ToolError
+        from lucnhan.core.errors import ToolError
 
         with self.assertRaises(ToolError):
             # list_functions expects int for offset — @tool wraps TypeError as ToolError
@@ -208,7 +208,7 @@ class TestToolsCatalogCache(unittest.TestCase):
     """Phase 2.1 — the tools catalog is cached and invalidated correctly."""
 
     def setUp(self):
-        from rikugan.tools.base import tool
+        from lucnhan.tools.base import tool
 
         @tool(category="test")
         def example_tool(name: str = "x") -> str:
@@ -230,7 +230,7 @@ class TestToolsCatalogCache(unittest.TestCase):
 
     def test_register_invalidates_cache(self):
         first = self.registry.tools_catalog()
-        from rikugan.tools.base import tool
+        from lucnhan.tools.base import tool
 
         @tool(category="test")
         def another_tool(value: int = 1) -> str:
@@ -255,7 +255,7 @@ class TestExecuteCoerced(unittest.TestCase):
     """Phase 2.3 — execute_coerced skips redundant argument coercion."""
 
     def setUp(self):
-        from rikugan.tools.base import tool
+        from lucnhan.tools.base import tool
 
         call_count = {"n": 0}
 
@@ -282,7 +282,7 @@ class TestExecuteCoerced(unittest.TestCase):
         self.assertEqual(self.call_count["n"], 1)
 
     def test_execute_coerced_unknown_tool_raises(self):
-        from rikugan.core.errors import ToolNotFoundError
+        from lucnhan.core.errors import ToolNotFoundError
 
         with self.assertRaises(ToolNotFoundError):
             self.registry.execute_coerced("does_not_exist", {})
@@ -299,7 +299,7 @@ class TestExecuteCoerced(unittest.TestCase):
 
     def test_execute_coerced_cacheable_tool_hits_cache(self):
         """When the tool is in CACHEABLE_TOOLS, repeated calls hit cache."""
-        from rikugan.tools import cache as cache_mod
+        from lucnhan.tools import cache as cache_mod
 
         # Force ``my_tool`` into the cacheable set for this test only.
         original = cache_mod.CACHEABLE_TOOLS
@@ -317,7 +317,7 @@ class TestCacheableToolsExpansion(unittest.TestCase):
     """Phase 2.2 — read-only tool result cache expanded safely."""
 
     def test_xrefs_and_function_info_are_cacheable(self):
-        from rikugan.tools.cache import CACHEABLE_TOOLS
+        from lucnhan.tools.cache import CACHEABLE_TOOLS
 
         self.assertIn("xrefs_to", CACHEABLE_TOOLS)
         self.assertIn("xrefs_from", CACHEABLE_TOOLS)
@@ -326,7 +326,7 @@ class TestCacheableToolsExpansion(unittest.TestCase):
 
     def test_strings_tools_still_excluded(self):
         """Phase 2.2 must NOT add list_strings/search_strings (see cache.py)."""
-        from rikugan.tools.cache import CACHEABLE_TOOLS
+        from lucnhan.tools.cache import CACHEABLE_TOOLS
 
         self.assertNotIn("list_strings", CACHEABLE_TOOLS)
         self.assertNotIn("search_strings", CACHEABLE_TOOLS)

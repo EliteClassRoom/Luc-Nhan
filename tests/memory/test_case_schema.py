@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from rikugan.memory.case_schema import (
+from lucnhan.memory.case_schema import (
     CaseRelationType,
     canonicalize_relation_endpoints,
     validate_case_relation,

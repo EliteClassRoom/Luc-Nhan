@@ -6,13 +6,13 @@ import pickle
 
 import pytest
 
-from rikugan.memory.authority import (
+from lucnhan.memory.authority import (
     CandidateSourceRef,
     MemoryAuthorityIssuer,
     MemoryCandidate,
     MemoryWriteDenied,
 )
-from rikugan.memory.workspace import MemoryRunContext, new_memory_id
+from lucnhan.memory.workspace import MemoryRunContext, new_memory_id
 
 
 def _context() -> MemoryRunContext:

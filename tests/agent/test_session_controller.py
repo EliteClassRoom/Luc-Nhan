@@ -16,11 +16,11 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult
-from rikugan.ida.ui.session_controller import IdaSessionController
-from rikugan.state.history import SessionHistory
-from rikugan.state.history_types import (
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult
+from lucnhan.ida.ui.session_controller import IdaSessionController
+from lucnhan.state.history import SessionHistory
+from lucnhan.state.history_types import (
     HistoryAttachStatus,
     HistoryDeleteStatus,
     HistoryRequestStatus,
@@ -29,7 +29,7 @@ from rikugan.state.history_types import (
 
 class TestIdaSessionController(unittest.TestCase):
     def setUp(self):
-        self.cfg = RikuganConfig()
+        self.cfg = LucNhanConfig()
         self.cfg._config_dir = tempfile.mkdtemp()
         self.ctrl = IdaSessionController(self.cfg)
 
@@ -222,7 +222,7 @@ class TestIdaSessionController(unittest.TestCase):
 
     def _save_history_session(self, instance_id: str) -> str:
         """Persist a session directly through SessionHistory (no auto-save path)."""
-        from rikugan.state.session import SessionState
+        from lucnhan.state.session import SessionState
 
         session = SessionState(
             id="saved-history",
@@ -352,7 +352,7 @@ class TestIdaSessionController(unittest.TestCase):
         scope = self.ctrl.capture_history_scope(generation=3)
         self.ctrl._db_instance_id = "f" * 32
 
-        with patch("rikugan.state.history.SessionHistory.delete_session_async") as delete_async:
+        with patch("lucnhan.state.history.SessionHistory.delete_session_async") as delete_async:
             result = self.ctrl.delete_history_session("saved-history", scope)
 
         self.assertIs(result.status, HistoryDeleteStatus.WRONG_IDB)
@@ -364,7 +364,7 @@ class TestIdaSessionController(unittest.TestCase):
         failed.set_exception(PermissionError("locked path"))
 
         with patch(
-            "rikugan.state.history.SessionHistory.delete_session_async",
+            "lucnhan.state.history.SessionHistory.delete_session_async",
             return_value=failed,
         ):
             result = self.ctrl.delete_history_session("saved-history", scope)
@@ -378,7 +378,7 @@ class TestIdaSessionController(unittest.TestCase):
         cancelled.cancel()
 
         with patch(
-            "rikugan.state.history.SessionHistory.delete_session_async",
+            "lucnhan.state.history.SessionHistory.delete_session_async",
             return_value=cancelled,
         ):
             with self.assertRaises(CancelledError):
@@ -403,8 +403,8 @@ class TestIdaSessionController(unittest.TestCase):
         from unittest.mock import MagicMock
         from unittest.mock import patch as mock_patch
 
-        from rikugan.memory import workspace_open
-        from rikugan.memory.workspace import FilesystemIdentity
+        from lucnhan.memory import workspace_open
+        from lucnhan.memory.workspace import FilesystemIdentity
 
         # Force the controller to bind to a stable identity that the
         # registry will accept; the in-memory mock's filesystem identity
@@ -422,7 +422,7 @@ class TestIdaSessionController(unittest.TestCase):
         def _fake_fs_identity(_path: str) -> FilesystemIdentity:
             return FilesystemIdentity("vol", "test-volume")
 
-        with mock_patch("rikugan.memory.identity.get_filesystem_identity", _fake_fs_identity):
+        with mock_patch("lucnhan.memory.identity.get_filesystem_identity", _fake_fs_identity):
             # First call seeds memory.db on disk (first-run create path).
             self.ctrl._wire_central_memory(MagicMock())
 
@@ -497,11 +497,11 @@ class TestEnsureAdvancedToolsReady(unittest.TestCase):
 
     def _make_controller(self, ensure_tools_ready):
         """Build a bare controller instance for ``ensure_advanced_tools_ready`` tests."""
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._config_dir = tempfile.mkdtemp()
         # Use ``SessionControllerBase`` directly so the IDA tool
         # registry / background runtime init are bypassed.
-        from rikugan.ui.session_controller_base import SessionControllerBase
+        from lucnhan.ui.session_controller_base import SessionControllerBase
 
         class _StubToolRegistry:
             def set_capabilities(self, _caps):
@@ -651,9 +651,9 @@ class TestIdaFunctionEnumerationImportFailures(unittest.TestCase):
     """
 
     def _make_controller(self):
-        from rikugan.ida.ui.session_controller import IdaSessionController
+        from lucnhan.ida.ui.session_controller import IdaSessionController
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._config_dir = tempfile.mkdtemp()
         # Each test builds its own controller — register the tempdir
         # cleanup on the test case so the per-test tempdir is reclaimed.
@@ -763,7 +763,7 @@ class TestUpdateSettingsSkillReload(unittest.TestCase):
         from unittest.mock import patch
 
         self._patch = patch
-        self.cfg = RikuganConfig()
+        self.cfg = LucNhanConfig()
         self.cfg._config_dir = tempfile.mkdtemp()
         self.ctrl = IdaSessionController(self.cfg)
         # Wait for the background runtime-init thread to finish its own

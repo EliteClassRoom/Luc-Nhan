@@ -1,4 +1,4 @@
-"""Tests for rikugan/tools/script_guard.py."""
+"""Tests for lucnhan/tools/script_guard.py."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.ida.tools.microcode_optim import compile_optimizer
-from rikugan.tools.script_guard import (
+from lucnhan.ida.tools.microcode_optim import compile_optimizer
+from lucnhan.tools.script_guard import (
     _DENY_ATTR_NAMES,
     GuardViolation,
     SafeModule,
@@ -95,17 +95,17 @@ class TestCheckAst(unittest.TestCase):
 
     # --- Guard self-import / closure escapes (fix round 3) ---------------
     # The guard module itself exposes _REAL_IMPORT (the unguarded importer);
-    # importing rikugan.* from a guarded script must be rejected outright.
+    # importing lucnhan.* from a guarded script must be rejected outright.
 
-    def test_blocks_import_rikugan_guard_module(self):
-        assert _check_ast("import rikugan.tools.script_guard as sg") is not None
+    def test_blocks_import_lucnhan_guard_module(self):
+        assert _check_ast("import lucnhan.tools.script_guard as sg") is not None
 
-    def test_blocks_rikugan_real_import_chain(self):
-        code = "import rikugan.tools.script_guard as sg\nm = sg._REAL_IMPORT('subprocess')\nprint(m.run)"
+    def test_blocks_lucnhan_real_import_chain(self):
+        code = "import lucnhan.tools.script_guard as sg\nm = sg._REAL_IMPORT('subprocess')\nprint(m.run)"
         assert _check_ast(code) is not None
 
-    def test_blocks_from_rikugan_import(self):
-        assert _check_ast("from rikugan.tools import script_guard") is not None
+    def test_blocks_from_lucnhan_import(self):
+        assert _check_ast("from lucnhan.tools import script_guard") is not None
 
     def test_blocks_closure_walk(self):
         # Function objects reachable from the sandbox (e.g. IDA module
@@ -148,7 +148,7 @@ class TestCheckAst(unittest.TestCase):
     def test_blocks_inspect_sys_modules_chain(self):
         code = (
             "import inspect\n"
-            "sg = inspect.sys.modules['rikugan.tools.script_guard']\n"
+            "sg = inspect.sys.modules['lucnhan.tools.script_guard']\n"
             "m = sg._REAL_IMPORT('subprocess')\n"
             "print(m.run)"
         )
@@ -168,7 +168,7 @@ class TestCheckAst(unittest.TestCase):
         assert _check_ast("import re\nr = re.compile") is None
 
     def test_safe_builtins_strips_introspection(self):
-        from rikugan.tools.script_guard import safe_builtins
+        from lucnhan.tools.script_guard import safe_builtins
 
         ns = safe_builtins()
         for name in ("getattr", "setattr", "delattr", "vars", "dir"):
@@ -303,7 +303,7 @@ BYPASSES = [
 
 @pytest.mark.parametrize("code", BYPASSES)
 def test_known_bypasses_blocked(code):
-    from rikugan.tools.script_guard import check_ast
+    from lucnhan.tools.script_guard import check_ast
 
     assert check_ast(code) is not None
 
@@ -586,10 +586,10 @@ class TestRunGuardedScript(unittest.TestCase):
         result = run_guarded_script("import xml.etree.ElementTree\nprint('ok')", _empty_ns)
         assert "ok" in result
 
-    def test_runtime_blocks_rikugan_import(self):
-        result = run_guarded_script("import rikugan", _empty_ns)
+    def test_runtime_blocks_lucnhan_import(self):
+        result = run_guarded_script("import lucnhan", _empty_ns)
         assert result.startswith("Error: Blocked")
-        assert "rikugan" in result
+        assert "lucnhan" in result
 
 
 class TestRunGuardedCode(unittest.TestCase):
@@ -640,7 +640,7 @@ class TestRunGuardedCode(unittest.TestCase):
 def test_compile_optimizer_executes_via_guarded_sink(monkeypatch):
     """Single-sink invariant: compile_optimizer must delegate execution to
     run_guarded_code instead of calling exec() itself."""
-    import rikugan.ida.tools.microcode_optim as microcode_optim
+    import lucnhan.ida.tools.microcode_optim as microcode_optim
 
     real_run = microcode_optim.run_guarded_code
     seen: dict = {}

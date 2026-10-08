@@ -22,7 +22,7 @@ Token estimate: ``(bytes + 2) // 3`` (rounds up at the boundary).
 
 from __future__ import annotations
 
-from rikugan.agent.glm_guard import GLMGuardSnapshot, GLMReasoningGuard
+from lucnhan.agent.glm_guard import GLMGuardSnapshot, GLMReasoningGuard
 
 # ---------------------------------------------------------------------------
 # Step 1: hard ceiling boundary (token-unit API)

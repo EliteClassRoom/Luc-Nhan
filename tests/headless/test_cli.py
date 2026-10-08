@@ -17,7 +17,7 @@ class TestCLIParser(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
         cls.parser = build_parser()
 
     def test_top_level_help_exits_zero(self):
@@ -109,7 +109,7 @@ class TestCLIParser(unittest.TestCase):
 
     def test_no_undefined_symbols_at_parser_construction(self):
         """build_parser() must not raise NameError."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
         # Re-build to test from scratch
         p = build_parser()
         self.assertIsNotNone(p)
@@ -168,7 +168,7 @@ class TestCLICommandHandlers(unittest.TestCase):
 
     def test_cmd_tools_wired_to_correct_handler(self):
         """tools subcommand uses cmd_tools, not cmd_tools_cmd."""
-        from rikugan.cli.headless import build_parser, cmd_tools
+        from lucnhan.cli.headless import build_parser, cmd_tools
         p = build_parser()
         action = next(a for a in p._actions if a.dest == "command")
         tools_parser = action.choices.get("tools")
@@ -178,7 +178,7 @@ class TestCLICommandHandlers(unittest.TestCase):
 
     def test_prompt_subcommand_wired_to_correct_handler(self):
         """prompt subcommand uses cmd_prompt_remote."""
-        from rikugan.cli.headless import build_parser, cmd_prompt_remote
+        from lucnhan.cli.headless import build_parser, cmd_prompt_remote
         p = build_parser()
         action = next(a for a in p._actions if a.dest == "command")
         prompt_parser = action.choices.get("prompt")
@@ -188,7 +188,7 @@ class TestCLICommandHandlers(unittest.TestCase):
 
     def test_answer_subcommand_wired_to_correct_handler(self):
         """answer subcommand uses cmd_answer."""
-        from rikugan.cli.headless import build_parser, cmd_answer
+        from lucnhan.cli.headless import build_parser, cmd_answer
         p = build_parser()
         action = next(a for a in p._actions if a.dest == "command")
         answer_parser = action.choices.get("answer")
@@ -201,14 +201,14 @@ class TestCLICommandHandlers(unittest.TestCase):
         fragments after the HTTP POST."""
         import inspect
 
-        from rikugan.cli.headless import cmd_shutdown
+        from lucnhan.cli.headless import cmd_shutdown
         src = inspect.getsource(cmd_shutdown)
         # The function should NOT contain 'text.splitlines' (the stray fragment).
         self.assertNotIn("text.splitlines", src)
 
     def test_tool_approval_requires_decision_and_run_id(self):
         """tool-approval requires run-id and decision positional arg."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
         p = build_parser()
         ns = p.parse_args([
             "tool-approval", "allow",
@@ -221,7 +221,7 @@ class TestCLICommandHandlers(unittest.TestCase):
 
     def test_tool_approval_rejects_bad_decision(self):
         """tool-approval rejects invalid decision values."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
         p = build_parser()
         with self.assertRaises(SystemExit):
             p.parse_args([
@@ -231,7 +231,7 @@ class TestCLICommandHandlers(unittest.TestCase):
 
     def test_approval_requires_decision_and_run_id(self):
         """approval requires run-id and decision positional arg."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
         p = build_parser()
         ns = p.parse_args([
             "approval", "approve",
@@ -244,14 +244,14 @@ class TestCLICommandHandlers(unittest.TestCase):
 
     def test_serve_ready_timeout_default(self):
         """serve defaults to a positive ready_timeout."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
         p = build_parser()
         ns = p.parse_args(["serve", "test.exe"])
         self.assertEqual(ns.ready_timeout, 120)
 
     def test_serve_ready_timeout_cli(self):
         """serve --ready-timeout is parsed."""
-        from rikugan.cli.headless import build_parser
+        from lucnhan.cli.headless import build_parser
         p = build_parser()
         ns = p.parse_args(["serve", "test.exe", "--ready-timeout", "60"])
         self.assertEqual(ns.ready_timeout, 60)
@@ -260,7 +260,7 @@ class TestCLICommandHandlers(unittest.TestCase):
         """cmd_tool_approval_remote normalizes 'approve' to 'allow' in the body."""
         from unittest import mock
 
-        from rikugan.cli.headless import cmd_tool_approval_remote
+        from lucnhan.cli.headless import cmd_tool_approval_remote
 
         args = mock.Mock()
         args.server = "http://127.0.0.1:8765"
@@ -268,7 +268,7 @@ class TestCLICommandHandlers(unittest.TestCase):
         args.run_id = "abc123"
         args.decision = "approve"  # CLI alias
 
-        with mock.patch("rikugan.cli.headless._http_post") as mock_post:
+        with mock.patch("lucnhan.cli.headless._http_post") as mock_post:
             mock_post.return_value = {"status": "ok"}
             cmd_tool_approval_remote(args)
             mock_post.assert_called_once()
@@ -280,7 +280,7 @@ class TestCLICommandHandlers(unittest.TestCase):
         """cmd_approval_remote sends 'decision' in the body."""
         from unittest import mock
 
-        from rikugan.cli.headless import cmd_approval_remote
+        from lucnhan.cli.headless import cmd_approval_remote
 
         args = mock.Mock()
         args.server = "http://127.0.0.1:8765"
@@ -288,7 +288,7 @@ class TestCLICommandHandlers(unittest.TestCase):
         args.run_id = "abc123"
         args.decision = "approve"
 
-        with mock.patch("rikugan.cli.headless._http_post") as mock_post:
+        with mock.patch("lucnhan.cli.headless._http_post") as mock_post:
             mock_post.return_value = {"status": "ok"}
             cmd_approval_remote(args)
             mock_post.assert_called_once()
@@ -300,14 +300,14 @@ class TestCLICommandHandlers(unittest.TestCase):
         """cmd_prompt_remote uses args.prompt, not args.text."""
         from unittest import mock
 
-        from rikugan.cli.headless import cmd_prompt_remote
+        from lucnhan.cli.headless import cmd_prompt_remote
 
         args = mock.Mock()
         args.server = "http://127.0.0.1:8765"
         args.token = "test-token"
         args.prompt = "test prompt"
 
-        with mock.patch("rikugan.cli.headless._http_post") as mock_post:
+        with mock.patch("lucnhan.cli.headless._http_post") as mock_post:
             mock_post.return_value = {"run_id": "r1", "status": "running"}
             cmd_prompt_remote(args)
             mock_post.assert_called_once()
@@ -318,7 +318,7 @@ class TestCLICommandHandlers(unittest.TestCase):
         """cmd_answer uses args.answer, not args.text."""
         from unittest import mock
 
-        from rikugan.cli.headless import cmd_answer
+        from lucnhan.cli.headless import cmd_answer
 
         args = mock.Mock()
         args.server = "http://127.0.0.1:8765"
@@ -326,7 +326,7 @@ class TestCLICommandHandlers(unittest.TestCase):
         args.run_id = "abc123"
         args.answer = "my answer"
 
-        with mock.patch("rikugan.cli.headless._http_post") as mock_post:
+        with mock.patch("lucnhan.cli.headless._http_post") as mock_post:
             mock_post.return_value = {"status": "ok"}
             cmd_answer(args)
             mock_post.assert_called_once()

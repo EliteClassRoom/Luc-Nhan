@@ -29,10 +29,10 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.providers.anthropic_provider import AnthropicProvider
-from rikugan.providers.codex_provider import CodexProvider
-from rikugan.providers.gemini_provider import GeminiProvider
-from rikugan.providers.openai_provider import OpenAIProvider
+from lucnhan.providers.anthropic_provider import AnthropicProvider
+from lucnhan.providers.codex_provider import CodexProvider
+from lucnhan.providers.gemini_provider import GeminiProvider
+from lucnhan.providers.openai_provider import OpenAIProvider
 
 # How long a completed stream's watchdog thread gets to exit before the
 # leak assertion fires.  Must comfortably exceed the watchdog poll interval.

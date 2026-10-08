@@ -73,13 +73,13 @@ def install_ida_mocks() -> None:
             "FormToPyQtWidget": staticmethod(lambda form: MagicMock()),
         },
     )
-    # Make netnode("$ rikugan", ...) return a persistent-storage node so that
+    # Make netnode("$ lucnhan", ...) return a persistent-storage node so that
     # db_instance_id survives across multiple SessionController instances in tests.
     _BADNODE_SENTINEL = object()
     idaapi.BADNODE = _BADNODE_SENTINEL
 
     def _netnode_factory(name, *args, **kwargs):
-        if name == "$ rikugan":
+        if name == "$ lucnhan":
             return _PersistentNetnode(name)
         return MagicMock()
 
@@ -139,7 +139,7 @@ def install_ida_mocks() -> None:
         sys.modules[mod_name] = MagicMock()
 
     # Provide real base classes for Hex-Rays optimizer types so subclasses
-    # defined in rikugan.ida.tools.microcode_optim can override func() properly.
+    # defined in lucnhan.ida.tools.microcode_optim can override func() properly.
     class _OptInsnStub:
         def remove(self):
             pass

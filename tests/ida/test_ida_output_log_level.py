@@ -3,8 +3,8 @@
 The feature adds a user-facing setting (``ida_output_log_level``) that
 controls which log records appear in IDA's Output window via
 ``HostOutputHandler``.  File and JSONL logging are untouched — full
-DEBUG output continues to land in ``rikugan_debug.log`` and
-``rikugan_structured.jsonl``.
+DEBUG output continues to land in ``lucnhan_debug.log`` and
+``lucnhan_structured.jsonl``.
 
 These tests are pure Python where possible; only the
 ``TestSettingsDialogAcceptsNewCombo`` test requires a ``QApplication``
@@ -34,19 +34,19 @@ class TestIdaOutputLogLevelConfig(unittest.TestCase):
     """
 
     def _make_config(self) -> object:
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
         # Use a private tempdir so tests don't write to the real
-        # ``~/.idapro/rikugan/rikugan.json`` and clobber user state.
-        cfg = RikuganConfig()
-        tmpdir = tempfile.mkdtemp(prefix="rikugan-cfg-test-")
+        # ``~/.idapro/lucnhan/lucnhan.json`` and clobber user state.
+        cfg = LucNhanConfig()
+        tmpdir = tempfile.mkdtemp(prefix="lucnhan-cfg-test-")
         cfg._config_dir = tmpdir
         return cfg
 
     def test_default_is_warning(self) -> None:
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         self.assertEqual(
             cfg.ida_output_log_level,
             "warning",
@@ -78,9 +78,9 @@ class TestIdaOutputLogLevelConfig(unittest.TestCase):
                 cfg.save()
 
                 # Re-load into a fresh instance with the same _config_dir
-                from rikugan.core.config import RikuganConfig
+                from lucnhan.core.config import LucNhanConfig
 
-                cfg2 = RikuganConfig()
+                cfg2 = LucNhanConfig()
                 cfg2._config_dir = cfg._config_dir
                 cfg2.load()
                 self.assertEqual(
@@ -100,9 +100,9 @@ class TestIdaOutputLogLevelConfig(unittest.TestCase):
         with open(cfg.config_path, "w") as f:
             json.dump(legacy, f)
 
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        cfg2 = RikuganConfig()
+        cfg2 = LucNhanConfig()
         cfg2._config_dir = cfg._config_dir
         cfg2.load()
         self.assertEqual(
@@ -148,7 +148,7 @@ class TestLogLevelMapping(unittest.TestCase):
     def test_each_label_resolves_to_expected_level(self) -> None:
         import logging as _logging
 
-        from rikugan.core.log_sinks import resolve_log_level
+        from lucnhan.core.log_sinks import resolve_log_level
 
         cases = {
             "debug": _logging.DEBUG,
@@ -165,7 +165,7 @@ class TestLogLevelMapping(unittest.TestCase):
     def test_unknown_value_falls_back_to_warning(self) -> None:
         import logging as _logging
 
-        from rikugan.core.log_sinks import resolve_log_level
+        from lucnhan.core.log_sinks import resolve_log_level
 
         self.assertEqual(resolve_log_level("verbose"), _logging.WARNING)
         self.assertEqual(resolve_log_level(""), _logging.WARNING)
@@ -175,7 +175,7 @@ class TestLogLevelMapping(unittest.TestCase):
     def test_case_insensitive(self) -> None:
         import logging as _logging
 
-        from rikugan.core.log_sinks import resolve_log_level
+        from lucnhan.core.log_sinks import resolve_log_level
 
         self.assertEqual(resolve_log_level("WARNING"), _logging.WARNING)
         self.assertEqual(resolve_log_level("Off"), _logging.CRITICAL + 1)
@@ -183,7 +183,7 @@ class TestLogLevelMapping(unittest.TestCase):
 
 class TestHostLogLevelRuntime(unittest.TestCase):
     """``set_host_log_level`` must update the level of every
-    ``HostOutputHandler`` attached to the ``Rikugan`` logger so the
+    ``HostOutputHandler`` attached to the ``Luc Nhan`` logger so the
     new value takes effect without restarting IDA.
 
     File / JSON handlers must remain at DEBUG / INFO — changing the
@@ -192,11 +192,11 @@ class TestHostLogLevelRuntime(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        # ``set_host_log_level`` targets the well-known ``Rikugan``
+        # ``set_host_log_level`` targets the well-known ``Luc Nhan``
         # logger, so the test must attach handlers there too.  Snapshot
         # the logger state and restore it in tearDown so other tests
         # (and any running tool) keep their configuration.
-        self.logger = logging.getLogger("Rikugan")
+        self.logger = logging.getLogger("LucNhan")
         self._snapshot = list(self.logger.handlers)
         self.logger.handlers.clear()
         self.logger.setLevel(logging.DEBUG)
@@ -210,7 +210,7 @@ class TestHostLogLevelRuntime(unittest.TestCase):
         """Attach one HostOutputHandler, one DEBUG file handler, and
         one INFO JSON-like handler.  Returns all three.
         """
-        from rikugan.core.log_sinks import HostOutputHandler
+        from lucnhan.core.log_sinks import HostOutputHandler
 
         host = HostOutputHandler()
         host.setLevel(logging.WARNING)
@@ -241,10 +241,10 @@ class TestHostLogLevelRuntime(unittest.TestCase):
             # handler.accept() decision.
             sink_records.append((levelno, msg))
 
-        from rikugan.core import log_sinks
+        from lucnhan.core import log_sinks
 
         with patch.object(log_sinks, "_host_sink", fake_sink, create=True):
-            from rikugan.core.log_sinks import set_host_log_level
+            from lucnhan.core.log_sinks import set_host_log_level
 
             new_level = set_host_log_level("error")
             self.assertEqual(new_level, logging.ERROR)
@@ -277,8 +277,8 @@ class TestHostLogLevelRuntime(unittest.TestCase):
         — while leaving file logging alone.
         """
         host, file_h, _json_h = self._attach()
-        from rikugan.core import log_sinks
-        from rikugan.core.log_sinks import set_host_log_level
+        from lucnhan.core import log_sinks
+        from lucnhan.core.log_sinks import set_host_log_level
 
         with patch.object(log_sinks, "_host_sink", lambda *a: None, create=True):
             set_host_log_level("off")
@@ -302,8 +302,8 @@ class TestHostLogLevelRuntime(unittest.TestCase):
         session, before the bootstrap code adds handlers.
         """
         self.logger.handlers.clear()
-        from rikugan.core import log_sinks
-        from rikugan.core.log_sinks import set_host_log_level
+        from lucnhan.core import log_sinks
+        from lucnhan.core.log_sinks import set_host_log_level
 
         with patch.object(log_sinks, "_host_sink", lambda *a: None, create=True):
             # No HostOutputHandler attached — should be a no-op.
@@ -317,53 +317,53 @@ class TestBootstrapHostLevel(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        # Make sure no real Rikugan logger exists in this process.
+        # Make sure no real Luc Nhan logger exists in this process.
         import logging as _logging
 
-        _logging.getLogger("Rikugan").handlers.clear()
+        _logging.getLogger("LucNhan").handlers.clear()
 
     def tearDown(self) -> None:
         import logging as _logging
 
-        _logging.getLogger("Rikugan").handlers.clear()
+        _logging.getLogger("LucNhan").handlers.clear()
 
     def _bootstrap_with_level(self, configured: str | None) -> logging.Logger:
-        """Construct the Rikugan logger with an optional preconfigured
+        """Construct the Luc Nhan logger with an optional preconfigured
         ``ida_output_log_level`` value (None means "no config file").
         """
-        from rikugan.core import log_sinks
-        from rikugan.core import logging as rikugan_logging
+        from lucnhan.core import log_sinks
+        from lucnhan.core import logging as lucnhan_logging
 
-        tmpdir = tempfile.mkdtemp(prefix="rikugan-bootstrap-test-")
+        tmpdir = tempfile.mkdtemp(prefix="lucnhan-bootstrap-test-")
 
         def fake_reader() -> int:
             """Stand-in for ``_read_configured_host_level`` that reads
             the tempdir config so we don't touch the user's real
-            ``~/.idapro/rikugan/rikugan.json``.
+            ``~/.idapro/lucnhan/lucnhan.json``.
             """
             if configured is None:
                 return logging.WARNING
             return log_sinks.resolve_log_level(configured)
 
         def fake_path() -> str:
-            return os.path.join(tmpdir, "rikugan_debug.log")
+            return os.path.join(tmpdir, "lucnhan_debug.log")
 
         # Force the module-level singleton to re-init so the host
         # handler picks up the freshly-written config.
-        rikugan_logging._logger = None
+        lucnhan_logging._logger = None
 
         with (
-            patch.object(rikugan_logging, "_read_configured_host_level", fake_reader),
+            patch.object(lucnhan_logging, "_read_configured_host_level", fake_reader),
             patch.object(log_sinks, "_log_file_path", fake_path),
         ):
-            logger = rikugan_logging.get_logger()
+            logger = lucnhan_logging.get_logger()
 
         self._configured_level = configured
         return logger
 
     def test_default_level_is_warning(self) -> None:
         logger = self._bootstrap_with_level(None)
-        from rikugan.core.log_sinks import HostOutputHandler
+        from lucnhan.core.log_sinks import HostOutputHandler
 
         host_handlers = [h for h in logger.handlers if isinstance(h, HostOutputHandler)]
         self.assertTrue(host_handlers, "Bootstrap must attach a HostOutputHandler.")
@@ -371,7 +371,7 @@ class TestBootstrapHostLevel(unittest.TestCase):
 
     def test_configured_off_suppresses_host_output(self) -> None:
         logger = self._bootstrap_with_level("off")
-        from rikugan.core.log_sinks import HostOutputHandler
+        from lucnhan.core.log_sinks import HostOutputHandler
 
         host = next(h for h in logger.handlers if isinstance(h, HostOutputHandler))
         self.assertGreater(host.level, logging.CRITICAL)
@@ -396,7 +396,7 @@ class TestBootstrapHostLevel(unittest.TestCase):
 
 
 def _ensure_qapplication():
-    from rikugan.ui.qt_compat import QApplication
+    from lucnhan.ui.qt_compat import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -413,12 +413,12 @@ class TestSettingsDialogAcceptsNewCombo(unittest.TestCase):
     """
 
     def test_default_combo_preselected_from_config(self) -> None:
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.ida_output_log_level = "warning"  # the new default
         dlg = SettingsDialog(config)
         try:
@@ -431,12 +431,12 @@ class TestSettingsDialogAcceptsNewCombo(unittest.TestCase):
             dlg.done(0)
 
     def test_accept_persists_selected_verbosity(self) -> None:
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.ida_output_log_level = "warning"
         dlg = SettingsDialog(config)
         try:
@@ -460,15 +460,15 @@ class TestSettingsDialogAcceptsNewCombo(unittest.TestCase):
         ``set_host_log_level`` so the change takes effect without an
         IDA restart.
         """
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         dlg = SettingsDialog(config)
         try:
-            with patch("rikugan.ui.settings_dialog.set_host_log_level") as mock_set:
+            with patch("lucnhan.ui.settings_dialog.set_host_log_level") as mock_set:
                 dlg._on_accept()
                 mock_set.assert_called_once_with("warning")  # default
         finally:
@@ -478,12 +478,12 @@ class TestSettingsDialogAcceptsNewCombo(unittest.TestCase):
         """Re-verify the lazy-tab regression: the new Behavior widget
         must not cause ``_on_accept()`` to force-load Skills/MCP/Profiles.
         """
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         dlg = SettingsDialog(config)
         try:
             dlg._on_accept()
@@ -505,7 +505,7 @@ class TestLogLevelLabels(unittest.TestCase):
     """
 
     def test_labels_and_values_bidirectional(self) -> None:
-        from rikugan.core.log_sinks import (
+        from lucnhan.core.log_sinks import (
             LOG_LEVEL_LABEL_TO_VALUE,
             LOG_LEVEL_LABELS,
             LOG_LEVEL_VALUE_TO_LABEL,

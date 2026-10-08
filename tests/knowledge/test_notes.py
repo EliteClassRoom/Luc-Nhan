@@ -1,4 +1,4 @@
-"""Tests for rikugan.memory.notes — frontmatter / wiki-link / address extraction."""
+"""Tests for lucnhan.memory.notes — frontmatter / wiki-link / address extraction."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import tempfile
 import textwrap
 import unittest
 
-from rikugan.memory.notes import (
+from lucnhan.memory.notes import (
     extract_inline_addresses,
     extract_inline_tags,
     list_notes,

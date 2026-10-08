@@ -9,15 +9,15 @@ import threading
 import unittest
 from unittest.mock import MagicMock
 
-from rikugan.agent import hypothesis_verification
-from rikugan.agent.hypothesis_verification import verify_hypotheses
-from rikugan.agent.loop import AgentLoop
-from rikugan.agent.loop_commands import _handle_verify_command
-from rikugan.agent.turn import TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.errors import CancellationError
-from rikugan.memory.schema import KnowledgeMemory
-from rikugan.state.session import SessionState
+from lucnhan.agent import hypothesis_verification
+from lucnhan.agent.hypothesis_verification import verify_hypotheses
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.agent.loop_commands import _handle_verify_command
+from lucnhan.agent.turn import TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.errors import CancellationError
+from lucnhan.memory.schema import KnowledgeMemory
+from lucnhan.state.session import SessionState
 from tests.knowledge._helpers import fresh_store
 
 
@@ -184,7 +184,7 @@ class TestVerifierContract(unittest.TestCase):
 class TestVerifyHypothesesFlow(unittest.TestCase):
     def _build_loop(self) -> AgentLoop:
         loop = AgentLoop.__new__(AgentLoop)
-        loop.config = RikuganConfig()
+        loop.config = LucNhanConfig()
         loop.session = SessionState()
         loop.provider = object()
         loop.tools = MagicMock()
@@ -301,7 +301,7 @@ class TestVerifyCommandHandler(unittest.TestCase):
 
     def _build_loop(self) -> AgentLoop:
         loop = AgentLoop.__new__(AgentLoop)
-        loop.config = RikuganConfig()
+        loop.config = LucNhanConfig()
         loop.session = SessionState(idb_path=self.idb_path)
         loop.provider = object()
         loop.tools = MagicMock()
@@ -329,7 +329,7 @@ class TestVerifyCommandHandler(unittest.TestCase):
     def test_no_pending_emits_text_event(self):
         loop = self._build_loop()
         with unittest.mock.patch(
-            "rikugan.agent.loop_commands._open_knowledge_store",
+            "lucnhan.agent.loop_commands._open_knowledge_store",
             return_value=(self.store, self.paths, None),
         ):
             events = list(_handle_verify_command(loop, ""))
@@ -339,7 +339,7 @@ class TestVerifyCommandHandler(unittest.TestCase):
     def test_single_id_no_match(self):
         loop = self._build_loop()
         with unittest.mock.patch(
-            "rikugan.agent.loop_commands._open_knowledge_store",
+            "lucnhan.agent.loop_commands._open_knowledge_store",
             return_value=(self.store, self.paths, None),
         ):
             events = list(_handle_verify_command(loop, "missing-id"))
@@ -349,7 +349,7 @@ class TestVerifyCommandHandler(unittest.TestCase):
         loop = self._build_loop()
         self._seed("mem:done", status="verified")
         with unittest.mock.patch(
-            "rikugan.agent.loop_commands._open_knowledge_store",
+            "lucnhan.agent.loop_commands._open_knowledge_store",
             return_value=(self.store, self.paths, None),
         ):
             events = list(_handle_verify_command(loop, "mem:done"))
@@ -362,11 +362,11 @@ class TestVerifyCommandHandler(unittest.TestCase):
         bad.run_task.side_effect = lambda *a, **k: iter(["not json"])
         with (
             unittest.mock.patch(
-                "rikugan.agent.loop_commands._open_knowledge_store",
+                "lucnhan.agent.loop_commands._open_knowledge_store",
                 return_value=(self.store, self.paths, None),
             ),
             unittest.mock.patch(
-                "rikugan.agent.hypothesis_verification._build_runner",
+                "lucnhan.agent.hypothesis_verification._build_runner",
                 lambda _loop: bad,
             ),
         ):
@@ -399,11 +399,11 @@ class TestVerifyCommandHandler(unittest.TestCase):
         good.run_task.return_value = iter([response])
         with (
             unittest.mock.patch(
-                "rikugan.agent.loop_commands._open_knowledge_store",
+                "lucnhan.agent.loop_commands._open_knowledge_store",
                 return_value=(self.store, self.paths, None),
             ),
             unittest.mock.patch(
-                "rikugan.agent.hypothesis_verification._build_runner",
+                "lucnhan.agent.hypothesis_verification._build_runner",
                 lambda _loop: good,
             ),
         ):
@@ -432,11 +432,11 @@ class TestVerifierReadOnlyToolView(unittest.TestCase):
     """
 
     def _build_loop_with_tools(self) -> AgentLoop:
-        from rikugan.tools.base import ToolDefinition
-        from rikugan.tools.registry import ToolRegistry
+        from lucnhan.tools.base import ToolDefinition
+        from lucnhan.tools.registry import ToolRegistry
 
         loop = AgentLoop.__new__(AgentLoop)
-        loop.config = RikuganConfig()
+        loop.config = LucNhanConfig()
         loop.session = SessionState()
         loop.provider = object()
         loop.tools = ToolRegistry()
@@ -479,8 +479,8 @@ class TestVerifierReadOnlyToolView(unittest.TestCase):
         )
 
     def test_read_only_view_omits_every_mutating_definition(self):
-        from rikugan.tools.base import ToolDefinition
-        from rikugan.tools.registry import ToolRegistry
+        from lucnhan.tools.base import ToolDefinition
+        from lucnhan.tools.registry import ToolRegistry
 
         reg = ToolRegistry()
         mutating_names = ["rename_function", "set_comment", "patch_bytes"]
@@ -508,8 +508,8 @@ class TestVerifierReadOnlyToolView(unittest.TestCase):
             self.assertNotIn(n, view_names)
 
     def test_read_only_view_isolated_from_parent(self):
-        from rikugan.tools.base import ToolDefinition
-        from rikugan.tools.registry import ToolRegistry
+        from lucnhan.tools.base import ToolDefinition
+        from lucnhan.tools.registry import ToolRegistry
 
         reg = ToolRegistry()
         reg.register(

@@ -22,8 +22,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.system_prompt import build_system_prompt
-from rikugan.ida.tools.database import get_binary_info
+from lucnhan.agent.system_prompt import build_system_prompt
+from lucnhan.ida.tools.database import get_binary_info
 
 FILENAME_RULE = (
     "Never infer the binary's purpose, family, or behavior from a file name"

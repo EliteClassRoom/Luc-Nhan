@@ -3,7 +3,7 @@
 Bug 1 (the click wiring):
 
   The ``HistoryPanel`` exposes a ``session_open_requested(str)``
-  signal that is connected to ``RikuganPanelCore._on_history_open_requested``
+  signal that is connected to ``LucNhanPanelCore._on_history_open_requested``
   in ``_build_main_splitter`` (panel_core.py:788).  When the user
   clicks a row, ``HistoryRowWidget.mouseReleaseEvent`` emits the
   signal with the bound entry's session id, and PanelCore looks up
@@ -27,7 +27,7 @@ These tests exercise the REAL click chain:
      production).
   3. The captured ``session_open_requested`` payload is asserted to
      carry the right session id (wiring 1: row → panel signal).
-  4. The same click is sent through a REAL ``RikuganPanelCore``
+  4. The same click is sent through a REAL ``LucNhanPanelCore``
      (built via the ``__new__`` idiom that bypasses ``__init__`` —
      the established pattern in this repo) and asserted to reach the
      ``ChatView`` whose async restore paints the loaded messages
@@ -57,28 +57,28 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import sys as _sys
 
 _STUB_TARGETS = (
-    "rikugan.core.types",
-    "rikugan.core.config",
-    "rikugan.core.host",
-    "rikugan.agent.turn",
-    "rikugan.ui.chat_view",
-    "rikugan.ui.history_panel",
-    "rikugan.ui.panel_core",
-    "rikugan.ui.session_controller_base",
-    "rikugan.ui.styles",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.ui.markdown",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.plan_view",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.qt_compat",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
+    "lucnhan.core.types",
+    "lucnhan.core.config",
+    "lucnhan.core.host",
+    "lucnhan.agent.turn",
+    "lucnhan.ui.chat_view",
+    "lucnhan.ui.history_panel",
+    "lucnhan.ui.panel_core",
+    "lucnhan.ui.session_controller_base",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.markdown",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.plan_view",
+    "lucnhan.ui.tool_widgets",
+    "lucnhan.ui.qt_compat",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
 )
 for _name in list(_sys.modules):
     if _name in _STUB_TARGETS:
@@ -96,15 +96,15 @@ try:
 except ImportError:
     pass
 
-from rikugan.core.types import Message, Role
-from rikugan.state.history_types import (
+from lucnhan.core.types import Message, Role
+from lucnhan.state.history_types import (
     HistoryLoadResult,
     HistoryRequestStatus,
     HistoryScope,
     SessionHistoryEntry,
 )
-from rikugan.ui.history_panel import HistoryPanel, HistoryRowWidget
-from rikugan.ui.message_widgets import (
+from lucnhan.ui.history_panel import HistoryPanel, HistoryRowWidget
+from lucnhan.ui.message_widgets import (
     AssistantMessageWidget,
     UserMessageWidget,
 )
@@ -114,23 +114,23 @@ from tests.qt_real import live_class, requires_real_qt
 def _user_widget_cls() -> type:
     """Live ``UserMessageWidget`` class.
 
-    Resolved per call: sibling test files purge ``rikugan.ui.*`` from
+    Resolved per call: sibling test files purge ``lucnhan.ui.*`` from
     ``sys.modules`` at import time, so a class captured at this
     module's import can be a different object from the one the live
     widget tree was built from. ``findChildren`` matches by exact type,
     so a stale reference reports zero widgets on a fully painted chat.
     """
-    return live_class("rikugan.ui.message_widgets.UserMessageWidget")
+    return live_class("lucnhan.ui.message_widgets.UserMessageWidget")
 
 
 def _assistant_widget_cls() -> type:
     """Live ``AssistantMessageWidget`` class — see :func:`_user_widget_cls`."""
-    return live_class("rikugan.ui.message_widgets.AssistantMessageWidget")
+    return live_class("lucnhan.ui.message_widgets.AssistantMessageWidget")
 
 
 def _chat_view_cls() -> type:
     """Live ``ChatView`` class — see :func:`_user_widget_cls`."""
-    return live_class("rikugan.ui.chat_view.ChatView")
+    return live_class("lucnhan.ui.chat_view.ChatView")
 
 
 def _entry(
@@ -283,7 +283,7 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
     test instead:
 
       * Builds a REAL ``HistoryPanel`` (the passive widget).
-      * Builds a REAL ``RikuganPanelCore`` via ``__new__`` +
+      * Builds a REAL ``LucNhanPanelCore`` via ``__new__`` +
         ``QWidget.__init__`` (the established repo idiom; bypasses
         the heavy ``__init__`` while still making the widget a real
         ``QWidget`` so Qt's signal dispatch works).
@@ -335,19 +335,19 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
         broad ``except Exception`` silently swallows into an empty
         failure.  Seed them here so the worker actually runs.
         """
-        import rikugan.ui.session_controller_base as scb
+        import lucnhan.ui.session_controller_base as scb
 
         if scb.SessionHistory is None:
-            from rikugan.state.history import SessionHistory
+            from lucnhan.state.history import SessionHistory
 
             scb.SessionHistory = SessionHistory
         if scb.SessionState is None:
-            from rikugan.state.session import SessionState
+            from lucnhan.state.session import SessionState
 
             scb.SessionState = SessionState
 
     def _build_panel(self):
-        """Construct a real ``RikuganPanelCore`` via ``__new__`` and
+        """Construct a real ``LucNhanPanelCore`` via ``__new__`` and
         seed the coordinator fields the click chain touches.
 
         Returns ``(panel, ctrl)`` so the test can arm the fake
@@ -355,12 +355,12 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
         """
         from PySide6.QtWidgets import QApplication, QTabWidget, QWidget
 
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         # ``QWidget.__init__`` is required so the panel is a real Qt
         # widget (signal dispatch needs the C++ side wired up).  We
-        # do NOT call ``RikuganPanelCore.__init__`` because that
+        # do NOT call ``LucNhanPanelCore.__init__`` because that
         # would touch every IDA / provider / Qt dependency.
         QWidget.__init__(panel)
         # Coordinator fields the click chain actually touches.
@@ -412,7 +412,7 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
         panel._ctrl = ctrl
         # Seed the panel's draft tab so the click chain has a tab to
         # attach to (mirrors ``_create_tab`` in ``_build_ui``).
-        from rikugan.ui.chat_view import ChatView
+        from lucnhan.ui.chat_view import ChatView
 
         draft = _chat_view_cls()()
         draft.setProperty("tab_id", ctrl.active_tab_id)
@@ -470,20 +470,20 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
         import shutil
         import tempfile
 
-        from rikugan.core.config import RikuganConfig
-        from rikugan.state.history_types import (
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.state.history_types import (
             HistoryAttachResult,
             HistoryAttachStatus,
         )
-        from rikugan.state.session import SessionState
+        from lucnhan.state.session import SessionState
 
         ctrl = MagicMock()
         # A bare ``MagicMock()`` config stringifies (its ``__fspath__``)
         # into the RELATIVE path ``MagicMock/mock.config/<id>``, so the
         # ``SessionHistory`` the load worker builds would mkdir junk
         # inside the repo.  Bind a real config on a tempdir instead.
-        config = RikuganConfig()
-        config._config_dir = tempfile.mkdtemp(prefix="rikugan-click-cfg-")
+        config = LucNhanConfig()
+        config._config_dir = tempfile.mkdtemp(prefix="lucnhan-click-cfg-")
         self.addCleanup(shutil.rmtree, config._config_dir, ignore_errors=True)
         ctrl.config = config
         ctrl.active_tab_id = "draft-tab"
@@ -635,7 +635,7 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
 
             panel._history_executor = _TPE(
                 max_workers=1,
-                thread_name_prefix="rikugan-history",
+                thread_name_prefix="lucnhan-history",
             )
         # Pump the drain multiple times so any chained work (the
         # apply path → OPENED → create tab → restore messages) has

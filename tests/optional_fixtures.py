@@ -8,7 +8,7 @@ rather than fail.
 
 The convention is:
 
-- Set the env var ``RIKUGAN_OPTIONAL_TEST_DATA`` to a directory
+- Set the env var ``LUCNHAN_OPTIONAL_TEST_DATA`` to a directory
   containing the fixtures.  Production tests do NOT set this env
   var, so default CI runs skip.
 - Tests that need a fixture call :func:`optional_test_data_path`
@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-_ENV_VAR = "RIKUGAN_OPTIONAL_TEST_DATA"
+_ENV_VAR = "LUCNHAN_OPTIONAL_TEST_DATA"
 
 
 def optional_test_data_path(filename: str) -> Path | None:
@@ -41,7 +41,7 @@ def optional_test_data_path(filename: str) -> Path | None:
 
     Returns:
         The absolute :class:`Path` to the fixture when the
-        ``RIKUGAN_OPTIONAL_TEST_DATA`` env var is set and the
+        ``LUCNHAN_OPTIONAL_TEST_DATA`` env var is set and the
         file exists; ``None`` otherwise.
     """
     base = os.environ.get(_ENV_VAR)

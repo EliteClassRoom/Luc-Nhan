@@ -1,4 +1,4 @@
-"""Tests for rikugan.agent.a2a.subprocess_bridge.SubprocessBridge.
+"""Tests for lucnhan.agent.a2a.subprocess_bridge.SubprocessBridge.
 
 Focus: argv injection prevention. The bridge builds subprocess commands
 by concatenating LLM-controlled task text into argv. Without a hard
@@ -22,8 +22,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.a2a.subprocess_bridge import SubprocessBridge
-from rikugan.agent.a2a.types import ExternalAgentConfig
+from lucnhan.agent.a2a.subprocess_bridge import SubprocessBridge
+from lucnhan.agent.a2a.types import ExternalAgentConfig
 
 
 def _make_claude_agent() -> ExternalAgentConfig:
@@ -167,12 +167,12 @@ class TestSubprocessBridgeTaskValidation(unittest.TestCase):
 
 class TestCurateSubprocessEnv(unittest.TestCase):
     """The subprocess bridge must not leak the parent's full os.environ
-    (which typically contains API keys and Rikugan-internal state) to
+    (which typically contains API keys and Luc Nhan-internal state) to
     the external CLI agent.
     """
 
     def setUp(self):
-        from rikugan.agent.a2a.subprocess_bridge import _curate_subprocess_env
+        from lucnhan.agent.a2a.subprocess_bridge import _curate_subprocess_env
         self._curate = _curate_subprocess_env
 
     def test_excludes_secret_api_keys(self):
@@ -183,7 +183,7 @@ class TestCurateSubprocessEnv(unittest.TestCase):
                 "ANTHROPIC_API_KEY": "sk-ant-secret",
                 "OPENAI_API_KEY": "sk-openai-secret",
                 "GOOGLE_API_KEY": "google-secret",
-                "RIKUGAN_AUTH_TOKEN": "rikugan-internal",
+                "LUCNHAN_AUTH_TOKEN": "lucnhan-internal",
             },
             clear=False,
         ):
@@ -191,7 +191,7 @@ class TestCurateSubprocessEnv(unittest.TestCase):
             assert "ANTHROPIC_API_KEY" not in curated
             assert "OPENAI_API_KEY" not in curated
             assert "GOOGLE_API_KEY" not in curated
-            assert "RIKUGAN_AUTH_TOKEN" not in curated
+            assert "LUCNHAN_AUTH_TOKEN" not in curated
 
     def test_passes_path_for_cli_discovery(self):
         with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):

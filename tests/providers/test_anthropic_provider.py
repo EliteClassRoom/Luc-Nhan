@@ -13,11 +13,11 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.types import LLMRequestContext, Message, Role, ToolCall, ToolResult
+from lucnhan.core.types import LLMRequestContext, Message, Role, ToolCall, ToolResult
 
 
 def _make_provider():
-    from rikugan.providers.anthropic_provider import AnthropicProvider
+    from lucnhan.providers.anthropic_provider import AnthropicProvider
 
     return AnthropicProvider(api_key="test-key", model="claude-test")
 
@@ -169,14 +169,14 @@ class TestAnthropicNormalizeResponse(unittest.TestCase):
 
 class TestAnthropicHandleApiError(unittest.TestCase):
     def test_generic_error_raises_provider_error(self):
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         p = _make_provider()
         with self.assertRaises(ProviderError):
             p._handle_api_error(RuntimeError("something broke"))
 
     def test_context_length_error(self):
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         p = _make_provider()
         with self.assertRaises(ProviderError):
@@ -187,21 +187,21 @@ class TestAnthropicAuthResolution(unittest.TestCase):
     """Test resolve_anthropic_auth priority order."""
 
     def test_explicit_api_key(self):
-        from rikugan.providers.anthropic_provider import resolve_anthropic_auth
+        from lucnhan.providers.anthropic_provider import resolve_anthropic_auth
 
         token, auth_type = resolve_anthropic_auth("sk-ant-api03-test")
         self.assertEqual(token, "sk-ant-api03-test")
         self.assertEqual(auth_type, "api_key")
 
     def test_explicit_oauth_token(self):
-        from rikugan.providers.anthropic_provider import resolve_anthropic_auth
+        from lucnhan.providers.anthropic_provider import resolve_anthropic_auth
 
         token, auth_type = resolve_anthropic_auth("sk-ant-oat01-test")
         self.assertEqual(token, "sk-ant-oat01-test")
         self.assertEqual(auth_type, "oauth")
 
     def test_env_var_api_key(self):
-        from rikugan.providers.anthropic_provider import resolve_anthropic_auth
+        from lucnhan.providers.anthropic_provider import resolve_anthropic_auth
 
         old = os.environ.get("ANTHROPIC_API_KEY")
         try:
@@ -216,7 +216,7 @@ class TestAnthropicAuthResolution(unittest.TestCase):
                 os.environ["ANTHROPIC_API_KEY"] = old
 
     def test_empty_returns_empty(self):
-        from rikugan.providers.anthropic_provider import resolve_anthropic_auth
+        from lucnhan.providers.anthropic_provider import resolve_anthropic_auth
 
         old_api = os.environ.pop("ANTHROPIC_API_KEY", None)
         old_oauth = os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
@@ -232,14 +232,14 @@ class TestAnthropicAuthResolution(unittest.TestCase):
                 os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = old_oauth
 
     def test_auth_status_with_key(self):
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         p = AnthropicProvider(api_key="sk-test", model="test")
         _label, status = p.auth_status()
         self.assertEqual(status, "ok")
 
     def test_auth_status_oauth(self):
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         p = AnthropicProvider(api_key="sk-ant-oat01-test", model="test")
         label, status = p.auth_status()
@@ -403,20 +403,20 @@ class TestSdkV1TemperatureCompat(unittest.TestCase):
     """
 
     def test_repack_moves_temperature_into_extra_body(self) -> None:
-        from rikugan.providers.anthropic_provider import _sdk_request_kwargs
+        from lucnhan.providers.anthropic_provider import _sdk_request_kwargs
 
         kwargs = _sdk_request_kwargs({"model": "m", "temperature": 0.7})
         self.assertNotIn("temperature", kwargs)
         self.assertEqual(kwargs["extra_body"], {"temperature": 0.7})
 
     def test_repack_merges_with_existing_extra_body(self) -> None:
-        from rikugan.providers.anthropic_provider import _sdk_request_kwargs
+        from lucnhan.providers.anthropic_provider import _sdk_request_kwargs
 
         kwargs = _sdk_request_kwargs({"temperature": 0.4, "extra_body": {"foo": 1}})
         self.assertEqual(kwargs["extra_body"], {"foo": 1, "temperature": 0.4})
 
     def test_repack_without_temperature_is_noop(self) -> None:
-        from rikugan.providers.anthropic_provider import _sdk_request_kwargs
+        from lucnhan.providers.anthropic_provider import _sdk_request_kwargs
 
         kwargs = _sdk_request_kwargs({"model": "m"})
         self.assertNotIn("extra_body", kwargs)

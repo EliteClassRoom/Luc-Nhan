@@ -1,7 +1,7 @@
 """Regression tests for the persistent raw string cache.
 
-These cover the safety properties of ``rikugan.tools.string_cache`` and the
-IDA-side ``rikugan.ida.tools.strings`` contract added during the
+These cover the safety properties of ``lucnhan.tools.string_cache`` and the
+IDA-side ``lucnhan.ida.tools.strings`` contract added during the
 string-cache refactor:
 
 * ``list_strings`` must not be in ``CACHEABLE_TOOLS`` (otherwise an in-memory
@@ -36,9 +36,9 @@ from typing import Any
 
 import pytest
 
-from rikugan.core import atomic_io
-from rikugan.tools import cache as tool_cache
-from rikugan.tools import string_cache
+from lucnhan.core import atomic_io
+from lucnhan.tools import cache as tool_cache
+from lucnhan.tools import string_cache
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -418,7 +418,7 @@ def test_non_winerror_replace_failure_is_not_retried(tmp_path: Any, monkeypatch:
 
 def _ida_strings_module() -> Any:
     """Import the IDA-side strings module (loads without IDA present)."""
-    import rikugan.ida.tools.strings as strings_mod
+    import lucnhan.ida.tools.strings as strings_mod
 
     return strings_mod
 

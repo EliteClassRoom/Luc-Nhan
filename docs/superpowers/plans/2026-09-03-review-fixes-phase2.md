@@ -13,8 +13,8 @@
 ## Global Constraints
 
 - `from __future__ import annotations`; type hints on all new signatures; dataclasses for structured data.
-- Never hardcode `"execute_python"` — `rikugan.constants.EXECUTE_PYTHON_TOOL_NAME`.
-- Host API imports only via `importlib.import_module()` in `try/except ImportError`; never at module level in `rikugan/ida/ui/`.
+- Never hardcode `"execute_python"` — `lucnhan.constants.EXECUTE_PYTHON_TOOL_NAME`.
+- Host API imports only via `importlib.import_module()` in `try/except ImportError`; never at module level in `lucnhan/ida/ui/`.
 - No Qt signals across threads — `queue.Queue` + `QTimer` only.
 - No new dependencies (portalocker already required).
 - Cross-thread cancel/approval only via existing `threading.Event` / queue patterns.
@@ -26,8 +26,8 @@
 ### Task 1: Serialize WorkspaceStore access across threads
 
 **Files:**
-- Modify: `rikugan/memory/workspace_store.py` (constructor holds one long-lived connection — grep `check_same_thread` and `WorkspaceStore.__init__`)
-- Modify: `rikugan/memory/sqlite_backend.py` (grep `check_same_thread=False`)
+- Modify: `lucnhan/memory/workspace_store.py` (constructor holds one long-lived connection — grep `check_same_thread` and `WorkspaceStore.__init__`)
+- Modify: `lucnhan/memory/sqlite_backend.py` (grep `check_same_thread=False`)
 - Test: `tests/memory/` (new `test_workspace_store_threads.py`)
 
 **Interfaces:**
@@ -40,7 +40,7 @@
 """Concurrent access to one WorkspaceStore must serialize without
 'started a transaction within a transaction' / 'cannot rollback' errors."""
 import threading
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 def test_concurrent_writer_and_reader_no_sqlite_errors(tmp_path):
     store = WorkspaceStore.create(tmp_path)  # adapt to real factory/classmethod
@@ -75,7 +75,7 @@ Also a correctness test: a reader must never observe a fact that a writer rolled
 ### Task 2: Fix MemoryProjector lock contention handling (portalocker semantics)
 
 **Files:**
-- Modify: `rikugan/memory/markdown.py` (grep `_acquire_lock`)
+- Modify: `lucnhan/memory/markdown.py` (grep `_acquire_lock`)
 - Test: `tests/memory/test_markdown.py` (replace the fake-Lock-constructor test, ~lines 228-252)
 
 **Interfaces:**
@@ -92,7 +92,7 @@ Also a correctness test: a reader must never observe a fact that a writer rolled
 ### Task 3: Approval-gate `delegate_external_task`
 
 **Files:**
-- Modify: `rikugan/agent/loop.py` (grep `delegate_external_task` / `_handle_delegate_external_task_tool`, review ref ~:2211-2295)
+- Modify: `lucnhan/agent/loop.py` (grep `delegate_external_task` / `_handle_delegate_external_task_tool`, review ref ~:2211-2295)
 - Test: `tests/agent/` (extend the approval-gate tests; follow `tests/agent/test_approval_gate.py` from Phase 1)
 
 **Interfaces:**
@@ -109,10 +109,10 @@ Also a correctness test: a reader must never observe a fact that a writer rolled
 ### Task 4: Close subagent approval deadlocks + propagate subagent mutations
 
 **Files:**
-- Modify: `rikugan/agent/bulk_renamer.py` (grep `_deep_analyze_job`)
-- Modify: `rikugan/agent/subagent_manager.py` (grep `_run_agent`)
-- Modify: `rikugan/agent/subagent.py` (grep `run_task` / `last_session`)
-- Modify: `rikugan/agent/loop.py` (grep `_mutation_log` — expose a read accessor `drain_mutations()` or return the log from `run`)
+- Modify: `lucnhan/agent/bulk_renamer.py` (grep `_deep_analyze_job`)
+- Modify: `lucnhan/agent/subagent_manager.py` (grep `_run_agent`)
+- Modify: `lucnhan/agent/subagent.py` (grep `run_task` / `last_session`)
+- Modify: `lucnhan/agent/loop.py` (grep `_mutation_log` — expose a read accessor `drain_mutations()` or return the log from `run`)
 - Test: `tests/agent/` (new `test_subagent_interactive_tools.py`)
 
 **Interfaces:**
@@ -131,11 +131,11 @@ Also a correctness test: a reader must never observe a fact that a writer rolled
 ### Task 5: Stop provider watchdog thread leak
 
 **Files:**
-- Modify: `rikugan/providers/openai_provider.py`, `anthropic_provider.py`, `gemini_provider.py`, `codex_provider.py` (grep `cancel_event.wait()` in each `_stream_chunks`)
+- Modify: `lucnhan/providers/openai_provider.py`, `anthropic_provider.py`, `gemini_provider.py`, `codex_provider.py` (grep `cancel_event.wait()` in each `_stream_chunks`)
 - Test: `tests/providers/` (new `test_watchdog_cleanup.py`)
 
 **Interfaces:**
-- Produces: each `_stream_chunks` creates `done = threading.Event()`; watchdog waits `cancel_event.wait(timeout)` in a loop AND exits when `done.is_set()`; `_stream_chunks` sets `done` in a `finally:`. Same shape in all four providers — factor a tiny helper in `rikugan/providers/base.py` (e.g. `_spawn_cancel_watchdog(cancel_event, iter) -> threading.Event`) only if it fits the existing inheritance structure cleanly; otherwise duplicate the 10-line pattern per provider (precedent: each provider already duplicates the watchdog).
+- Produces: each `_stream_chunks` creates `done = threading.Event()`; watchdog waits `cancel_event.wait(timeout)` in a loop AND exits when `done.is_set()`; `_stream_chunks` sets `done` in a `finally:`. Same shape in all four providers — factor a tiny helper in `lucnhan/providers/base.py` (e.g. `_spawn_cancel_watchdog(cancel_event, iter) -> threading.Event`) only if it fits the existing inheritance structure cleanly; otherwise duplicate the 10-line pattern per provider (precedent: each provider already duplicates the watchdog).
 
 - [ ] **Step 1: Write failing test** — a fake stream that completes normally; assert no thread named `*watchdog*` (or: `threading.active_count()` returns to baseline within a short join timeout) after the generator is exhausted; and that a mid-stream cancel still interrupts promptly.
 - [ ] **Step 2: Run — expect FAIL** (thread count stays elevated)
@@ -148,8 +148,8 @@ Also a correctness test: a reader must never observe a fact that a writer rolled
 ### Task 6: Gemini/Codex retry classification + Gemini empty-candidate guard
 
 **Files:**
-- Modify: `rikugan/providers/gemini_provider.py` (grep `_handle_api_error` and `_normalize_response`)
-- Modify: `rikugan/providers/codex_provider.py` (grep `_handle_api_error`)
+- Modify: `lucnhan/providers/gemini_provider.py` (grep `_handle_api_error` and `_normalize_response`)
+- Modify: `lucnhan/providers/codex_provider.py` (grep `_handle_api_error`)
 - Test: `tests/providers/` (extend gemini/codex tests; follow existing error-classification test style)
 
 **Interfaces:**
@@ -169,8 +169,8 @@ Also a correctness test: a reader must never observe a fact that a writer rolled
 ### Task 7: Mutation coverage for the 13 untracked mutating tools (+ drift-proof test)
 
 **Files:**
-- Modify: `rikugan/agent/mutation.py` (grep `_REVERSE_BUILDERS`, `capture_pre_state`)
-- Read-only reference for tool semantics: `rikugan/ida/tools/types_tools.py` (create_struct/modify_struct/create_enum/modify_enum/create_typedef/apply_struct_to_address/import_c_header/propagate_type/import_type_from_library), `annotations.py` (set_type), `microcode.py` (nop_microcode, install/remove_microcode_optimizer — the install/remove pair can register a non-reversible record with a clear reason, same precedent as execute_python)
+- Modify: `lucnhan/agent/mutation.py` (grep `_REVERSE_BUILDERS`, `capture_pre_state`)
+- Read-only reference for tool semantics: `lucnhan/ida/tools/types_tools.py` (create_struct/modify_struct/create_enum/modify_enum/create_typedef/apply_struct_to_address/import_c_header/propagate_type/import_type_from_library), `annotations.py` (set_type), `microcode.py` (nop_microcode, install/remove_microcode_optimizer — the install/remove pair can register a non-reversible record with a clear reason, same precedent as execute_python)
 - Test: `tests/agent/test_mutation_coverage.py` (new)
 
 **Interfaces:**
@@ -178,8 +178,8 @@ Also a correctness test: a reader must never observe a fact that a writer rolled
 
 ```python
 def test_every_mutating_tool_is_covered():
-    from rikugan.tools.registry import ToolRegistry  # adapt to real registry API
-    from rikugan.agent.mutation import _REVERSE_BUILDERS, _INTENTIONALLY_NON_REVERSIBLE
+    from lucnhan.tools.registry import ToolRegistry  # adapt to real registry API
+    from lucnhan.agent.mutation import _REVERSE_BUILDERS, _INTENTIONALLY_NON_REVERSIBLE
     registry = build_test_registry()  # existing test registry factory — reuse it
     mutating = {td.name for td in registry.definitions() if td.mutating}
     uncovered = mutating - set(_REVERSE_BUILDERS) - _INTENTIONALLY_NON_REVERSIBLE
@@ -199,12 +199,12 @@ Priority order for real builders (highest value first): `nop_microcode` (origina
 ### Task 8: RestoreWorker queue+QTimer + Shiboken import guards
 
 **Files:**
-- Modify: `rikugan/ui/chat_view.py` (grep `class RestoreWorker`, review ref ~:283-294 emit sites, connections ~:1984-1990)
-- Modify: `rikugan/ida/ui/panel.py` (grep `importlib.import_module` at module level ~:21-22), `rikugan/ida/ui/tools_form.py` (~:11)
+- Modify: `lucnhan/ui/chat_view.py` (grep `class RestoreWorker`, review ref ~:283-294 emit sites, connections ~:1984-1990)
+- Modify: `lucnhan/ida/ui/panel.py` (grep `importlib.import_module` at module level ~:21-22), `lucnhan/ida/ui/tools_form.py` (~:11)
 - Test: `tests/ui/test_chat_view_restore.py` (new or extend existing restore tests)
 
 **Interfaces:**
-- Produces: `RestoreWorker.run()` pushes `(kind, payload)` tuples to a `queue.Queue` and the main thread drains via the existing `QTimer` poll pattern (copy the shape from `panel_core`'s history executor — grep `_poll` there); chunk widget construction moves to the main-thread drain. `panel.py`/`tools_form.py` ida imports move inside functions with `try/except ImportError` following `rikugan/ida/ui/actions.py`'s `_probe_ida/_ensure_ida` pattern.
+- Produces: `RestoreWorker.run()` pushes `(kind, payload)` tuples to a `queue.Queue` and the main thread drains via the existing `QTimer` poll pattern (copy the shape from `panel_core`'s history executor — grep `_poll` there); chunk widget construction moves to the main-thread drain. `panel.py`/`tools_form.py` ida imports move inside functions with `try/except ImportError` following `lucnhan/ida/ui/actions.py`'s `_probe_ida/_ensure_ida` pattern.
 
 - [ ] **Step 1: Write failing test** — restore flow with a stubbed widget factory: assert chunks are delivered on the main-thread drain call (i.e., queue populated, no cross-thread widget construction); existing restore tests must stay green.
 - [ ] **Step 2: Run — expect FAIL** (new test), keep old ones green.
@@ -217,7 +217,7 @@ Priority order for real builders (highest value first): `nop_microcode` (origina
 ### Task 9: Config hardening — boolean guard + numeric coercion
 
 **Files:**
-- Modify: `rikugan/core/config.py` (grep `_BOOLEAN_FIELDS`, `_apply_loaded_config`)
+- Modify: `lucnhan/core/config.py` (grep `_BOOLEAN_FIELDS`, `_apply_loaded_config`)
 - Test: `tests/core/test_config.py` (extend; Phase-1 file exists)
 
 **Interfaces:**
@@ -237,14 +237,14 @@ Priority order for real builders (highest value first): `nop_microcode` (origina
 
 **Files & exact changes:**
 
-1. `rikugan/agent/loop_commands.py` (grep `_handle_undo_command`): pop the mutation record only AFTER a successful reverse — on `ToolError`, push the record back (or don't pop until success). Test: failing reverse → record still present, second `/undo` retries it.
-2. `rikugan/agent/modes/plan.py` (grep `_execute_step`): emit `plan_step_done` with a real status (`completed`/`turn_limit`/`error`) and always emit it (try/finally around the mini loop); error path no longer leaves the UI step stuck. Test both paths.
-3. `rikugan/providers/openai_provider.py` (grep `_fetch_models_live`): make the model-id prefix filter a class attr `_MODEL_ID_PREFIXES`; `GLMProvider` overrides with `("glm-",)`. Test: GLM live fetch keeps `glm-5.2`-style ids.
-4. `rikugan/providers/minimax_provider.py` (grep `_NativeToolCallFilter` usage in `_stream_chunks`): tag thinking-channel chunks and skip tool-call XML detection for them (text passthrough only). Test: thinking delta containing `<invoke ...>` produces text, no tool-call events.
-5. `rikugan/skills/registry.py` (grep `get_summary_for_prompt`): pass `description` (and slug) through `strip_injection_markers` (import from `core/sanitize.py`). Test: description with embedded newline+"system:" is neutralized in the summary.
-6. `rikugan/memory/bundle_import.py` (grep `zf.read(file_info.name)`): verify per-member sha256 against the manifest and enforce declared uncompressed size before inflating (read via streaming with a cap); mismatch → clear import error. Test: tampered member rejected; oversized member rejected before full inflation.
-7. `rikugan/agent/pseudo_tool_schemas.py` (grep `Luc Nhan`): replace with "Rikugan/IDA" wording.
-8. `rikugan/memory/service.py` (grep `BUG:`): delete the two post-save `get_fact` verification blocks reaching into `repository._store` (and the same pattern in `tests/memory/test_repository.py`/`test_service.py` if trivially present).
+1. `lucnhan/agent/loop_commands.py` (grep `_handle_undo_command`): pop the mutation record only AFTER a successful reverse — on `ToolError`, push the record back (or don't pop until success). Test: failing reverse → record still present, second `/undo` retries it.
+2. `lucnhan/agent/modes/plan.py` (grep `_execute_step`): emit `plan_step_done` with a real status (`completed`/`turn_limit`/`error`) and always emit it (try/finally around the mini loop); error path no longer leaves the UI step stuck. Test both paths.
+3. `lucnhan/providers/openai_provider.py` (grep `_fetch_models_live`): make the model-id prefix filter a class attr `_MODEL_ID_PREFIXES`; `GLMProvider` overrides with `("glm-",)`. Test: GLM live fetch keeps `glm-5.2`-style ids.
+4. `lucnhan/providers/minimax_provider.py` (grep `_NativeToolCallFilter` usage in `_stream_chunks`): tag thinking-channel chunks and skip tool-call XML detection for them (text passthrough only). Test: thinking delta containing `<invoke ...>` produces text, no tool-call events.
+5. `lucnhan/skills/registry.py` (grep `get_summary_for_prompt`): pass `description` (and slug) through `strip_injection_markers` (import from `core/sanitize.py`). Test: description with embedded newline+"system:" is neutralized in the summary.
+6. `lucnhan/memory/bundle_import.py` (grep `zf.read(file_info.name)`): verify per-member sha256 against the manifest and enforce declared uncompressed size before inflating (read via streaming with a cap); mismatch → clear import error. Test: tampered member rejected; oversized member rejected before full inflation.
+7. `lucnhan/agent/pseudo_tool_schemas.py` (grep `Luc Nhan`): replace with "Luc Nhan/IDA" wording.
+8. `lucnhan/memory/service.py` (grep `BUG:`): delete the two post-save `get_fact` verification blocks reaching into `repository._store` (and the same pattern in `tests/memory/test_repository.py`/`test_service.py` if trivially present).
 
 - [ ] **Step 1: Write failing tests per item** (each in the module's existing test file; batch them in one run)
 - [ ] **Step 2: Run — expect all new tests RED**
@@ -259,7 +259,7 @@ Priority order for real builders (highest value first): `nop_microcode` (origina
 - [ ] `./ci-local.sh` — no regression vs master baseline (pre-existing failures unchanged; desloppify ≥ 88.5)
 - [ ] Full pytest: failure set ⊆ master's 28 pre-existing failures
 - [ ] `git log --oneline` shows the 10 task commits on `fix/review-phase2`
-- [ ] Push branch + PR to `master` (fork `EliteClassRoom/rikugan`) — or local merge per user choice
+- [ ] Push branch + PR to `master` (fork `EliteClassRoom/Luc-Nhan`) — or local merge per user choice
 
 ## Explicitly out of scope (Phase 3 / accepted residuals)
 

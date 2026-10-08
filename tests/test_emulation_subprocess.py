@@ -112,7 +112,7 @@ def _main() -> int:
     idc.set_name = _deny_mutation
     idc.create_strlit = _deny_mutation
 
-    from rikugan.ida.tools import emulation as emu
+    from lucnhan.ida.tools import emulation as emu
 
     tool_name = plan["tool"]
     payload = dict(plan["payload"])
@@ -122,7 +122,7 @@ def _main() -> int:
         # CPU phase stays on the worker that called them.
         import threading
 
-        from rikugan.tools.execution import ToolExecutionContext, tool_execution_context
+        from lucnhan.tools.execution import ToolExecutionContext, tool_execution_context
 
         marker = "dispatched"
         worker_name: list[str] = []
@@ -250,7 +250,7 @@ def _main() -> int:
     if plan.get("registry"):
         import threading
 
-        from rikugan.tools.registry import ToolRegistry
+        from lucnhan.tools.registry import ToolRegistry
 
         handler = emu.emulate_code if tool_name == "emulate_code" else emu.resolve_emulated_string
         registry = ToolRegistry()

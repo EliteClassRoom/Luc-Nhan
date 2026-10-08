@@ -16,11 +16,11 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.prompts.base import IDA_API_DISCIPLINE_SECTION
-from rikugan.tools.validate_idapython import BLOCKED_CALLS, BLOCKED_MODULES, WARNED_CALLS
+from lucnhan.agent.prompts.base import IDA_API_DISCIPLINE_SECTION
+from lucnhan.tools.validate_idapython import BLOCKED_CALLS, BLOCKED_MODULES, WARNED_CALLS
 
 _SKILL_PATH = (
-    Path(__file__).resolve().parent.parent.parent / "rikugan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"
+    Path(__file__).resolve().parent.parent.parent / "lucnhan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"
 )
 
 

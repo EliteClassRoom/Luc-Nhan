@@ -14,8 +14,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.loop import _parse_user_command
-from rikugan.agent.modes.research import (
+from lucnhan.agent.loop import _parse_user_command
+from lucnhan.agent.modes.research import (
     ResearchNote,
     ResearchState,
     _generate_index,
@@ -23,8 +23,8 @@ from rikugan.agent.modes.research import (
     _slugify,
     write_and_review_note,
 )
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.errors import CancellationError
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.errors import CancellationError
 
 
 class TestParseResearchCommand(unittest.TestCase):

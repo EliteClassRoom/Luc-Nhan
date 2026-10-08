@@ -1,4 +1,4 @@
-"""Tests for rikugan.ui.qt_compat — PySide6-only Qt surface."""
+"""Tests for lucnhan.ui.qt_compat — PySide6-only Qt surface."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import unittest
 from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
-import rikugan.ui.qt_compat as qt_compat
+import lucnhan.ui.qt_compat as qt_compat
 
 
 class TestQtCompat(unittest.TestCase):

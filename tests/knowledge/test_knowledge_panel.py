@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import unittest
 
-from rikugan.memory.schema import (
+from lucnhan.memory.schema import (
     KnowledgeEntity,
     KnowledgeMemory,
     KnowledgeRelation,
@@ -32,10 +32,10 @@ class FakeRelation(KnowledgeRelation):
 
 def _make_widget():
     """Build the widget with a headless QApplication."""
-    from rikugan.ui.knowledge_panel import KnowledgePanel
+    from lucnhan.ui.knowledge_panel import KnowledgePanel
 
     try:
-        from rikugan.ui.qt_compat import QApplication
+        from lucnhan.ui.qt_compat import QApplication
     except Exception:
         from PySide6.QtWidgets import QApplication
     # Touch QApplication so the singleton is created if needed.

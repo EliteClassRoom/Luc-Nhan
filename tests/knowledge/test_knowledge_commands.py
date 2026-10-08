@@ -13,17 +13,17 @@ from unittest.mock import MagicMock
 
 import tests as _tests
 
-_tests.purge_rikugan_stubs()
+_tests.purge_lucnhan_stubs()
 
-from rikugan.agent.loop import _parse_user_command
-from rikugan.agent.loop_commands import _handle_knowledge_command
-from rikugan.agent.turn import TurnEvent
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.ingest import (
+from lucnhan.agent.loop import _parse_user_command
+from lucnhan.agent.loop_commands import _handle_knowledge_command
+from lucnhan.agent.turn import TurnEvent
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.ingest import (
     ingest_exploration_finding,
     ingest_save_memory,
 )
-from rikugan.state.session import SessionState
+from lucnhan.state.session import SessionState
 from tests.knowledge._helpers import fresh_store
 
 
@@ -47,7 +47,7 @@ class TestParser(unittest.TestCase):
 def _make_loop(idb_path: str, knowledge_enabled: bool = True) -> MagicMock:
     """Build a minimal AgentLoop stub for the handler."""
     session = SessionState(idb_path=idb_path)
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config.knowledge_enabled = knowledge_enabled
     loop = MagicMock()
     loop.session = session

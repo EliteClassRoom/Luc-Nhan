@@ -5,15 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from rikugan.agent.loop import AgentLoop
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.authority import MemoryAuthorityIssuer
-from rikugan.memory.markdown import MemoryProjector
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.service import BinaryMemoryService
-from rikugan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
-from rikugan.state.session import SessionState
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.authority import MemoryAuthorityIssuer
+from lucnhan.memory.markdown import MemoryProjector
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.service import BinaryMemoryService
+from lucnhan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
+from lucnhan.state.session import SessionState
 
 
 def _make_loop_with_central_memory(tmp_path: Path) -> tuple[AgentLoop, BinaryMemoryService]:
@@ -33,7 +33,7 @@ def _make_loop_with_central_memory(tmp_path: Path) -> tuple[AgentLoop, BinaryMem
         authority_issuer=issuer,
     )
 
-    config = RikuganConfig()
+    config = LucNhanConfig()
     session = SessionState(idb_path=str(tmp_path / "test.i64"))
     provider = MagicMock()
     tools = MagicMock()
@@ -80,8 +80,8 @@ class TestPromptSourceSeparation:
 
         manual = service.manual_notes_context()
         assert "Check key schedule manually" in manual
-        assert "rikugan:managed" not in manual
-        assert "rikugan:record" not in manual
+        assert "lucnhan:managed" not in manual
+        assert "lucnhan:record" not in manual
         assert "Uses HTTP" not in manual  # managed content excluded
 
     def test_structured_context_excludes_manual_notes(self, tmp_path: Path) -> None:
@@ -108,11 +108,11 @@ class TestPromptSourceSeparation:
 
         assert structured == ""
         # MEMORY.md may or may not exist yet — empty is fine
-        assert "rikugan:managed" not in manual
+        assert "lucnhan:managed" not in manual
 
     def test_build_system_prompt_uses_central_memory_when_wired(self, tmp_path: Path) -> None:
         """build_system_prompt should include structured_memory when provided."""
-        from rikugan.agent.system_prompt import build_system_prompt
+        from lucnhan.agent.system_prompt import build_system_prompt
 
         prompt = build_system_prompt(
             structured_memory="## Structured Memory\n- [fact] Test: hello",
@@ -126,7 +126,7 @@ class TestPromptSourceSeparation:
 
     def test_build_system_prompt_no_memory_section_when_empty(self, tmp_path: Path) -> None:
         """Without structured_memory or manual_memory_notes, no memory section appears."""
-        from rikugan.agent.system_prompt import build_system_prompt
+        from lucnhan.agent.system_prompt import build_system_prompt
 
         prompt = build_system_prompt()
         # No memory content, but base prompt is present

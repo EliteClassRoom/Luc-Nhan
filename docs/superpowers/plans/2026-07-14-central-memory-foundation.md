@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Spec authority: `docs/superpowers/specs/2026-07-14-central-memory-workspaces-design.md`.
-- Canonical root: `RikuganConfig.memory_dir == <RikuganConfig._config_dir>/memory`; không fallback cạnh IDB.
+- Canonical root: `LucNhanConfig.memory_dir == <LucNhanConfig._config_dir>/memory`; không fallback cạnh IDB.
 - `memory_id` format: `mem-` + 32 lowercase hex; `case_id` format: `case-` + 32 lowercase hex; authoritative record IDs use a validated kind prefix plus 32 lowercase hex.
 - `db_instance_id`, path, display name và hash chỉ là evidence; không dùng trực tiếp làm directory name.
 - SQLite files dùng `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`, transactional migrations và `PRAGMA user_version`.
@@ -34,23 +34,23 @@
 
 | File | Action | Responsibility |
 |---|---|---|
-| `rikugan/constants.py` | Modify | Tên directory/schema version/lock timeout constants |
-| `rikugan/core/config.py` | Modify | `memory_dir`, dark feature flag |
+| `lucnhan/constants.py` | Modify | Tên directory/schema version/lock timeout constants |
+| `lucnhan/core/config.py` | Modify | `memory_dir`, dark feature flag |
 | `pyproject.toml` | Modify | Runtime dependency `portalocker>=3.3.0,<4` |
 | `ida-plugin.json` | Modify | Giữ dependency manifest đồng bộ |
-| `rikugan/memory/workspace.py` | Create | Workspace/evidence/run-context dataclasses, ID validation, locator |
-| `rikugan/memory/sqlite_backend.py` | Create | Safe SQLite open, local-filesystem/WAL validation, migrations |
-| `rikugan/memory/registry.py` | Create | Registry schema v1 và atomic evidence/workspace operations |
-| `rikugan/memory/identity.py` | Create | Filesystem identity, raw hash, ordered resolver decision table |
-| `rikugan/memory/workspace_store.py` | Create | Workspace schema v1, facts/entities/relations/observations/projection state |
-| `rikugan/memory/markdown.py` | Create | Managed-region parser/render/projector và portable lock |
-| `rikugan/memory/manager.py` | Create | Façade bind database, resolve paths, create immutable run context |
-| `rikugan/state/session.py` | Modify | Persist binary memory/case binding fields |
-| `rikugan/state/history.py` | Modify | Session/manifest schema v2 and memory-ID filtering |
-| `rikugan/cli/headless.py` | Modify | Hash original raw input and carry source identity |
-| `rikugan/ida/headless_bootstrap.py` | Modify | Validate/bootstrap memory source identity |
-| `rikugan/ida/headless_controller.py` | Modify | Pass bootstrap identity to base controller |
-| `rikugan/ui/session_controller_base.py` | Modify | Resolve before UUID creation, generations, dark binding lifecycle |
+| `lucnhan/memory/workspace.py` | Create | Workspace/evidence/run-context dataclasses, ID validation, locator |
+| `lucnhan/memory/sqlite_backend.py` | Create | Safe SQLite open, local-filesystem/WAL validation, migrations |
+| `lucnhan/memory/registry.py` | Create | Registry schema v1 và atomic evidence/workspace operations |
+| `lucnhan/memory/identity.py` | Create | Filesystem identity, raw hash, ordered resolver decision table |
+| `lucnhan/memory/workspace_store.py` | Create | Workspace schema v1, facts/entities/relations/observations/projection state |
+| `lucnhan/memory/markdown.py` | Create | Managed-region parser/render/projector và portable lock |
+| `lucnhan/memory/manager.py` | Create | Façade bind database, resolve paths, create immutable run context |
+| `lucnhan/state/session.py` | Modify | Persist binary memory/case binding fields |
+| `lucnhan/state/history.py` | Modify | Session/manifest schema v2 and memory-ID filtering |
+| `lucnhan/cli/headless.py` | Modify | Hash original raw input and carry source identity |
+| `lucnhan/ida/headless_bootstrap.py` | Modify | Validate/bootstrap memory source identity |
+| `lucnhan/ida/headless_controller.py` | Modify | Pass bootstrap identity to base controller |
+| `lucnhan/ui/session_controller_base.py` | Modify | Resolve before UUID creation, generations, dark binding lifecycle |
 | `tests/memory/test_config.py` | Create | Config root and dependency parity |
 | `tests/memory/test_workspace.py` | Create | IDs, locator and immutable run context |
 | `tests/memory/test_sqlite_backend.py` | Create | WAL, migrations, unsupported schema/filesystem behavior |
@@ -67,8 +67,8 @@
 ### Task 1: Memory config, constants, and lock dependency
 
 **Files:**
-- Modify: `rikugan/constants.py:19-35`
-- Modify: `rikugan/core/config.py:74-179`
+- Modify: `lucnhan/constants.py:19-35`
+- Modify: `lucnhan/core/config.py:74-179`
 - Modify: `pyproject.toml:34-48`
 - Modify: `ida-plugin.json:20-31`
 - Modify: `requirements.txt`
@@ -77,7 +77,7 @@
 
 **Interfaces:**
 - Produces: `MEMORY_DIR_NAME`, `MEMORY_REGISTRY_SCHEMA_VERSION`, `MEMORY_WORKSPACE_SCHEMA_VERSION`, `MEMORY_LOCK_TIMEOUT_SECONDS`, `MEMORY_MARKDOWN_MAX_BYTES`.
-- Produces: `RikuganConfig.memory_dir: str` and `RikuganConfig.memory_workspaces_enabled: bool`.
+- Produces: `LucNhanConfig.memory_dir: str` and `LucNhanConfig.memory_workspaces_enabled: bool`.
 - Consumed by: Tasks 2–9.
 
 - [ ] **Step 1: Write failing config and manifest-parity tests**
@@ -89,11 +89,11 @@ import json
 import tomllib
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
+from lucnhan.core.config import LucNhanConfig
 
 
 def test_memory_dir_is_central_and_feature_is_dark(tmp_path: Path) -> None:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
 
     assert Path(config.memory_dir) == tmp_path / "memory"
@@ -101,7 +101,7 @@ def test_memory_dir_is_central_and_feature_is_dark(tmp_path: Path) -> None:
 
 
 def test_invalid_memory_flag_type_keeps_safe_default(tmp_path: Path) -> None:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     config._apply_loaded_config({"memory_workspaces_enabled": "true"})
 
@@ -136,7 +136,7 @@ Expected: FAIL because `memory_dir`, `memory_workspaces_enabled`, and the depend
 - [ ] **Step 3: Add constants, central config property, and private-root helpers**
 
 ```python
-# rikugan/constants.py
+# lucnhan/constants.py
 MEMORY_DIR_NAME = "memory"
 MEMORY_REGISTRY_SCHEMA_VERSION = 1
 MEMORY_WORKSPACE_SCHEMA_VERSION = 1
@@ -145,18 +145,18 @@ MEMORY_MARKDOWN_MAX_BYTES = 16 * 1024 * 1024
 ```
 
 ```python
-# rikugan/core/config.py dataclass fields/properties
+# lucnhan/core/config.py dataclass fields/properties
 memory_workspaces_enabled: bool = False
 
 @property
 def memory_dir(self) -> str:
-    """Root for Rikugan-owned durable memory workspaces."""
+    """Root for Luc Nhan-owned durable memory workspaces."""
     return os.path.join(self._config_dir, MEMORY_DIR_NAME)
 ```
 
-Add `memory_workspaces_enabled` to the scalar fields persisted by `_apply_loaded_config()`/`to_dict()`. Import `MEMORY_DIR_NAME` from `rikugan.constants`. When loading, accept only a real JSON boolean (`type(value) is bool`); an invalid value records a config warning and keeps the safe default instead of assigning a truthy string/integer. Add the same typed-load rule for `case_memory_enabled` and `peer_retrieval_enabled` when introduced later.
+Add `memory_workspaces_enabled` to the scalar fields persisted by `_apply_loaded_config()`/`to_dict()`. Import `MEMORY_DIR_NAME` from `lucnhan.constants`. When loading, accept only a real JSON boolean (`type(value) is bool`); an invalid value records a config warning and keeps the safe default instead of assigning a truthy string/integer. Add the same typed-load rule for `case_memory_enabled` and `peer_retrieval_enabled` when introduced later.
 
-Add private-root helpers in `rikugan/core/config.py` or `rikugan/memory/sqlite_backend.py`: new directories are created with owner-only mode where supported; new DB/Markdown/lock/temp files are hardened after creation. Add POSIX mode assertions and Windows best-effort/error-path tests. The later `StorageGuard` centralizes and expands these checks.
+Add private-root helpers in `lucnhan/core/config.py` or `lucnhan/memory/sqlite_backend.py`: new directories are created with owner-only mode where supported; new DB/Markdown/lock/temp files are hardened after creation. Add POSIX mode assertions and Windows best-effort/error-path tests. The later `StorageGuard` centralizes and expands these checks.
 
 - [ ] **Step 4: Add the same exact dependency to all runtime manifests**
 
@@ -195,14 +195,14 @@ Run: `uv run python -m pytest tests/memory/test_config.py tests/tools/test_setti
 
 Expected: PASS.
 
-Run: `uvx ruff check rikugan/constants.py rikugan/core/config.py tests/memory/test_config.py`
+Run: `uvx ruff check lucnhan/constants.py lucnhan/core/config.py tests/memory/test_config.py`
 
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rikugan/constants.py rikugan/core/config.py pyproject.toml ida-plugin.json requirements.txt uv.lock tests/memory/test_config.py
+git add lucnhan/constants.py lucnhan/core/config.py pyproject.toml ida-plugin.json requirements.txt uv.lock tests/memory/test_config.py
 git commit -m "feat(memory): add central memory configuration"
 ```
 
@@ -211,11 +211,11 @@ git commit -m "feat(memory): add central memory configuration"
 ### Task 2: Workspace identity models and locator
 
 **Files:**
-- Create: `rikugan/memory/workspace.py`
+- Create: `lucnhan/memory/workspace.py`
 - Create: `tests/memory/test_workspace.py`
 
 **Interfaces:**
-- Consumes: `RikuganConfig.memory_dir` from Task 1.
+- Consumes: `LucNhanConfig.memory_dir` from Task 1.
 - Produces: `new_memory_id() -> str`, `new_case_id() -> str`, `new_record_id(kind: str) -> str`, `validate_memory_id(value: str) -> str`, `validate_case_id(value: str) -> str`, `validate_record_id(kind: str, value: str) -> str`.
 - Produces: `FilesystemIdentity`, `IdentityRequest`, `WorkspaceBinding`, `WorkspacePaths`, `MemoryRunContext`, `MemoryLocator`.
 - Consumed by: Tasks 3–9 and all later plans.
@@ -231,7 +231,7 @@ import re
 
 import pytest
 
-from rikugan.memory.workspace import (
+from lucnhan.memory.workspace import (
     MemoryLocator,
     MemoryRunContext,
     new_case_id,
@@ -281,7 +281,7 @@ def test_run_context_is_immutable() -> None:
 
 Run: `uv run python -m pytest tests/memory/test_workspace.py -v`
 
-Expected: FAIL with `ModuleNotFoundError: rikugan.memory.workspace`.
+Expected: FAIL with `ModuleNotFoundError: lucnhan.memory.workspace`.
 
 - [ ] **Step 3: Implement generated IDs and frozen data contracts**
 
@@ -422,14 +422,14 @@ Run: `uv run python -m pytest tests/memory/test_workspace.py -v`
 
 Expected: 3 passed.
 
-Run: `uvx ruff check rikugan/memory/workspace.py tests/memory/test_workspace.py`
+Run: `uvx ruff check lucnhan/memory/workspace.py tests/memory/test_workspace.py`
 
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/memory/workspace.py tests/memory/test_workspace.py
+git add lucnhan/memory/workspace.py tests/memory/test_workspace.py
 git commit -m "feat(memory): define workspace identity contracts"
 ```
 
@@ -438,8 +438,8 @@ git commit -m "feat(memory): define workspace identity contracts"
 ### Task 3: Safe SQLite backend and registry schema v1
 
 **Files:**
-- Create: `rikugan/memory/sqlite_backend.py`
-- Create: `rikugan/memory/registry.py`
+- Create: `lucnhan/memory/sqlite_backend.py`
+- Create: `lucnhan/memory/registry.py`
 - Create: `tests/memory/test_sqlite_backend.py`
 - Create: `tests/memory/test_registry.py`
 
@@ -459,7 +459,7 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.sqlite_backend import UnsupportedSchemaError, open_sqlite
+from lucnhan.memory.sqlite_backend import UnsupportedSchemaError, open_sqlite
 
 
 def test_open_sqlite_enables_required_pragmas(tmp_path: Path) -> None:
@@ -524,8 +524,8 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.registry import EvidenceConflictError, MemoryRegistry
-from rikugan.memory.workspace import new_memory_id
+from lucnhan.memory.registry import EvidenceConflictError, MemoryRegistry
+from lucnhan.memory.workspace import new_memory_id
 
 
 def test_registry_current_filesystem_evidence_is_unique(tmp_path: Path) -> None:
@@ -744,7 +744,7 @@ Expected: PASS without `database is locked` or duplicate workspace.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add rikugan/memory/sqlite_backend.py rikugan/memory/registry.py tests/memory/test_sqlite_backend.py tests/memory/test_registry.py
+git add lucnhan/memory/sqlite_backend.py lucnhan/memory/registry.py tests/memory/test_sqlite_backend.py tests/memory/test_registry.py
 git commit -m "feat(memory): add sqlite registry foundation"
 ```
 
@@ -753,9 +753,9 @@ git commit -m "feat(memory): add sqlite registry foundation"
 ### Task 4: Filesystem identity and ordered resolver
 
 **Files:**
-- Create: `rikugan/memory/identity.py`
+- Create: `lucnhan/memory/identity.py`
 - Create: `tests/memory/test_identity.py`
-- Modify: `rikugan/memory/registry.py`
+- Modify: `lucnhan/memory/registry.py`
 
 **Interfaces:**
 - Consumes: `IdentityRequest`, `FilesystemIdentity`, `MemoryRegistry`.
@@ -771,9 +771,9 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.identity import IdentityChoice, MemoryIdentityResolver, ResolutionStatus
-from rikugan.memory.registry import MemoryRegistry
-from rikugan.memory.workspace import FilesystemIdentity, IdentityRequest
+from lucnhan.memory.identity import IdentityChoice, MemoryIdentityResolver, ResolutionStatus
+from lucnhan.memory.registry import MemoryRegistry
+from lucnhan.memory.workspace import FilesystemIdentity, IdentityRequest
 
 
 def _idb(path: Path, uuid: str, fs_value: tuple[str, str]) -> IdentityRequest:
@@ -969,7 +969,7 @@ Expected: PASS on Windows, Linux, and macOS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add rikugan/memory/identity.py rikugan/memory/registry.py tests/memory/test_identity.py
+git add lucnhan/memory/identity.py lucnhan/memory/registry.py tests/memory/test_identity.py
 git commit -m "feat(memory): resolve copy and move identities"
 ```
 
@@ -978,9 +978,9 @@ git commit -m "feat(memory): resolve copy and move identities"
 ### Task 5: Raw-headless SHA identity transport
 
 **Files:**
-- Modify: `rikugan/cli/headless.py:134-167,486-510,540-570`
-- Modify: `rikugan/ida/headless_bootstrap.py:303-355`
-- Modify: `rikugan/ida/headless_controller.py:25-58`
+- Modify: `lucnhan/cli/headless.py:134-167,486-510,540-570`
+- Modify: `lucnhan/ida/headless_bootstrap.py:303-355`
+- Modify: `lucnhan/ida/headless_controller.py:25-58`
 - Create: `tests/cli/test_headless_memory_identity.py`
 - Modify: `tests/ida/test_headless_bootstrap.py`
 
@@ -998,7 +998,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from rikugan.cli.headless import _build_memory_source
+from lucnhan.cli.headless import _build_memory_source
 
 
 def test_raw_input_carries_sha256_before_ida_launch(tmp_path: Path) -> None:
@@ -1017,7 +1017,7 @@ def test_raw_input_carries_sha256_before_ida_launch(tmp_path: Path) -> None:
 def test_existing_idb_does_not_hash_database(tmp_path: Path) -> None:
     idb = tmp_path / "sample.i64"
     idb.write_bytes(b"idb")
-    with patch("rikugan.cli.headless.hash_raw_binary") as hash_mock:
+    with patch("lucnhan.cli.headless.hash_raw_binary") as hash_mock:
         source = _build_memory_source(str(idb))
     assert source == {"kind": "idb", "original_path": str(idb.resolve())}
     hash_mock.assert_not_called()
@@ -1093,7 +1093,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/cli/headless.py rikugan/ida/headless_bootstrap.py rikugan/ida/headless_controller.py tests/cli/test_headless_memory_identity.py tests/ida/test_headless_bootstrap.py
+git add lucnhan/cli/headless.py lucnhan/ida/headless_bootstrap.py lucnhan/ida/headless_controller.py tests/cli/test_headless_memory_identity.py tests/ida/test_headless_bootstrap.py
 git commit -m "feat(memory): carry raw binary identity headlessly"
 ```
 
@@ -1102,7 +1102,7 @@ git commit -m "feat(memory): carry raw binary identity headlessly"
 ### Task 6: Authoritative workspace SQLite store
 
 **Files:**
-- Create: `rikugan/memory/workspace_store.py`
+- Create: `lucnhan/memory/workspace_store.py`
 - Create: `tests/memory/test_workspace_store.py`
 
 **Interfaces:**
@@ -1120,8 +1120,8 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.workspace import MemoryLocator, new_memory_id
-from rikugan.memory.workspace_store import StaleRevisionError, WorkspaceStore
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+from lucnhan.memory.workspace_store import StaleRevisionError, WorkspaceStore
 
 
 def test_fact_revision_is_atomic_and_owner_scoped(tmp_path: Path) -> None:
@@ -1240,7 +1240,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add rikugan/memory/workspace_store.py tests/memory/test_workspace_store.py
+git add lucnhan/memory/workspace_store.py tests/memory/test_workspace_store.py
 git commit -m "feat(memory): add workspace sqlite store"
 ```
 
@@ -1249,7 +1249,7 @@ git commit -m "feat(memory): add workspace sqlite store"
 ### Task 7: Deterministic `MEMORY.md` document and projector
 
 **Files:**
-- Create: `rikugan/memory/markdown.py`
+- Create: `lucnhan/memory/markdown.py`
 - Create: `tests/memory/test_markdown.py`
 
 **Interfaces:**
@@ -1266,8 +1266,8 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.markdown import ManagedRegionError, parse_memory_document, render_memory_document
-from rikugan.memory.workspace_store import FactRecord
+from lucnhan.memory.markdown import ManagedRegionError, parse_memory_document, render_memory_document
+from lucnhan.memory.workspace_store import FactRecord
 
 
 def test_render_preserves_unmanaged_text_and_embeds_record_revision() -> None:
@@ -1286,13 +1286,13 @@ def test_render_preserves_unmanaged_text_and_embeds_record_revision() -> None:
     rendered = render_memory_document(parse_memory_document(original), [fact])
 
     assert "Keep this line." in rendered
-    assert "<!-- rikugan:record id=fact-33333333333333333333333333333333 rev=3 -->" in rendered
-    assert rendered.count("<!-- rikugan:managed:start -->") == 1
-    assert rendered.count("<!-- rikugan:managed:end -->") == 1
+    assert "<!-- lucnhan:record id=fact-33333333333333333333333333333333 rev=3 -->" in rendered
+    assert rendered.count("<!-- lucnhan:managed:start -->") == 1
+    assert rendered.count("<!-- lucnhan:managed:end -->") == 1
 
 
 def test_nested_or_reversed_markers_are_conflicts() -> None:
-    content = "<!-- rikugan:managed:end -->\n<!-- rikugan:managed:start -->"
+    content = "<!-- lucnhan:managed:end -->\n<!-- lucnhan:managed:start -->"
     with pytest.raises(ManagedRegionError):
         parse_memory_document(content)
 ```
@@ -1310,9 +1310,9 @@ Expected: FAIL with missing module.
 - [ ] **Step 4: Implement managed-region parser**
 
 ```python
-MANAGED_START = "<!-- rikugan:managed:start -->"
-MANAGED_END = "<!-- rikugan:managed:end -->"
-_RECORD_RE = re.compile(r"<!-- rikugan:record id=([A-Za-z0-9._:-]+) rev=([1-9][0-9]*) -->")
+MANAGED_START = "<!-- lucnhan:managed:start -->"
+MANAGED_END = "<!-- lucnhan:managed:end -->"
+_RECORD_RE = re.compile(r"<!-- lucnhan:record id=([A-Za-z0-9._:-]+) rev=([1-9][0-9]*) -->")
 
 
 @dataclass(frozen=True)
@@ -1380,14 +1380,14 @@ Expected: PASS.
 
 - [ ] **Step 8: Run formatter/lint and commit**
 
-Run: `uvx ruff format --check rikugan/memory/markdown.py tests/memory/test_markdown.py`
+Run: `uvx ruff format --check lucnhan/memory/markdown.py tests/memory/test_markdown.py`
 
-Run: `uvx ruff check rikugan/memory/markdown.py tests/memory/test_markdown.py`
+Run: `uvx ruff check lucnhan/memory/markdown.py tests/memory/test_markdown.py`
 
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/markdown.py tests/memory/test_markdown.py
+git add lucnhan/memory/markdown.py tests/memory/test_markdown.py
 git commit -m "feat(memory): project sqlite facts to markdown"
 ```
 
@@ -1396,12 +1396,12 @@ git commit -m "feat(memory): project sqlite facts to markdown"
 ### Task 8: Session binding, manager façade, and database generations
 
 **Files:**
-- Create: `rikugan/memory/manager.py`
-- Modify: `rikugan/state/session.py:53-75`
-- Modify: `rikugan/state/history.py:35,140-166,275-296,438-550`
-- Modify: `rikugan/constants.py:33-35`
-- Modify: `rikugan/ui/session_controller_base.py:91-110,193-221,459-490,586-673`
-- Modify: `rikugan/ida/headless_controller.py:25-58`
+- Create: `lucnhan/memory/manager.py`
+- Modify: `lucnhan/state/session.py:53-75`
+- Modify: `lucnhan/state/history.py:35,140-166,275-296,438-550`
+- Modify: `lucnhan/constants.py:33-35`
+- Modify: `lucnhan/ui/session_controller_base.py:91-110,193-221,459-490,586-673`
+- Modify: `lucnhan/ida/headless_controller.py:25-58`
 - Create: `tests/memory/test_manager.py`
 - Create: `tests/state/test_memory_binding.py`
 - Modify: `tests/agent/test_session_controller.py`
@@ -1419,13 +1419,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
-from rikugan.state.history import SessionHistory
-from rikugan.state.session import SessionState
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.state.history import SessionHistory
+from lucnhan.state.session import SessionState
 
 
 def test_session_and_manifest_round_trip_memory_binding(tmp_path: Path) -> None:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     session = SessionState(
         id="bound-session",
@@ -1447,12 +1447,12 @@ def test_session_and_manifest_round_trip_memory_binding(tmp_path: Path) -> None:
 - [ ] **Step 2: Write failing manager generation tests**
 
 ```python
-from rikugan.memory.manager import MemoryWorkspaceManager
-from rikugan.memory.workspace import FilesystemIdentity, IdentityRequest
+from lucnhan.memory.manager import MemoryWorkspaceManager
+from lucnhan.memory.workspace import FilesystemIdentity, IdentityRequest
 
 
 def test_rebinding_database_invalidates_old_run_context(tmp_path: Path) -> None:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     config.memory_workspaces_enabled = True
     manager = MemoryWorkspaceManager(config)
@@ -1490,7 +1490,7 @@ Do not serialize `database_generation` or `case_binding_generation`: they are fr
 
 ```python
 class MemoryWorkspaceManager:
-    def __init__(self, config: RikuganConfig):
+    def __init__(self, config: LucNhanConfig):
         self._config = config
         self._locator = MemoryLocator(config.memory_dir)
         self._registry = MemoryRegistry(self._locator.registry_database())
@@ -1555,7 +1555,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add rikugan/memory/manager.py rikugan/state/session.py rikugan/state/history.py rikugan/constants.py rikugan/ui/session_controller_base.py rikugan/ida/headless_controller.py tests/memory/test_manager.py tests/state/test_memory_binding.py tests/agent/test_session_controller.py
+git add lucnhan/memory/manager.py lucnhan/state/session.py lucnhan/state/history.py lucnhan/constants.py lucnhan/ui/session_controller_base.py lucnhan/ida/headless_controller.py tests/memory/test_manager.py tests/state/test_memory_binding.py tests/agent/test_session_controller.py
 git commit -m "feat(memory): bind sessions to memory workspaces"
 ```
 
@@ -1564,7 +1564,7 @@ git commit -m "feat(memory): bind sessions to memory workspaces"
 ### Task 9: Foundation integration gate and dark-scaffolding verification
 
 **Files:**
-- Modify: `rikugan/memory/__init__.py`
+- Modify: `lucnhan/memory/__init__.py`
 - Modify: `tests/memory/test_manager.py`
 - Modify: `tests/memory/test_registry.py`
 - Modify: `tests/memory/test_markdown.py`
@@ -1614,30 +1614,30 @@ Expected: PASS.
 
 - [ ] **Step 5: Run both repository test roots to catch import regressions**
 
-Run: `uv run python -m pytest tests/ rikugan/tests/ -q`
+Run: `uv run python -m pytest tests/ lucnhan/tests/ -q`
 
 Expected: PASS. If pre-existing order-dependent failures remain on the base branch, record exact test IDs in the execution report; do not weaken new tests or mark the task complete until new failures are fixed.
 
 - [ ] **Step 6: Run static checks**
 
-Run: `uvx ruff format --check rikugan/ tests/`
+Run: `uvx ruff format --check lucnhan/ tests/`
 
-Run: `uvx ruff check rikugan/ tests/`
+Run: `uvx ruff check lucnhan/ tests/`
 
-Run: `uvx mypy rikugan/core rikugan/providers --pretty`
+Run: `uvx mypy lucnhan/core lucnhan/providers --pretty`
 
 Expected: PASS.
 
 - [ ] **Step 7: Confirm no cutover occurred**
 
-Run: `git grep -n "RIKUGAN.md" -- rikugan/agent rikugan/memory rikugan/ui`
+Run: `git grep -n "RIKUGAN.md" -- lucnhan/agent lucnhan/memory lucnhan/ui`
 
-Expected: Existing runtime references still exist because this plan is dark scaffolding. Confirm no new consumer reads `MEMORY.md` except `rikugan/memory/markdown.py`.
+Expected: Existing runtime references still exist because this plan is dark scaffolding. Confirm no new consumer reads `MEMORY.md` except `lucnhan/memory/markdown.py`.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add rikugan/memory/__init__.py tests/memory/test_manager.py tests/memory/test_registry.py tests/memory/test_markdown.py
+git add lucnhan/memory/__init__.py tests/memory/test_manager.py tests/memory/test_registry.py tests/memory/test_markdown.py
 git commit -m "test(memory): verify dark workspace foundation"
 ```
 
@@ -1645,7 +1645,7 @@ git commit -m "test(memory): verify dark workspace foundation"
 
 ## Foundation Exit Checklist
 
-- [ ] `RikuganConfig.memory_dir` and dependency manifests are correct.
+- [ ] `LucNhanConfig.memory_dir` and dependency manifests are correct.
 - [ ] Registry v1 serializes first-open and rejects unsupported schema.
 - [ ] Resolver follows the complete ordered copy/move/conflict decision table.
 - [ ] Raw headless input carries validated SHA-256 before IDA launch.

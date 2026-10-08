@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.workspace import (
+from lucnhan.memory.workspace import (
     FilesystemIdentity,
     IdentityRequest,
     MemoryLocator,

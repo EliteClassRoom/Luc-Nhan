@@ -3,7 +3,7 @@
 - **Ngày:** 2026-07-13
 - **Trạng thái:** Approved (brainstorming)
 - **Tác giả:** tuna99 + Claude Code
-- **Liên quan:** `rikugan/agent/loop.py`, `rikugan/agent/agents/ida_docs_reviewer.py`, `rikugan/tools/idapython_complexity.py`, `rikugan/tools/validate_idapython.py`, `rikugan/core/config.py`
+- **Liên quan:** `lucnhan/agent/loop.py`, `lucnhan/agent/agents/ida_docs_reviewer.py`, `lucnhan/tools/idapython_complexity.py`, `lucnhan/tools/validate_idapython.py`, `lucnhan/core/config.py`
 
 ---
 
@@ -26,7 +26,7 @@ Bốn thay đổi phối hợp:
 
 ### 3.1. Preload API reference compact vào system prompt main agent
 
-Bổ sung một section mới vào system prompt IDA (`rikugan/agent/prompts/base.py` + `ida.py`): **Module Router** (task→module map) + **Core Patterns** (code samples compact) + **DO NOT USE** table (đã có một phần trong `IDA_API_DISCIPLINE_SECTION`, sẽ bổ sung để đầy đủ).
+Bổ sung một section mới vào system prompt IDA (`lucnhan/agent/prompts/base.py` + `ida.py`): **Module Router** (task→module map) + **Core Patterns** (code samples compact) + **DO NOT USE** table (đã có một phần trong `IDA_API_DISCIPLINE_SECTION`, sẽ bổ sung để đầy đủ).
 
 Phần này lấy từ skill `ida-scripting/SKILL.md` (dòng 159-244) nhưng rút gọn — chỉ giữ bảng Module Router và Core Patterns thiết yếu. Bỏ phần verbose (Domain API, deep reference, fallback URL patterns — những thứ này reviewer subagent vẫn dùng khi cần).
 
@@ -109,7 +109,7 @@ execute_python tool call
 
 ## 5. Chi tiết kỹ thuật từng component
 
-### 5.1. Module mới: `rikugan/tools/traceback_classifier.py`
+### 5.1. Module mới: `lucnhan/tools/traceback_classifier.py`
 
 Pure function, không dependency IDA, không LLM, không globals. Operate trên traceback string + script source.
 
@@ -143,7 +143,7 @@ def classify_traceback(
 **Thay field:**
 
 ```python
-# rikugan/core/config.py — thay:
+# lucnhan/core/config.py — thay:
 require_ida_docs_for_complex_scripts: bool = True
 
 # bằng:
@@ -293,7 +293,7 @@ Cập nhật `IDA_DOCS_REVIEWER_PROMPT`:
 
 ### 5.5. System prompt: `IDA_API_MODULE_REFERENCE_SECTION`
 
-Thêm section mới vào `rikugan/agent/prompts/base.py`:
+Thêm section mới vào `lucnhan/agent/prompts/base.py`:
 
 ```python
 IDA_API_MODULE_REFERENCE_SECTION = """\
@@ -393,7 +393,7 @@ this round-trip, verify APIs against the Module Quick Reference above and
 call `lookup_idapython_doc(module="<module>")` before writing the script.
 ```
 
-### 5.6. Settings dialog: `rikugan/ui/settings_dialog.py`
+### 5.6. Settings dialog: `lucnhan/ui/settings_dialog.py`
 
 Thay checkbox boolean bằng combobox enum (~dòng 628-640 và ~1417-1418):
 

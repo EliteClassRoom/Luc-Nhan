@@ -12,7 +12,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.sanitize import sanitize_tool_result
+from lucnhan.core.sanitize import sanitize_tool_result
 
 
 class TestErrorResultWrap(unittest.TestCase):
@@ -20,7 +20,7 @@ class TestErrorResultWrap(unittest.TestCase):
         # Pin: _execute_single_tool wraps error results too (no is_error bypass).
         import inspect
 
-        from rikugan.agent.loop import AgentLoop
+        from lucnhan.agent.loop import AgentLoop
 
         src = inspect.getsource(AgentLoop._execute_single_tool)
         self.assertNotIn("if not is_error else", src, "Error-path results must not bypass the wrapper")

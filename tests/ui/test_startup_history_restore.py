@@ -28,7 +28,7 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.state.history_types import (
+from lucnhan.state.history_types import (
     HistoryListResult,
     HistoryLoadResult,
     HistoryRequestStatus,
@@ -38,9 +38,9 @@ from rikugan.state.history_types import (
 
 
 def _build_panel():
-    from rikugan.ui.panel_core import RikuganPanelCore
+    from lucnhan.ui.panel_core import LucNhanPanelCore
 
-    panel = RikuganPanelCore.__new__(RikuganPanelCore)
+    panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
     panel._history_panel = MagicMock()
     # History panel is hidden on the startup path — the probe runs
     # against the current IDB's saved sessions before the user opens
@@ -140,9 +140,9 @@ class TestStartupRestoreListResult(unittest.TestCase):
 
 class TestStartupLoadFailureClearsFlag(unittest.TestCase):
     def _build_panel(self):
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._history_panel = MagicMock()
         # Hidden History panel on the startup path so the visibility
@@ -174,9 +174,9 @@ class TestStartupLoadFailureClearsFlag(unittest.TestCase):
 
 class TestInvalidateClearsStartupFlags(unittest.TestCase):
     def test_invalidate_resets_both_flags(self) -> None:
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._startup_restore_pending = True
         panel._startup_restore_load_pending = True
         # Minimal state the invalidate helper touches.

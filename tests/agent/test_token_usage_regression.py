@@ -1,4 +1,4 @@
-"""Regression tests for Rikugan's token-usage normalization and the
+"""Regression tests for Luc Nhan's token-usage normalization and the
 agent-loop accumulation path that previously crashed with
 ``TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'``.
 
@@ -12,14 +12,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from rikugan.core.types import (
+from lucnhan.core.types import (
     Message,
     Role,
     TokenUsage,
     coerce_token_count,
 )
-from rikugan.providers.anthropic_provider import AnthropicProvider
-from rikugan.providers.openai_provider import OpenAIProvider
+from lucnhan.providers.anthropic_provider import AnthropicProvider
+from lucnhan.providers.openai_provider import OpenAIProvider
 
 
 class TestCoerceTokenCount(unittest.TestCase):
@@ -178,7 +178,7 @@ class TestAccumulateChunkUsage(unittest.TestCase):
     """Exercise the agent-loop accumulator against the original crash."""
 
     def _accumulate(self, last, chunk):
-        from rikugan.agent.loop import AgentLoop
+        from lucnhan.agent.loop import AgentLoop
 
         # _accumulate_chunk_usage is a method on AgentLoop. We invoke it
         # without constructing a full instance by binding ``self`` to a
@@ -273,7 +273,7 @@ class TestFinalizeStreamUsage(unittest.TestCase):
     """The finalize path must coerce nullable fields and patch estimates."""
 
     def _finalize(self, last_usage, estimated_usage, estimated_prompt_tokens):
-        from rikugan.agent.loop import AgentLoop
+        from lucnhan.agent.loop import AgentLoop
 
         return AgentLoop._finalize_stream_usage(SimpleNamespace(), last_usage, estimated_usage, estimated_prompt_tokens)
 

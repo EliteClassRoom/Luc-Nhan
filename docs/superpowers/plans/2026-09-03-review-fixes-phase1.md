@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Every module keeps `from __future__ import annotations`; type hints on all new signatures.
-- Never hardcode the string `"execute_python"` — use `rikugan.constants.EXECUTE_PYTHON_TOOL_NAME`.
+- Never hardcode the string `"execute_python"` — use `lucnhan.constants.EXECUTE_PYTHON_TOOL_NAME`.
 - Host API imports only via `importlib.import_module()` inside `try/except ImportError`.
 - No new deps. No `eval`/`exec` outside `script_guard.run_guarded_script()` (Task 1 removes the one exception).
 - CI must stay green: `./ci-local.sh` (ruff format+lint, mypy core+providers, pytest, desloppify ≥ 88.5).
@@ -24,14 +24,14 @@
 ### Task 1: Gate `install_microcode_optimizer` behind script_guard + user approval
 
 **Files:**
-- Modify: `rikugan/tools/base.py:150-200` (add `requires_approval` param to `@tool`, store on `ToolDefinition`)
-- Modify: `rikugan/agent/loop.py:1761-1810` (`_execute_single_tool`: approval fires when `tc.name == EXECUTE_PYTHON_TOOL_NAME` **or** `definition.requires_approval`)
-- Modify: `rikugan/ida/tools/microcode.py:311-379` (`install_microcode_optimizer`: run `python_code` through `_check_ast`, declare `requires_approval=True`)
-- Modify: `rikugan/ida/tools/microcode_optim.py:121-139` (`compile_optimizer`: call `script_guard._check_ast` and raise on violation — make it public as `check_ast` re-export)
+- Modify: `lucnhan/tools/base.py:150-200` (add `requires_approval` param to `@tool`, store on `ToolDefinition`)
+- Modify: `lucnhan/agent/loop.py:1761-1810` (`_execute_single_tool`: approval fires when `tc.name == EXECUTE_PYTHON_TOOL_NAME` **or** `definition.requires_approval`)
+- Modify: `lucnhan/ida/tools/microcode.py:311-379` (`install_microcode_optimizer`: run `python_code` through `_check_ast`, declare `requires_approval=True`)
+- Modify: `lucnhan/ida/tools/microcode_optim.py:121-139` (`compile_optimizer`: call `script_guard._check_ast` and raise on violation — make it public as `check_ast` re-export)
 - Test: `tests/tools/test_script_guard.py` (existing file, extend), `tests/agent/test_approval_gate.py` (new)
 
 **Interfaces:**
-- Produces: `ToolDefinition.requires_approval: bool = False`; `rikugan.tools.script_guard.check_ast(code: str) -> str | None` (public alias of `_check_ast`).
+- Produces: `ToolDefinition.requires_approval: bool = False`; `lucnhan.tools.script_guard.check_ast(code: str) -> str | None` (public alias of `_check_ast`).
 - `_execute_single_tool` gate condition becomes:
   ```python
   needs_approval = (
@@ -44,7 +44,7 @@
 
 ```python
 # tests/tools/test_script_guard.py — add
-from rikugan.ida.tools.microcode_optim import compile_optimizer
+from lucnhan.ida.tools.microcode_optim import compile_optimizer
 
 def test_compile_optimizer_rejects_subprocess_import():
     code = "def optimize(mbi, ins): return 0\nimport subprocess\nsubprocess.run(['calc'])"
@@ -64,22 +64,22 @@ def test_compile_optimizer_accepts_pure_code():
 ```python
 # tests/agent/test_approval_gate.py — new
 """install_microcode_optimizer must be approval-gated like execute_python."""
-from rikugan.constants import EXECUTE_PYTHON_TOOL_NAME
+from lucnhan.constants import EXECUTE_PYTHON_TOOL_NAME
 
 def test_microcode_optimizer_flagged_requires_approval():
-    from rikugan.ida.tools.microcode import install_microcode_optimizer
+    from lucnhan.ida.tools.microcode import install_microcode_optimizer
     assert getattr(install_microcode_optimizer, "requires_approval", None) is True or \
         install_microcode_optimizer.definition.requires_approval is True
 
 def test_gate_condition_includes_requires_approval():
     # Inspect the source-level contract: any tool whose definition sets
     # requires_approval goes through _wait_for_approval.
-    from rikugan.tools.base import ToolDefinition
+    from lucnhan.tools.base import ToolDefinition
     td = ToolDefinition(name="x", description="d", parameters={}, function=lambda: "", requires_approval=True)
     assert td.requires_approval is True
 ```
 
-(Adapt attribute access to the actual `@tool` wrapping — read `rikugan/tools/base.py` first; the decorator currently attaches the `ToolDefinition` either to the function or returns it.)
+(Adapt attribute access to the actual `@tool` wrapping — read `lucnhan/tools/base.py` first; the decorator currently attaches the `ToolDefinition` either to the function or returns it.)
 
 - [ ] **Step 2: Run tests — expect FAIL**
 
@@ -113,7 +113,7 @@ git add -A && git commit -m "fix(security): gate install_microcode_optimizer beh
 ### Task 2: Close AST-blocklist bypasses in `script_guard`
 
 **Files:**
-- Modify: `rikugan/tools/script_guard.py:18-80` (`_BLOCKED_MODULES`), `:120-159` (`_BLOCKED_ATTRS`), `:248-271` (`_check_ast` Call branch)
+- Modify: `lucnhan/tools/script_guard.py:18-80` (`_BLOCKED_MODULES`), `:120-159` (`_BLOCKED_ATTRS`), `:248-271` (`_check_ast` Call branch)
 - Test: `tests/tools/test_script_guard.py`
 
 **Interfaces:**
@@ -133,7 +133,7 @@ BYPASSES = [
 ]
 @pytest.mark.parametrize("code", BYPASSES)
 def test_known_bypasses_blocked(code):
-    from rikugan.tools.script_guard import check_ast
+    from lucnhan.tools.script_guard import check_ast
     assert check_ast(code) is not None
 ```
 
@@ -143,7 +143,7 @@ Note: `inspect` frame walks hit the `_BLOCKED_DUNDER_ATTRS` dunder rule (`f_back
 - [ ] **Step 3: Implement**
 
 1. Add to `_BLOCKED_MODULES`: `builtins`, `timeit`, `pdb`, `doctest`, `operator`, `inspect` (with comment: exec/getattr re-export + introspection vectors).
-2. Add to `_BLOCKED_DUNDER_ATTRS`: `f_back`, `f_builtins`, `f_globals`, `f_locals`, `f_code` (frame-object attrs) — verify none legitimates a common analysis idiom first by grepping `rikugan/data/idapython-examples` and builtin skills for these attrs; IDAPython analysis scripts do not use frame introspection.
+2. Add to `_BLOCKED_DUNDER_ATTRS`: `f_back`, `f_builtins`, `f_globals`, `f_locals`, `f_code` (frame-object attrs) — verify none legitimates a common analysis idiom first by grepping `lucnhan/data/idapython-examples` and builtin skills for these attrs; IDAPython analysis scripts do not use frame introspection.
 3. In `_check_ast`'s `ast.Call` branch, add receiver-agnostic rule after the pair check:
    ```python
    # Any call whose attribute name is itself a blocked built-in
@@ -156,7 +156,7 @@ Note: `inspect` frame walks hit the `_BLOCKED_DUNDER_ATTRS` dunder rule (`f_back
 
 - [ ] **Step 4: Run — expect PASS**; also run the whole existing guard suite to catch false positives:
   `python3 -m pytest tests/tools/test_script_guard.py -v`
-- [ ] **Step 5: Grep builtin skills + `rikugan/data/idapython-docs` examples for newly blocked modules used in documented flows; confirm none. Commit**
+- [ ] **Step 5: Grep builtin skills + `lucnhan/data/idapython-docs` examples for newly blocked modules used in documented flows; confirm none. Commit**
 
 ```bash
 git commit -am "fix(security): close builtins/timeit/pdb/inspect AST blocklist bypasses"
@@ -167,7 +167,7 @@ git commit -am "fix(security): close builtins/timeit/pdb/inspect AST blocklist b
 ### Task 3: Stop compaction from orphaning tool-result messages
 
 **Files:**
-- Modify: `rikugan/agent/context_window.py:41-93` (`compact_messages`)
+- Modify: `lucnhan/agent/context_window.py:41-93` (`compact_messages`)
 - Test: `tests/agent/test_context_window.py` (extend existing)
 
 **Interfaces:**
@@ -191,7 +191,7 @@ def test_compaction_does_not_orphan_leading_tool_result():
                 f"orphaned TOOL at compacted index {i}"
 ```
 
-(Use the existing message-builder fixtures in that test file; if none exist, construct `Message(role=..., content=..., tool_calls=[ToolCall(...)], tool_results=[...])` directly per `rikugan/core/types.py`.)
+(Use the existing message-builder fixtures in that test file; if none exist, construct `Message(role=..., content=..., tool_calls=[ToolCall(...)], tool_results=[...])` directly per `lucnhan/core/types.py`.)
 
 - [ ] **Step 2: Run — expect FAIL** (current fixed `[-4:]` cut orphans `("tool", "result2")` in the shape above)
 - [ ] **Step 3: Implement** — replace the fixed cut with a boundary walk:
@@ -223,7 +223,7 @@ git commit -am "fix(agent): compaction no longer orphans tool-result messages"
 ### Task 4: Don't clear an inherited/external cancel event in `AgentLoop.run()`
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:355-380` (constructor: record `self._owns_cancel_event`), `:2571-2576` (`run()` clear conditionally)
+- Modify: `lucnhan/agent/loop.py:355-380` (constructor: record `self._owns_cancel_event`), `:2571-2576` (`run()` clear conditionally)
 - Test: `tests/agent/test_agent_loop.py` (extend; search for existing cancel tests and follow their harness)
 
 **Interfaces:**
@@ -275,7 +275,7 @@ git commit -am "fix(agent): preserve inherited cancel event across subagent pipe
 ### Task 5: Stop `OPENAI_API_KEY` env fallback leaking to compat/GLM endpoints
 
 **Files:**
-- Modify: `rikugan/providers/openai_provider.py:169-171` (env fallback behind class attr)
+- Modify: `lucnhan/providers/openai_provider.py:169-171` (env fallback behind class attr)
 - Test: `tests/providers/test_openai_compat.py` (extend or create)
 
 **Interfaces:**
@@ -321,7 +321,7 @@ git commit -am "fix(providers): opt-in OPENAI_API_KEY env fallback; stop leak to
 ### Task 6: `save()` without password must not downgrade encrypted keys to plaintext
 
 **Files:**
-- Modify: `rikugan/core/config.py:282-296` (the `else` branch of the encryption block)
+- Modify: `lucnhan/core/config.py:282-296` (the `else` branch of the encryption block)
 - Test: `tests/core/test_config.py` (extend)
 
 **Interfaces:**
@@ -332,13 +332,13 @@ git commit -am "fix(providers): opt-in OPENAI_API_KEY env fallback; stop leak to
 
 ```python
 def test_save_without_password_preserves_encryption(tmp_path, monkeypatch):
-    cfg = RikuganConfig(config_dir=str(tmp_path))
+    cfg = LucNhanConfig(config_dir=str(tmp_path))
     cfg.provider.api_key = "sk-secret"
     cfg.encrypt_api_keys = True
     cfg.save(password="pw123")
     on_disk = json.loads((tmp_path / "config.json").read_text())
     assert on_disk["encryption"]["enabled"] is True
-    cfg2 = RikuganConfig(config_dir=str(tmp_path))
+    cfg2 = LucNhanConfig(config_dir=str(tmp_path))
     cfg2.load()
     cfg2.decrypt_stored_keys("pw123")
     cfg2.knowledge_show_retrieved_in_chat = True   # the panel_core.py:3655 path
@@ -381,7 +381,7 @@ git commit -am "fix(core): preserve encrypted API keys on password-less config s
 
 - [ ] `./ci-local.sh` green end-to-end
 - [ ] `git log --oneline` shows 6 commits on `fix/review-phase1`
-- [ ] Push branch + open PR to `master` (fork `EliteClassRoom/rikugan`)
+- [ ] Push branch + open PR to `master` (fork `EliteClassRoom/Luc-Nhan`)
 
 ## Out of scope (Phase 2 plan, separate doc)
 

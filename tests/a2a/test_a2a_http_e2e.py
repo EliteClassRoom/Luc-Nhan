@@ -31,8 +31,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.a2a.client import A2AClient, A2AClientConfig
-from rikugan.agent.a2a.types import A2ATaskStatus, ExternalAgentConfig
+from lucnhan.agent.a2a.client import A2AClient, A2AClientConfig
+from lucnhan.agent.a2a.types import A2ATaskStatus, ExternalAgentConfig
 
 # ---------------------------------------------------------------------------
 # Test fixtures: a thread-local HTTP server with a configurable handler

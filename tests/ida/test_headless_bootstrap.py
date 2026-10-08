@@ -20,7 +20,7 @@ class TestBootstrapCleanExit(unittest.TestCase):
 
     def test_clean_exit_writes_json_and_raises_system_exit(self):
         with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
-            from rikugan.ida.headless_bootstrap import _clean_exit_ida
+            from lucnhan.ida.headless_bootstrap import _clean_exit_ida
 
             with self.assertRaises(SystemExit):
                 _clean_exit_ida(1, "test error message")
@@ -33,7 +33,7 @@ class TestBootstrapCleanExit(unittest.TestCase):
 
     def test_clean_exit_no_message_no_json_output(self):
         with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
-            from rikugan.ida.headless_bootstrap import _clean_exit_ida
+            from lucnhan.ida.headless_bootstrap import _clean_exit_ida
 
             with self.assertRaises(SystemExit):
                 _clean_exit_ida(0, "")
@@ -43,7 +43,7 @@ class TestBootstrapCleanExit(unittest.TestCase):
 
     def test_clean_exit_code_propagates(self):
         with patch("sys.stdout", new_callable=io.StringIO):
-            from rikugan.ida.headless_bootstrap import _clean_exit_ida
+            from lucnhan.ida.headless_bootstrap import _clean_exit_ida
 
             with self.assertRaises(SystemExit) as ctx:
                 _clean_exit_ida(7, "exit seven")
@@ -61,10 +61,10 @@ class TestBootstrapMainErrorPaths(unittest.TestCase):
         return path
 
     def test_no_config_and_no_env_exits(self):
-        """No RIKUGAN_HEADLESS_BOOTSTRAP and no mode env → _clean_exit_ida(2)."""
+        """No LUCNHAN_HEADLESS_BOOTSTRAP and no mode env → _clean_exit_ida(2)."""
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(SystemExit) as ctx:
-                from rikugan.ida.headless_bootstrap import main
+                from lucnhan.ida.headless_bootstrap import main
                 main()
             self.assertEqual(ctx.exception.code, 2)
 
@@ -77,9 +77,9 @@ class TestBootstrapMainErrorPaths(unittest.TestCase):
         }
         cfg_path = self._write_config(config)
 
-        with patch.dict(os.environ, {"RIKUGAN_HEADLESS_BOOTSTRAP": cfg_path}):
+        with patch.dict(os.environ, {"LUCNHAN_HEADLESS_BOOTSTRAP": cfg_path}):
             with self.assertRaises(SystemExit) as ctx:
-                from rikugan.ida.headless_bootstrap import main
+                from lucnhan.ida.headless_bootstrap import main
                 main()
             self.assertEqual(ctx.exception.code, 2)
 
@@ -93,9 +93,9 @@ class TestBootstrapMainErrorPaths(unittest.TestCase):
         }
         cfg_path = self._write_config(config)
 
-        with patch.dict(os.environ, {"RIKUGAN_HEADLESS_BOOTSTRAP": cfg_path}):
+        with patch.dict(os.environ, {"LUCNHAN_HEADLESS_BOOTSTRAP": cfg_path}):
             with self.assertRaises(SystemExit) as ctx:
-                from rikugan.ida.headless_bootstrap import main
+                from lucnhan.ida.headless_bootstrap import main
                 main()
             self.assertEqual(ctx.exception.code, 2)
 
@@ -107,4 +107,4 @@ class TestBootstrapImports(unittest.TestCase):
 
     def test_import_headless_bootstrap(self):
         """headless_bootstrap is importable."""
-        import rikugan.ida.headless_bootstrap  # noqa: F401
+        import lucnhan.ida.headless_bootstrap  # noqa: F401

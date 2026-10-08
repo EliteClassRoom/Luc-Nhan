@@ -19,16 +19,16 @@ class TestEmulationAdvancedRegistration(unittest.TestCase):
     def setUp(self) -> None:
         # Reset cached module states so ``register_advanced_tools`` runs
         # fresh on each invocation.
-        if "rikugan.ida.tools.emulation" in sys.modules:
-            del sys.modules["rikugan.ida.tools.emulation"]
-        self.assertNotIn("rikugan.ida.tools.emulation", sys.modules)
+        if "lucnhan.ida.tools.emulation" in sys.modules:
+            del sys.modules["lucnhan.ida.tools.emulation"]
+        self.assertNotIn("lucnhan.ida.tools.emulation", sys.modules)
         # Force the advanced registry cache to reload every module name.
-        from rikugan.ida.tools import registry as ida_registry
+        from lucnhan.ida.tools import registry as ida_registry
 
         ida_registry.reset_failed_advanced_modules()
 
     def _fresh_registry(self):
-        from rikugan.ida.tools.registry import create_default_registry, register_advanced_tools
+        from lucnhan.ida.tools.registry import create_default_registry, register_advanced_tools
 
         registry = create_default_registry()
         register_advanced_tools(registry)
@@ -51,7 +51,7 @@ class TestEmulationAdvancedRegistration(unittest.TestCase):
 
     def test_schema_lists_tools_even_when_unicorn_is_hidden(self) -> None:
         """If Unicorn is missing the schema still advertises both tools."""
-        from rikugan.ida.tools.registry import create_default_registry, register_advanced_tools
+        from lucnhan.ida.tools.registry import create_default_registry, register_advanced_tools
 
         # Mock a missing Unicorn SDK.
         original_unicorn = sys.modules.pop("unicorn", None)

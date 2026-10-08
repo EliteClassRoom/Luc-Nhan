@@ -1,9 +1,9 @@
-"""Tests for rikugan.core.host standalone-testable functions."""
+"""Tests for lucnhan.core.host standalone-testable functions."""
 
 from __future__ import annotations
 
-import rikugan.core.host as host_mod
-from rikugan.core.host import (
+import lucnhan.core.host as host_mod
+from lucnhan.core.host import (
     HOST_IDA,
     HOST_STANDALONE,
     host_display_name,

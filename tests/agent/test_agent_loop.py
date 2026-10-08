@@ -17,11 +17,11 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.exploration_mode import ExplorationState
-from rikugan.agent.loop import AgentLoop, BackgroundAgentRunner
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import (
+from lucnhan.agent.exploration_mode import ExplorationState
+from lucnhan.agent.loop import AgentLoop, BackgroundAgentRunner
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import (
     Message,
     ModelInfo,
     ProviderCapabilities,
@@ -32,10 +32,10 @@ from rikugan.core.types import (
     TurnDisposition,
     TurnOutcome,
 )
-from rikugan.providers.base import LLMProvider
-from rikugan.state.session import SessionState
-from rikugan.tools.base import ParameterSchema, ToolDefinition
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.providers.base import LLMProvider
+from lucnhan.state.session import SessionState
+from lucnhan.tools.base import ParameterSchema, ToolDefinition
+from lucnhan.tools.registry import ToolRegistry
 
 
 class MockProvider(LLMProvider):
@@ -142,7 +142,7 @@ def _drain_generator_with_return(
 
 class TestAgentLoop(unittest.TestCase):
     def _make_loop(self, provider: MockProvider, tools: ToolRegistry | None = None, **kwargs: Any) -> AgentLoop:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False  # Skip IDA API calls
         session = SessionState(provider_name="mock", model_name="mock-model")
         return AgentLoop(
@@ -184,7 +184,7 @@ class TestAgentLoop(unittest.TestCase):
 
     def test_session_records_messages(self):
         provider = MockProvider(responses=[_text_response("Hi there")])
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState()
         loop = AgentLoop(provider, ToolRegistry(), config, session)
@@ -418,7 +418,7 @@ class TestAgentLoop(unittest.TestCase):
 
     def test_usage_tracked(self):
         provider = MockProvider(responses=[_text_response("Hi")])
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState()
         loop = AgentLoop(provider, ToolRegistry(), config, session)
@@ -436,7 +436,7 @@ class TestAgentLoop(unittest.TestCase):
 
     def test_usage_fallback_when_provider_omits_usage(self):
         provider = MockProvider(responses=[_text_response_no_usage("Hi")])
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState()
         loop = AgentLoop(provider, ToolRegistry(), config, session)
@@ -599,7 +599,7 @@ class TestAgentLoop(unittest.TestCase):
         already saw — the "chat bị ngắt đột ngột" symptom where text
         disappears and history has a gap.
         """
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         class BrokenStreamProvider(MockProvider):
             """Provider whose chat_stream yields partial text then raises a
@@ -640,7 +640,7 @@ class TestAgentLoop(unittest.TestCase):
         retry layer in _stream_llm_turn can handle it as before.  Catching
         it here would silently turn every cold-connection failure into a
         no-op turn."""
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         class ColdFailProvider(MockProvider):
             def chat_stream(
@@ -667,7 +667,7 @@ class TestAgentLoop(unittest.TestCase):
         'partial output' warning — it must become a CANCELLED event so the
         UI's cancellation UX works.  This guards the CancellationError
         re-raise branch in the new try/except."""
-        from rikugan.core.errors import CancellationError
+        from lucnhan.core.errors import CancellationError
 
         class CancelMidStreamProvider(MockProvider):
             def chat_stream(
@@ -690,7 +690,7 @@ class TestAgentLoop(unittest.TestCase):
         """If the stream breaks after some tool calls completed (is_tool_call_end
         seen) but before the turn finished, completed tool calls are preserved
         and executed; an incomplete tool call (only start, no end) is dropped."""
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         registry = ToolRegistry()
         registry.register(
@@ -837,7 +837,7 @@ class TestAgentLoop(unittest.TestCase):
         assert outcome.disposition == TurnDisposition.TRUNCATED_PARTIAL_TOOL_USE
 
     def test_stream_turn_returns_stream_broken_outcome(self):
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         class BrokenStreamProvider(MockProvider):
             def chat_stream(
@@ -863,7 +863,7 @@ class TestAgentLoop(unittest.TestCase):
         transient connection drop. The provider's prefill noise was
         shown to the user as a complete answer, which was wrong.
         """
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         call_count = {"n": 0}
 
@@ -997,7 +997,7 @@ class TestAgentLoop(unittest.TestCase):
         """
         from unittest.mock import MagicMock, patch
 
-        from rikugan.memory.context import NORMAL_BUDGET, budget_from_config
+        from lucnhan.memory.context import NORMAL_BUDGET, budget_from_config
 
         provider = MockProvider(responses=[_text_response("done")])
         loop = self._make_loop(provider)
@@ -1018,11 +1018,11 @@ class TestAgentLoop(unittest.TestCase):
         mock_service.repository = mock_repo
         loop.memory_service = mock_service
 
-        with patch("rikugan.memory.sqlite_retrieval.repository_to_retrieval_pack") as pack_mock:
+        with patch("lucnhan.memory.sqlite_retrieval.repository_to_retrieval_pack") as pack_mock:
             # Return value must look like a RetrievalPack-shaped object so
             # ``build_section_from_pack`` / ``build_retrieval_metadata`` do
             # not blow up downstream.
-            from rikugan.memory.retrieve import RetrievalPack
+            from lucnhan.memory.retrieve import RetrievalPack
 
             pack_mock.return_value = RetrievalPack(
                 memories=[],
@@ -1071,7 +1071,7 @@ class TestAgentLoop(unittest.TestCase):
         loop.memory_service = None
 
         # Patch make_store so we don't actually touch the filesystem.
-        with patch("rikugan.memory.ingest.make_store") as make_store_mock:
+        with patch("lucnhan.memory.ingest.make_store") as make_store_mock:
             make_store_mock.return_value = (None, None)
             section = loop._build_retrieved_knowledge_section(
                 current_address="0x401000",
@@ -1113,7 +1113,7 @@ class TestAgentLoop(unittest.TestCase):
 
 class TestStreamOutcomeGuardIntegration(unittest.TestCase):
     def _make_loop(self, provider, tools=None):
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState(provider_name="mock", model_name="mock-model")
         return AgentLoop(provider=provider, tool_registry=tools or ToolRegistry(), config=config, session=session)
@@ -1165,7 +1165,7 @@ class TestStreamOutcomeGuardIntegration(unittest.TestCase):
                 return "glm"
 
         # Configure GLM with low ceiling for faster trigger
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.provider.extra = {"dialect": "glm", "degeneration_guard": {"reasoning_token_ceiling": 1024}}
 
@@ -1218,7 +1218,7 @@ class TestStreamOutcomeGuardIntegration(unittest.TestCase):
             def name(self):
                 return "glm"
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.provider.extra = {"dialect": "glm", "degeneration_guard": {"reasoning_token_ceiling": 1024}}
 
@@ -1253,7 +1253,7 @@ class TestStreamOutcomeGuardIntegration(unittest.TestCase):
     def test_invalid_glm_extra_raises_not_silently_skipped(self):
         """Invalid GLM config values must surface as ValueError, not be
         silently swallowed by a broad except in _maybe_create_guard."""
-        from rikugan.core.glm_config import parse_glm_extra
+        from lucnhan.core.glm_config import parse_glm_extra
 
         # An invalid reasoning_token_ceiling (string instead of int) must raise.
         invalid_extra = {"dialect": "glm", "degeneration_guard": {"reasoning_token_ceiling": "not_an_int"}}
@@ -1268,7 +1268,7 @@ class TestStreamOutcomeGuardIntegration(unittest.TestCase):
             def name(self):
                 return "glm"
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.provider.extra = invalid_extra
 
@@ -1314,7 +1314,7 @@ def _make_glm_loop(
     tools: ToolRegistry | None = None,
 ) -> AgentLoop:
     """Create an AgentLoop configured as GLM with the given scripted responses."""
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config.auto_context = False
     config.provider.extra = {
         "dialect": "glm",
@@ -1423,7 +1423,7 @@ class TestGLMStrictPartialToolCalls(unittest.TestCase):
         assert discarded[0].tool_call_id == "call_1"
 
     def test_non_glm_keeps_malformed_json_fallback(self):
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState(provider_name="mock", model_name="mock-model")
         registry = _echo_registry()
@@ -1526,7 +1526,7 @@ class TestGLMPartialToolCallPersistence(unittest.TestCase):
 
     def test_one_safe_call_plus_one_incomplete_persists_one_to_one(self):
         registry = _echo_registry()
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.provider.extra = {
             "dialect": "glm",
@@ -1553,7 +1553,7 @@ class TestGLMPartialToolCallPersistence(unittest.TestCase):
         )
         tools_schema = registry.to_provider_format()
 
-        from rikugan.agent.modes.turn_helpers import execute_single_turn
+        from lucnhan.agent.modes.turn_helpers import execute_single_turn
 
         list(execute_single_turn(loop, "system", tools_schema))
 
@@ -1571,7 +1571,7 @@ class TestGLMPartialToolCallPersistence(unittest.TestCase):
 class TestBackgroundAgentRunner(unittest.TestCase):
     def test_run_in_background(self):
         provider = MockProvider(responses=[_text_response("Background response")])
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState()
         loop = AgentLoop(provider, ToolRegistry(), config, session)
@@ -1597,7 +1597,7 @@ class TestSkillInvocation(unittest.TestCase):
         """Test that /slug messages get rewritten with skill body."""
         import tempfile
 
-        from rikugan.skills.registry import SkillRegistry
+        from lucnhan.skills.registry import SkillRegistry
 
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "test-skill")
@@ -1609,7 +1609,7 @@ class TestSkillInvocation(unittest.TestCase):
             registry.discover()
 
             provider = MockProvider(responses=[_text_response("Skill response")])
-            config = RikuganConfig()
+            config = LucNhanConfig()
             config.auto_context = False
             session = SessionState()
             loop = AgentLoop(provider, ToolRegistry(), config, session, skill_registry=registry)
@@ -1633,7 +1633,7 @@ class TestProfileEnforcement(unittest.TestCase):
         tools: ToolRegistry = None,
         custom_profiles: dict | None = None,
     ) -> AgentLoop:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.active_profile = profile_name
         if custom_profiles:
@@ -1648,7 +1648,7 @@ class TestProfileEnforcement(unittest.TestCase):
 
     def test_private_profile_skips_binary_info(self):
         """Private profile should not call get_binary_info."""
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = True  # Enable auto-context
         config.active_profile = "private"
 
@@ -1691,7 +1691,7 @@ class TestProfileEnforcement(unittest.TestCase):
         )
 
         # Use private profile which has all ioc_filters enabled
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.active_profile = "private"
         session = SessionState(provider_name="mock", model_name="mock-model")
@@ -1776,7 +1776,7 @@ class TestProfileEnforcement(unittest.TestCase):
                 "ioc_filters": {"hashes": True, "ipv4": False, "urls": False},
             }
         }
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.active_profile = "hash-only"
         config.custom_profiles = custom_profiles
@@ -1824,7 +1824,7 @@ class TestProfileEnforcement(unittest.TestCase):
                 ],
             }
         }
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.active_profile = "custom-rules"
         config.custom_profiles = custom_profiles
@@ -1861,7 +1861,7 @@ class TestProfileEnforcement(unittest.TestCase):
             )
         )
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         config.active_profile = "default"
         session = SessionState(provider_name="mock", model_name="mock-model")
@@ -1950,7 +1950,7 @@ class TestReasoningRunnerCoalescing(unittest.TestCase):
                 return True
 
         provider = MockProvider(responses=[_text_response("x")])
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState()
         loop = AgentLoop(provider, ToolRegistry(), config, session)
@@ -2003,7 +2003,7 @@ class TestReasoningRunnerCoalescing(unittest.TestCase):
 
         events: list[TurnEvent] = []
         provider = MockProvider(responses=[_text_response("x")])
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState()
         loop = AgentLoop(provider, ToolRegistry(), config, session)
@@ -2031,7 +2031,7 @@ class TestReasoningRunnerCoalescing(unittest.TestCase):
         must be obtainable before TEXT_DONE arrives, proving streaming
         latency is preserved."""
         provider = MockProvider(responses=[_text_response("x")])
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState()
         loop = AgentLoop(provider, ToolRegistry(), config, session)
@@ -2071,7 +2071,7 @@ class TestReasoningRunnerCoalescing(unittest.TestCase):
         import queue as queue_mod
 
         provider = MockProvider(responses=[_text_response("x")])
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState()
         loop = AgentLoop(provider, ToolRegistry(), config, session)
@@ -2106,7 +2106,7 @@ class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
 
     def _make_loop(self) -> AgentLoop:
         provider = MockProvider(responses=[_text_response("x")])
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState()
         return AgentLoop(provider, ToolRegistry(), config, session)
@@ -2330,7 +2330,7 @@ class TestMaxTurnsHardCeiling(unittest.TestCase):
     def _make_loop(
         self, provider: MockProvider, tools: ToolRegistry | None = None, max_turns: int | None = None
     ) -> AgentLoop:
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.auto_context = False
         session = SessionState(provider_name="mock", model_name="mock-model")
         kwargs: dict[str, Any] = {}
@@ -2346,7 +2346,7 @@ class TestMaxTurnsHardCeiling(unittest.TestCase):
 
     def test_loop_tool_loop_stops_at_max_turns_3(self) -> None:
         """A provider that always emits tool calls must terminate at turn 3."""
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from lucnhan.tools.base import ParameterSchema, ToolDefinition
 
         registry = ToolRegistry()
         registry.register(
@@ -2377,7 +2377,7 @@ class TestMaxTurnsHardCeiling(unittest.TestCase):
     def test_loop_default_uses_legacy_100_ceiling(self) -> None:
         """Without ``max_turns`` the loop keeps the 100-turn ceiling
         (no behavioural regression for the top-level agent)."""
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from lucnhan.tools.base import ParameterSchema, ToolDefinition
 
         registry = ToolRegistry()
         registry.register(
@@ -2407,7 +2407,7 @@ class TestMaxTurnsHardCeiling(unittest.TestCase):
         call, then the ceiling fires on the second iteration — exactly
         one ``TURN_END`` and one ``max turns`` ERROR.
         """
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from lucnhan.tools.base import ParameterSchema, ToolDefinition
 
         registry = ToolRegistry()
         registry.register(

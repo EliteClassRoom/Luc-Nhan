@@ -1,4 +1,4 @@
-"""Tests for rikugan.ui.panel_core — pure logic helpers."""
+"""Tests for lucnhan.ui.panel_core — pure logic helpers."""
 
 from __future__ import annotations
 
@@ -11,21 +11,21 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 # Install the lightweight ``PySide6`` stubs BEFORE importing any
-# rikugan module.  The conftest hook uninstalls those stubs
+# lucnhan module.  The conftest hook uninstalls those stubs
 # (and re-imports the real C extension) for the *next* test
 # module's collection, so sibling tests that need real Qt
-# (e.g. ``rikugan/tests/test_chat_view_async_restore.py``)
+# (e.g. ``lucnhan/tests/test_chat_view_async_restore.py``)
 # pick up the real classes even when this file runs first.
 from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
 
-# Stub heavy rikugan submodules.  We only stub the *names* that
+# Stub heavy lucnhan submodules.  We only stub the *names* that
 # the production code under test imports, and only as MagicMock —
 # real classes from the real modules are not needed because the
 # tests in this module exercise static helpers (``_export_*``) and
-# build a bare ``RikuganPanelCore`` via ``object.__new__`` so its
+# build a bare ``LucNhanPanelCore`` via ``object.__new__`` so its
 # constructor (which would touch every heavy dependency) is bypassed.
 #
 # Each stub uses a ``__getattr__`` fallback so that ANY missing
@@ -40,66 +40,66 @@ class _StubModule(types.ModuleType):
         return m
 
 
-# Snapshot the real rikugan modules BEFORE we install the stubs below,
+# Snapshot the real lucnhan modules BEFORE we install the stubs below,
 # so a module-level pytest fixture can restore them after this test
 # module finishes.  Without this snapshot/restore pair, the stubs we
 # install at import time would leak into sibling test modules and
-# break tests that touch the real rikugan modules (e.g. provider
+# break tests that touch the real lucnhan modules (e.g. provider
 # tests that construct ``AnthropicProvider`` / ``OpenAIProvider``).
 _STUBBED_MODULES = [
-    "rikugan.ui.styles",
-    "rikugan.ui.chat_view",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.markdown",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.applicator",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.core.config",
-    "rikugan.core.logging",
-    "rikugan.core.types",
-    "rikugan.core.host",
-    "rikugan.agent.turn",
-    "rikugan.agent.mutation",
-    "rikugan.providers.auth_cache",
-    "rikugan.providers.anthropic_provider",
-    "rikugan.providers.ollama_provider",
-    "rikugan.providers.registry",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.chat_view",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
+    "lucnhan.ui.tool_widgets",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.markdown",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.applicator",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.core.config",
+    "lucnhan.core.logging",
+    "lucnhan.core.types",
+    "lucnhan.core.host",
+    "lucnhan.agent.turn",
+    "lucnhan.agent.mutation",
+    "lucnhan.providers.auth_cache",
+    "lucnhan.providers.anthropic_provider",
+    "lucnhan.providers.ollama_provider",
+    "lucnhan.providers.registry",
 ]
 _STUBBED_MODULE_BACKUPS: dict[str, object] = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
 
 
 for _mod_name in [
-    "rikugan.ui.styles",
-    "rikugan.ui.chat_view",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.markdown",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.applicator",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.core.config",
-    "rikugan.core.logging",
-    "rikugan.core.types",
-    "rikugan.core.host",
-    "rikugan.agent.turn",
-    "rikugan.agent.mutation",
-    "rikugan.providers.auth_cache",
-    "rikugan.providers.anthropic_provider",
-    "rikugan.providers.ollama_provider",
-    "rikugan.providers.registry",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.chat_view",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
+    "lucnhan.ui.tool_widgets",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.markdown",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.applicator",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.core.config",
+    "lucnhan.core.logging",
+    "lucnhan.core.types",
+    "lucnhan.core.host",
+    "lucnhan.agent.turn",
+    "lucnhan.agent.mutation",
+    "lucnhan.providers.auth_cache",
+    "lucnhan.providers.anthropic_provider",
+    "lucnhan.providers.ollama_provider",
+    "lucnhan.providers.registry",
 ]:
     # Always (re)install the stub.  Other test files may have left
     # partial stubs in sys.modules that lack the names this module
@@ -114,7 +114,7 @@ for _mod_name in [
         "InputArea",
         "ContextBar",
         "_SharedSpinnerTimer",
-        "RikuganConfig",
+        "LucNhanConfig",
         "log_error",
         "log_info",
         "log_debug",
@@ -133,7 +133,7 @@ for _mod_name in [
     sys.modules[_mod_name] = _stub
 
 # Ensure DEFAULT_OLLAMA_URL is a string (used in comparisons)
-_ollama_stub = sys.modules.get("rikugan.providers.ollama_provider")
+_ollama_stub = sys.modules.get("lucnhan.providers.ollama_provider")
 if _ollama_stub and not isinstance(getattr(_ollama_stub, "DEFAULT_OLLAMA_URL", None), str):
     _ollama_stub.DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
@@ -193,43 +193,43 @@ class _StubThemeManager:
         cls._instance = None
 
 
-_tm_stub = sys.modules.get("rikugan.ui.theme.manager")
+_tm_stub = sys.modules.get("lucnhan.ui.theme.manager")
 if _tm_stub is not None:
     _tm_stub.ThemeManager = _StubThemeManager
 
 # Force-remove any stub that test_ida_panel may have registered
 # so we always import the real module here.
-sys.modules.pop("rikugan.ui.panel_core", None)
+sys.modules.pop("lucnhan.ui.panel_core", None)
 
-# Pytest fixture that restores the real rikugan modules after this
+# Pytest fixture that restores the real lucnhan modules after this
 # test module finishes.  The fixtures below are module-scoped so
 # they run exactly once per ``test_panel_core.py`` collection cycle,
 # and they use the ``_STUBBED_MODULE_BACKUPS`` snapshot taken at
 # import time to put the real modules back in ``sys.modules``.
 #
 # Without this fixture, the MagicMock stubs installed above leak
-# into sibling test modules and poison ``rikugan.core.config``,
-# ``rikugan.providers.registry``, and other modules for every
+# into sibling test modules and poison ``lucnhan.core.config``,
+# ``lucnhan.providers.registry``, and other modules for every
 # downstream test — which is exactly the kind of test-isolation
 # regression that makes headless / provider tests fail when run
 # after a panel-core test in the same pytest invocation.
 import pytest
 
-from rikugan.ui.export_formatting import (
+from lucnhan.ui.export_formatting import (
     _TOOL_RESULT_TRUNCATE_CHARS,
     _export_detect_lang,
     _export_format_tool_args,
     _export_format_tool_result,
 )
-from rikugan.ui.panel_core import (
-    RikuganPanelCore,
+from lucnhan.ui.panel_core import (
+    LucNhanPanelCore,
 )
 from tests.qt_real import live_class
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _restore_rikugan_modules_after_panel_core_tests():
-    """Restore the real rikugan modules once this test module finishes."""
+def _restore_lucnhan_modules_after_panel_core_tests():
+    """Restore the real lucnhan modules once this test module finishes."""
     yield
     _cleanup_temp_configs()
     for name, original in _STUBBED_MODULE_BACKUPS.items():
@@ -390,7 +390,7 @@ _TMP_CONFIG_DIRS: list[str] = []
 
 
 def _temp_config():
-    """A ``RikuganConfig`` rooted at a throwaway directory.
+    """A ``LucNhanConfig`` rooted at a throwaway directory.
 
     A bare ``MagicMock()`` cannot stand in here: ``SessionHistory``
     does ``os.makedirs(os.path.join(config.checkpoints_dir,
@@ -399,10 +399,10 @@ def _temp_config():
     worker mkdirs junk inside the repo root.  Real config + real
     tempdir keeps every write outside the working tree.
     """
-    from rikugan.core.config import RikuganConfig
+    from lucnhan.core.config import LucNhanConfig
 
-    cfg = RikuganConfig()
-    cfg._config_dir = tempfile.mkdtemp(prefix="rikugan-panel-cfg-")
+    cfg = LucNhanConfig()
+    cfg._config_dir = tempfile.mkdtemp(prefix="lucnhan-panel-cfg-")
     _TMP_CONFIG_DIRS.append(cfg._config_dir)
     return cfg
 
@@ -414,15 +414,15 @@ def _cleanup_temp_configs() -> None:
 
 def _make_panel():
     # Use the class's own ``__new__`` rather than ``object.__new__``.
-    # ``RikuganPanelCore`` inherits from a C-level Qt class
+    # ``LucNhanPanelCore`` inherits from a C-level Qt class
     # (``QWidget``), and ``object.__new__`` is rejected on C-level
     # subclasses with a ``TypeError`` — use
-    # ``RikuganPanelCore.__new__(RikuganPanelCore)`` which delegates
+    # ``LucNhanPanelCore.__new__(LucNhanPanelCore)`` which delegates
     # to the C-level allocator.  The same idiom is used in
     # ``test_chat_view.py`` and ``test_settings_dialog.py``; keeping
     # the form consistent avoids surprises when real PySide6 has
     # been loaded by a sibling test in the same session.
-    panel = RikuganPanelCore.__new__(RikuganPanelCore)
+    panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
     panel._is_shutdown = False
     panel._polling = False
     panel._pending_answer = False
@@ -641,7 +641,7 @@ class TestOnUndoRequested(unittest.TestCase):
 
 
 class TestOnOrchestraApproval(unittest.TestCase):
-    """Regression tests for ``RikuganPanelCore._on_orchestra_approval``.
+    """Regression tests for ``LucNhanPanelCore._on_orchestra_approval``.
 
     The orchestra / agent-handoff path uses a different approval queue
     inside the agent loop (``_approval_queue``) than regular tool
@@ -848,7 +848,7 @@ class TestUpdateTokenDisplay(unittest.TestCase):
 
 
 class TestCreateTabSignalWiring(unittest.TestCase):
-    """``RikuganPanelCore._create_tab`` must use ``ChatView`` signals.
+    """``LucNhanPanelCore._create_tab`` must use ``ChatView`` signals.
 
     Older revisions of ``_create_tab`` called
     ``chat_view.set_tool_approval_callback(...)`` and
@@ -866,7 +866,7 @@ class TestCreateTabSignalWiring(unittest.TestCase):
         """Build a panel whose ``_create_tab`` can be invoked.
 
         We rely on the test-file-level stub of
-        ``rikugan.ui.chat_view``: the stub's ``ChatView`` attribute
+        ``lucnhan.ui.chat_view``: the stub's ``ChatView`` attribute
         is a plain ``MagicMock``, so ``ChatView()`` returns a fresh
         ``MagicMock`` instance.  Production ``_create_tab`` runs
         against that mock — and we then assert on the side
@@ -995,20 +995,20 @@ class TestShutdownDisconnectsThemeChanged(unittest.TestCase):
     def setUp(self) -> None:
         # Sibling test files (notably
         # ``tests/tools/test_settings_dialog.py``) re-import the
-        # *real* ``rikugan.ui.theme.manager`` so they can exercise
+        # *real* ``lucnhan.ui.theme.manager`` so they can exercise
         # the production ``ThemeManager`` singleton.  When those
         # tests run before us in the same session, the real
-        # module is what ``from rikugan.ui.theme.manager import
+        # module is what ``from lucnhan.ui.theme.manager import
         # ThemeManager`` resolves to here.  Force the stub back
         # into place so the test can observe connect/disconnect
         # against the in-test ``_StubThemeSignal``.
-        sys.modules.pop("rikugan.ui.theme.manager", None)
-        _tm_stub = _StubModule("rikugan.ui.theme.manager")
+        sys.modules.pop("lucnhan.ui.theme.manager", None)
+        _tm_stub = _StubModule("lucnhan.ui.theme.manager")
         _tm_stub.ThemeManager = _StubThemeManager
-        sys.modules["rikugan.ui.theme.manager"] = _tm_stub
+        sys.modules["lucnhan.ui.theme.manager"] = _tm_stub
 
     def test_shutdown_disconnects_theme_changed(self) -> None:
-        from rikugan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.manager import ThemeManager
 
         # Reset the ThemeManager singleton so we control its
         # signal listeners.
@@ -1058,7 +1058,7 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
     """
 
     def test_tab_constants_match_index_order(self):
-        from rikugan.ui.tools_panel import ToolsPanel
+        from lucnhan.ui.tools_panel import ToolsPanel
 
         self.assertEqual(ToolsPanel.TAB_AGENTS, 0)
         self.assertEqual(ToolsPanel.TAB_A2A, 1)
@@ -1070,7 +1070,7 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
 
     def test_replacing_current_tab_does_not_reenter_activation_callback(self):
         """Replacing a selected lazy tab must not recursively initialize it."""
-        from rikugan.ui.tools_panel import ToolsPanel
+        from lucnhan.ui.tools_panel import ToolsPanel
 
         class _Tabs:
             def __init__(self) -> None:
@@ -1114,8 +1114,8 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         self.assertFalse(tools_panel._tabs._signals_blocked)
 
     def test_tab_initializer_keys_match_constants(self):
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
-        from rikugan.ui.tools_panel import ToolsPanel
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
+        from lucnhan.ui.tools_panel import ToolsPanel
 
         initializers = panel._TAB_INITIALIZERS
         # No renamer initializer should be reachable by tab index.
@@ -1137,7 +1137,7 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
 
     def test_show_tools_panel_defaults_to_knowledge(self):
         """Calling ``show_tools_panel`` without arguments opens Knowledge."""
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._mode_bar = MagicMock()
         panel._tools_form = None
@@ -1146,7 +1146,7 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         panel._ensure_tools_panel_created = MagicMock()
 
         # Build a fake ToolsPanel whose ``_tabs`` we can spy on.
-        from rikugan.ui.tools_panel import ToolsPanel
+        from lucnhan.ui.tools_panel import ToolsPanel
 
         fake_panel = MagicMock()
         fake_panel._tabs.currentIndex.return_value = ToolsPanel.TAB_A2A
@@ -1164,9 +1164,9 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
 
     def test_show_tools_panel_falls_back_for_unknown_index(self):
         """Out-of-range and explicit renamer indices fall back to Knowledge."""
-        from rikugan.ui.tools_panel import ToolsPanel
+        from lucnhan.ui.tools_panel import ToolsPanel
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._mode_bar = MagicMock()
         panel._tools_form = None
@@ -1191,7 +1191,7 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
 
     def test_no_renamer_widget_or_engine_attributes_on_panel(self):
         """Panel must not lazily construct renamer widgets, engines, or timers."""
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         self.assertFalse(
             hasattr(panel, "_bulk_renamer"),
             "_bulk_renamer attribute should be gone after the renamer removal.",
@@ -1206,11 +1206,11 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
 
     def test_theme_refresh_iterates_only_active_tabs(self):
         """The theme refresh loop should no longer touch a renamer widget."""
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._bulk_renamer = None
         # Look for any ``_bulk_renamer`` mention in the theme refresh
         # code path. The active attribute list is the simplest check.
-        from rikugan.ui import panel_core as pc
+        from lucnhan.ui import panel_core as pc
 
         # The expected active attribute list is documented inline at
         # the loop site; verify no ``_bulk_renamer`` is iterated.
@@ -1267,9 +1267,9 @@ class TestStartupAutoRestore(unittest.TestCase):
     def _source(self):
         import inspect
 
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        return inspect.getsource(RikuganPanelCore._build_ui)
+        return inspect.getsource(LucNhanPanelCore._build_ui)
 
     def test_build_ui_arms_probe_via_qtimer_single_shot(self) -> None:
         """``_build_ui`` must defer the probe via ``QTimer.singleShot(0, ...)``.
@@ -1337,9 +1337,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         startup branch) is the one that runs; an alternate path that
         talked to ``_ctrl`` directly would bypass the filter.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
-        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
         panel._is_shutdown = False
         panel._history_panel = MagicMock(name="history_panel")
         panel._history_panel.isVisible.return_value = False
@@ -1360,9 +1360,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         first event-loop turn should not let the probe double-fire on top
         of their explicit request.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
-        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
         panel._is_shutdown = False
         panel._history_panel = MagicMock(name="history_panel")
         panel._history_panel.isVisible.return_value = False
@@ -1379,9 +1379,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         """Re-arming the probe would race a second list submit at a
         different generation.  The helper is idempotent.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
-        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
         panel._is_shutdown = False
         panel._history_panel = MagicMock(name="history_panel")
         panel._history_panel.isVisible.return_value = False
@@ -1398,9 +1398,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         deferred slot that fires during teardown cannot leak a worker
         onto the executor that ``_invalidate_history`` already tore down.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
-        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
         panel._is_shutdown = True
         panel._history_panel = MagicMock(name="history_panel")
         panel._history_pending = False
@@ -1416,9 +1416,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         """A test fixture / partial ``_build_ui`` without ``_history_panel``
         must not submit — there is no UI surface for the worker result.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
-        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
         panel._is_shutdown = False
         panel._history_panel = None
         panel._history_pending = False
@@ -1435,9 +1435,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         land: yield to them and render the list normally instead of
         silently swapping the draft for a session they did not pick.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
-        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
         panel._history_panel = MagicMock(name="history_panel")
         panel._history_panel.isVisible.return_value = True  # user opened it
         panel._startup_restore_pending = True
@@ -1469,13 +1469,13 @@ class TestStartupAutoRestore(unittest.TestCase):
         startup probe must leave the blank draft tab intact with no
         error copy surfaced.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
         for status in (
             HistoryRequestStatus.SAVE_FLUSH_TIMEOUT,
             HistoryRequestStatus.FAILED,
         ):
-            panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+            panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
             panel._history_panel = MagicMock(name="history_panel")
             panel._history_panel.isVisible.return_value = False
             panel._startup_restore_pending = True
@@ -1497,9 +1497,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         """A successful LISTED with zero entries must leave the blank
         draft tab intact — nothing to restore for this IDB.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
-        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
         panel._history_panel = MagicMock(name="history_panel")
         panel._history_panel.isVisible.return_value = False
         panel._startup_restore_pending = True
@@ -1521,9 +1521,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         newest-by-updated_at session and set the load-pending flag so
         ``_apply_history_loaded`` can suppress non-LOADED copy.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
-        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
         panel._history_panel = MagicMock(name="history_panel")
         panel._history_panel.isVisible.return_value = False
         panel._startup_restore_pending = True
@@ -1562,7 +1562,7 @@ class TestStartupAutoRestore(unittest.TestCase):
         """A startup LOAD that lands NOT_FOUND / WRONG_IDB / EMPTY / FAILED
         must leave the blank draft tab intact with no error copy.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
         for status in (
             HistoryRequestStatus.NOT_FOUND,
@@ -1570,7 +1570,7 @@ class TestStartupAutoRestore(unittest.TestCase):
             HistoryRequestStatus.EMPTY,
             HistoryRequestStatus.FAILED,
         ):
-            panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+            panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
             panel._history_panel = MagicMock(name="history_panel")
             panel._history_panel.isVisible.return_value = False
             panel._startup_restore_pending = False
@@ -1600,9 +1600,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         session silently and re-submit a list so the user sees rows
         instead of an empty spinner forever.
         """
-        import rikugan.ui.panel_core as _pc_module
+        import lucnhan.ui.panel_core as _pc_module
 
-        panel = _pc_module.RikuganPanelCore.__new__(_pc_module.RikuganPanelCore)
+        panel = _pc_module.LucNhanPanelCore.__new__(_pc_module.LucNhanPanelCore)
         panel._history_panel = MagicMock(name="history_panel")
         panel._history_panel.isVisible.return_value = True  # user opened it
         panel._startup_restore_pending = False
@@ -1635,9 +1635,9 @@ class TestStartupAutoRestore(unittest.TestCase):
         """
         import inspect
 
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        source = inspect.getsource(RikuganPanelCore.on_database_changed)
+        source = inspect.getsource(LucNhanPanelCore.on_database_changed)
         self.assertNotIn(
             "_arm_startup_restore_if_idle",
             source,
@@ -1664,9 +1664,9 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
     def test_chat_splitter_wraps_main_and_input(self) -> None:
         import inspect
 
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
-        source = inspect.getsource(RikuganPanelCore._build_ui)
+        source = inspect.getsource(LucNhanPanelCore._build_ui)
         # The vertical chat splitter must be created before either pane
         # is added, and the main conversation area + input section must
         # both be added to it (not the chat layout directly).
@@ -1724,7 +1724,7 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
         """
         import inspect
 
-        from rikugan.ui.input_area import InputArea
+        from lucnhan.ui.input_area import InputArea
 
         source = inspect.getsource(InputArea.__init__)
         self.assertIn(
@@ -1754,7 +1754,7 @@ class TestOnDatabaseChangedNoRestore(unittest.TestCase):
     """
 
     def _make_panel(self):
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._polling = False
         panel._pending_answer = False
@@ -1858,7 +1858,7 @@ class TestOnDatabaseChangedNoRestore(unittest.TestCase):
 
 
 def _make_history_panel():
-    """Build a bare ``RikuganPanelCore`` with the Task-8 history fields.
+    """Build a bare ``LucNhanPanelCore`` with the Task-8 history fields.
 
     Mirrors ``_make_panel`` but also seeds the new history-coordinator
     fields listed in the brief so ``_show_right_panel`` /
@@ -1868,13 +1868,13 @@ def _make_history_panel():
     import queue
     import threading
 
-    # Resolve at call time: ``tests.conftest.purge_rikugan_stubs`` drops
-    # ``rikugan.ui.panel_core`` from :data:`sys.modules` between tests, so
+    # Resolve at call time: ``tests.conftest.purge_lucnhan_stubs`` drops
+    # ``lucnhan.ui.panel_core`` from :data:`sys.modules` between tests, so
     # the import-time binding above can name a dead module object.  The
     # live class's ``_history_list_worker`` resolves ``SessionHistory``
     # through its OWN module globals, so only the live class makes
     # ``_patch_session_history`` reach production code.
-    panel_core_cls = live_class("rikugan.ui.panel_core.RikuganPanelCore")
+    panel_core_cls = live_class("lucnhan.ui.panel_core.LucNhanPanelCore")
     panel = panel_core_cls.__new__(panel_core_cls)
     panel._is_shutdown = False
     panel._polling = False
@@ -1924,16 +1924,16 @@ def _make_history_panel():
 
 
 def _live_panel_core_globals() -> dict:
-    """Namespace holding the ``RikuganPanelCore`` the live tree uses.
+    """Namespace holding the ``LucNhanPanelCore`` the live tree uses.
 
-    ``tests.conftest.purge_rikugan_stubs`` drops ``rikugan.ui.panel_core``
+    ``tests.conftest.purge_lucnhan_stubs`` drops ``lucnhan.ui.panel_core``
     from :data:`sys.modules` between tests, so the module object bound
     at import time here can be a dead one — patching its attributes
     would never reach the function the panel actually calls.
     Resolving per call and reading ``__globals__`` off the live class
     yields the namespace production code looks ``SessionHistory`` up in.
     """
-    return live_class("rikugan.ui.panel_core.RikuganPanelCore")._history_list_worker.__globals__
+    return live_class("lucnhan.ui.panel_core.LucNhanPanelCore")._history_list_worker.__globals__
 
 
 @contextlib.contextmanager
@@ -2136,7 +2136,7 @@ class TestHistoryListWorker(unittest.TestCase):
         return panel
 
     def test_worker_enqueues_listed_result(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryRequestStatus,
             HistoryScope,
         )
@@ -2160,7 +2160,7 @@ class TestHistoryListWorker(unittest.TestCase):
         self.assertEqual(tuple(result.entries), tuple(entries))
 
     def test_worker_enqueues_save_flush_timeout(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryRequestStatus,
             HistoryScope,
         )
@@ -2178,7 +2178,7 @@ class TestHistoryListWorker(unittest.TestCase):
         self.assertEqual(tuple(result.entries), ())
 
     def test_worker_enqueues_failed_on_exception(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryRequestStatus,
             HistoryScope,
         )
@@ -2209,7 +2209,7 @@ class TestHistoryListWorker(unittest.TestCase):
         """
         import threading
 
-        from rikugan.state.history_types import HistoryScope
+        from lucnhan.state.history_types import HistoryScope
 
         panel = self._make_panel_for_worker()
         closing_event = threading.Event()
@@ -2226,7 +2226,7 @@ class TestHistoryDrain(unittest.TestCase):
     """Drain is the only method calling ``set_entries``/``set_error`` (spec §8.1)."""
 
     def test_drain_applies_listed_result(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryRequestStatus,
             HistoryScope,
@@ -2272,7 +2272,7 @@ class TestHistoryDrain(unittest.TestCase):
 
     def test_drain_drops_stale_generation(self) -> None:
         """A result whose scope generation differs is silently dropped."""
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryRequestStatus,
             HistoryScope,
@@ -2293,7 +2293,7 @@ class TestHistoryDrain(unittest.TestCase):
         panel._history_panel.set_error.assert_not_called()
 
     def test_drain_reports_save_flush_timeout(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryRequestStatus,
             HistoryScope,
@@ -2313,7 +2313,7 @@ class TestHistoryDrain(unittest.TestCase):
         self.assertFalse(panel._history_pending)
 
     def test_drain_reports_failed(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryRequestStatus,
             HistoryScope,
@@ -2345,7 +2345,7 @@ class TestHistoryDrain(unittest.TestCase):
 
     def test_drain_failed_with_empty_error_uses_generic_copy(self) -> None:
         """Reviewer point #3: empty error string still renders generic copy."""
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryRequestStatus,
             HistoryScope,
@@ -2370,7 +2370,7 @@ class TestHistoryDrain(unittest.TestCase):
 
     def test_drain_noop_when_shutdown(self) -> None:
         """Drain must return immediately when ``_is_shutdown`` is true (spec §7.4)."""
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryRequestStatus,
             HistoryScope,
@@ -2396,7 +2396,7 @@ class TestHistoryDrain(unittest.TestCase):
         pins the behavior so a future refactor cannot re-introduce
         the busy-loop.
         """
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryRequestStatus,
             HistoryScope,
@@ -2450,7 +2450,7 @@ class TestHistoryDrain(unittest.TestCase):
     def test_drain_stops_timer_when_only_stale_results_in_queue(self) -> None:
         """Reviewer point #1: a queue containing only stale-generation
         results must still trigger the timer-stop on a hidden panel."""
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryRequestStatus,
             HistoryScope,
@@ -2553,7 +2553,7 @@ class TestInvalidateHistory(unittest.TestCase):
         panel._stop_history_poll_timer.assert_called_once_with()
 
     def test_drains_and_discards_queue(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryRequestStatus,
             HistoryScope,
@@ -2650,19 +2650,19 @@ class TestHistoryExecutorDistinctFromSaveExecutor(unittest.TestCase):
         # it would run so no background thread outlives the test.
         with _patch_session_history():
             panel._start_history_list_request()
-        from rikugan.state.history import _SAVE_EXECUTOR
+        from lucnhan.state.history import _SAVE_EXECUTOR
 
         self.assertIsNot(panel._history_executor, _SAVE_EXECUTOR)
 
     def test_history_executor_thread_name_prefix_is_distinct(self) -> None:
-        """The prefix must be ``rikugan-history`` so thread dumps are debuggable."""
+        """The prefix must be ``lucnhan-history`` so thread dumps are debuggable."""
         panel = _make_history_panel()
         panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
         with _patch_session_history():
             panel._start_history_list_request()
         # ThreadPoolExecutor exposes the prefix via ``_thread_name_prefix``.
         prefix = getattr(panel._history_executor, "_thread_name_prefix", "")
-        self.assertEqual(prefix, "rikugan-history")
+        self.assertEqual(prefix, "lucnhan-history")
 
     def test_queued_save_then_list_completes_without_self_deadlock(self) -> None:
         """Submitting a save to ``_SAVE_EXECUTOR`` then opening History must
@@ -2676,8 +2676,8 @@ class TestHistoryExecutorDistinctFromSaveExecutor(unittest.TestCase):
         """
         from concurrent.futures import ThreadPoolExecutor
 
-        from rikugan.state.history import _SAVE_EXECUTOR
-        from rikugan.state.history_types import (
+        from lucnhan.state.history import _SAVE_EXECUTOR
+        from lucnhan.state.history_types import (
             HistoryRequestStatus,
             HistoryScope,
         )
@@ -2720,7 +2720,7 @@ class TestHistoryButtonAlwaysVisible(unittest.TestCase):
         """
         import inspect
 
-        src = inspect.getsource(RikuganPanelCore._build_action_buttons)
+        src = inspect.getsource(LucNhanPanelCore._build_action_buttons)
         # ``_history_btn`` must be created and must NOT carry a
         # ``setVisible(False)`` call (unlike Mutations which hides until
         # the first mutation lands).
@@ -2734,7 +2734,7 @@ class TestHistoryButtonAlwaysVisible(unittest.TestCase):
         """
         import inspect
 
-        src = inspect.getsource(RikuganPanelCore._build_main_splitter)
+        src = inspect.getsource(LucNhanPanelCore._build_main_splitter)
         self.assertIn("HistoryPanel", src)
         # Must start hidden (third hidden widget).
         self.assertIn("setVisible(False)", src)
@@ -2752,7 +2752,7 @@ def _make_load_result(
     error="",
 ):
     """Build a ``HistoryLoadResult`` without forcing every test to import it."""
-    from rikugan.state.history_types import HistoryLoadResult
+    from lucnhan.state.history_types import HistoryLoadResult
 
     return HistoryLoadResult(status=status, scope=scope, session=session, error=error)
 
@@ -2850,7 +2850,7 @@ class TestHistoryLoadWorker(unittest.TestCase):
     §10.3, §11.4)."""
 
     def test_worker_enqueues_loaded_result(self) -> None:
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         scope = MagicMock(name="scope")
         session = MagicMock(name="session")
@@ -2869,7 +2869,7 @@ class TestHistoryLoadWorker(unittest.TestCase):
         self.assertIs(result.scope, scope)
 
     def test_worker_enqueues_not_found_result(self) -> None:
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         scope = MagicMock(name="scope")
         panel = _make_history_panel()
@@ -2884,7 +2884,7 @@ class TestHistoryLoadWorker(unittest.TestCase):
     def test_worker_catches_exception_enqueues_failed_with_empty_error(self) -> None:
         """Spec §11.4 + §11.3: outer boundary catch, no exception used as
         control flow, and the raw exception string never reaches the UI."""
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         scope = MagicMock(name="scope")
         panel = _make_history_panel()
@@ -2934,7 +2934,7 @@ class TestHistoryDrainHandlesLoad(unittest.TestCase):
         return panel
 
     def test_drain_routes_load_result_to_apply_history_loaded(self) -> None:
-        from rikugan.state.history_types import HistoryLoadResult
+        from lucnhan.state.history_types import HistoryLoadResult
 
         panel = self._panel_with_running_timer()
         scope = MagicMock(name="scope")
@@ -2956,7 +2956,7 @@ class TestHistoryDrainHandlesLoad(unittest.TestCase):
     def test_drain_drops_stale_generation_load_result(self) -> None:
         """A load result whose generation differs from live is dropped
         silently — no attach, no UI mutation (spec §10.3 step 7)."""
-        from rikugan.state.history_types import HistoryLoadResult
+        from lucnhan.state.history_types import HistoryLoadResult
 
         panel = self._panel_with_running_timer()
         panel._history_pending = True  # a load is conceptually in flight
@@ -2979,7 +2979,7 @@ class TestHistoryDrainHandlesLoad(unittest.TestCase):
         panel._history_poll_timer.stop.assert_not_called()
 
     def test_drain_stops_timer_when_hidden_and_no_pending_after_load(self) -> None:
-        from rikugan.state.history_types import HistoryLoadResult
+        from lucnhan.state.history_types import HistoryLoadResult
 
         panel = self._panel_with_running_timer()
         scope = MagicMock(name="scope")
@@ -3016,7 +3016,7 @@ class TestApplyHistoryLoaded(unittest.TestCase):
         return panel
 
     def test_opened_creates_one_tab_and_uses_async_restore(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryAttachResult,
             HistoryAttachStatus,
             HistoryRequestStatus,
@@ -3057,7 +3057,7 @@ class TestApplyHistoryLoaded(unittest.TestCase):
         panel._focus_tab.assert_called_once_with("tab-new")
 
     def test_already_open_focuses_existing_tab_no_create(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryAttachResult,
             HistoryAttachStatus,
             HistoryRequestStatus,
@@ -3088,7 +3088,7 @@ class TestApplyHistoryLoaded(unittest.TestCase):
 
     def test_stale_scope_silently_dropped_no_ui(self) -> None:
         """STALE_SCOPE: do nothing — no tab, no UI message."""
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryAttachResult,
             HistoryAttachStatus,
             HistoryRequestStatus,
@@ -3119,7 +3119,7 @@ class TestApplyHistoryLoaded(unittest.TestCase):
         draft (same tab_id). PanelCore must rebuild that tab's ChatView and
         trigger async restore over the same tab_id — never create a new tab.
         """
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryAttachResult,
             HistoryAttachStatus,
             HistoryRequestStatus,
@@ -3171,7 +3171,7 @@ class TestApplyHistoryLoaded(unittest.TestCase):
         causes the drain to leave pending=True (the new list worker owns
         its own terminal-result lifecycle).  Here we stub the refresh so
         no rebump happens and pending is left as the caller set it."""
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         scope = MagicMock(name="scope")
         scope.generation = 1
@@ -3201,7 +3201,7 @@ class TestApplyHistoryLoaded(unittest.TestCase):
         panel._start_history_list_request.assert_called_once_with()
 
     def test_wrong_idb_shows_exact_copy_no_attach(self) -> None:
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         scope = MagicMock(name="scope")
         panel = self._panel()
@@ -3215,7 +3215,7 @@ class TestApplyHistoryLoaded(unittest.TestCase):
         panel._create_tab.assert_not_called()
 
     def test_empty_shows_exact_copy_no_attach(self) -> None:
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         scope = MagicMock(name="scope")
         panel = self._panel()
@@ -3235,7 +3235,7 @@ class TestApplyHistoryLoaded(unittest.TestCase):
         can re-dispatch the LOAD (not the list).  The raw ``error`` is
         still never surfaced — generic copy only.
         """
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         scope = MagicMock(name="scope")
         panel = self._panel()
@@ -3320,7 +3320,7 @@ class TestDrainGenerationAwarePendingClear(unittest.TestCase):
         """End-to-end (drain → apply → real ``_start_history_list_request``
         with a fake executor): NOT_FOUND leaves ``_history_pending=True``
         and submits exactly one list worker at generation+1."""
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryLoadResult,
             HistoryRequestStatus,
         )
@@ -3368,7 +3368,7 @@ class TestDrainGenerationAwarePendingClear(unittest.TestCase):
         """For LOADED / WRONG_IDB / EMPTY / FAILED (no refresh), the
         pending flag is cleared as the terminal result lands (regression
         guard for the generation-aware fix)."""
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryLoadResult,
             HistoryRequestStatus,
         )
@@ -3398,7 +3398,7 @@ class TestDrainGenerationAwarePendingClear(unittest.TestCase):
         type system allows it): each apply sees the live generation,
         the final pending state is correct for whichever apply landed
         last."""
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryListResult,
             HistoryLoadResult,
             HistoryRequestStatus,
@@ -3447,7 +3447,7 @@ class TestLoadRetryPath(unittest.TestCase):
         return panel
 
     def test_failed_load_shows_retry_visible_true(self) -> None:
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         panel = self._panel()
         scope = MagicMock(name="scope")
@@ -3465,7 +3465,7 @@ class TestLoadRetryPath(unittest.TestCase):
         )
 
     def test_failed_load_remembered_for_retry(self) -> None:
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         panel = self._panel()
         # Simulate the load-submit path having stashed the in-flight id.
@@ -3485,7 +3485,7 @@ class TestLoadRetryPath(unittest.TestCase):
         self.assertEqual(panel._history_retry_load_session_id, "persisted-failed-x")
 
     def test_loaded_success_clears_retry_load(self) -> None:
-        from rikugan.state.history_types import (
+        from lucnhan.state.history_types import (
             HistoryAttachResult,
             HistoryAttachStatus,
             HistoryRequestStatus,
@@ -3514,7 +3514,7 @@ class TestLoadRetryPath(unittest.TestCase):
     def test_not_found_does_not_set_retry_load(self) -> None:
         """NOT_FOUND refreshes the list; it does not retain a
         retry-load id because the session is gone for good."""
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         panel = self._panel()
         panel._history_generation = 1
@@ -3531,7 +3531,7 @@ class TestLoadRetryPath(unittest.TestCase):
 
     def test_wrong_idb_does_not_set_retry_load(self) -> None:
         """WRONG_IDB is non-retryable — no retry-load id retained."""
-        from rikugan.state.history_types import HistoryRequestStatus
+        from lucnhan.state.history_types import HistoryRequestStatus
 
         panel = self._panel()
         scope = MagicMock(name="scope")
@@ -3649,7 +3649,7 @@ class TestTask10InvalidateHistorySignature(unittest.TestCase):
         pass would obscure it at the call site."""
         import inspect
 
-        sig = inspect.signature(RikuganPanelCore._invalidate_history)
+        sig = inspect.signature(LucNhanPanelCore._invalidate_history)
         params = sig.parameters
         self.assertIn("clear_panel", params)
         # Keyword-only (comes after ``*`` or ``*args``).
@@ -4057,8 +4057,8 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
         after the panel installs a NEW one."""
         import inspect
 
-        list_sig = inspect.signature(RikuganPanelCore._history_list_worker)
-        load_sig = inspect.signature(RikuganPanelCore._history_load_worker)
+        list_sig = inspect.signature(LucNhanPanelCore._history_list_worker)
+        load_sig = inspect.signature(LucNhanPanelCore._history_load_worker)
         list_params = list(list_sig.parameters)
         load_params = list(load_sig.parameters)
         self.assertIn(
@@ -4110,7 +4110,7 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
         """
         from concurrent.futures import ThreadPoolExecutor
 
-        from rikugan.state.history_types import HistoryScope
+        from lucnhan.state.history_types import HistoryScope
 
         panel = _make_history_panel()
         panel._ctrl.config = _temp_config()
@@ -4199,7 +4199,7 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
 # the pre-confirm / post-confirm / watchdog / retry / invalidation
 # phases cannot land silently.
 # ---------------------------------------------------------------------------
-from rikugan.state.history_types import (
+from lucnhan.state.history_types import (
     HistoryDeleteResult,
     HistoryDeleteStatus,
     HistoryRequestStatus,

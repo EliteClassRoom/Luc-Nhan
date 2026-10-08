@@ -1449,8 +1449,8 @@ wheels = [
 ]
 
 [[package]]
-name = "rikugan"
-version = "1.14.0"
+name = "lucnhan"
+version = "1.14.1"
 source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },

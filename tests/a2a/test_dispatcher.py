@@ -1,4 +1,4 @@
-"""Tests for rikugan.agent.a2a.dispatcher.A2ADispatcher.
+"""Tests for lucnhan.agent.a2a.dispatcher.A2ADispatcher.
 
 Focus: the dispatcher's single-entry-point contract — agent lookup,
 event translation, cancellation forwarding, and cap on returned text.
@@ -19,17 +19,17 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.a2a import dispatcher as dispatcher_module
-from rikugan.agent.a2a.client import A2AClient
-from rikugan.agent.a2a.dispatcher import A2ADispatcher
-from rikugan.agent.a2a.subprocess_bridge import SubprocessBridge
-from rikugan.agent.a2a.types import (
+from lucnhan.agent.a2a import dispatcher as dispatcher_module
+from lucnhan.agent.a2a.client import A2AClient
+from lucnhan.agent.a2a.dispatcher import A2ADispatcher
+from lucnhan.agent.a2a.subprocess_bridge import SubprocessBridge
+from lucnhan.agent.a2a.types import (
     A2AEvent,
     A2ATask,
     A2ATaskStatus,
     ExternalAgentConfig,
 )
-from rikugan.agent.turn import TurnEventType
+from lucnhan.agent.turn import TurnEventType
 
 
 def _make_agent(name: str = "claude", transport: str = "subprocess") -> ExternalAgentConfig:

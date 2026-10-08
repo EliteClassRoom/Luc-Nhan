@@ -1,4 +1,4 @@
-"""Tests for rikugan.ida.dispatch — headless dispatcher lifecycle."""
+"""Tests for lucnhan.ida.dispatch — headless dispatcher lifecycle."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ class TestHeadlessDispatcher(unittest.TestCase):
     """Tests for IdaHeadlessDispatcher queue-based dispatch."""
 
     def setUp(self):
-        from rikugan.ida.dispatch import IdaHeadlessDispatcher
+        from lucnhan.ida.dispatch import IdaHeadlessDispatcher
 
         self.dispatcher = IdaHeadlessDispatcher()
 
@@ -85,7 +85,7 @@ class TestHeadlessDispatcher(unittest.TestCase):
 
     def test_shutdown_rejects_new_jobs(self):
         """After shutdown, new wrap() calls should raise DispatcherShutdownError."""
-        from rikugan.ida.dispatch import DispatcherShutdownError
+        from lucnhan.ida.dispatch import DispatcherShutdownError
 
         self.dispatcher.request_shutdown()
 
@@ -98,7 +98,7 @@ class TestHeadlessDispatcher(unittest.TestCase):
 
     def test_shutdown_wakes_blocked_workers(self):
         """Workers blocked on the pump should be woken on shutdown."""
-        from rikugan.ida.dispatch import DispatcherShutdownError
+        from lucnhan.ida.dispatch import DispatcherShutdownError
 
         errors = []
 
@@ -154,7 +154,7 @@ class TestHeadlessDispatcher(unittest.TestCase):
 
     def test_shutdown_wakes_exactly_with_shutdown_error(self):
         """Workers must raise DispatcherShutdownError, not return None."""
-        from rikugan.ida.dispatch import DispatcherShutdownError
+        from lucnhan.ida.dispatch import DispatcherShutdownError
 
         errors = []
 
@@ -182,8 +182,8 @@ class TestHeadlessDispatcher(unittest.TestCase):
     def test_job_timeout_raises_timeout_error(self):
         """A job that is never pumped must raise DispatcherTimeoutError."""
         # Override the default timeout to something small for testing
-        import rikugan.ida.dispatch as disp_mod
-        from rikugan.ida.dispatch import DispatcherTimeoutError
+        import lucnhan.ida.dispatch as disp_mod
+        from lucnhan.ida.dispatch import DispatcherTimeoutError
 
         old_timeout = disp_mod._DEFAULT_JOB_TIMEOUT
         disp_mod._DEFAULT_JOB_TIMEOUT = 0.2
@@ -213,7 +213,7 @@ class TestHeadlessDispatcher(unittest.TestCase):
 
     def test_timed_out_job_not_executed_by_pump(self):
         """A timed-out job must be skipped by the pump (not execute later)."""
-        import rikugan.ida.dispatch as disp_mod
+        import lucnhan.ida.dispatch as disp_mod
 
         # Give the worker thread a short timeout
         old_timeout = disp_mod._DEFAULT_JOB_TIMEOUT
@@ -260,7 +260,7 @@ class TestHeadlessDispatcher(unittest.TestCase):
         Regression test: the worker thread must not observe job.result
         before the pump has finished setting it.
         """
-        import rikugan.ida.dispatch as disp_mod
+        import lucnhan.ida.dispatch as disp_mod
 
         old_timeout = disp_mod._DEFAULT_JOB_TIMEOUT
         # Short timeout so worker fires before the slow function finishes.

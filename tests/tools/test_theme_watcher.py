@@ -1,4 +1,4 @@
-"""Tests for rikugan.ui.theme.watcher — IDAThemeWatcher palette change detection.
+"""Tests for lucnhan.ui.theme.watcher — IDAThemeWatcher palette change detection.
 
 These tests focus on the watcher's contract (start/stop idempotency, tick
 error swallowing) without requiring real PySide6. The full end-to-end
@@ -47,9 +47,9 @@ class TestPaletteSignature(unittest.TestCase):
         return pal
 
     def test_signature_returns_two_strings(self) -> None:
-        from rikugan.ui.theme.watcher import _palette_signature
+        from lucnhan.ui.theme.watcher import _palette_signature
 
-        with patch("rikugan.ui.theme.watcher.QPalette") as MockQPalette:
+        with patch("lucnhan.ui.theme.watcher.QPalette") as MockQPalette:
             MockQPalette.ColorRole.Window = "Window"
             MockQPalette.ColorRole.WindowText = "WindowText"
             pal = self._make_pal("#111111", "#eeeeee")
@@ -57,9 +57,9 @@ class TestPaletteSignature(unittest.TestCase):
         self.assertEqual(sig, ("#111111", "#eeeeee"))
 
     def test_signature_changes_with_window(self) -> None:
-        from rikugan.ui.theme.watcher import _palette_signature
+        from lucnhan.ui.theme.watcher import _palette_signature
 
-        with patch("rikugan.ui.theme.watcher.QPalette") as MockQPalette:
+        with patch("lucnhan.ui.theme.watcher.QPalette") as MockQPalette:
             MockQPalette.ColorRole.Window = "Window"
             MockQPalette.ColorRole.WindowText = "WindowText"
             sig1 = _palette_signature(self._make_pal("#111111", "#eeeeee"))
@@ -67,9 +67,9 @@ class TestPaletteSignature(unittest.TestCase):
         self.assertNotEqual(sig1, sig2)
 
     def test_signature_changes_with_text(self) -> None:
-        from rikugan.ui.theme.watcher import _palette_signature
+        from lucnhan.ui.theme.watcher import _palette_signature
 
-        with patch("rikugan.ui.theme.watcher.QPalette") as MockQPalette:
+        with patch("lucnhan.ui.theme.watcher.QPalette") as MockQPalette:
             MockQPalette.ColorRole.Window = "Window"
             MockQPalette.ColorRole.WindowText = "WindowText"
             sig1 = _palette_signature(self._make_pal("#111111", "#eeeeee"))
@@ -77,9 +77,9 @@ class TestPaletteSignature(unittest.TestCase):
         self.assertNotEqual(sig1, sig2)
 
     def test_signature_is_stable_for_same_input(self) -> None:
-        from rikugan.ui.theme.watcher import _palette_signature
+        from lucnhan.ui.theme.watcher import _palette_signature
 
-        with patch("rikugan.ui.theme.watcher.QPalette") as MockQPalette:
+        with patch("lucnhan.ui.theme.watcher.QPalette") as MockQPalette:
             MockQPalette.ColorRole.Window = "Window"
             MockQPalette.ColorRole.WindowText = "WindowText"
             pal = self._make_pal("#111111", "#eeeeee")
@@ -96,10 +96,10 @@ class TestIDAThemeWatcherLifecycle(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        from rikugan.ui.theme.watcher import IDAThemeWatcher
+        from lucnhan.ui.theme.watcher import IDAThemeWatcher
 
         self._patch = patch(
-            "rikugan.ui.theme.watcher.QTimer.singleShot",
+            "lucnhan.ui.theme.watcher.QTimer.singleShot",
             lambda *a, **kw: None,
         )
         self._patch.start()
@@ -123,7 +123,7 @@ class TestIDAThemeWatcherLifecycle(unittest.TestCase):
 
     def test_stop_is_safe_when_never_started(self) -> None:
         """stop() on a fresh watcher must not raise."""
-        from rikugan.ui.theme.watcher import IDAThemeWatcher
+        from lucnhan.ui.theme.watcher import IDAThemeWatcher
 
         fresh = IDAThemeWatcher(interval_ms=10)
         fresh.stop()  # no exception
@@ -134,10 +134,10 @@ class TestTickErrorSwallowing(unittest.TestCase):
     """_tick() must never propagate exceptions to the Qt event loop."""
 
     def setUp(self) -> None:
-        from rikugan.ui.theme.watcher import IDAThemeWatcher
+        from lucnhan.ui.theme.watcher import IDAThemeWatcher
 
         self._patch = patch(
-            "rikugan.ui.theme.watcher.QTimer.singleShot",
+            "lucnhan.ui.theme.watcher.QTimer.singleShot",
             lambda *a, **kw: None,
         )
         self._patch.start()
@@ -151,7 +151,7 @@ class TestTickErrorSwallowing(unittest.TestCase):
     def test_tick_swallows_source_none(self) -> None:
         """When _app_source returns None, _tick is a clean no-op."""
         with patch(
-            "rikugan.ui.theme.watcher.ThemeManager.instance"
+            "lucnhan.ui.theme.watcher.ThemeManager.instance"
         ) as mock_inst:
             mock_inst.return_value._app_source.return_value = None
             # Should not raise
@@ -161,7 +161,7 @@ class TestTickErrorSwallowing(unittest.TestCase):
     def test_tick_swallows_palette_errors(self) -> None:
         """When source.palette() raises, _tick logs and continues."""
         with patch(
-            "rikugan.ui.theme.watcher.ThemeManager.instance"
+            "lucnhan.ui.theme.watcher.ThemeManager.instance"
         ) as mock_inst:
             source = MagicMock()
             source.palette.side_effect = RuntimeError("palette access failed")
@@ -178,9 +178,9 @@ class TestPluginWatcherGate(unittest.TestCase):
     """
 
     def test_needs_palette_watch_logic(self) -> None:
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui.theme.tokens import ThemeMode
 
-        # Mirror the gate from rikugan_plugin.run() — this is the
+        # Mirror the gate from lucnhan_plugin.run() — this is the
         # source-of-truth truth table.
         for mode, expected in [
             (ThemeMode.AUTO, True),

@@ -4,11 +4,11 @@ Background
 ----------
 IDA 9.x 32-bit hosts still ship Qt5. Importing PySide6 in such an environment
 loads Qt6 DLLs into a Qt5 process and triggers ``FAST_FAIL_FATAL_APP_EXIT``
-inside the Qt widget constructor (see ``rikugan/ui/qt_compat.py``).
+inside the Qt widget constructor (see ``lucnhan/ui/qt_compat.py``).
 
-Every Qt import in non-test source MUST go through ``rikugan/ui/qt_compat.py``.
+Every Qt import in non-test source MUST go through ``lucnhan/ui/qt_compat.py``.
 This test enforces that rule by scanning all ``.py`` files under
-``rikugan/ui/`` and the ``rikugan_plugin.py`` entry point for direct
+``lucnhan/ui/`` and the ``lucnhan_plugin.py`` entry point for direct
 ``from PySide6`` / ``import PySide6`` / ``from PyQt5`` / ``import PyQt5``
 statements, ignoring the compatibility layer itself and the tests directory.
 """
@@ -21,9 +21,9 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-UI_DIR = REPO_ROOT / "rikugan" / "ui"
-PLUGIN_FILE = REPO_ROOT / "rikugan_plugin.py"
-TESTS_DIR = REPO_ROOT / "rikugan" / "tests"
+UI_DIR = REPO_ROOT / "lucnhan" / "ui"
+PLUGIN_FILE = REPO_ROOT / "lucnhan_plugin.py"
+TESTS_DIR = REPO_ROOT / "lucnhan" / "tests"
 
 # Top-level forms we forbid (excluding the compatibility layer).
 _FORBIDDEN_RE = re.compile(r"^\s*(?:from\s+(?:PySide6|PyQt5)(?:\.\w+)?\s+import\b|import\s+(?:PySide6|PyQt5)\b)")
@@ -71,6 +71,6 @@ def test_no_direct_qt_imports(path: Path) -> None:
     violations = _scan_violations(path)
     assert not violations, (
         f"{path.relative_to(REPO_ROOT)} imports PySide6/PyQt5 directly. "
-        "Use `rikugan.ui.qt_compat` instead. Violations:\n"
+        "Use `lucnhan.ui.qt_compat` instead. Violations:\n"
         + "\n".join(f"  line {ln}: {line}" for ln, line in violations)
     )

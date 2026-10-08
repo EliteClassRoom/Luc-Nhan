@@ -4,10 +4,10 @@
 
 ## Key Concepts
 
-- **Agent Loop**: Generator-based turn cycle (`rikugan/agent/loop.py`). User message → skill resolution → system prompt build → stream LLM → intercept tool calls → execute → feed results back → repeat.
-- **Host**: IDA Pro (`rikugan_plugin.py`). Host-agnostic core in `rikugan/agent/`, `rikugan/core/`, `rikugan/ui/`, `rikugan/providers/`, `rikugan/mcp/`, `rikugan/skills/`, `rikugan/state/`.
-- **Tools**: 60+ tools for IDA. Defined with the `@tool` decorator in `rikugan/ida/tools/`. Categories: navigation, functions, strings, database, disassembly, decompiler, xrefs, annotations, types, scripting, microcode.
-- **Skills**: Markdown files with YAML frontmatter in `rikugan/skills/builtins/`. Activated with `/<slug>`. 12 built-in skills.
+- **Agent Loop**: Generator-based turn cycle (`lucnhan/agent/loop.py`). User message → skill resolution → system prompt build → stream LLM → intercept tool calls → execute → feed results back → repeat.
+- **Host**: IDA Pro (`lucnhan_plugin.py`). Host-agnostic core in `lucnhan/agent/`, `lucnhan/core/`, `lucnhan/ui/`, `lucnhan/providers/`, `lucnhan/mcp/`, `lucnhan/skills/`, `lucnhan/state/`.
+- **Tools**: 60+ tools for IDA. Defined with the `@tool` decorator in `lucnhan/ida/tools/`. Categories: navigation, functions, strings, database, disassembly, decompiler, xrefs, annotations, types, scripting, microcode.
+- **Skills**: Markdown files with YAML frontmatter in `lucnhan/skills/builtins/`. Activated with `/<slug>`. 12 built-in skills.
 - **Exploration Mode**: 4-phase autonomous flow triggered by `/modify <goal>`: EXPLORE → PLAN → EXECUTE → SAVE. Phase 1 runs as a subagent.
 - **Plan Mode**: `/plan <msg>` — generate plan, user approves, execute step by step.
 - **Mutation Tracking**: Every mutating tool call is logged with a reverse operation. `/undo [N]` replays them in reverse.
@@ -19,15 +19,15 @@
 
 ## Documentation
 
-- [Full Architecture Reference](https://buzzer-re.github.io/rikugan/ARCHITECTURE.html): Agent loop internals, TurnEvent system, tool framework, exploration mode, plan mode, subagents, mutation tracking, context window, MCP integration, provider layer, UI layer, thread safety model.
-- [Docs / Getting Started](https://buzzer-re.github.io/rikugan/docs.html): Installation, configuration, usage, skills, MCP setup.
-- [ARCHITECTURE.md](ARCHITECTURE.md): Full technical reference (same content as Architecture page, local copy).
+- [ARCHITECTURE.md](ARCHITECTURE.md): Full technical reference — agent loop internals, TurnEvent system, tool framework, exploration mode, plan mode, subagents, mutation tracking, context window, MCP integration, provider layer, UI layer, thread safety model.
 - [AGENTS.md](AGENTS.md): Developer guide — directory structure, how to add tools and skills.
+- [DEVELOPMENT.md](DEVELOPMENT.md): Setup, local CI, release process, headless-mode development.
+- [README.md](README.md): Installation, configuration, features, providers.
 
 ## File Layout
 
 ```
-rikugan/
+lucnhan/
 ├── agent/          # AgentLoop, BackgroundAgentRunner, exploration, plan, subagent, mutation, context window
 ├── core/           # Config, constants, errors, host context, logging, thread safety, types
 ├── ida/            # IDA Pro tools, UI, and tool registry
@@ -37,7 +37,7 @@ rikugan/
 ├── skills/         # Skill discovery, loading, 12 built-in skills
 ├── state/          # SessionState, SessionHistory
 ├── ui/             # Shared Qt widgets (PanelCore, ChatView, MutationLogPanel, etc.)
-rikugan_plugin.py           # IDA Pro entry point
+lucnhan_plugin.py           # IDA Pro entry point
 ```
 
 ## Commands
@@ -72,7 +72,7 @@ rikugan_plugin.py           # IDA Pro entry point
 
 ```python
 from typing import Annotated
-from rikugan.tools.base import tool
+from lucnhan.tools.base import tool
 
 @tool(category="navigation", mutating=False)
 def my_tool(address: Annotated[str, "Target address (hex)"]) -> str:
@@ -80,11 +80,11 @@ def my_tool(address: Annotated[str, "Target address (hex)"]) -> str:
     ...
 ```
 
-Register by adding the module to the host's `create_default_registry()` in `rikugan/ida/tools/registry.py`.
+Register by adding the module to the host's `create_default_registry()` in `lucnhan/ida/tools/registry.py`.
 
 ## Adding Skills
 
-Create `rikugan/skills/builtins/<slug>/SKILL.md`:
+Create `lucnhan/skills/builtins/<slug>/SKILL.md`:
 
 ```markdown
 ---

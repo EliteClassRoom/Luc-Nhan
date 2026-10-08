@@ -1,8 +1,8 @@
-"""Build curated release archive for Rikugan IDA plugin (HCLI flat-ZIP layout).
+"""Build curated release archive for Luc Nhan IDA plugin (HCLI flat-ZIP layout).
 
 Chỉ include runtime files cần để install và chạy plugin trong IDA:
-- rikugan_plugin.py  (entry point)
-- rikugan/           (Python package, loại __pycache__)
+- lucnhan_plugin.py  (entry point)
+- lucnhan/           (Python package, loại __pycache__)
 - install.sh, install_ida.sh, install.ps1, install_ida.bat
 - requirements.txt
 - ida-plugin.json
@@ -10,7 +10,7 @@ Chỉ include runtime files cần để install và chạy plugin trong IDA:
 - README.md
 
 Không include: tests/, docs/, AGENTS.md, ARCHITECTURE.md, DEVELOPMENT.md,
-llms.txt, .github/, assets/, chat_examples/, webpage/, pyproject.toml,
+llms.txt, .github/, assets/, chat_examples/, pyproject.toml,
 uv.lock, ci-local.sh, .git/, .venv/, .*_cache/, __pycache__/.
 
 HCLI layout (per https://hcli.docs.hex-rays.com/reference/plugin-packaging-and-format/):
@@ -20,7 +20,7 @@ Usage:
     python scripts/build_release.py --version 1.2.3 --out-dir dist
 
 Output:
-    dist/rikugan-v1.2.3.zip
+    dist/lucnhan-v1.2.3.zip
     dist/SHA256SUMS
 """
 
@@ -34,8 +34,8 @@ from pathlib import Path
 
 # Tên file/dir cần include (paths tương đối so với source root).
 INCLUDE_PATHS: list[str] = [
-    "rikugan_plugin.py",
-    "rikugan",  # toàn bộ package
+    "lucnhan_plugin.py",
+    "lucnhan",  # toàn bộ package
     "install.sh",
     "install_ida.sh",
     "install.ps1",
@@ -151,7 +151,7 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, default=Path("."))
     args = parser.parse_args()
 
-    archive_name = f"rikugan-v{args.version}.zip"
+    archive_name = f"lucnhan-v{args.version}.zip"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     files = collect(args.source_root)
     if not files:

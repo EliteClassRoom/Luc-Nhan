@@ -12,9 +12,9 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from rikugan.core.errors import AuthenticationError, ProviderError
-from rikugan.core.types import LLMRequestContext, Message, Role
-from rikugan.providers.codex_provider import CodexProvider, _id_token_info, codex_auth_status
+from lucnhan.core.errors import AuthenticationError, ProviderError
+from lucnhan.core.types import LLMRequestContext, Message, Role
+from lucnhan.providers.codex_provider import CodexProvider, _id_token_info, codex_auth_status
 
 
 def _jwt(claims: dict) -> str:

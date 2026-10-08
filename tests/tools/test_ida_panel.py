@@ -1,4 +1,4 @@
-"""Tests for rikugan.ida.ui.panel — IDA PluginForm wrapper."""
+"""Tests for lucnhan.ida.ui.panel — IDA PluginForm wrapper."""
 
 from __future__ import annotations
 
@@ -17,30 +17,30 @@ from tests.qt_stubs import _qt_class, ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-# Stub rikugan.ui.panel_core
-_panel_core_mod = types.ModuleType("rikugan.ui.panel_core")
-_panel_core_mod.RikuganPanelCore = _qt_class("RikuganPanelCore")
-sys.modules.setdefault("rikugan.ui.panel_core", _panel_core_mod)
+# Stub lucnhan.ui.panel_core
+_panel_core_mod = types.ModuleType("lucnhan.ui.panel_core")
+_panel_core_mod.LucNhanPanelCore = _qt_class("LucNhanPanelCore")
+sys.modules.setdefault("lucnhan.ui.panel_core", _panel_core_mod)
 
 # Stub session/actions modules
-_session_mod = types.ModuleType("rikugan.ida.ui.session_controller")
+_session_mod = types.ModuleType("lucnhan.ida.ui.session_controller")
 _session_mod.IdaSessionController = MagicMock()
 _session_mod.SessionController = _session_mod.IdaSessionController  # backwards-compat alias
-sys.modules["rikugan.ida.ui.session_controller"] = _session_mod
+sys.modules["lucnhan.ida.ui.session_controller"] = _session_mod
 
-_actions_mod = types.ModuleType("rikugan.ida.ui.actions")
-_actions_mod.RikuganUIHooks = MagicMock()
-sys.modules["rikugan.ida.ui.actions"] = _actions_mod
+_actions_mod = types.ModuleType("lucnhan.ida.ui.actions")
+_actions_mod.LucNhanUIHooks = MagicMock()
+sys.modules["lucnhan.ida.ui.actions"] = _actions_mod
 
-from rikugan.ida.ui.panel import RikuganPanel
+from lucnhan.ida.ui.panel import LucNhanPanel
 
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 
-def _make_panel() -> RikuganPanel:
-    """Create RikuganPanel bypassing __init__, injecting mock _core."""
-    panel = object.__new__(RikuganPanel)
+def _make_panel() -> LucNhanPanel:
+    """Create LucNhanPanel bypassing __init__, injecting mock _core."""
+    panel = object.__new__(LucNhanPanel)
     panel._form_widget = None
     panel._root = None
     panel._core = None
@@ -51,7 +51,7 @@ def _make_panel() -> RikuganPanel:
 # shutdown
 # ---------------------------------------------------------------------------
 
-class TestRikuganIdaPanelShutdown(unittest.TestCase):
+class TestLucNhanIdaPanelShutdown(unittest.TestCase):
     def test_shutdown_calls_core_shutdown(self):
         panel = _make_panel()
         mock_core = MagicMock()
@@ -75,7 +75,7 @@ class TestRikuganIdaPanelShutdown(unittest.TestCase):
 # prefill_input
 # ---------------------------------------------------------------------------
 
-class TestRikuganIdaPanelPrefillInput(unittest.TestCase):
+class TestLucNhanIdaPanelPrefillInput(unittest.TestCase):
     def test_prefill_delegates_when_core_available(self):
         panel = _make_panel()
         panel._core = MagicMock()
@@ -98,7 +98,7 @@ class TestRikuganIdaPanelPrefillInput(unittest.TestCase):
 # __getattr__
 # ---------------------------------------------------------------------------
 
-class TestRikuganIdaPanelGetattr(unittest.TestCase):
+class TestLucNhanIdaPanelGetattr(unittest.TestCase):
     def test_getattr_delegates_to_core(self):
         panel = _make_panel()
         panel._core = MagicMock()
@@ -123,7 +123,7 @@ class TestRikuganIdaPanelGetattr(unittest.TestCase):
 # OnClose
 # ---------------------------------------------------------------------------
 
-class TestRikuganIdaPanelOnClose(unittest.TestCase):
+class TestLucNhanIdaPanelOnClose(unittest.TestCase):
     def test_on_close_calls_shutdown(self):
         panel = _make_panel()
         panel._core = MagicMock()

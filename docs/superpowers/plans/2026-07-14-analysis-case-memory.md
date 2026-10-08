@@ -37,22 +37,22 @@
 
 | File | Action | Responsibility |
 |---|---|---|
-| `rikugan/memory/case_schema.py` | Create | Predicate enum, case/member/relation/promotion dataclasses |
-| `rikugan/memory/case_repository.py` | Create | Case CRUD/membership/relations/promotions in registry/case DB |
-| `rikugan/memory/case_service.py` | Create | Active binding, promotion, source drift, case narrative/retrieval |
-| `rikugan/memory/suggestions.py` | Create | Exact-signal non-mutating membership suggestions |
-| `rikugan/memory/peer_retrieval.py` | Create | Eligibility/ranking/dedup/budget/read-only retrieval/wrappers |
-| `rikugan/memory/workspace_store.py` | Modify | Source/artifact query and read-only current-record APIs |
-| `rikugan/memory/registry.py` | Modify | Cases/case_members schema and generation-safe operations |
-| `rikugan/memory/manager.py` | Modify | Active case binding/generation validation |
-| `rikugan/state/session.py`, `rikugan/state/history.py` | Modify | Restore valid active case only |
-| `rikugan/agent/loop.py` | Modify | Case context and explicit promotion pseudo-tool dispatch |
-| `rikugan/agent/loop_commands.py` | Modify | Final `/case` and peer-search command contract |
-| `rikugan/agent/pseudo_tool_schemas.py` | Modify | Explicit promotion schema only when active case |
-| `rikugan/agent/system_prompt.py` | Modify | Namespaced case/peer blocks and policy |
-| `rikugan/ui/knowledge_panel.py` | Modify | Case selector/membership/relation/promotion controls |
-| `rikugan/ui/panel_core.py` | Modify | Case signal wiring and context refresh |
-| `rikugan/core/config.py` | Modify | `case_memory_enabled`, `peer_retrieval_enabled` |
+| `lucnhan/memory/case_schema.py` | Create | Predicate enum, case/member/relation/promotion dataclasses |
+| `lucnhan/memory/case_repository.py` | Create | Case CRUD/membership/relations/promotions in registry/case DB |
+| `lucnhan/memory/case_service.py` | Create | Active binding, promotion, source drift, case narrative/retrieval |
+| `lucnhan/memory/suggestions.py` | Create | Exact-signal non-mutating membership suggestions |
+| `lucnhan/memory/peer_retrieval.py` | Create | Eligibility/ranking/dedup/budget/read-only retrieval/wrappers |
+| `lucnhan/memory/workspace_store.py` | Modify | Source/artifact query and read-only current-record APIs |
+| `lucnhan/memory/registry.py` | Modify | Cases/case_members schema and generation-safe operations |
+| `lucnhan/memory/manager.py` | Modify | Active case binding/generation validation |
+| `lucnhan/state/session.py`, `lucnhan/state/history.py` | Modify | Restore valid active case only |
+| `lucnhan/agent/loop.py` | Modify | Case context and explicit promotion pseudo-tool dispatch |
+| `lucnhan/agent/loop_commands.py` | Modify | Final `/case` and peer-search command contract |
+| `lucnhan/agent/pseudo_tool_schemas.py` | Modify | Explicit promotion schema only when active case |
+| `lucnhan/agent/system_prompt.py` | Modify | Namespaced case/peer blocks and policy |
+| `lucnhan/ui/knowledge_panel.py` | Modify | Case selector/membership/relation/promotion controls |
+| `lucnhan/ui/panel_core.py` | Modify | Case signal wiring and context refresh |
+| `lucnhan/core/config.py` | Modify | `case_memory_enabled`, `peer_retrieval_enabled` |
 | `tests/memory/cases/test_schema.py` | Create | Predicate semantics/canonicalization |
 | `tests/memory/cases/test_repository.py` | Create | CRUD/membership/soft delete/relations |
 | `tests/memory/cases/test_binding.py` | Create | Active case and generation/session restore |
@@ -67,7 +67,7 @@
 ### Task 1: Case schema and predicate invariants
 
 **Files:**
-- Create: `rikugan/memory/case_schema.py`
+- Create: `lucnhan/memory/case_schema.py`
 - Create: `tests/memory/cases/test_schema.py`
 
 **Interfaces:**
@@ -82,12 +82,12 @@ from __future__ import annotations
 
 import pytest
 
-from rikugan.memory.case_schema import (
+from lucnhan.memory.case_schema import (
     CaseRelationType,
     canonicalize_relation_endpoints,
     validate_case_relation,
 )
-from rikugan.memory.workspace import new_memory_id
+from lucnhan.memory.workspace import new_memory_id
 
 
 def test_symmetric_endpoints_are_canonicalized() -> None:
@@ -217,7 +217,7 @@ Run: `uv run python -m pytest tests/memory/cases/test_schema.py -v`
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/case_schema.py tests/memory/cases/test_schema.py
+git add lucnhan/memory/case_schema.py tests/memory/cases/test_schema.py
 git commit -m "feat(memory): define analysis case schema"
 ```
 
@@ -226,8 +226,8 @@ git commit -m "feat(memory): define analysis case schema"
 ### Task 2: Case registry CRUD and membership
 
 **Files:**
-- Modify: `rikugan/memory/registry.py`
-- Create: `rikugan/memory/case_repository.py`
+- Modify: `lucnhan/memory/registry.py`
+- Create: `lucnhan/memory/case_repository.py`
 - Create: `tests/memory/cases/test_repository.py`
 
 **Interfaces:**
@@ -242,9 +242,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.registry import MemoryRegistry
-from rikugan.memory.workspace import MemoryLocator, new_memory_id
+from lucnhan.memory.case_repository import CaseRepository
+from lucnhan.memory.registry import MemoryRegistry
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id
 
 
 def test_case_membership_is_explicit_and_soft_delete_is_non_destructive(tmp_path: Path) -> None:
@@ -314,7 +314,7 @@ Run: `uv run python -m pytest tests/memory/cases/test_repository.py tests/memory
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/registry.py rikugan/memory/case_repository.py tests/memory/cases/test_repository.py tests/memory/test_registry.py rikugan/constants.py
+git add lucnhan/memory/registry.py lucnhan/memory/case_repository.py tests/memory/cases/test_repository.py tests/memory/test_registry.py lucnhan/constants.py
 git commit -m "feat(memory): add case membership registry"
 ```
 
@@ -323,10 +323,10 @@ git commit -m "feat(memory): add case membership registry"
 ### Task 3: Active-case session binding and generation
 
 **Files:**
-- Modify: `rikugan/memory/manager.py`
-- Modify: `rikugan/state/session.py`
-- Modify: `rikugan/state/history.py`
-- Modify: `rikugan/ui/session_controller_base.py`
+- Modify: `lucnhan/memory/manager.py`
+- Modify: `lucnhan/state/session.py`
+- Modify: `lucnhan/state/history.py`
+- Modify: `lucnhan/ui/session_controller_base.py`
 - Create: `tests/memory/cases/test_binding.py`
 
 **Interfaces:**
@@ -370,7 +370,7 @@ Run: `uv run python -m pytest tests/memory/cases/test_binding.py tests/state/tes
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/manager.py rikugan/state/session.py rikugan/state/history.py rikugan/ui/session_controller_base.py tests/memory/cases/test_binding.py
+git add lucnhan/memory/manager.py lucnhan/state/session.py lucnhan/state/history.py lucnhan/ui/session_controller_base.py tests/memory/cases/test_binding.py
 git commit -m "feat(memory): bind sessions to active cases"
 ```
 
@@ -379,9 +379,9 @@ git commit -m "feat(memory): bind sessions to active cases"
 ### Task 4: Case relations and exact-signal suggestions
 
 **Files:**
-- Modify: `rikugan/memory/case_repository.py`
-- Modify: `rikugan/memory/workspace_store.py`
-- Create: `rikugan/memory/suggestions.py`
+- Modify: `lucnhan/memory/case_repository.py`
+- Modify: `lucnhan/memory/workspace_store.py`
+- Create: `lucnhan/memory/suggestions.py`
 - Create: `tests/memory/cases/test_suggestions.py`
 - Modify: `tests/memory/cases/test_repository.py`
 
@@ -431,7 +431,7 @@ Run: `uv run python -m pytest tests/memory/cases/test_repository.py tests/memory
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/case_repository.py rikugan/memory/workspace_store.py rikugan/memory/suggestions.py tests/memory/cases/test_repository.py tests/memory/cases/test_suggestions.py
+git add lucnhan/memory/case_repository.py lucnhan/memory/workspace_store.py lucnhan/memory/suggestions.py tests/memory/cases/test_repository.py tests/memory/cases/test_suggestions.py
 git commit -m "feat(memory): add case relations and suggestions"
 ```
 
@@ -440,8 +440,8 @@ git commit -m "feat(memory): add case relations and suggestions"
 ### Task 5: Explicit promotion and lazy source drift
 
 **Files:**
-- Create: `rikugan/memory/case_service.py`
-- Modify: `rikugan/memory/case_repository.py`
+- Create: `lucnhan/memory/case_service.py`
+- Modify: `lucnhan/memory/case_repository.py`
 - Create: `tests/memory/cases/test_promotion.py`
 
 **Interfaces:**
@@ -503,7 +503,7 @@ Run: `uv run python -m pytest tests/memory/cases/test_promotion.py -v`
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/case_service.py rikugan/memory/case_repository.py tests/memory/cases/test_promotion.py
+git add lucnhan/memory/case_service.py lucnhan/memory/case_repository.py tests/memory/cases/test_promotion.py
 git commit -m "feat(memory): promote facts into analysis cases"
 ```
 
@@ -512,9 +512,9 @@ git commit -m "feat(memory): promote facts into analysis cases"
 ### Task 6: Controlled peer retrieval and wrappers
 
 **Files:**
-- Create: `rikugan/memory/peer_retrieval.py`
-- Modify: `rikugan/memory/context.py`
-- Modify: `rikugan/memory/workspace_store.py`
+- Create: `lucnhan/memory/peer_retrieval.py`
+- Modify: `lucnhan/memory/context.py`
+- Modify: `lucnhan/memory/workspace_store.py`
 - Create: `tests/memory/cases/test_peer_retrieval.py`
 
 **Interfaces:**
@@ -591,7 +591,7 @@ Run: `uv run python -m pytest tests/memory/cases/test_peer_retrieval.py -v`
 Expected: PASS.
 
 ```bash
-git add rikugan/memory/peer_retrieval.py rikugan/memory/context.py rikugan/memory/workspace_store.py tests/memory/cases/test_peer_retrieval.py
+git add lucnhan/memory/peer_retrieval.py lucnhan/memory/context.py lucnhan/memory/workspace_store.py tests/memory/cases/test_peer_retrieval.py
 git commit -m "feat(memory): retrieve cited peer context"
 ```
 
@@ -600,10 +600,10 @@ git commit -m "feat(memory): retrieve cited peer context"
 ### Task 7: Case and peer context in agent prompts
 
 **Files:**
-- Modify: `rikugan/agent/loop.py:441-566`
-- Modify: `rikugan/agent/system_prompt.py`
-- Modify: `rikugan/agent/pseudo_tool_schemas.py`
-- Modify: `rikugan/core/config.py`
+- Modify: `lucnhan/agent/loop.py:441-566`
+- Modify: `lucnhan/agent/system_prompt.py`
+- Modify: `lucnhan/agent/pseudo_tool_schemas.py`
+- Modify: `lucnhan/core/config.py`
 - Create: `tests/agent/test_case_context.py`
 - Modify: `tests/memory/test_config.py`
 
@@ -650,7 +650,7 @@ Run: `uv run python -m pytest tests/agent/test_case_context.py tests/agent/test_
 Expected: PASS.
 
 ```bash
-git add rikugan/agent/loop.py rikugan/agent/system_prompt.py rikugan/agent/pseudo_tool_schemas.py rikugan/core/config.py tests/agent/test_case_context.py tests/memory/test_config.py
+git add lucnhan/agent/loop.py lucnhan/agent/system_prompt.py lucnhan/agent/pseudo_tool_schemas.py lucnhan/core/config.py tests/agent/test_case_context.py tests/memory/test_config.py
 git commit -m "feat(memory): add case context to agent turns"
 ```
 
@@ -659,8 +659,8 @@ git commit -m "feat(memory): add case context to agent turns"
 ### Task 8: Approved case command contract and UI-only CRUD extensions
 
 **Files:**
-- Modify: `rikugan/agent/loop.py` command parser
-- Modify: `rikugan/agent/loop_commands.py`
+- Modify: `lucnhan/agent/loop.py` command parser
+- Modify: `lucnhan/agent/loop_commands.py`
 - Create: `tests/agent/test_case_commands.py`
 
 **Interfaces:**
@@ -702,7 +702,7 @@ Run: `uv run python -m pytest tests/agent/test_case_commands.py -v`
 Expected: PASS.
 
 ```bash
-git add rikugan/agent/loop.py rikugan/agent/loop_commands.py tests/agent/test_case_commands.py
+git add lucnhan/agent/loop.py lucnhan/agent/loop_commands.py tests/agent/test_case_commands.py
 git commit -m "feat(memory): add analysis case commands"
 ```
 
@@ -711,9 +711,9 @@ git commit -m "feat(memory): add analysis case commands"
 ### Task 9: Case selector, membership, relation, promotion UI
 
 **Files:**
-- Modify: `rikugan/ui/knowledge_panel.py`
-- Modify: `rikugan/ui/panel_core.py`
-- Modify: `rikugan/ui/session_controller_base.py`
+- Modify: `lucnhan/ui/knowledge_panel.py`
+- Modify: `lucnhan/ui/panel_core.py`
+- Modify: `lucnhan/ui/session_controller_base.py`
 - Create: `tests/ui/test_case_memory_ui.py`
 
 **Interfaces:**
@@ -753,7 +753,7 @@ Run: `uv run python -m pytest tests/ui/test_case_memory_ui.py tests/tools/test_p
 Expected: PASS.
 
 ```bash
-git add rikugan/ui/knowledge_panel.py rikugan/ui/panel_core.py rikugan/ui/session_controller_base.py tests/ui/test_case_memory_ui.py tests/tools/test_panel_core.py
+git add lucnhan/ui/knowledge_panel.py lucnhan/ui/panel_core.py lucnhan/ui/session_controller_base.py tests/ui/test_case_memory_ui.py tests/tools/test_panel_core.py
 git commit -m "feat(memory): add analysis case ui"
 ```
 
@@ -793,17 +793,17 @@ Run: `uv run python -m pytest tests/memory/cases tests/agent/test_case_context.p
 
 Expected: PASS.
 
-Run: `uv run python -m pytest tests/ rikugan/tests/ -q`
+Run: `uv run python -m pytest tests/ lucnhan/tests/ -q`
 
 Expected: PASS.
 
 - [ ] **Step 6: Run static checks and commit**
 
-Run: `uvx ruff format --check rikugan/ tests/`
+Run: `uvx ruff format --check lucnhan/ tests/`
 
-Run: `uvx ruff check rikugan/ tests/`
+Run: `uvx ruff check lucnhan/ tests/`
 
-Run: `uvx mypy rikugan/core rikugan/providers --pretty`
+Run: `uvx mypy lucnhan/core lucnhan/providers --pretty`
 
 Expected: PASS.
 

@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────
-# Rikugan — universal installer (Linux / macOS)
+# Luc Nhan — universal installer (Linux / macOS)
 #
-#   curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.sh | bash -s -- --ida
+#   curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/Luc-Nhan/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/Luc-Nhan/master/install.sh | bash -s -- --ida
 #
 # Environment variables:
-#   RIKUGAN_DIR     — where to clone the repo   (default: ~/.rikugan)
-#   RIKUGAN_BRANCH  — git branch to check out   (default: master)
+#   LUCNHAN_DIR     — where to clone the repo   (default: ~/.lucnhan)
+#   LUCNHAN_BRANCH  — git branch to check out   (default: master)
 
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO_URL="https://github.com/EliteClassRoom/rikugan.git"
-INSTALL_DIR="${RIKUGAN_DIR:-$HOME/.rikugan}"
-BRANCH="${RIKUGAN_BRANCH:-master}"
+REPO_URL="https://github.com/EliteClassRoom/Luc-Nhan.git"
+INSTALL_DIR="${LUCNHAN_DIR:-$HOME/.lucnhan}"
+BRANCH="${LUCNHAN_BRANCH:-master}"
 
 # ── Colors ───────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
@@ -29,7 +29,7 @@ banner() {
     printf "\n${BOLD}"
     cat << 'EOF'
     ╔══════════════════════════════════════════╗
-    ║            六眼  Rikugan                 ║
+    ║            六眼  Luc Nhan                 ║
     ║     Reverse Engineering AI Agent         ║
     ║              IDA Pro                     ║
     ╚══════════════════════════════════════════╝
@@ -45,15 +45,15 @@ for arg in "$@"; do
             TARGET="ida"
             ;;
         --help|-h)
-            echo "Usage: curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/rikugan/master/install.sh | bash -s -- [OPTIONS]"
+            echo "Usage: curl -fsSL https://raw.githubusercontent.com/EliteClassRoom/Luc-Nhan/master/install.sh | bash -s -- [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --ida       Install for IDA Pro"
             echo "  (no flag)   Auto-detect IDA Pro"
             echo ""
             echo "Environment:"
-            echo "  RIKUGAN_DIR=$INSTALL_DIR"
-            echo "  RIKUGAN_BRANCH=$BRANCH"
+            echo "  LUCNHAN_DIR=$INSTALL_DIR"
+            echo "  LUCNHAN_BRANCH=$BRANCH"
             exit 0
             ;;
     esac
@@ -106,7 +106,7 @@ clone_or_update() {
             warn "$INSTALL_DIR exists but is not a git repo — backing up"
             mv "$INSTALL_DIR" "${INSTALL_DIR}.bak.$(date +%s)"
         fi
-        info "Cloning Rikugan into $INSTALL_DIR..."
+        info "Cloning Luc Nhan into $INSTALL_DIR..."
         git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR" --quiet
         ok "Cloned successfully"
     fi
@@ -164,7 +164,7 @@ main() {
     if $failed; then
         warn "Installation completed with errors. Check the output above."
     else
-        ok "Rikugan installation complete!"
+        ok "Luc Nhan installation complete!"
     fi
     printf "${DIM}  Install location: ${INSTALL_DIR}${NC}\n"
     printf "${DIM}  To update later:  cd ${INSTALL_DIR} && git pull${NC}\n"

@@ -1,7 +1,7 @@
 """Behavioral tests for the emulation output layer.
 
 Covers the three pure helpers owned by
-:mod:`rikugan.ida.tools.emulation_output`:
+:mod:`lucnhan.ida.tools.emulation_output`:
 
 * per-encoding terminator detection (``decode_string_candidates``),
 * printable ASCII / UTF-8 / UTF-16LE discovery (``extract_strings``),
@@ -20,14 +20,14 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from rikugan.constants import TOOL_RESULT_TRUNCATE_LEN
-from rikugan.ida.tools.emulation_output import (
+from lucnhan.constants import TOOL_RESULT_TRUNCATE_LEN
+from lucnhan.ida.tools.emulation_output import (
     OUTPUT_BUDGET_CHARS,
     decode_string_candidates,
     extract_strings,
     format_result,
 )
-from rikugan.ida.tools.emulation_types import EmulationResult, StringCandidate
+from lucnhan.ida.tools.emulation_types import EmulationResult, StringCandidate
 
 
 def _texts(candidates: list[StringCandidate], encoding: str) -> list[str]:

@@ -1,4 +1,4 @@
-"""Tests for rikugan.ui.chat_view — pure logic helpers."""
+"""Tests for lucnhan.ui.chat_view — pure logic helpers."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ class _StubModule(types.ModuleType):
 
 
 for _mod_name in [
-    "rikugan.agent.turn",
-    "rikugan.core.types",
+    "lucnhan.agent.turn",
+    "lucnhan.core.types",
 ]:
     _stub = _StubModule(_mod_name)
     # Add commonly-needed attrs
@@ -46,26 +46,26 @@ for _mod_name in [
     sys.modules[_mod_name] = _stub
 
 # Other tests may leave stubbed UI modules behind; force fresh imports.
-# Note: we must also pop the parent package ``rikugan.ui.theme`` so
+# Note: we must also pop the parent package ``lucnhan.ui.theme`` so
 # that Python can re-import its submodules from disk — a stub parent
 # (a ``types.ModuleType`` without ``__path__``) would otherwise block
 # the relative ``from .theme.manager import ...`` resolution that
 # ``markdown.py`` performs at import time.
 for _mod_name in [
-    "rikugan.ui.chat_view",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.plan_view",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.styles",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.markdown",
+    "lucnhan.ui.chat_view",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.plan_view",
+    "lucnhan.ui.tool_widgets",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.markdown",
 ]:
     sys.modules.pop(_mod_name, None)
 
-from rikugan.ui.bulk_renamer import BulkRenamerWidget
-from rikugan.ui.chat_view import _TOOL_GROUP_MIN_CALLS, _is_hidden_system_user_message
+from lucnhan.ui.bulk_renamer import BulkRenamerWidget
+from lucnhan.ui.chat_view import _TOOL_GROUP_MIN_CALLS, _is_hidden_system_user_message
 
 # ---------------------------------------------------------------------------
 # _is_hidden_system_user_message
@@ -157,17 +157,17 @@ class TestExecutePythonRouting(unittest.TestCase):
         # Order matters: pop chat_view LAST so its import chain sees the
         # freshly-imported real agent.turn / core.types / tool_widgets.
         for _mod_name in [
-            "rikugan.ui.chat_view",
-            "rikugan.ui.tool_widgets",
-            "rikugan.agent.turn",
-            "rikugan.core.types",
+            "lucnhan.ui.chat_view",
+            "lucnhan.ui.tool_widgets",
+            "lucnhan.agent.turn",
+            "lucnhan.core.types",
         ]:
             sys.modules.pop(_mod_name, None)
 
-        from rikugan import constants as _constants
-        from rikugan.agent.turn import TurnEvent, TurnEventType
-        from rikugan.ui.chat_view import ChatView
-        from rikugan.ui.tool_widgets import (
+        from lucnhan import constants as _constants
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.ui.chat_view import ChatView
+        from lucnhan.ui.tool_widgets import (
             ExecutePythonWidget,
             ToolApprovalWidget,
             ToolCallWidget,

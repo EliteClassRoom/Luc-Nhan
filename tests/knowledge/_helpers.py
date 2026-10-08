@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import os
 
-from rikugan.memory.paths import KnowledgePaths, knowledge_paths
-from rikugan.memory.raw_store import KnowledgeRawStore
+from lucnhan.memory.paths import KnowledgePaths, knowledge_paths
+from lucnhan.memory.raw_store import KnowledgeRawStore
 
 # Canonical IDB filename used by the knowledge-store test suite.
 # ``.idb`` is what ``HeadlessSessionController`` and the IDA fallback

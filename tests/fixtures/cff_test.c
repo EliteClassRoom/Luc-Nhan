@@ -1,5 +1,5 @@
 /*
- * CFF test binary for Rikugan IL analysis tools.
+ * CFF test binary for Luc Nhan IL analysis tools.
  * Compile with: clang -O0 -o cff_test cff_test.c
  */
 

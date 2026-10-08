@@ -11,12 +11,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.context_window import ContextWindowManager
-from rikugan.agent.plan_mode import create_plan_from_text, parse_plan
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role, TokenUsage
-from rikugan.state.session import SessionState
+from lucnhan.agent.context_window import ContextWindowManager
+from lucnhan.agent.plan_mode import create_plan_from_text, parse_plan
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import Message, Role, TokenUsage
+from lucnhan.state.session import SessionState
 
 
 class TestTurnEvents(unittest.TestCase):
@@ -123,9 +123,9 @@ class TestSessionHistory(unittest.TestCase):
     def test_save_and_load(self):
         import tempfile
 
-        from rikugan.state.history import SessionHistory
+        from lucnhan.state.history import SessionHistory
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._config_dir = tempfile.mkdtemp()
 
         history = SessionHistory(cfg)
@@ -143,9 +143,9 @@ class TestSessionHistory(unittest.TestCase):
     def test_list_sessions(self):
         import tempfile
 
-        from rikugan.state.history import SessionHistory
+        from lucnhan.state.history import SessionHistory
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._config_dir = tempfile.mkdtemp()
         history = SessionHistory(cfg)
 

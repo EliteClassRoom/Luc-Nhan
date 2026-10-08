@@ -20,13 +20,13 @@ import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
-from rikugan.agent.loop import AgentLoop, BackgroundAgentRunner
-from rikugan.agent.loop_commands import _handle_report_command
-from rikugan.agent.turn import TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.report import ReportSaveResult, build_report_context
-from rikugan.memory.schema import KnowledgeMemory
-from rikugan.state.session import SessionState
+from lucnhan.agent.loop import AgentLoop, BackgroundAgentRunner
+from lucnhan.agent.loop_commands import _handle_report_command
+from lucnhan.agent.turn import TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.report import ReportSaveResult, build_report_context
+from lucnhan.memory.schema import KnowledgeMemory
+from lucnhan.state.session import SessionState
 from tests.knowledge._helpers import fresh_store
 
 
@@ -50,7 +50,7 @@ def _seed_verified_hypothesis(store, paths) -> KnowledgeMemory:
 def _build_test_loop(store, paths) -> AgentLoop:
     """Minimal AgentLoop whose ``run`` only yields from the real /report handler."""
     loop = AgentLoop.__new__(AgentLoop)
-    loop.config = RikuganConfig()
+    loop.config = LucNhanConfig()
     loop.session = SessionState(idb_path=paths.idb_path)
     loop.provider = object()
     loop.tools = MagicMock()
@@ -87,19 +87,19 @@ class TestBackgroundAgentRunnerReportFlow(unittest.TestCase):
 
         return [
             patch(
-                "rikugan.agent.loop_commands._open_knowledge_store",
+                "lucnhan.agent.loop_commands._open_knowledge_store",
                 return_value=(self.store, self.paths, None),
             ),
             patch(
-                "rikugan.memory.report.build_report_context",
+                "lucnhan.memory.report.build_report_context",
                 side_effect=_context_for,
             ),
             patch(
-                "rikugan.memory.report.synthesize_report",
+                "lucnhan.memory.report.synthesize_report",
                 return_value=(_context_for(), "# Draft\n\nverified body"),
             ),
             patch(
-                "rikugan.memory.report.save_report",
+                "lucnhan.memory.report.save_report",
                 side_effect=save_mock,
             ),
         ]

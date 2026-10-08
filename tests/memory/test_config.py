@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.core.config import RikuganConfig
+from lucnhan.core.config import LucNhanConfig
 
 # Version specifier starts at the first comparison/exclusion operator; everything
 # before it is the distribution name (PEP 508), e.g. ``portalocker>=4.1.0,<5``.
@@ -60,7 +60,7 @@ def test_runtime_dependency_spec_is_consistent_across_manifests(package: str) ->
 
 
 def test_memory_dir_is_central(tmp_path: Path) -> None:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
 
     assert Path(config.memory_dir) == tmp_path / "memory"

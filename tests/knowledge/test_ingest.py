@@ -1,4 +1,4 @@
-"""Tests for rikugan.memory.ingest.
+"""Tests for lucnhan.memory.ingest.
 
 Exercises auto-ingest paths for save_memory, exploration_report,
 and research_note. These tests don't touch IDA / Qt — they operate
@@ -12,7 +12,7 @@ import tempfile
 import textwrap
 import unittest
 
-from rikugan.memory.ingest import (
+from lucnhan.memory.ingest import (
     ingest_exploration_finding,
     ingest_report,
     ingest_research_note,
@@ -194,7 +194,7 @@ class TestCanonicalIdHelpers(unittest.TestCase):
         self.store, self.paths = fresh_store(self.tmp)
 
     def test_report_entity_id_sanitizes_hostile_slug(self):
-        from rikugan.memory.paths import report_entity_id
+        from lucnhan.memory.paths import report_entity_id
 
         hostile_slug = "../etc/passwd"
         ingest_report(
@@ -217,7 +217,7 @@ class TestCanonicalIdHelpers(unittest.TestCase):
         # address falls through the "_entity_id_for" path that builds
         # an "import:unknown:{name}" id. Verify the unsafe characters
         # are sanitized (the old hard-coded f-string skipped that).
-        from rikugan.memory.paths import import_entity_id
+        from lucnhan.memory.paths import import_entity_id
 
         # ``address`` is required for the import branch; use a dummy.
         ingest_exploration_finding(

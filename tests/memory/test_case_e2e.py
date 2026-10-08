@@ -8,26 +8,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.authority import MemoryAuthorityIssuer
-from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.case_schema import CaseRelationType
-from rikugan.memory.case_service import CaseMemoryService
-from rikugan.memory.manager import MemoryWorkspaceManager
-from rikugan.memory.peer_retrieval import PeerMemoryRetriever
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.schema import KnowledgeMemory
-from rikugan.memory.workspace import (
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.authority import MemoryAuthorityIssuer
+from lucnhan.memory.case_repository import CaseRepository
+from lucnhan.memory.case_schema import CaseRelationType
+from lucnhan.memory.case_service import CaseMemoryService
+from lucnhan.memory.manager import MemoryWorkspaceManager
+from lucnhan.memory.peer_retrieval import PeerMemoryRetriever
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.schema import KnowledgeMemory
+from lucnhan.memory.workspace import (
     FilesystemIdentity,
     IdentityRequest,
     new_record_id,
 )
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _full_setup(tmp_path: Path) -> dict:
     """Set up complete case subsystem with 2 binaries and a case."""
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     manager = MemoryWorkspaceManager(config)
 

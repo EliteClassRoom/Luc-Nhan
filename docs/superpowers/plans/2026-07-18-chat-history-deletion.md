@@ -4,14 +4,14 @@
 
 **Goal:** Thêm hard delete có xác nhận cho từng chat đã lưu trong History của IDB hiện tại, đồng thời ngăn autosave hoặc history load làm chat bị xóa xuất hiện lại.
 
-**Architecture:** `HistoryPanel` chỉ phát intent và render trạng thái; `RikuganPanelCore` sở hữu confirmation, deletion intents, single-flight executor, watchdog, queue và Qt-main-thread apply; `SessionControllerBase` ánh xạ persistence outcome sang typed UI result; `SessionHistory` serialize delete với `_SAVE_EXECUTOR` hiện có. Primary session JSON là source of truth; sidecar và manifest là cleanup/recoverable metadata.
+**Architecture:** `HistoryPanel` chỉ phát intent và render trạng thái; `LucNhanPanelCore` sở hữu confirmation, deletion intents, single-flight executor, watchdog, queue và Qt-main-thread apply; `SessionControllerBase` ánh xạ persistence outcome sang typed UI result; `SessionHistory` serialize delete với `_SAVE_EXECUTOR` hiện có. Primary session JSON là source of truth; sidecar và manifest là cleanup/recoverable metadata.
 
-**Tech Stack:** Python 3.11 target (tương thích IDA Pro ≥ 9.0; Python 3.10 là runtime IDA an toàn nhất), PySide6 qua `rikugan.ui.qt_compat`, frozen dataclasses/Enum, `concurrent.futures.ThreadPoolExecutor`, `queue.Queue`, `threading.Event`, pytest/unittest, ruff, mypy.
+**Tech Stack:** Python 3.11 target (tương thích IDA Pro ≥ 9.0; Python 3.10 là runtime IDA an toàn nhất), PySide6 qua `lucnhan.ui.qt_compat`, frozen dataclasses/Enum, `concurrent.futures.ThreadPoolExecutor`, `queue.Queue`, `threading.Event`, pytest/unittest, ruff, mypy.
 
 ## Global Constraints
 
 - Đọc `AGENTS.md` trước khi sửa code; mọi module Python mới/sửa vẫn bắt đầu bằng `from __future__ import annotations`.
-- Không import `ida_*` hoặc `PySide6` trực tiếp; UI chỉ import Qt qua `rikugan.ui.qt_compat`.
+- Không import `ida_*` hoặc `PySide6` trực tiếp; UI chỉ import Qt qua `lucnhan.ui.qt_compat`.
 - `HistoryPanel`/`HistoryRowWidget` tuyệt đối không import persistence, config, threading, executor hoặc thực hiện I/O.
 - Worker không chạm Qt; mọi mutation widget/tab/intent set chạy trên Qt main thread qua result queue + `QTimer`.
 - `_history_executor` và `_SAVE_EXECUTOR` phải là hai executor khác nhau; delete filesystem được enqueue vào `_SAVE_EXECUTOR` để có FIFO với autosave.
@@ -28,14 +28,14 @@
 
 ### Production
 
-- `rikugan/constants.py` — slow-delete watchdog constant.
-- `rikugan/state/history_types.py` — frozen UI-facing delete result/status contracts.
-- `rikugan/state/history.py` — internal persistence outcome, ordered async delete, sidecar/manifest cleanup; loại public synchronous delete unsafe.
-- `rikugan/ui/session_controller_base.py` — Qt-free delete API mapping persistence result to UI result.
-- `rikugan/ui/history_panel.py` — passive delete affordance, notices, pending state, cached-row removal.
-- `rikugan/ui/theme/widgets_common.py` — token-driven History delete button style.
-- `rikugan/ui/styles.py` — re-export style getter.
-- `rikugan/ui/panel_core.py` — confirmation, intent race gate, worker/drain/apply/retry/watchdog/lifecycle.
+- `lucnhan/constants.py` — slow-delete watchdog constant.
+- `lucnhan/state/history_types.py` — frozen UI-facing delete result/status contracts.
+- `lucnhan/state/history.py` — internal persistence outcome, ordered async delete, sidecar/manifest cleanup; loại public synchronous delete unsafe.
+- `lucnhan/ui/session_controller_base.py` — Qt-free delete API mapping persistence result to UI result.
+- `lucnhan/ui/history_panel.py` — passive delete affordance, notices, pending state, cached-row removal.
+- `lucnhan/ui/theme/widgets_common.py` — token-driven History delete button style.
+- `lucnhan/ui/styles.py` — re-export style getter.
+- `lucnhan/ui/panel_core.py` — confirmation, intent race gate, worker/drain/apply/retry/watchdog/lifecycle.
 - `CHANGELOG.md` — Unreleased feature note.
 
 ### Tests
@@ -53,8 +53,8 @@
 ### Task 1: Freeze Delete Contracts and Watchdog Constant
 
 **Files:**
-- Modify: `rikugan/constants.py:51-57`
-- Modify: `rikugan/state/history_types.py:60-129`
+- Modify: `lucnhan/constants.py:51-57`
+- Modify: `lucnhan/state/history_types.py:60-129`
 - Test: `tests/state/test_history_on_demand.py:40-54`
 
 **Interfaces:**
@@ -66,8 +66,8 @@
 Add imports and focused tests to `tests/state/test_history_on_demand.py`:
 
 ```python
-from rikugan.constants import HISTORY_DELETE_SLOW_NOTICE_SECONDS
-from rikugan.state.history_types import (
+from lucnhan.constants import HISTORY_DELETE_SLOW_NOTICE_SECONDS
+from lucnhan.state.history_types import (
     HistoryDeleteResult,
     HistoryDeleteStatus,
 )
@@ -105,14 +105,14 @@ Expected: collection fails because the constant/types do not exist.
 
 - [ ] **Step 3: Add the constant and frozen contracts**
 
-In `rikugan/constants.py`:
+In `lucnhan/constants.py`:
 
 ```python
 HISTORY_TITLE_MAX_CHARS = 80
 HISTORY_DELETE_SLOW_NOTICE_SECONDS = 30.0
 ```
 
-In `rikugan/state/history_types.py`, after `HistoryAttachStatus`:
+In `lucnhan/state/history_types.py`, after `HistoryAttachStatus`:
 
 ```python
 class HistoryDeleteStatus(str, Enum):
@@ -145,14 +145,14 @@ Expected: PASS.
 - [ ] **Step 5: Run formatting and checkpoint**
 
 ```bash
-python -m ruff format rikugan/constants.py rikugan/state/history_types.py tests/state/test_history_on_demand.py
-python -m ruff check rikugan/constants.py rikugan/state/history_types.py tests/state/test_history_on_demand.py
+python -m ruff format lucnhan/constants.py lucnhan/state/history_types.py tests/state/test_history_on_demand.py
+python -m ruff check lucnhan/constants.py lucnhan/state/history_types.py tests/state/test_history_on_demand.py
 ```
 
 If commits are authorized:
 
 ```bash
-git add rikugan/constants.py rikugan/state/history_types.py tests/state/test_history_on_demand.py
+git add lucnhan/constants.py lucnhan/state/history_types.py tests/state/test_history_on_demand.py
 git commit -m "feat(history): define chat deletion contracts"
 ```
 
@@ -161,7 +161,7 @@ git commit -m "feat(history): define chat deletion contracts"
 ### Task 2: Implement Ordered Persistence Deletion
 
 **Files:**
-- Modify: `rikugan/state/history.py:50-82, 235-357, 545-572, 819-827`
+- Modify: `lucnhan/state/history.py:50-82, 235-357, 545-572, 819-827`
 - Modify: `tests/state/test_history_on_demand.py:103-380`
 - Modify: `tests/agent/test_state.py:251-320`
 
@@ -174,18 +174,18 @@ git commit -m "feat(history): define chat deletion contracts"
 Run:
 
 ```bash
-rg -n "\bdelete_session\(" rikugan tests
-rg -n "_SAVE_EXECUTOR = ThreadPoolExecutor\(max_workers=1" rikugan/state/history.py
+rg -n "\bdelete_session\(" lucnhan tests
+rg -n "_SAVE_EXECUTOR = ThreadPoolExecutor\(max_workers=1" lucnhan/state/history.py
 ```
 
-Expected baseline: production definition in `rikugan/state/history.py`, legacy happy/nonexistent tests in `tests/agent/test_state.py`, and the invalid-ID assertion in `tests/state/test_history_on_demand.py`; no other production caller. The second command must find exactly the single-worker executor declaration because FIFO save→delete correctness depends on `max_workers=1`. Migrate all three test call sites in this task before removing the public sync method.
+Expected baseline: production definition in `lucnhan/state/history.py`, legacy happy/nonexistent tests in `tests/agent/test_state.py`, and the invalid-ID assertion in `tests/state/test_history_on_demand.py`; no other production caller. The second command must find exactly the single-worker executor declaration because FIFO save→delete correctness depends on `max_workers=1`. Migrate all three test call sites in this task before removing the public sync method.
 
 - [ ] **Step 2: Write failing happy-path, sidecar, and idempotency tests**
 
 Add helpers/tests to `tests/state/test_history_on_demand.py`:
 
 ```python
-from rikugan.state.history import (
+from lucnhan.state.history import (
     MANIFEST_FILE,
     SessionDeleteStatus,
 )
@@ -256,7 +256,7 @@ Expected: import/attribute failures for new persistence contracts/API.
 
 - [ ] **Step 4: Add internal persistence outcome and ordered public API**
 
-In `rikugan/state/history.py`:
+In `lucnhan/state/history.py`:
 
 ```python
 from dataclasses import dataclass
@@ -545,7 +545,7 @@ This preserves the original "invalid ID causes no I/O" assertion while exercisin
 
 ```bash
 python -m pytest tests/state/test_history_on_demand.py tests/agent/test_state.py -v
-rg -n "\bdelete_session\(" rikugan tests
+rg -n "\bdelete_session\(" lucnhan tests
 ```
 
 Expected: tests PASS; grep returns no public synchronous call.
@@ -553,14 +553,14 @@ Expected: tests PASS; grep returns no public synchronous call.
 - [ ] **Step 10: Format, lint, and checkpoint**
 
 ```bash
-python -m ruff format rikugan/state/history.py tests/state/test_history_on_demand.py tests/agent/test_state.py
-python -m ruff check rikugan/state/history.py tests/state/test_history_on_demand.py tests/agent/test_state.py
+python -m ruff format lucnhan/state/history.py tests/state/test_history_on_demand.py tests/agent/test_state.py
+python -m ruff check lucnhan/state/history.py tests/state/test_history_on_demand.py tests/agent/test_state.py
 ```
 
 If authorized:
 
 ```bash
-git add rikugan/state/history.py tests/state/test_history_on_demand.py tests/agent/test_state.py
+git add lucnhan/state/history.py tests/state/test_history_on_demand.py tests/agent/test_state.py
 git commit -m "feat(history): serialize persisted chat deletion"
 ```
 
@@ -569,7 +569,7 @@ git commit -m "feat(history): serialize persisted chat deletion"
 ### Task 3: Add the Qt-Free Controller Delete Boundary
 
 **Files:**
-- Modify: `rikugan/ui/session_controller_base.py:15-33, 669-813`
+- Modify: `lucnhan/ui/session_controller_base.py:15-33, 669-813`
 - Test: `tests/agent/test_session_controller.py:216-329`
 
 **Interfaces:**
@@ -596,7 +596,7 @@ def test_delete_history_session_rejects_stale_live_scope(self) -> None:
     scope = self.ctrl.capture_history_scope(generation=3)
     self.ctrl._db_instance_id = "f" * 32
 
-    with patch("rikugan.state.history.SessionHistory.delete_session_async") as delete_async:
+    with patch("lucnhan.state.history.SessionHistory.delete_session_async") as delete_async:
         result = self.ctrl.delete_history_session("saved-history", scope)
 
     self.assertIs(result.status, HistoryDeleteStatus.WRONG_IDB)
@@ -666,7 +666,7 @@ def test_delete_history_session_translates_persistence_failure(self) -> None:
     failed.set_exception(PermissionError("locked path"))
 
     with patch(
-        "rikugan.state.history.SessionHistory.delete_session_async",
+        "lucnhan.state.history.SessionHistory.delete_session_async",
         return_value=failed,
     ):
         result = self.ctrl.delete_history_session("saved-history", scope)
@@ -684,7 +684,7 @@ def test_delete_history_session_does_not_swallow_cancelled_error(self) -> None:
     cancelled.cancel()
 
     with patch(
-        "rikugan.state.history.SessionHistory.delete_session_async",
+        "lucnhan.state.history.SessionHistory.delete_session_async",
         return_value=cancelled,
     ):
         with self.assertRaises(CancelledError):
@@ -703,14 +703,14 @@ Expected: PASS.
 - [ ] **Step 6: Format, lint, and checkpoint**
 
 ```bash
-python -m ruff format rikugan/ui/session_controller_base.py tests/agent/test_session_controller.py
-python -m ruff check rikugan/ui/session_controller_base.py tests/agent/test_session_controller.py
+python -m ruff format lucnhan/ui/session_controller_base.py tests/agent/test_session_controller.py
+python -m ruff check lucnhan/ui/session_controller_base.py tests/agent/test_session_controller.py
 ```
 
 If authorized:
 
 ```bash
-git add rikugan/ui/session_controller_base.py tests/agent/test_session_controller.py
+git add lucnhan/ui/session_controller_base.py tests/agent/test_session_controller.py
 git commit -m "feat(history): add chat deletion controller boundary"
 ```
 
@@ -719,9 +719,9 @@ git commit -m "feat(history): add chat deletion controller boundary"
 ### Task 4: Add the Passive Delete Affordance and Notice API
 
 **Files:**
-- Modify: `rikugan/ui/history_panel.py:54-67, 126-201, 216-542`
-- Modify: `rikugan/ui/theme/widgets_common.py:251-304, 422-454`
-- Modify: `rikugan/ui/styles.py:108-138`
+- Modify: `lucnhan/ui/history_panel.py:54-67, 126-201, 216-542`
+- Modify: `lucnhan/ui/theme/widgets_common.py:251-304, 422-454`
+- Modify: `lucnhan/ui/styles.py:108-138`
 - Modify: `tests/qt_stubs.py:19-415`
 - Test: `tests/ui/test_history_panel.py:55-500`
 
@@ -734,7 +734,7 @@ git commit -m "feat(history): add chat deletion controller boundary"
 Add `HistoryRowWidget` to test imports and create focused tests:
 
 ```python
-from rikugan.ui.history_panel import HistoryRowWidget
+from lucnhan.ui.history_panel import HistoryRowWidget
 
 
 class TestDeleteAffordance(unittest.TestCase):
@@ -784,7 +784,7 @@ Expected: missing class signal/button/style API.
 
 - [ ] **Step 3: Add token-driven delete button style**
 
-In `rikugan/ui/theme/widgets_common.py`:
+In `lucnhan/ui/theme/widgets_common.py`:
 
 ```python
 def _history_delete_btn_style() -> str:
@@ -810,7 +810,7 @@ def get_history_delete_btn_style() -> str:
     return _history_delete_btn_style()
 ```
 
-Re-export it from `rikugan/ui/styles.py`.
+Re-export it from `lucnhan/ui/styles.py`.
 
 - [ ] **Step 4: Add row signal/button without event bubbling**
 
@@ -982,14 +982,14 @@ Expected: all existing search/plain-text/overflow/theme/passivity tests and new 
 - [ ] **Step 8: Format, lint, and checkpoint**
 
 ```bash
-python -m ruff format rikugan/ui/history_panel.py rikugan/ui/theme/widgets_common.py rikugan/ui/styles.py tests/ui/test_history_panel.py tests/qt_stubs.py
-python -m ruff check rikugan/ui/history_panel.py rikugan/ui/theme/widgets_common.py rikugan/ui/styles.py tests/ui/test_history_panel.py tests/qt_stubs.py
+python -m ruff format lucnhan/ui/history_panel.py lucnhan/ui/theme/widgets_common.py lucnhan/ui/styles.py tests/ui/test_history_panel.py tests/qt_stubs.py
+python -m ruff check lucnhan/ui/history_panel.py lucnhan/ui/theme/widgets_common.py lucnhan/ui/styles.py tests/ui/test_history_panel.py tests/qt_stubs.py
 ```
 
 If authorized:
 
 ```bash
-git add rikugan/ui/history_panel.py rikugan/ui/theme/widgets_common.py rikugan/ui/styles.py tests/ui/test_history_panel.py tests/qt_stubs.py
+git add lucnhan/ui/history_panel.py lucnhan/ui/theme/widgets_common.py lucnhan/ui/styles.py tests/ui/test_history_panel.py tests/qt_stubs.py
 git commit -m "feat(history): add passive chat delete controls"
 ```
 
@@ -998,7 +998,7 @@ git commit -m "feat(history): add passive chat delete controls"
 ### Task 5: Implement PanelCore Confirmation, Intents, Worker, Retry, and Watchdog
 
 **Files:**
-- Modify: `rikugan/ui/panel_core.py:5-27, 259-290, 665-673, 1803-2453`
+- Modify: `lucnhan/ui/panel_core.py:5-27, 259-290, 665-673, 1803-2453`
 - Modify: `tests/tools/test_panel_core.py:1335-1382, 1647-1927, 2170-3140`
 
 **Interfaces:**
@@ -1556,14 +1556,14 @@ Expected: PASS with no regressions in list/load pending lifecycle.
 - [ ] **Step 12: Format, lint, and checkpoint**
 
 ```bash
-python -m ruff format rikugan/ui/panel_core.py tests/tools/test_panel_core.py
-python -m ruff check rikugan/ui/panel_core.py tests/tools/test_panel_core.py
+python -m ruff format lucnhan/ui/panel_core.py tests/tools/test_panel_core.py
+python -m ruff check lucnhan/ui/panel_core.py tests/tools/test_panel_core.py
 ```
 
 If authorized:
 
 ```bash
-git add rikugan/ui/panel_core.py tests/tools/test_panel_core.py
+git add lucnhan/ui/panel_core.py tests/tools/test_panel_core.py
 git commit -m "feat(history): coordinate confirmed chat deletion"
 ```
 
@@ -1726,7 +1726,7 @@ def test_primary_delete_failure_keeps_row_and_retry_succeeds(self):
             raise PermissionError("locked")
         original_remove(path)
 
-    with patch("rikugan.state.history.os.remove", side_effect=fail_target):
+    with patch("lucnhan.state.history.os.remove", side_effect=fail_target):
         self.facade.delete_history_session(self.a1_id)
 
     self.assertIn(self.a1_id, self.facade.visible_history_ids())
@@ -1819,12 +1819,12 @@ Do not bump `PLUGIN_VERSION`, `pyproject.toml`, or `ida-plugin.json`; version bu
 - [ ] **Step 2: Audit forbidden/legacy surfaces**
 
 ```bash
-rg -n "\bdelete_session\(" rikugan tests
-rg -n "SessionHistory|ThreadPoolExecutor|threading|open\(|os\." rikugan/ui/history_panel.py
+rg -n "\bdelete_session\(" lucnhan tests
+rg -n "SessionHistory|ThreadPoolExecutor|threading|open\(|os\." lucnhan/ui/history_panel.py
 rg -n "from PySide6|import ida_|from ida_" \
-  rikugan/ui/history_panel.py \
-  rikugan/ui/panel_core.py \
-  rikugan/ui/session_controller_base.py
+  lucnhan/ui/history_panel.py \
+  lucnhan/ui/panel_core.py \
+  lucnhan/ui/session_controller_base.py
 ```
 
 Expected:
@@ -1837,14 +1837,14 @@ Expected:
 
 ```bash
 python -m ruff format \
-  rikugan/constants.py \
-  rikugan/state/history_types.py \
-  rikugan/state/history.py \
-  rikugan/ui/session_controller_base.py \
-  rikugan/ui/history_panel.py \
-  rikugan/ui/theme/widgets_common.py \
-  rikugan/ui/styles.py \
-  rikugan/ui/panel_core.py \
+  lucnhan/constants.py \
+  lucnhan/state/history_types.py \
+  lucnhan/state/history.py \
+  lucnhan/ui/session_controller_base.py \
+  lucnhan/ui/history_panel.py \
+  lucnhan/ui/theme/widgets_common.py \
+  lucnhan/ui/styles.py \
+  lucnhan/ui/panel_core.py \
   tests/state/test_history_on_demand.py \
   tests/agent/test_state.py \
   tests/agent/test_session_controller.py \
@@ -1853,14 +1853,14 @@ python -m ruff format \
   tests/integration/test_history_on_demand.py
 
 python -m ruff check \
-  rikugan/constants.py \
-  rikugan/state/history_types.py \
-  rikugan/state/history.py \
-  rikugan/ui/session_controller_base.py \
-  rikugan/ui/history_panel.py \
-  rikugan/ui/theme/widgets_common.py \
-  rikugan/ui/styles.py \
-  rikugan/ui/panel_core.py \
+  lucnhan/constants.py \
+  lucnhan/state/history_types.py \
+  lucnhan/state/history.py \
+  lucnhan/ui/session_controller_base.py \
+  lucnhan/ui/history_panel.py \
+  lucnhan/ui/theme/widgets_common.py \
+  lucnhan/ui/styles.py \
+  lucnhan/ui/panel_core.py \
   tests/state/test_history_on_demand.py \
   tests/agent/test_state.py \
   tests/agent/test_session_controller.py \
@@ -1874,7 +1874,7 @@ Expected: no lint errors.
 - [ ] **Step 4: Run mypy scope used by project CI**
 
 ```bash
-python -m mypy rikugan/core rikugan/providers
+python -m mypy lucnhan/core lucnhan/providers
 ```
 
 Expected: PASS. Note that current CI mypy scope does not cover UI/state; rely on tests, ruff, and reviewers for those files.
@@ -1942,14 +1942,14 @@ If authorized:
 ```bash
 git add \
   CHANGELOG.md \
-  rikugan/constants.py \
-  rikugan/state/history_types.py \
-  rikugan/state/history.py \
-  rikugan/ui/session_controller_base.py \
-  rikugan/ui/history_panel.py \
-  rikugan/ui/theme/widgets_common.py \
-  rikugan/ui/styles.py \
-  rikugan/ui/panel_core.py \
+  lucnhan/constants.py \
+  lucnhan/state/history_types.py \
+  lucnhan/state/history.py \
+  lucnhan/ui/session_controller_base.py \
+  lucnhan/ui/history_panel.py \
+  lucnhan/ui/theme/widgets_common.py \
+  lucnhan/ui/styles.py \
+  lucnhan/ui/panel_core.py \
   tests/state/test_history_on_demand.py \
   tests/agent/test_state.py \
   tests/agent/test_session_controller.py \

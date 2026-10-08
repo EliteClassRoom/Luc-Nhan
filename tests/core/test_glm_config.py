@@ -6,7 +6,7 @@ validates boolean/enum/range values, and reports exact field paths so users
 see *which* GLM setting is wrong.
 
 Effort levels come from the provider-neutral table in
-:mod:`rikugan.core.thinking`: a wholly unknown level raises, while a level
+:mod:`lucnhan.core.thinking`: a wholly unknown level raises, while a level
 the selected model does not accept (a stale saved value) normalizes to that
 model's default instead of bricking provider construction.
 
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from rikugan.core.glm_config import get_glm_model_metadata, parse_glm_extra
+from lucnhan.core.glm_config import get_glm_model_metadata, parse_glm_extra
 
 
 def test_default_glm_config_is_guarded_and_preserved():
@@ -172,7 +172,7 @@ def test_unknown_glm_model_accepts_any_known_level():
 
 def test_legacy_reasoning_effort_values_is_the_level_union():
     """The exported flat enum stays in sync with the level table."""
-    from rikugan.core.glm_config import REASONING_EFFORT_VALUES
-    from rikugan.core.thinking import ALL_THINKING_LEVELS
+    from lucnhan.core.glm_config import REASONING_EFFORT_VALUES
+    from lucnhan.core.thinking import ALL_THINKING_LEVELS
 
     assert REASONING_EFFORT_VALUES == frozenset(ALL_THINKING_LEVELS)

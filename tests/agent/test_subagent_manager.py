@@ -1,4 +1,4 @@
-"""Tests for rikugan.agent.subagent_manager registry logic (no thread/LLM)."""
+"""Tests for lucnhan.agent.subagent_manager registry logic (no thread/LLM)."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from rikugan.agent.subagent_manager import (
+from lucnhan.agent.subagent_manager import (
     SubagentInfo,
     SubagentManager,
     SubagentStatus,
 )
-from rikugan.agent.turn import TurnEvent
-from rikugan.core.config import RikuganConfig
-from rikugan.providers.base import LLMProvider, ModelInfo, ProviderCapabilities
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.agent.turn import TurnEvent
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.providers.base import LLMProvider, ModelInfo, ProviderCapabilities
+from lucnhan.tools.registry import ToolRegistry
 
 
 class _StubProvider(LLMProvider):
@@ -68,7 +68,7 @@ def _make_manager() -> SubagentManager:
     return SubagentManager(
         provider=_StubProvider(),
         tool_registry=ToolRegistry(),
-        config=RikuganConfig(),
+        config=LucNhanConfig(),
         host_name="test",
     )
 
@@ -309,7 +309,7 @@ class TestRegistryAllowlist(unittest.TestCase):
     """``ToolRegistry.allowlist`` returns a filtered view that preserves the dispatch surface."""
 
     def _make_registry(self) -> ToolRegistry:
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from lucnhan.tools.base import ParameterSchema, ToolDefinition
 
         reg = ToolRegistry()
         reg.register(
@@ -370,7 +370,7 @@ class TestManagerSpawnHandoff(unittest.TestCase):
     """``SubagentManager.spawn`` forwards the new tools/model kwargs to its worker."""
 
     def _stub_tools(self) -> ToolRegistry:
-        from rikugan.tools.base import ParameterSchema, ToolDefinition
+        from lucnhan.tools.base import ParameterSchema, ToolDefinition
 
         reg = ToolRegistry()
         reg.register(
@@ -398,7 +398,7 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         mgr = SubagentManager(
             provider=_StubProvider(),
             tool_registry=self._stub_tools(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
         )
         captured: dict = {}
@@ -426,7 +426,7 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         with patch.object(mgr, "_run_agent", side_effect=fake_run_agent):
             agent_id = mgr.spawn(name="n", task="t", tools=["alpha_tool"], model="child-model")
         # Wait for the daemon thread to finish.
-        for thread in [t for t in threading.enumerate() if t.name.startswith("rikugan-subagent-")]:
+        for thread in [t for t in threading.enumerate() if t.name.startswith("lucnhan-subagent-")]:
             thread.join(timeout=1.0)
         assert captured["model"] == "child-model"
         assert set(captured["tools_registry"].list_names()) == {"alpha_tool"}
@@ -437,7 +437,7 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         mgr = SubagentManager(
             provider=_StubProvider(),
             tool_registry=self._stub_tools(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
         )
         captured: dict = {}
@@ -461,7 +461,7 @@ class TestManagerSpawnHandoff(unittest.TestCase):
 
         with patch.object(mgr, "_run_agent", side_effect=fake_run_agent):
             mgr.spawn(name="n", task="t")
-        for thread in [t for t in threading.enumerate() if t.name.startswith("rikugan-subagent-")]:
+        for thread in [t for t in threading.enumerate() if t.name.startswith("lucnhan-subagent-")]:
             thread.join(timeout=1.0)
         assert captured["model"] == ""
         assert set(captured["tools_registry"].list_names()) == {"alpha_tool", "beta_tool"}
@@ -470,12 +470,12 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         """The preflight cancel check in ``_run_agent`` (after
         ``run_task`` returns, before iteration) must finalize the worker
         without emitting progress or completion events."""
-        from rikugan.agent.subagent import SubagentRunner
+        from lucnhan.agent.subagent import SubagentRunner
 
         mgr = SubagentManager(
             provider=_StubProvider(),
             tool_registry=self._stub_tools(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
         )
 
@@ -486,7 +486,7 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         with patch.object(SubagentRunner, "run_task", fake_run_task):
             agent_id = mgr.spawn(name="n", task="t")
         for thread in [
-            t for t in threading.enumerate() if t.name.startswith("rikugan-subagent-")
+            t for t in threading.enumerate() if t.name.startswith("lucnhan-subagent-")
         ]:
             thread.join(timeout=1.0)
         info = mgr.get(agent_id)

@@ -27,8 +27,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.errors import ToolError
-from rikugan.tools import web, web_fetch
+from lucnhan.core.errors import ToolError
+from lucnhan.tools import web, web_fetch
 
 
 class TestPrivateIPDetection(unittest.TestCase):

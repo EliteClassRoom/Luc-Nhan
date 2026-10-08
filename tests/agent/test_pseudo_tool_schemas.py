@@ -1,8 +1,8 @@
-"""Tests for rikugan.agent.pseudo_tool_schemas."""
+"""Tests for lucnhan.agent.pseudo_tool_schemas."""
 
 from __future__ import annotations
 
-from rikugan.agent.pseudo_tool_schemas import (
+from lucnhan.agent.pseudo_tool_schemas import (
     ALL_PSEUDO_TOOL_SCHEMAS,
     ASK_USER_SCHEMA,
     DELEGATE_EXTERNAL_TASK_SCHEMA,

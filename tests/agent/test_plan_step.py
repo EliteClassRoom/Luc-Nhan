@@ -20,12 +20,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.loop import AgentLoop
-from rikugan.agent.modes import plan as plan_mode
-from rikugan.agent.modes.turn_helpers import TurnResult
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.state.session import SessionState
+from lucnhan.agent.loop import AgentLoop
+from lucnhan.agent.modes import plan as plan_mode
+from lucnhan.agent.modes.turn_helpers import TurnResult
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.state.session import SessionState
 
 
 def _make_loop() -> AgentLoop:
@@ -33,7 +33,7 @@ def _make_loop() -> AgentLoop:
     loop = object.__new__(AgentLoop)
     loop.provider = provider
     loop.session = SessionState()
-    loop.config = RikuganConfig()
+    loop.config = LucNhanConfig()
     loop._cancelled = threading.Event()
     return loop
 

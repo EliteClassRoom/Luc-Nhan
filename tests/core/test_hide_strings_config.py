@@ -1,6 +1,6 @@
 """Persistence and validation tests for the `hide_strings` config field.
 
-Round-trips the boolean through ``RikuganConfig.load``/``save``, asserts the
+Round-trips the boolean through ``LucNhanConfig.load``/``save``, asserts the
 strict-bool guard rejects malformed values, and verifies ``validate`` reports
 the field's type. Independent of Qt, IDA, or any other subsystem.
 """
@@ -13,10 +13,10 @@ import unittest
 from pathlib import Path
 
 # Force the real config module even if a sibling test installed a
-# stub for ``rikugan.core.config`` earlier in the collection order.
-sys.modules.pop("rikugan.core.config", None)
+# stub for ``lucnhan.core.config`` earlier in the collection order.
+sys.modules.pop("lucnhan.core.config", None)
 
-from rikugan.core.config import RikuganConfig
+from lucnhan.core.config import LucNhanConfig
 
 
 def _write_config(path: Path, payload: dict) -> None:
@@ -34,8 +34,8 @@ class TestHideStringsConfig(unittest.TestCase):
 
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def _fresh_config(self) -> RikuganConfig:
-        cfg = RikuganConfig()
+    def _fresh_config(self) -> LucNhanConfig:
+        cfg = LucNhanConfig()
         cfg._config_dir = str(self.tmp)
         return cfg
 
@@ -47,7 +47,7 @@ class TestHideStringsConfig(unittest.TestCase):
         cfg = self._fresh_config()
         cfg.hide_strings = True
         cfg.save()
-        reloaded = RikuganConfig()
+        reloaded = LucNhanConfig()
         reloaded._config_dir = str(self.tmp)
         reloaded.load()
         self.assertTrue(reloaded.hide_strings)
@@ -56,7 +56,7 @@ class TestHideStringsConfig(unittest.TestCase):
         cfg = self._fresh_config()
         cfg.hide_strings = False
         cfg.save()
-        reloaded = RikuganConfig()
+        reloaded = LucNhanConfig()
         reloaded._config_dir = str(self.tmp)
         reloaded.load()
         self.assertFalse(reloaded.hide_strings)
@@ -90,7 +90,7 @@ class TestHideStringsConfig(unittest.TestCase):
         cfg.hide_strings = "true"  # type: ignore[assignment]
         # validate() flags it; save() must still produce a loadable file.
         cfg.save()
-        reloaded = RikuganConfig()
+        reloaded = LucNhanConfig()
         reloaded._config_dir = str(self.tmp)
         reloaded.load()
         self.assertFalse(reloaded.hide_strings)

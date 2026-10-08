@@ -29,8 +29,8 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.core.types import Message, Role
-from rikugan.ui.chat_view import MessageSpec, RestoreWorker
+from lucnhan.core.types import Message, Role
+from lucnhan.ui.chat_view import MessageSpec, RestoreWorker
 
 
 class TestWorkerPreRendersAssistantHtml(unittest.TestCase):
@@ -71,7 +71,7 @@ class TestBuildWidgetsUsesPreRenderedHtml(unittest.TestCase):
         # If content_html is pre-rendered, the main-thread build path must
         # NOT invoke md_to_html again. We detect this by patching md_to_html
         # to raise — if the build path calls it, the test fails.
-        import rikugan.ui.chat_view as chat_view_module
+        import lucnhan.ui.chat_view as chat_view_module
 
         original_md = chat_view_module.md_to_html
 
@@ -87,7 +87,7 @@ class TestBuildWidgetsUsesPreRenderedHtml(unittest.TestCase):
             # is what the build path instantiates. We construct the spec
             # with content_html already set and verify set_text_deferred
             # accepts it without re-rendering.
-            from rikugan.ui.message_widgets import AssistantMessageWidget
+            from lucnhan.ui.message_widgets import AssistantMessageWidget
 
             spec = MessageSpec(
                 msg_id="t1",

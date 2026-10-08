@@ -1,4 +1,4 @@
-"""Tests for rikugan.memory.paths.
+"""Tests for lucnhan.memory.paths.
 
 Pure unit tests; no Qt, no fixtures.
 """
@@ -9,7 +9,7 @@ import os
 import tempfile
 import unittest
 
-from rikugan.memory.paths import (
+from lucnhan.memory.paths import (
     algo_entity_id,
     capability_entity_id,
     derive_binary_id,
@@ -126,7 +126,7 @@ class TestKnowledgePaths(unittest.TestCase):
             idb_path = os.path.join(tmp, "sample.i64")
             paths = knowledge_paths(idb_path)
             self.assertEqual(paths.notes_dir, os.path.join(tmp, "notes"))
-            self.assertEqual(paths.kb_dir, os.path.join(tmp, ".rikugan-kb"))
+            self.assertEqual(paths.kb_dir, os.path.join(tmp, ".lucnhan-kb"))
             self.assertEqual(paths.reports_dir, os.path.join(tmp, "notes", "reports"))
             self.assertTrue(paths.binary_id.startswith("sample.i64-"))
             self.assertEqual(len(paths.binary_id.split("-")[-1]), 12)
@@ -147,6 +147,25 @@ class TestKnowledgePaths(unittest.TestCase):
             self.assertTrue(os.path.isdir(paths.notes_dir))
             self.assertTrue(os.path.isdir(paths.kb_dir))
             self.assertTrue(os.path.isdir(paths.reports_dir))
+
+    def test_ensure_adopts_legacy_kb_dir(self):
+        """A store built before the rename keeps its records."""
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = os.path.join(tmp, ".rikugan-kb")
+            os.makedirs(legacy)
+            with open(os.path.join(legacy, "memories.jsonl"), "w", encoding="utf-8") as fh:
+                fh.write("{}\n")
+
+            paths = knowledge_paths(os.path.join(tmp, "x.i64"))
+            paths.ensure()
+            self.assertTrue(os.path.isfile(paths.memories_path))
+            self.assertFalse(os.path.exists(legacy))
+
+            # An already-populated store wins: a stale legacy sibling is left
+            # alone rather than merged over live state.
+            os.makedirs(legacy)
+            paths.ensure()
+            self.assertTrue(os.path.isdir(legacy))
 
     def test_ensure_empty_idb_path_raises(self):
         with self.assertRaises(ValueError):

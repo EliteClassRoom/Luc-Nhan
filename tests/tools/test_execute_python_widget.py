@@ -11,9 +11,9 @@ from tests.qt_stubs import ensure_pyside6_stubs
 ensure_pyside6_stubs()
 
 # Ensure the real module is loaded even if another test stubbed it.
-sys.modules.pop("rikugan.ui.tool_widgets", None)
+sys.modules.pop("lucnhan.ui.tool_widgets", None)
 
-from rikugan.ui.tool_widgets import ExecutePythonWidget
+from lucnhan.ui.tool_widgets import ExecutePythonWidget
 
 
 class TestExecutePythonWidgetInit(unittest.TestCase):
@@ -166,7 +166,7 @@ class TestSetResult(unittest.TestCase):
     def test_result_long_output_capped_and_scrollable(self):
         """A long output caps the editor height at _RESULT_MAX_LINES; the
         full text is still present in the document (scrollable)."""
-        from rikugan.ui.tool_widgets import _RESULT_MAX_LINES
+        from lucnhan.ui.tool_widgets import _RESULT_MAX_LINES
 
         long_output = "\n".join(f"line {i}" for i in range(50))
         w = ExecutePythonWidget("tc1")

@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.registry import (
+from lucnhan.memory.registry import (
     EvidenceConflictError,
     MemoryRegistry,
     WorkspaceRecord,
 )
-from rikugan.memory.workspace import new_memory_id
+from lucnhan.memory.workspace import new_memory_id
 
 
 def _make_registry(tmp_path: Path) -> MemoryRegistry:

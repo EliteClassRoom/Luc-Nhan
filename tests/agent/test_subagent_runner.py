@@ -15,12 +15,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.subagent import SubagentRunner
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import ProviderCapabilities, StreamChunk
-from rikugan.providers.base import LLMProvider, ModelInfo
-from rikugan.state.session import SessionState
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.agent.subagent import SubagentRunner
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import ProviderCapabilities, StreamChunk
+from lucnhan.providers.base import LLMProvider, ModelInfo
+from lucnhan.state.session import SessionState
+from lucnhan.tools.registry import ToolRegistry
 
 
 class _StubProvider(LLMProvider):
@@ -85,7 +85,7 @@ class _FakeAgentLoop:
         _FakeAgentLoop.captures.append(kwargs)
 
     def run(self, user_message: str):
-        from rikugan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
 
         yield TurnEvent(type=TurnEventType.TEXT_DONE, text="done")
         return None
@@ -96,7 +96,7 @@ class TestRunnerCancelEvent(unittest.TestCase):
         return SubagentRunner(
             provider=_StubProvider(),
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
         )
 
@@ -104,14 +104,14 @@ class TestRunnerCancelEvent(unittest.TestCase):
         runner = self._runner()
         ev = threading.Event()
         runner._cancel_event = ev
-        with patch("rikugan.agent.loop.AgentLoop", _FakeAgentLoop):
+        with patch("lucnhan.agent.loop.AgentLoop", _FakeAgentLoop):
             loop = runner._build_loop(SessionState())
         assert isinstance(loop, _FakeAgentLoop)
         assert _FakeAgentLoop.captures[-1]["cancel_event"] is ev
 
     def test_independent_runs_get_independent_fallback_events(self) -> None:
         runner = self._runner()
-        with patch("rikugan.agent.loop.AgentLoop", _FakeAgentLoop):
+        with patch("lucnhan.agent.loop.AgentLoop", _FakeAgentLoop):
             a = runner._build_loop(SessionState())
             b = runner._build_loop(SessionState())
         assert a._cancelled is not b._cancelled
@@ -123,10 +123,10 @@ class TestRunnerModelOverride(unittest.TestCase):
         runner = SubagentRunner(
             provider=provider,
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
         )
-        with patch("rikugan.agent.loop.AgentLoop", _FakeAgentLoop):
+        with patch("lucnhan.agent.loop.AgentLoop", _FakeAgentLoop):
             loop = runner._build_loop(SessionState())
         assert loop.provider is provider
         assert loop.provider.model == "parent-model"
@@ -134,7 +134,7 @@ class TestRunnerModelOverride(unittest.TestCase):
 
     def test_override_uses_copy_and_does_not_mutate_parent(self) -> None:
         provider = _StubProvider(model="parent-model")
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg_before_model = cfg.provider.model
         runner = SubagentRunner(
             provider=provider,
@@ -143,7 +143,7 @@ class TestRunnerModelOverride(unittest.TestCase):
             host_name="test",
             model_override="child-model",
         )
-        with patch("rikugan.agent.loop.AgentLoop", _FakeAgentLoop):
+        with patch("lucnhan.agent.loop.AgentLoop", _FakeAgentLoop):
             loop = runner._build_loop(SessionState())
         assert loop.provider is not provider
         assert loop.provider.model == "child-model"
@@ -156,7 +156,7 @@ class TestRunnerModelOverride(unittest.TestCase):
 class TestRunnerRespectsCancelEvent(unittest.TestCase):
     def test_cancel_event_reaches_provider_stream(self) -> None:
         """The cancel event must be forwarded into the chat_stream cancel_event slot."""
-        from rikugan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
 
         provider = _StubProvider()
         provider.scripted_packets = [
@@ -180,11 +180,11 @@ class TestRunnerRespectsCancelEvent(unittest.TestCase):
         runner = SubagentRunner(
             provider=provider,
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
             cancel_event=cancel,
         )
-        with patch("rikugan.agent.loop.AgentLoop", _ShortLoop):
+        with patch("lucnhan.agent.loop.AgentLoop", _ShortLoop):
             events = list(runner.run_task("do thing", max_turns=1))
         assert any(e.type == TurnEventType.TEXT_DONE and e.text == "ok" for e in events)
 
@@ -208,10 +208,10 @@ class TestRunnerMaxTurnsPlumbing(unittest.TestCase):
         runner = SubagentRunner(
             provider=provider,
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
         )
-        with patch("rikugan.agent.loop.AgentLoop", _Loop):
+        with patch("lucnhan.agent.loop.AgentLoop", _Loop):
             list(runner.run_task("task", max_turns=7))
         assert captured["max_turns"] == 7
 
@@ -229,10 +229,10 @@ class TestRunnerMaxTurnsPlumbing(unittest.TestCase):
         runner = SubagentRunner(
             provider=provider,
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
         )
-        with patch("rikugan.agent.loop.AgentLoop", _Loop):
+        with patch("lucnhan.agent.loop.AgentLoop", _Loop):
             list(runner.run_mode("task", mode="normal", max_turns=12))
         assert captured["max_turns"] == 12
 
@@ -252,10 +252,10 @@ class TestRunnerMaxTurnsPlumbing(unittest.TestCase):
         runner = SubagentRunner(
             provider=_StubProvider(),
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
         )
-        with patch("rikugan.agent.loop.AgentLoop", _Loop):
+        with patch("lucnhan.agent.loop.AgentLoop", _Loop):
             list(runner.run_exploration("goal", max_turns=9))
         assert captured["max_turns"] == 9
 
@@ -274,7 +274,7 @@ class TestRunnerMaxTurnsValidation(unittest.TestCase):
         return SubagentRunner(
             provider=_StubProvider(),
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
         )
 
@@ -283,7 +283,7 @@ class TestRunnerMaxTurnsValidation(unittest.TestCase):
             SubagentRunner(
                 provider=_StubProvider(),
                 tool_registry=ToolRegistry(),
-                config=RikuganConfig(),
+                config=LucNhanConfig(),
                 host_name="test",
                 max_turns=0,
             )
@@ -294,7 +294,7 @@ class TestRunnerMaxTurnsValidation(unittest.TestCase):
             SubagentRunner(
                 provider=_StubProvider(),
                 tool_registry=ToolRegistry(),
-                config=RikuganConfig(),
+                config=LucNhanConfig(),
                 host_name="test",
                 max_turns=-1,
             )
@@ -304,7 +304,7 @@ class TestRunnerMaxTurnsValidation(unittest.TestCase):
         runner = SubagentRunner(
             provider=_StubProvider(),
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
             max_turns=None,
         )
@@ -314,7 +314,7 @@ class TestRunnerMaxTurnsValidation(unittest.TestCase):
         runner = SubagentRunner(
             provider=_StubProvider(),
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
             max_turns=12,
         )
@@ -350,7 +350,7 @@ class TestRunnerInheritsCentralMemory(unittest.TestCase):
         runner = SubagentRunner(
             provider=_StubProvider(),
             tool_registry=ToolRegistry(),
-            config=RikuganConfig(),
+            config=LucNhanConfig(),
             host_name="test",
             parent_loop=parent,
         )

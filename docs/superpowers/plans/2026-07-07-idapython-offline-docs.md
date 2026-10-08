@@ -4,7 +4,7 @@
 
 **Goal:** Bundle the Hex-Rays Python reference (`/_sources/<module>/index.rst.txt`) into the plugin so the docs-reviewer subagent has authoritative IDAPython docs offline, eliminating 403-induced turn waste and supporting fully-offline IDA sessions.
 
-**Architecture:** Two cooperating halves — (1) `scripts/build_idapython_docs.py` runs at dev/CI time to fetch and write raw RST files + MANIFEST.json, (2) `rikugan/tools/idapython_docs.py` exposes a `lookup_idapython_doc(module)` tool that reads the bundle at runtime with no network dependency. Prompts prefer the tool over `web_fetch` for Hex-Rays docs.
+**Architecture:** Two cooperating halves — (1) `scripts/build_idapython_docs.py` runs at dev/CI time to fetch and write raw RST files + MANIFEST.json, (2) `lucnhan/tools/idapython_docs.py` exposes a `lookup_idapython_doc(module)` tool that reads the bundle at runtime with no network dependency. Prompts prefer the tool over `web_fetch` for Hex-Rays docs.
 
 **Tech Stack:** Python 3.10+, stdlib only for build script (`urllib.request`, `hashlib`, `json`, `pathlib`, `argparse`, `tempfile`, `html.parser`). Tool uses existing `@tool` decorator + `ida_docs_reviewer.py` prompt patterns.
 
@@ -16,8 +16,8 @@
 - **Path traversal prevention** — tool MUST sanitize module name to `[a-z0-9_]+` regex; reject all other inputs without filesystem access.
 - **Atomic writes** — every file write uses `tempfile.NamedTemporaryFile` + `os.replace()`; partial writes never leave the bundle inconsistent.
 - **MANIFEST schema versioning** — `schema_version` field is mandatory; bundle committed with `schema_version: 1`.
-- **Bundle size** — committed `rikugan/data/idapython-docs/` ~500-800 KB raw RST across ~50 modules (acceptable; idiomatic for plugin distribution).
-- **Gitignore** — `*.tmp` and `*.tmp.*` in `rikugan/data/` excluded; committed `.rst.txt` files and `MANIFEST.json` stay.
+- **Bundle size** — committed `lucnhan/data/idapython-docs/` ~500-800 KB raw RST across ~50 modules (acceptable; idiomatic for plugin distribution).
+- **Gitignore** — `*.tmp` and `*.tmp.*` in `lucnhan/data/` excluded; committed `.rst.txt` files and `MANIFEST.json` stay.
 - **Python style** (project rules): `from __future__ import annotations`, type hints on all signatures, no mutation, f-strings, hex `f"0x{ea:x}"`, no magic numbers, no bare `except:`.
 - **Reviewer prompt format** — keep YAML-friendly plain markdown; backticks-for-code; never invent APIs.
 - **Test framework** — `unittest` (matches existing `tests/test_idapython_docs_gate.py`); pytest as runner.
@@ -31,17 +31,17 @@
 | Path | Status | Responsibility |
 |------|--------|----------------|
 | `scripts/build_idapython_docs.py` | CREATE | Build-time CLI: discover/fetch/manifest/verify |
-| `rikugan/tools/idapython_docs.py` | CREATE | Runtime tool: read + paginate + error |
-| `rikugan/data/idapython-docs/<module>.rst.txt` | CREATE (build) | One file per module (~50), raw RST |
-| `rikugan/data/idapython-docs/MANIFEST.json` | CREATE (build) | Bundle metadata: schema_version, fetch_date, hashes |
+| `lucnhan/tools/idapython_docs.py` | CREATE | Runtime tool: read + paginate + error |
+| `lucnhan/data/idapython-docs/<module>.rst.txt` | CREATE (build) | One file per module (~50), raw RST |
+| `lucnhan/data/idapython-docs/MANIFEST.json` | CREATE (build) | Bundle metadata: schema_version, fetch_date, hashes |
 | `tests/test_idapython_docs_tool.py` | CREATE | Tool unit tests (mocked filesystem) |
 | `tests/test_build_idapython_docs.py` | CREATE | Build script unit tests (mocked HTTP) |
 | `tests/test_build_idapython_docs_integration.py` | CREATE | Opt-in real-fetch integration test |
 | `tests/test_ida_docs_review_prompt.py` | MODIFY | Add 4 prompt regression tests (extend existing) |
-| `rikugan/ida/tools/registry.py` | MODIFY | Register new tool in `_BOOT_TOOL_MODULES` |
-| `rikugan/agent/agents/ida_docs_reviewer.py` | MODIFY | Update prompt section B to prefer new tool |
-| `rikugan/skills/builtins/ida-scripting/SKILL.md` | MODIFY | Update "When to fetch more" section |
-| `.gitignore` | MODIFY | Ignore `rikugan/data/**/*.tmp` atomic-write remnants |
+| `lucnhan/ida/tools/registry.py` | MODIFY | Register new tool in `_BOOT_TOOL_MODULES` |
+| `lucnhan/agent/agents/ida_docs_reviewer.py` | MODIFY | Update prompt section B to prefer new tool |
+| `lucnhan/skills/builtins/ida-scripting/SKILL.md` | MODIFY | Update "When to fetch more" section |
+| `.gitignore` | MODIFY | Ignore `lucnhan/data/**/*.tmp` atomic-write remnants |
 
 ---
 
@@ -112,7 +112,7 @@ Replace `scripts/build_idapython_docs.py` content with:
 """Build the offline IDAPython docs bundle from Hex-Rays upstream.
 
 Runs at dev/CI time (NOT inside IDA). Produces raw RST files + MANIFEST.json
-under rikugan/data/idapython-docs/. See:
+under lucnhan/data/idapython-docs/. See:
 docs/superpowers/specs/2026-07-07-idapython-offline-docs-design.md
 """
 from __future__ import annotations
@@ -139,7 +139,7 @@ UPSTREAM_INDEX_URL: str = f"{BASE_URL}/"
 SOURCES_URL_TEMPLATE: str = f"{BASE_URL}/_sources/{{module}}/index.rst.txt"
 
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
-OUTPUT_DIR: Path = REPO_ROOT / "rikugan" / "data" / "idapython-docs"
+OUTPUT_DIR: Path = REPO_ROOT / "lucnhan" / "data" / "idapython-docs"
 MANIFEST_PATH: Path = OUTPUT_DIR / "MANIFEST.json"
 
 MANIFEST_SCHEMA_VERSION: int = 1
@@ -677,8 +677,8 @@ Modify `.gitignore`, append:
 
 ```
 # Atomic-write remnants in bundle directory
-rikugan/data/**/*.tmp
-rikugan/data/**/*.tmp.*
+lucnhan/data/**/*.tmp
+lucnhan/data/**/*.tmp.*
 ```
 
 - [ ] **Step 2: Add failing tests**
@@ -1098,20 +1098,20 @@ git commit -m "feat(scripts): --verify mode compares local vs upstream via SHA-2
 ## Task 7: Runtime tool — basic read + sanitization
 
 **Files:**
-- Create: `rikugan/tools/idapython_docs.py`
+- Create: `lucnhan/tools/idapython_docs.py`
 - Test: `tests/test_idapython_docs_tool.py`
 
 **Interfaces:**
 - Produces: `lookup_idapython_doc(module, offset=0, limit=7400) -> str`
 - Module name validation regex: `^[a-z0-9_]+$`
-- Read from `rikugan/data/idapython-docs/<module>.rst.txt`
+- Read from `lucnhan/data/idapython-docs/<module>.rst.txt`
 
 - [ ] **Step 1: Write failing test**
 
 Create `tests/test_idapython_docs_tool.py`:
 
 ```python
-"""Unit tests for rikugan/tools/idapython_docs.py"""
+"""Unit tests for lucnhan/tools/idapython_docs.py"""
 from __future__ import annotations
 
 import os
@@ -1139,42 +1139,42 @@ class TestLookupIdapythonDoc(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _patch_docs_dir(self):
-        return patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir))
+        return patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir))
 
     def test_reads_existing_module_returns_content(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
         with self._patch_docs_dir():
             result = lookup_idapython_doc("ida_typeinf")
         self.assertIn("apply_cdecl", result)
         self.assertIn("[Offline IDAPython docs: ida_typeinf", result)
 
     def test_path_traversal_rejected_dotdot(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
         with self._patch_docs_dir():
             result = lookup_idapython_doc("../../../etc/passwd")
         self.assertIn("invalid module name", result)
 
     def test_path_traversal_rejected_slash(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
         with self._patch_docs_dir():
             result = lookup_idapython_doc("foo/bar")
         self.assertIn("invalid module name", result)
 
     def test_path_traversal_rejected_uppercase(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
         with self._patch_docs_dir():
             result = lookup_idapython_doc("IDA_TYPEINF")
         self.assertIn("invalid module name", result)
 
     def test_path_traversal_rejected_dot(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
         with self._patch_docs_dir():
             result = lookup_idapython_doc(".")
         self.assertIn("invalid module name", result)
 
     def test_tool_does_not_read_outside_docs_dir(self):
         # Create a file in /tmp that the tool must NOT access
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
         outside = Path(self.tmpdir).parent / "sensitive_outside.txt"
         outside.write_text("SENSITIVE")
         try:
@@ -1191,14 +1191,14 @@ class TestLookupIdapythonDoc(unittest.TestCase):
 - [ ] **Step 2: Run tests to verify RED**
 
 Run: `pytest tests/test_idapython_docs_tool.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'rikugan.tools.idapython_docs'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'lucnhan.tools.idapython_docs'`
 
 - [ ] **Step 3: Implement tool (minimal)**
 
-Create `rikugan/tools/idapython_docs.py`:
+Create `lucnhan/tools/idapython_docs.py`:
 
 ```python
-"""Offline IDAPython docs lookup — reads from bundled rikugan/data/idapython-docs/.
+"""Offline IDAPython docs lookup — reads from bundled lucnhan/data/idapython-docs/.
 
 This is the runtime counterpart of scripts/build_idapython_docs.py. Once
 the bundle is built and committed, this tool serves IDAPython docs to the
@@ -1277,7 +1277,7 @@ def lookup_idapython_doc(
 ) -> str:
     """Look up an IDAPython module's documentation from the bundled offline bundle.
 
-    Reads from ``rikugan/data/idapython-docs/<module>.rst.txt`` — works
+    Reads from ``lucnhan/data/idapython-docs/<module>.rst.txt`` — works
     without network access. Use this BEFORE web_fetch against
     python.docs.hex-rays.com because that site is bot-protected
     (403 Forbidden on deep-link HTML pages).
@@ -1338,13 +1338,13 @@ Expected: 6 passed.
 
 - [ ] **Step 5: Lint + format**
 
-Run: `python -m ruff check rikugan/tools/idapython_docs.py tests/test_idapython_docs_tool.py --fix`
-Run: `python -m ruff format rikugan/tools/idapython_docs.py tests/test_idapython_docs_tool.py`
+Run: `python -m ruff check lucnhan/tools/idapython_docs.py tests/test_idapython_docs_tool.py --fix`
+Run: `python -m ruff format lucnhan/tools/idapython_docs.py tests/test_idapython_docs_tool.py`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/tools/idapython_docs.py tests/test_idapython_docs_tool.py
+git add lucnhan/tools/idapython_docs.py tests/test_idapython_docs_tool.py
 git commit -m "feat(tools): lookup_idapython_doc tool — offline docs reader with path-traversal guard"
 ```
 
@@ -1353,7 +1353,7 @@ git commit -m "feat(tools): lookup_idapython_doc tool — offline docs reader wi
 ## Task 8: Runtime tool — pagination + manifest handling + edge cases
 
 **Files:**
-- Modify: `rikugan/tools/idapython_docs.py`
+- Modify: `lucnhan/tools/idapython_docs.py`
 - Modify: `tests/test_idapython_docs_tool.py`
 
 - [ ] **Step 1: Add failing tests**
@@ -1376,61 +1376,61 @@ class TestPaginationAndEdgeCases(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_pagination_first_chunk(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=0, limit=200)
         self.assertIn("showing offset 0-200", result)
 
     def test_pagination_middle_chunk(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=4000, limit=100)
         self.assertIn("showing offset 4000-4100", result)
 
     def test_pagination_past_end_returns_marker(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=20000, limit=100)
         self.assertIn("reached end of content", result)
 
     def test_empty_file_returns_empty_marker(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("empty")
         self.assertIn("[Offline IDAPython docs: empty", result)
         self.assertIn("(empty response)", result)
 
     def test_limit_clamped_to_max(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc, MAX_LIMIT
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc, MAX_LIMIT
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             # Request way over the max — must clamp to MAX_LIMIT
             result = lookup_idapython_doc("big", offset=0, limit=99999)
         # Header shows total file size ~10K so we see clamped chunk end
         self.assertIn(f"showing offset 0-{MAX_LIMIT}", result)
 
     def test_limit_below_one_clamped_to_one(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=0, limit=0)
         # limit=0 -> clamp to 1 -> shows offset 0-1
         self.assertIn("showing offset 0-1", result)
 
     def test_offset_negative_clamped_to_zero(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=-5, limit=100)
         self.assertIn("showing offset 0-100", result)
 
     def test_manifest_missing_does_not_break_tool(self):
         # No MANIFEST.json — tool should still work (manifest is informational)
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big")
         self.assertIn("apply_cdecl" if "apply_cdecl" in result else "XXX", result)  # any content
 
     def test_zero_byte_file_does_not_crash(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("empty")
         # Must not raise; must include "(empty response)" or similar
         self.assertIsInstance(result, str)
@@ -1445,15 +1445,15 @@ If any fail, the implementation from Task 7 needs adjustment. Likely candidates:
 
 - [ ] **Step 3: Lint + format**
 
-Run: `python -m ruff check rikugan/tools/idapython_docs.py tests/test_idapython_docs_tool.py --fix`
-Run: `python -m ruff format rikugan/tools/idapython_docs.py tests/test_idapython_docs_tool.py`
+Run: `python -m ruff check lucnhan/tools/idapython_docs.py tests/test_idapython_docs_tool.py --fix`
+Run: `python -m ruff format lucnhan/tools/idapython_docs.py tests/test_idapython_docs_tool.py`
 
 Note: this task adds tests that exercise existing behavior. It's primarily a regression-guards task — no implementation change unless Step 2 reveals a bug.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add rikugan/tools/idapython_docs.py tests/test_idapython_docs_tool.py
+git add lucnhan/tools/idapython_docs.py tests/test_idapython_docs_tool.py
 git commit -m "test(tools): pagination + edge cases for lookup_idapython_doc"
 ```
 
@@ -1462,18 +1462,18 @@ git commit -m "test(tools): pagination + edge cases for lookup_idapython_doc"
 ## Task 9: Register tool in IDA tool registry
 
 **Files:**
-- Modify: `rikugan/ida/tools/registry.py`
+- Modify: `lucnhan/ida/tools/registry.py`
 
 - [ ] **Step 1: Read registry to find insertion point**
 
-Read `rikugan/ida/tools/registry.py` and locate the `_BOOT_TOOL_MODULES` tuple. Verify `rikugan.tools.idapython_docs` is NOT already present.
+Read `lucnhan/ida/tools/registry.py` and locate the `_BOOT_TOOL_MODULES` tuple. Verify `lucnhan.tools.idapython_docs` is NOT already present.
 
 - [ ] **Step 2: Add module to _BOOT_TOOL_MODULES**
 
-Edit the tuple to add a new entry. The exact text depends on the current tuple — find it and add the line in alphabetical / logical order. Likely placement: alongside `rikugan.tools.documentation` or near `rikugan.tools.web` / `rikugan.tools.scripting`. Pattern:
+Edit the tuple to add a new entry. The exact text depends on the current tuple — find it and add the line in alphabetical / logical order. Likely placement: alongside `lucnhan.tools.documentation` or near `lucnhan.tools.web` / `lucnhan.tools.scripting`. Pattern:
 
 ```python
-    "rikugan.tools.idapython_docs",  # Offline IDAPython docs reader (added YYYY-MM-DD)
+    "lucnhan.tools.idapython_docs",  # Offline IDAPython docs reader (added YYYY-MM-DD)
 ```
 
 - [ ] **Step 3: Run existing test suite to ensure no regression**
@@ -1486,22 +1486,22 @@ Expected: 18 passed (no behavior change; just tool registration).
 Run from repo root:
 
 ```bash
-python -c "from rikugan.tools.idapython_docs import lookup_idapython_doc; print('OK')"
+python -c "from lucnhan.tools.idapython_docs import lookup_idapython_doc; print('OK')"
 ```
 
 Expected output: `OK`
 
-If `rikugan.tools.idapython_docs` cannot be imported outside the IDA host, the import fails. If so, the tool will still be loaded when IDA host's `_BOOT_TOOL_MODULES` iterates and does its own module loading.
+If `lucnhan.tools.idapython_docs` cannot be imported outside the IDA host, the import fails. If so, the tool will still be loaded when IDA host's `_BOOT_TOOL_MODULES` iterates and does its own module loading.
 
 - [ ] **Step 5: Lint + format**
 
-Run: `python -m ruff check rikugan/ida/tools/registry.py --fix`
-Run: `python -m ruff format rikugan/ida/tools/registry.py`
+Run: `python -m ruff check lucnhan/ida/tools/registry.py --fix`
+Run: `python -m ruff format lucnhan/ida/tools/registry.py`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/ida/tools/registry.py
+git add lucnhan/ida/tools/registry.py
 git commit -m "feat(ida): register lookup_idapython_doc in IDA tool registry"
 ```
 
@@ -1510,7 +1510,7 @@ git commit -m "feat(ida): register lookup_idapython_doc in IDA tool registry"
 ## Task 10: Update reviewer prompt to prefer new tool
 
 **Files:**
-- Modify: `rikugan/agent/agents/ida_docs_reviewer.py` (section B)
+- Modify: `lucnhan/agent/agents/ida_docs_reviewer.py` (section B)
 - Modify: `tests/test_ida_docs_review_prompt.py` (add new tests)
 
 - [ ] **Step 1: Add failing tests**
@@ -1520,14 +1520,14 @@ Append to `tests/test_ida_docs_review_prompt.py`:
 ```python
 class TestReviewerPromptPrefersTool(unittest.TestCase):
     def test_prompt_mentions_lookup_idapython_doc(self):
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
         self.assertIn("lookup_idapython_doc", IDA_DOCS_REVIEWER_PROMPT)
 
     def test_prompt_demotes_web_fetch_to_fallback(self):
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
         # The lookup_idapython_doc should appear BEFORE web_fetch in the
         # documentation sources section (Tool first → fallback later).
-        from rikugan.agent.agents.ida_docs_reviewer import build_ida_docs_reviewer_addendum
+        from lucnhan.agent.agents.ida_docs_reviewer import build_ida_docs_reviewer_addendum
         prompt = build_ida_docs_reviewer_addendum()
         tool_idx = prompt.find("lookup_idapython_doc")
         web_fetch_idx = prompt.find("web_fetch", tool_idx) if tool_idx >= 0 else -1
@@ -1537,7 +1537,7 @@ class TestReviewerPromptPrefersTool(unittest.TestCase):
         self.assertLess(tool_idx, web_fetch_idx)
 
     def test_prompt_explains_fallback_reason(self):
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
         # The fallback should mention "not in bundle" or similar
         self.assertTrue(
             "not in bundle" in IDA_DOCS_REVIEWER_PROMPT.lower()
@@ -1553,7 +1553,7 @@ Expected: FAIL (prompt does not yet mention `lookup_idapython_doc`).
 
 - [ ] **Step 3: Update prompt section B**
 
-In `rikugan/agent/agents/ida_docs_reviewer.py`, locate section B (currently titled "RAW RST SOURCE (preferred online format)"). Replace this section with:
+In `lucnhan/agent/agents/ida_docs_reviewer.py`, locate section B (currently titled "RAW RST SOURCE (preferred online format)"). Replace this section with:
 
 ```text
 B. The bundled offline docs (preferred — works offline, zero network):
@@ -1588,13 +1588,13 @@ Expected: all tests (old + new) pass.
 
 - [ ] **Step 5: Lint + format**
 
-Run: `python -m ruff check rikugan/agent/agents/ida_docs_reviewer.py tests/test_ida_docs_review_prompt.py --fix`
-Run: `python -m ruff format rikugan/agent/agents/ida_docs_reviewer.py tests/test_ida_docs_review_prompt.py`
+Run: `python -m ruff check lucnhan/agent/agents/ida_docs_reviewer.py tests/test_ida_docs_review_prompt.py --fix`
+Run: `python -m ruff format lucnhan/agent/agents/ida_docs_reviewer.py tests/test_ida_docs_review_prompt.py`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/agent/agents/ida_docs_reviewer.py tests/test_ida_docs_review_prompt.py
+git add lucnhan/agent/agents/ida_docs_reviewer.py tests/test_ida_docs_review_prompt.py
 git commit -m "feat(agent): reviewer prompt prefers lookup_idapython_doc over web_fetch for IDAPython docs"
 ```
 
@@ -1603,7 +1603,7 @@ git commit -m "feat(agent): reviewer prompt prefers lookup_idapython_doc over we
 ## Task 11: Update SKILL.md "When to fetch more" section
 
 **Files:**
-- Modify: `rikugan/skills/builtins/ida-scripting/SKILL.md`
+- Modify: `lucnhan/skills/builtins/ida-scripting/SKILL.md`
 - Modify: `tests/test_ida_docs_review_prompt.py` (add tests)
 
 - [ ] **Step 1: Add failing tests**
@@ -1638,7 +1638,7 @@ Expected: FAIL (skill body does not mention the new tool).
 
 - [ ] **Step 3: Update SKILL.md "When to fetch more" section**
 
-Replace the section in `rikugan/skills/builtins/ida-scripting/SKILL.md` that currently shows `web_fetch(url="https://python.docs.hex-rays.com/_sources/ida_<module>/index.rst.txt", format="text")` with:
+Replace the section in `lucnhan/skills/builtins/ida-scripting/SKILL.md` that currently shows `web_fetch(url="https://python.docs.hex-rays.com/_sources/ida_<module>/index.rst.txt", format="text")` with:
 
 ```markdown
 ## When to fetch more
@@ -1677,7 +1677,7 @@ SKILL.md is markdown. No ruff needed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rikugan/skills/builtins/ida-scripting/SKILL.md tests/test_ida_docs_review_prompt.py
+git add lucnhan/skills/builtins/ida-scripting/SKILL.md tests/test_ida_docs_review_prompt.py
 git commit -m "feat(skills): ida-scripting SKILL.md prefers lookup_idapython_doc over web_fetch"
 ```
 
@@ -1686,15 +1686,15 @@ git commit -m "feat(skills): ida-scripting SKILL.md prefers lookup_idapython_doc
 ## Task 12: Initial build + bundle commit
 
 **Files:**
-- Modify: `rikugan/data/idapython-docs/` (NEW files committed here)
-- Create: `rikugan/data/idapython-docs/MANIFEST.json`
+- Modify: `lucnhan/data/idapython-docs/` (NEW files committed here)
+- Create: `lucnhan/data/idapython-docs/MANIFEST.json`
 
 This task runs the build script for real and commits the populated bundle. **Not run in CI** — done once by the implementer.
 
 - [ ] **Step 1: Verify the bundle directory exists + is gitignored correctly**
 
 ```bash
-ls -la rikugan/data/ 2>&1 || mkdir -p rikugan/data/idapython-docs
+ls -la lucnhan/data/ 2>&1 || mkdir -p lucnhan/data/idapython-docs
 ```
 
 Verify `.gitignore` includes the `*.tmp` patterns from Task 5 but NOT the bundle files themselves.
@@ -1712,8 +1712,8 @@ If non-zero failures, investigate which modules failed (likely temporary network
 - [ ] **Step 3: Verify the bundle is valid**
 
 ```bash
-ls rikugan/data/idapython-docs/ | head -10
-cat rikugan/data/idapython-docs/MANIFEST.json | python -m json.tool | head -30
+ls lucnhan/data/idapython-docs/ | head -10
+cat lucnhan/data/idapython-docs/MANIFEST.json | python -m json.tool | head -30
 ```
 
 Should show ~50 `.rst.txt` files and a valid MANIFEST.json.
@@ -1722,7 +1722,7 @@ Should show ~50 `.rst.txt` files and a valid MANIFEST.json.
 
 ```bash
 python -c "
-from rikugan.tools.idapython_docs import lookup_idapython_doc
+from lucnhan.tools.idapython_docs import lookup_idapython_doc
 result = lookup_idapython_doc('ida_typeinf')
 print(result[:200])
 "
@@ -1746,12 +1746,12 @@ Expected exit code 0 (no drift, no missing). May print "NEW" lines if Hex-Rays a
 - [ ] **Step 7: Commit the bundle**
 
 ```bash
-git add rikugan/data/idapython-docs/MANIFEST.json
-git add rikugan/data/idapython-docs/
+git add lucnhan/data/idapython-docs/MANIFEST.json
+git add lucnhan/data/idapython-docs/
 git commit -m "feat(data): initial IDAPython offline docs bundle (~50 modules, ~612 KB)"
 ```
 
-Note: `git add rikugan/data/idapython-docs/` adds all `.rst.txt` files. `.tmp` files (if any leftover) are excluded by `.gitignore`.
+Note: `git add lucnhan/data/idapython-docs/` adds all `.rst.txt` files. `.tmp` files (if any leftover) are excluded by `.gitignore`.
 
 ---
 
@@ -1861,14 +1861,14 @@ pytest tests/ -v
 - [ ] **Run lint + format:**
 
 ```bash
-python -m ruff format rikugan/ scripts/ tests/
-python -m ruff check rikugan/ scripts/ tests/
+python -m ruff format lucnhan/ scripts/ tests/
+python -m ruff check lucnhan/ scripts/ tests/
 ```
 
 - [ ] **Run mypy on new files:**
 
 ```bash
-python -m mypy rikugan/tools/idapython_docs.py
+python -m mypy lucnhan/tools/idapython_docs.py
 ```
 
 - [ ] **Manual smoke test in IDA Pro (optional, out-of-band):**

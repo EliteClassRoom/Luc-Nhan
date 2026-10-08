@@ -5,7 +5,7 @@ from __future__ import annotations
 import pathlib
 import unittest
 
-_PANEL_CORE = pathlib.Path("rikugan/ui/panel_core.py")
+_PANEL_CORE = pathlib.Path("lucnhan/ui/panel_core.py")
 
 
 class TestPanelCoreNoQtHelpers(unittest.TestCase):

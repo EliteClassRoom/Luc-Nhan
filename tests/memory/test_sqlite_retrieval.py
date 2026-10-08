@@ -4,22 +4,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.retrieve import (
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.retrieve import (
     NoteExcerpt,
     RetrievalPack,
     RetrievalQuery,
     retrieve,
     retrieve_from_records,
 )
-from rikugan.memory.schema import (
+from lucnhan.memory.schema import (
     KnowledgeEntity,
     KnowledgeMemory,
     KnowledgeRelation,
 )
-from rikugan.memory.sqlite_retrieval import repository_to_retrieval_pack
-from rikugan.memory.workspace import MemoryLocator, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.sqlite_retrieval import repository_to_retrieval_pack
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _create_repo(tmp_path: Path):
@@ -38,8 +38,8 @@ def _build_jsonl_store(
     note_files: list[tuple[str, str]] | None = None,
 ):
     """Create a JSONL store + write memory/entity records + optional notes."""
-    from rikugan.memory.paths import KnowledgePaths, derive_binary_id
-    from rikugan.memory.raw_store import KnowledgeRawStore
+    from lucnhan.memory.paths import KnowledgePaths, derive_binary_id
+    from lucnhan.memory.raw_store import KnowledgeRawStore
 
     jsonl_paths = KnowledgePaths(
         idb_path=str(tmp_path / "test.i64"),

@@ -9,7 +9,7 @@ the StartupRestore slice; this test asserts the OUTCOME so a future
 refactor of the trigger does not break the contract.
 
 The test drives the real ``_apply_history_list_result`` +
-``_apply_history_loaded`` sequence on a real ``RikuganPanelCore``
+``_apply_history_loaded`` sequence on a real ``LucNhanPanelCore``
 (via ``__new__`` + ``QWidget.__init__``, the established repo
 idiom) seeded with a stub controller and a real ``ChatView`` for
 the draft tab.  The OUTCOME assertion is the visible widget count
@@ -50,28 +50,28 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import sys as _sys
 
 _STUB_TARGETS = (
-    "rikugan.core.types",
-    "rikugan.core.config",
-    "rikugan.core.host",
-    "rikugan.agent.turn",
-    "rikugan.ui.chat_view",
-    "rikugan.ui.history_panel",
-    "rikugan.ui.panel_core",
-    "rikugan.ui.session_controller_base",
-    "rikugan.ui.styles",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.ui.markdown",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.plan_view",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.qt_compat",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
+    "lucnhan.core.types",
+    "lucnhan.core.config",
+    "lucnhan.core.host",
+    "lucnhan.agent.turn",
+    "lucnhan.ui.chat_view",
+    "lucnhan.ui.history_panel",
+    "lucnhan.ui.panel_core",
+    "lucnhan.ui.session_controller_base",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.markdown",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.plan_view",
+    "lucnhan.ui.tool_widgets",
+    "lucnhan.ui.qt_compat",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
 )
 for _name in list(_sys.modules):
     if _name in _STUB_TARGETS:
@@ -89,8 +89,8 @@ try:
 except ImportError:
     pass
 
-from rikugan.core.types import Message, Role
-from rikugan.state.history_types import (
+from lucnhan.core.types import Message, Role
+from lucnhan.state.history_types import (
     HistoryAttachResult,
     HistoryAttachStatus,
     HistoryListResult,
@@ -99,7 +99,7 @@ from rikugan.state.history_types import (
     HistoryScope,
     SessionHistoryEntry,
 )
-from rikugan.ui.message_widgets import (
+from lucnhan.ui.message_widgets import (
     AssistantMessageWidget,
     UserMessageWidget,
 )
@@ -109,23 +109,23 @@ from tests.qt_real import live_class, requires_real_qt
 def _user_widget_cls() -> type:
     """Live ``UserMessageWidget`` class.
 
-    Resolved per call: sibling test files purge ``rikugan.ui.*`` from
+    Resolved per call: sibling test files purge ``lucnhan.ui.*`` from
     ``sys.modules`` at import time, so a class captured at this
     module's import can be a different object from the one the live
     widget tree was built from. ``findChildren`` matches by exact type,
     so a stale reference reports zero widgets on a fully painted chat.
     """
-    return live_class("rikugan.ui.message_widgets.UserMessageWidget")
+    return live_class("lucnhan.ui.message_widgets.UserMessageWidget")
 
 
 def _assistant_widget_cls() -> type:
     """Live ``AssistantMessageWidget`` class — see :func:`_user_widget_cls`."""
-    return live_class("rikugan.ui.message_widgets.AssistantMessageWidget")
+    return live_class("lucnhan.ui.message_widgets.AssistantMessageWidget")
 
 
 def _chat_view_cls() -> type:
     """Live ``ChatView`` class — see :func:`_user_widget_cls`."""
-    return live_class("rikugan.ui.chat_view.ChatView")
+    return live_class("lucnhan.ui.chat_view.ChatView")
 
 
 def _entry(session_id: str, title: str, updated_at: float) -> SessionHistoryEntry:
@@ -156,7 +156,7 @@ def _assistant_message(content: str, msg_id: str = "") -> Message:
 class TestStartupOutcome(unittest.TestCase):
     """Drives ``_apply_history_list_result`` then
     ``_apply_history_loaded`` end-to-end against a real
-    ``RikuganPanelCore`` + real ``ChatView`` and asserts the
+    ``LucNhanPanelCore`` + real ``ChatView`` and asserts the
     visible chat outcome.
 
     A real ``ChatView`` (not the ``__new__`` harness) is used so
@@ -178,14 +178,14 @@ class TestStartupOutcome(unittest.TestCase):
         the list worker blows up with ``TypeError`` which the broad
         ``except Exception`` silently swallows.  Seed them here.
         """
-        import rikugan.ui.session_controller_base as scb
+        import lucnhan.ui.session_controller_base as scb
 
         if scb.SessionHistory is None:
-            from rikugan.state.history import SessionHistory
+            from lucnhan.state.history import SessionHistory
 
             scb.SessionHistory = SessionHistory
         if scb.SessionState is None:
-            from rikugan.state.session import SessionState
+            from lucnhan.state.session import SessionState
 
             scb.SessionState = SessionState
 
@@ -195,7 +195,7 @@ class TestStartupOutcome(unittest.TestCase):
         newer_session_messages: list[Message] | None,
         older_session_messages: list[Message] | None,
     ):
-        """Build a real ``RikuganPanelCore`` (via ``__new__`` +
+        """Build a real ``LucNhanPanelCore`` (via ``__new__`` +
         ``QWidget.__init__``) seeded with a stub controller that
         returns canned list / load results.
 
@@ -210,13 +210,13 @@ class TestStartupOutcome(unittest.TestCase):
         """
         from PySide6.QtWidgets import QApplication, QTabWidget, QWidget
 
-        from rikugan.ui.chat_view import ChatView
-        from rikugan.ui.history_panel import HistoryPanel
-        from rikugan.ui.panel_core import RikuganPanelCore
+        from lucnhan.ui.chat_view import ChatView
+        from lucnhan.ui.history_panel import HistoryPanel
+        from lucnhan.ui.panel_core import LucNhanPanelCore
 
         self._seed_session_controller_globals()
 
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         QWidget.__init__(panel)
 
         # Build a real ChatView for the draft tab — the panel reads
@@ -275,10 +275,10 @@ class TestStartupOutcome(unittest.TestCase):
         # into the RELATIVE path ``MagicMock/mock.config/<id>``, so the
         # ``SessionHistory`` the list worker builds would mkdir junk
         # inside the repo.  Bind a real config on a tempdir instead.
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        config = RikuganConfig()
-        config._config_dir = tempfile.mkdtemp(prefix="rikugan-startup-cfg-")
+        config = LucNhanConfig()
+        config._config_dir = tempfile.mkdtemp(prefix="lucnhan-startup-cfg-")
         self.addCleanup(shutil.rmtree, config._config_dir, ignore_errors=True)
         ctrl.config = config
         ctrl.active_tab_id = "draft-tab"
@@ -296,7 +296,7 @@ class TestStartupOutcome(unittest.TestCase):
         def _load_session(session_id: str, scope: HistoryScope) -> HistoryLoadResult:
             # Return the messages for the requested session id (newer
             # is the candidate the startup probe picks).
-            from rikugan.state.session import SessionState
+            from lucnhan.state.session import SessionState
 
             if newer_session_messages is not None and session_id == "newer":
                 session = SessionState(idb_path="", db_instance_id="test-instance")

@@ -101,26 +101,26 @@ $Py = Get-PythonCmd
 # ── 1. Ruff — format check ────────────────────────────────────────────────────
 Write-Info "[1/5] Ruff format..."
 if ($Fix) {
-    Invoke-DevTool -Tool "ruff" -ToolArgs @("format", "rikugan/")
+    Invoke-DevTool -Tool "ruff" -ToolArgs @("format", "lucnhan/")
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff format (auto-fixed)" } else { Add-Fail "ruff format" "failed" }
 } else {
-    Invoke-DevTool -Tool "ruff" -ToolArgs @("format", "--check", "rikugan/")
+    Invoke-DevTool -Tool "ruff" -ToolArgs @("format", "--check", "lucnhan/")
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff format" } else { Add-Fail "ruff format" "run with -Fix to auto-fix" }
 }
 
 # ── 2. Ruff — lint (config in pyproject.toml) ─────────────────────────────────
 Write-Info "[2/5] Ruff lint..."
 if ($Fix) {
-    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "rikugan/", "--fix")
+    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/", "--fix")
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff lint (auto-fixed)" } else { Add-Fail "ruff lint" "see above" }
 } else {
-    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "rikugan/")
+    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/")
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff lint" } else { Add-Fail "ruff lint" "see above" }
 }
 
 # ── 3. Mypy — core modules only (config in pyproject.toml) ────────────────────
 Write-Info "[3/5] Mypy (core + providers)..."
-$mypyOutput = (Invoke-DevTool -Tool "mypy" -ToolArgs @("rikugan/core", "rikugan/providers", "--pretty") 2>&1) -join "`n"
+$mypyOutput = (Invoke-DevTool -Tool "mypy" -ToolArgs @("lucnhan/core", "lucnhan/providers", "--pretty") 2>&1) -join "`n"
 $mypyOk = $LASTEXITCODE -eq 0
 
 if ($mypyOk) {
@@ -138,7 +138,7 @@ if ($mypyOk) {
 
 # ── 4. Pytest ──────────────────────────────────────────────────────────────────
 # NOTE: pytest must run inside the PROJECT venv (not `uvx pytest`) because tests
-# import rikugan_plugin.py which needs PySide6 (a project dev dependency).
+# import lucnhan_plugin.py which needs PySide6 (a project dev dependency).
 # `uvx pytest` would create an isolated ephemeral env missing PySide6.
 Write-Info "[4/5] Pytest..."
 if ($Py) {

@@ -21,16 +21,16 @@ from unittest.mock import MagicMock, patch
 
 import tests as _tests
 
-_tests.purge_rikugan_stubs()
+_tests.purge_lucnhan_stubs()
 
 from tests.qt_real import requires_real_qt
 
-from rikugan.agent.loop_commands import _handle_report_command
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.report import ReportSaveResult, build_report_context
-from rikugan.memory.schema import KnowledgeMemory
-from rikugan.state.session import SessionState
+from lucnhan.agent.loop_commands import _handle_report_command
+from lucnhan.agent.turn import TurnEvent, TurnEventType
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.report import ReportSaveResult, build_report_context
+from lucnhan.memory.schema import KnowledgeMemory
+from lucnhan.state.session import SessionState
 from tests.knowledge._helpers import fresh_store
 
 
@@ -39,7 +39,7 @@ class _FakeLoop:
 
     def __init__(self, idb_path: str) -> None:
         self.session = SessionState(idb_path=idb_path)
-        self.config = RikuganConfig()
+        self.config = LucNhanConfig()
         self.provider = object()
         self._user_answer_queue: queue.Queue = queue.Queue(maxsize=1)
 
@@ -118,19 +118,19 @@ class TestReportCommandEventSequence(unittest.TestCase):
     def _start_patches(self, save_mock: MagicMock) -> list:
         return [
             patch(
-                "rikugan.agent.loop_commands._open_knowledge_store",
+                "lucnhan.agent.loop_commands._open_knowledge_store",
                 return_value=(self.store, self.paths, None),
             ),
             patch(
-                "rikugan.memory.report.build_report_context",
+                "lucnhan.memory.report.build_report_context",
                 side_effect=self._context_for,
             ),
             patch(
-                "rikugan.memory.report.synthesize_report",
+                "lucnhan.memory.report.synthesize_report",
                 return_value=(self._context_for("full"), "# Draft\n\nverified body"),
             ),
             patch(
-                "rikugan.memory.report.save_report",
+                "lucnhan.memory.report.save_report",
                 side_effect=save_mock,
             ),
         ]
@@ -199,8 +199,8 @@ class TestReportCommandEventSequence(unittest.TestCase):
         self.assertIn("No stored knowledge", events[0].text)
 
     def test_synthesize_receives_session_messages_as_context(self) -> None:
-        from rikugan.core.types import Message, Role
-        from rikugan.memory.report import ReportSaveResult
+        from lucnhan.core.types import Message, Role
+        from lucnhan.memory.report import ReportSaveResult
 
         loop = self._build_loop()
         # Seed a fake chat history: a USER and an ASSISTANT message.
@@ -224,19 +224,19 @@ class TestReportCommandEventSequence(unittest.TestCase):
 
         patches = [
             patch(
-                "rikugan.agent.loop_commands._open_knowledge_store",
+                "lucnhan.agent.loop_commands._open_knowledge_store",
                 return_value=(self.store, self.paths, None),
             ),
             patch(
-                "rikugan.memory.report.build_report_context",
+                "lucnhan.memory.report.build_report_context",
                 side_effect=self._context_for,
             ),
             patch(
-                "rikugan.memory.report.synthesize_report",
+                "lucnhan.memory.report.synthesize_report",
                 side_effect=fake_synth,
             ),
             patch(
-                "rikugan.memory.report.save_report",
+                "lucnhan.memory.report.save_report",
                 side_effect=fake_save,
             ),
         ]
@@ -273,7 +273,7 @@ class TestReportCommandEventSequence(unittest.TestCase):
         the missing-registry path is genuinely exercised (an
         ``executive`` scope would short-circuit before the tools path).
         """
-        from rikugan.memory.report import ReportSaveResult
+        from lucnhan.memory.report import ReportSaveResult
 
         # The shared seed (crypto tag) does not populate the executive
         # template, so add an ioc-tagged verified hypothesis to make
@@ -308,19 +308,19 @@ class TestReportCommandEventSequence(unittest.TestCase):
 
         patches = [
             patch(
-                "rikugan.agent.loop_commands._open_knowledge_store",
+                "lucnhan.agent.loop_commands._open_knowledge_store",
                 return_value=(self.store, self.paths, None),
             ),
             patch(
-                "rikugan.memory.report.build_report_context",
+                "lucnhan.memory.report.build_report_context",
                 side_effect=self._context_for,
             ),
             patch(
-                "rikugan.memory.report.synthesize_report",
+                "lucnhan.memory.report.synthesize_report",
                 side_effect=fake_synth,
             ),
             patch(
-                "rikugan.memory.report.save_report",
+                "lucnhan.memory.report.save_report",
                 side_effect=fake_save,
             ),
         ]
@@ -362,19 +362,19 @@ class TestReportDraftFencing(unittest.TestCase):
         save_mock = MagicMock()
         patches = [
             patch(
-                "rikugan.agent.loop_commands._open_knowledge_store",
+                "lucnhan.agent.loop_commands._open_knowledge_store",
                 return_value=(self.store, self.paths, None),
             ),
             patch(
-                "rikugan.memory.report.build_report_context",
+                "lucnhan.memory.report.build_report_context",
                 side_effect=lambda *_a, **_kw: build_report_context(self.store, self.paths),
             ),
             patch(
-                "rikugan.memory.report.synthesize_report",
+                "lucnhan.memory.report.synthesize_report",
                 return_value=(build_report_context(self.store, self.paths), draft),
             ),
             patch(
-                "rikugan.memory.report.save_report",
+                "lucnhan.memory.report.save_report",
                 side_effect=save_mock,
             ),
         ]
@@ -424,12 +424,12 @@ class TestReportDraftFencing(unittest.TestCase):
         distinct UserQuestionWidget beneath the draft.
         """
         try:
-            from rikugan.ui.chat_view import ChatView
-            from rikugan.ui.message_widgets import (
+            from lucnhan.ui.chat_view import ChatView
+            from lucnhan.ui.message_widgets import (
                 AssistantMessageWidget,
                 UserQuestionWidget,
             )
-            from rikugan.ui.qt_compat import QApplication
+            from lucnhan.ui.qt_compat import QApplication
         except ImportError:
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])
@@ -530,9 +530,9 @@ class TestReportDraftFencing(unittest.TestCase):
         fails before the user notices.
         """
         try:
-            from rikugan.ui.chat_view import ChatView
-            from rikugan.ui.message_widgets import AssistantMessageWidget
-            from rikugan.ui.qt_compat import QApplication
+            from lucnhan.ui.chat_view import ChatView
+            from lucnhan.ui.message_widgets import AssistantMessageWidget
+            from lucnhan.ui.qt_compat import QApplication
         except ImportError:
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])
@@ -618,19 +618,19 @@ class TestReportDraftFencing(unittest.TestCase):
         loop = _FakeLoop(self.idb_path)
         patches = [
             patch(
-                "rikugan.agent.loop_commands._open_knowledge_store",
+                "lucnhan.agent.loop_commands._open_knowledge_store",
                 return_value=(self.store, self.paths, None),
             ),
             patch(
-                "rikugan.memory.report.build_report_context",
+                "lucnhan.memory.report.build_report_context",
                 side_effect=lambda *_a, **_kw: build_report_context(self.store, self.paths),
             ),
             patch(
-                "rikugan.memory.report.synthesize_report",
+                "lucnhan.memory.report.synthesize_report",
                 return_value=(build_report_context(self.store, self.paths), "   \n"),
             ),
             patch(
-                "rikugan.memory.report.save_report",
+                "lucnhan.memory.report.save_report",
                 return_value=MagicMock(),
             ),
         ]
@@ -661,9 +661,9 @@ class TestReportDraftFencing(unittest.TestCase):
         the visible body to a heading + raw source-dump blob.
         """
         try:
-            from rikugan.ui.chat_view import ChatView
-            from rikugan.ui.message_widgets import AssistantMessageWidget
-            from rikugan.ui.qt_compat import QApplication
+            from lucnhan.ui.chat_view import ChatView
+            from lucnhan.ui.message_widgets import AssistantMessageWidget
+            from lucnhan.ui.qt_compat import QApplication
         except ImportError:
             self.skipTest("PySide6 / ChatView not available in this env")
         QApplication.instance() or QApplication([])

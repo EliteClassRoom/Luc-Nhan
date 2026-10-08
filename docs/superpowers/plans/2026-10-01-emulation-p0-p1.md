@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Workspace: `D:/Program Files/IDAdata/IDAUSR/plugins/rikugan/.superpowers/worktrees/emulation-p0p1`, branch `fix/emulation-p0p1`.
+- Workspace: `D:/Program Files/IDAdata/IDAUSR/plugins/lucnhan/.superpowers/worktrees/emulation-p0p1`, branch `fix/emulation-p0p1`.
 - Do not commit, merge, push, change global config, install dependencies, or edit the original checkout.
 - No new dependency, arbitrary callbacks, script execution, syscall/API simulation, or IDB mutations.
 - Every IDA API call uses the existing host-thread dispatcher. Unicorn execution stays on the registry worker in normal UI execution.
@@ -26,7 +26,7 @@
 
 ## Shared Interfaces
 
-Task 2 owns `rikugan/ida/tools/emulation_types.py`. Create these definitions early and inform the other workers when available. Use absolute imports.
+Task 2 owns `lucnhan/ida/tools/emulation_types.py`. Create these definitions early and inform the other workers when available. Use absolute imports.
 
 ```python
 @dataclass(frozen=True)
@@ -114,7 +114,7 @@ def format_result(result: EmulationResult) -> str: ...
 ```
 Candidate metadata keeps `ascii`, `utf8`, `utf16le`, `raw_length`, `has_nul_terminator` and adds `ascii_terminated`, `utf8_terminated`, `utf16le_terminated`. Wide NUL must start at an even byte offset. Do not manufacture `?`-replacement strings as discoveries; ASCII/UTF-8/wide discoveries must be valid printable candidates. Nonterminated wide input is decoded from its complete even-length bytes, not an ASCII prefix.
 
-Task 4 provides in `rikugan/tools/execution.py`:
+Task 4 provides in `lucnhan/tools/execution.py`:
 ```python
 @dataclass(frozen=True)
 class ToolExecutionContext:
@@ -131,7 +131,7 @@ ToolDefinition and `@tool` gain `main_thread: bool = True`. Registry skips outer
 
 ## Task 1: Memory fidelity and bounded snapshot
 
-**Owner/files:** Create `rikugan/ida/tools/emulation_memory.py` and `tests/ida/test_emulation_memory.py`. Do not edit emulation.py/types/output/framework files.
+**Owner/files:** Create `lucnhan/ida/tools/emulation_memory.py` and `tests/ida/test_emulation_memory.py`. Do not edit emulation.py/types/output/framework files.
 
 - [ ] Write focused behavioral regressions before implementation: read extra buffer `78 56 34 12` at 0x501000; entry at 0x402000 inside segment beginning 0x401000; non-page-aligned segment; adjacent RX/RW pages; stack capture; synthetic input bytes; synthetic overlap and missing IDB bytes.
 - [ ] Implement `snapshot_memory` and its bounded address/page helpers. Lazy safe IDA imports, architecture-width address validation, positive strict sizes (reject bool), page-level permissions kept separate. Read requested page intersections using `ida_bytes.get_bytes(intersection_start, intersection_size)`.
@@ -144,7 +144,7 @@ ToolDefinition and `@tool` gain `main_thread: bool = True`. Registry skips outer
 
 ## Task 2: CPU correctness, inputs, ABI and partial results
 
-**Owner/files:** Modify `rikugan/ida/tools/emulation.py`, `tests/ida/test_emulation.py`, `tests/test_emulation_subprocess.py`; create `rikugan/ida/tools/emulation_types.py` and `tests/ida/test_emulation_execution.py`. Do not edit memory/output/framework files. Sole integration owner for the emulation tool surface.
+**Owner/files:** Modify `lucnhan/ida/tools/emulation.py`, `tests/ida/test_emulation.py`, `tests/test_emulation_subprocess.py`; create `lucnhan/ida/tools/emulation_types.py` and `tests/ida/test_emulation_execution.py`. Do not edit memory/output/framework files. Sole integration owner for the emulation tool surface.
 
 - [ ] Create behavior regressions first. Cover x64 `eax=41; add eax,1 ->42`, carry `adc`, exact one/two-instruction budgets, stop PC at exclusive end, mid-range syscall, permission-vs-unmapped status, `ret` function completion, x86 stack args, win64/sysv64 ABI args, stack-relative capture, timeout/cancel partial state, and >64 writes producing a discovered string.
 - [ ] Create shared dataclasses early, notify memory/output workers. Remove old definitions and unused helper implementations from emulation.py; migrate imports/tests, no compatibility re-exports. Remove incidental wording/implementation tests rather than re-pin them.
@@ -172,7 +172,7 @@ assert any(s.text == "HELLO" for s in result.discovered_strings)
 
 ## Task 3: Encoding and compact useful output
 
-**Owner/files:** Create `rikugan/ida/tools/emulation_output.py`, `tests/ida/test_emulation_output.py`. Do not edit existing engine/tests/framework files.
+**Owner/files:** Create `lucnhan/ida/tools/emulation_output.py`, `tests/ida/test_emulation_output.py`. Do not edit existing engine/tests/framework files.
 
 - [ ] Write regressions for aligned/unaligned UTF-16 NULs, valid UTF-8, malformed payloads, and capture/discovery summaries surviving the real registry result cap for a 4096-byte capture.
 - [ ] Implement the three shared functions. Decode terminators independently by encoding; report raw length; wide data without aligned terminator must not be truncated by interior single-byte NUL.
@@ -184,7 +184,7 @@ assert any(s.text == "HELLO" for s in result.discovered_strings)
 
 ## Task 4: Worker execution context and cancellation routing
 
-**Owner/files:** Create `rikugan/tools/execution.py`, `tests/tools/test_tool_execution_context.py`; modify `rikugan/tools/base.py`, `rikugan/tools/registry.py`, `rikugan/agent/loop.py`. Do not edit emulation modules/tests/docs.
+**Owner/files:** Create `lucnhan/tools/execution.py`, `tests/tools/test_tool_execution_context.py`; modify `lucnhan/tools/base.py`, `lucnhan/tools/registry.py`, `lucnhan/agent/loop.py`. Do not edit emulation modules/tests/docs.
 
 - [ ] Write deterministic tests first for actual host/worker separation using a queued dispatcher, context isolation between overlapping registry executions, cancellation reaching an executing worker, context cleanup on exception, and unchanged dispatch of ordinary tools. Use real threading/events/registry, not assertions that mocks echoed arguments.
 - [ ] Implement shared context and `main_thread` metadata; new field appended with default True to avoid positional callers changing meaning. Propagate decorator metadata correctly.

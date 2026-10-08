@@ -44,7 +44,7 @@ def _isolated_cryptography_modules() -> Iterator[None]:
 
 class TestCryptoLazyImport(unittest.TestCase):
     def test_is_available_returns_bool(self):
-        from rikugan.core.crypto import is_available
+        from lucnhan.core.crypto import is_available
 
         result = is_available()
         self.assertIsInstance(result, bool)
@@ -57,9 +57,9 @@ class TestCryptoLazyImport(unittest.TestCase):
         # should fall back to ``importlib.util.find_spec`` and return
         # whatever is currently installed (probably True in CI).
         with _isolated_cryptography_modules():
-            if "rikugan.core.crypto" in sys.modules:
-                importlib.reload(sys.modules["rikugan.core.crypto"])
-            from rikugan.core.crypto import is_available
+            if "lucnhan.core.crypto" in sys.modules:
+                importlib.reload(sys.modules["lucnhan.core.crypto"])
+            from lucnhan.core.crypto import is_available
 
             # The result reflects the actual installation: if cryptography
             # is present (it usually is in dev), the function returns True;
@@ -73,9 +73,9 @@ class TestCryptoLazyImport(unittest.TestCase):
         # name starts with ``"cryptography"`` appears in ``sys.modules``
         # after the call.
         with _isolated_cryptography_modules():
-            if "rikugan.core.crypto" in sys.modules:
-                importlib.reload(sys.modules["rikugan.core.crypto"])
-            from rikugan.core.crypto import is_available
+            if "lucnhan.core.crypto" in sys.modules:
+                importlib.reload(sys.modules["lucnhan.core.crypto"])
+            from lucnhan.core.crypto import is_available
 
             # is_available() is allowed to use find_spec(); that does not
             # cause a full import.  No ``cryptography*`` module may end
@@ -93,7 +93,7 @@ class TestCryptoLazyImport(unittest.TestCase):
         # Ensure the token-coercion helper (in a different module) does
         # not pull in cryptography.
         with _isolated_cryptography_modules():
-            from rikugan.core.types import coerce_token_count
+            from lucnhan.core.types import coerce_token_count
 
             self.assertEqual(coerce_token_count(None), 0)
             self.assertEqual(coerce_token_count(5), 5)

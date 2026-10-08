@@ -42,10 +42,10 @@ jobs:
         run: pip install ruff==0.16.10
 
       - name: Format check
-        run: python -m ruff format --check rikugan/
+        run: python -m ruff format --check lucnhan/
 
       - name: Lint
-        run: python -m ruff check rikugan/  # config in pyproject.toml
+        run: python -m ruff check lucnhan/  # config in pyproject.toml
 
   typecheck:
     name: Mypy
@@ -62,7 +62,7 @@ jobs:
         run: pip install mypy tomli
 
       - name: Type check (core + providers)
-        run: python -m mypy rikugan/core rikugan/providers  # config in pyproject.toml
+        run: python -m mypy lucnhan/core lucnhan/providers  # config in pyproject.toml
 
   test:
     name: Pytest (Python ${{ matrix.python-version }})
@@ -87,9 +87,9 @@ jobs:
       - name: Install dev tools
         run: pip install pytest tomli
 
-      # Tests import rikugan.ui.* which imports PySide6 at module
+      # Tests import lucnhan.ui.* which imports PySide6 at module
       # level (subject to Shiboken UAF on Python 3.13+ — see
-      # rikugan_plugin.py docstring). PySide6 + a subset of runtime
+      # lucnhan_plugin.py docstring). PySide6 + a subset of runtime
       # deps are required for the headless tests; the heavy ones
       # (anthropic, openai, ...) are mock-stubbed via tests/mocks/.
       - name: Install runtime + test deps
@@ -98,7 +98,7 @@ jobs:
           pip install PySide6
 
       # PySide6's Qt libraries link libEGL/libGL at import time. Without
-      # them every test module that imports rikugan.ui.* dies during
+      # them every test module that imports lucnhan.ui.* dies during
       # collection with "ImportError: libEGL.so.1", which hides the real
       # test results behind an import failure.
       - name: Install Qt runtime libs

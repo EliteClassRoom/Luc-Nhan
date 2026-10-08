@@ -1,4 +1,4 @@
-"""Tests for rikugan.memory.retrieve + rikugan.memory.context.
+"""Tests for lucnhan.memory.retrieve + lucnhan.memory.context.
 
 Pure unit tests; no Qt, no IDA. Build a small raw store, populate it,
 verify ranking and the prompt-section renderer.
@@ -10,8 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from rikugan.core.config import RikuganConfig
-from rikugan.memory.context import (
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory.context import (
     ContextBudget,
     budget_for_mode,
     budget_from_config,
@@ -20,11 +20,11 @@ from rikugan.memory.context import (
     build_retrieved_context_with_pack,
     sanitize_knowledge_context,
 )
-from rikugan.memory.ingest import (
+from lucnhan.memory.ingest import (
     ingest_exploration_finding,
     ingest_save_memory,
 )
-from rikugan.memory.retrieve import RetrievalQuery, retrieve, search_all
+from lucnhan.memory.retrieve import RetrievalQuery, retrieve, search_all
 from tests.knowledge._helpers import fresh_store
 
 
@@ -32,7 +32,7 @@ class TestBudgetFromConfig(unittest.TestCase):
     """Verify config-driven budget actually caps retrieval output."""
 
     def test_default_config_normal_mode(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         budget = budget_from_config(cfg, active_mode="normal")
         # Defaults: 12 items / 12_000 chars.
         self.assertEqual(budget.max_total_chars, 12_000)
@@ -43,7 +43,7 @@ class TestBudgetFromConfig(unittest.TestCase):
         )
 
     def test_smaller_item_cap_shrinks_section(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.knowledge_max_context_items = 4
         budget = budget_from_config(cfg, active_mode="normal")
         self.assertEqual(
@@ -52,13 +52,13 @@ class TestBudgetFromConfig(unittest.TestCase):
         )
 
     def test_smaller_char_cap_truncates(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.knowledge_max_context_chars = 2_000
         budget = budget_from_config(cfg, active_mode="normal")
         self.assertEqual(budget.max_total_chars, 2_000)
 
     def test_research_mode_multiplies_but_is_capped(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.knowledge_max_context_items = 100  # already at hard cap
         cfg.knowledge_max_context_chars = 60_000
         budget = budget_from_config(cfg, active_mode="research")
@@ -70,7 +70,7 @@ class TestBudgetFromConfig(unittest.TestCase):
         self.assertLessEqual(budget.max_total_chars, 60_000)
 
     def test_invalid_config_falls_back_to_default(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.knowledge_max_context_items = "bogus"  # type: ignore[assignment]
         cfg.knowledge_max_context_chars = object()  # type: ignore[assignment]
         budget = budget_from_config(cfg, active_mode="normal")
@@ -108,7 +108,7 @@ class TestRetrieveDeduplication(unittest.TestCase):
 
     def test_build_retrieved_context_with_pack_calls_retrieve_once(self):
         q = RetrievalQuery(text="rc4", address="0x401000")
-        with patch("rikugan.memory.context.retrieve", wraps=retrieve) as spy:
+        with patch("lucnhan.memory.context.retrieve", wraps=retrieve) as spy:
             section, pack = build_retrieved_context_with_pack(self.store, self.paths, query=q, active_mode="normal")
         self.assertEqual(spy.call_count, 1)
         # The returned pack and the rendered section are consistent.

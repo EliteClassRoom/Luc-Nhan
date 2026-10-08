@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 # whose ``__init__`` calls ``apply_theme`` which touches Qt.
 _app = QApplication.instance() or QApplication(sys.argv)
 
-from rikugan.ui.input_area import InputArea
+from lucnhan.ui.input_area import InputArea
 from tests.qt_real import requires_real_qt
 
 

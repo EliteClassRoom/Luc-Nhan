@@ -1,10 +1,10 @@
-"""Tests for rikugan.ui.markdown — Markdown-to-HTML converter."""
+"""Tests for lucnhan.ui.markdown — Markdown-to-HTML converter."""
 
 from __future__ import annotations
 
 import unittest
 
-from rikugan.ui.markdown import _inline, _inline_formatting, md_to_html
+from lucnhan.ui.markdown import _inline, _inline_formatting, md_to_html
 
 
 class TestMdToHtmlEmptyAndNone(unittest.TestCase):
@@ -219,7 +219,7 @@ class TestMdToHtmlFencedCodeBlockEmojiStrip(unittest.TestCase):
     def test_legacy_path_strips_emoji(self):
         # The legacy regex fallback in ``_legacy_md_to_html`` must
         # also strip emoji — exercised when markdown-it-py is absent.
-        from rikugan.ui.markdown import _legacy_md_to_html
+        from lucnhan.ui.markdown import _legacy_md_to_html
 
         result = _legacy_md_to_html("```\n2️⃣ hello\n```")
         text = self._strip_tags(result)
@@ -370,7 +370,7 @@ class TestInlineCodeSpans(unittest.TestCase):
 class TestMdToHtmlHtmlInjection(unittest.TestCase):
     """Regression: raw HTML must never reach the Qt rich-text engine.
 
-    Rikugan is a reverse-engineering tool where untrusted binary
+    Luc Nhan is a reverse-engineering tool where untrusted binary
     content (strings, decompiler output, function names) flows into
     the LLM prompt and back into the assistant's markdown response.
     CLAUDE.md section 3 names binary-as-prompt-injection as a top
@@ -444,7 +444,7 @@ class TestLegacyMarkdownFences(unittest.TestCase):
     """
 
     def test_legacy_renders_inner_code_block_and_trailing(self):
-        from rikugan.ui.markdown import _legacy_md_to_html
+        from lucnhan.ui.markdown import _legacy_md_to_html
 
         out = _legacy_md_to_html(_LEGACY_BODY)
         self.assertIn("int main(void) {return 0;}", out)
@@ -470,7 +470,7 @@ class TestMdToHtmlDispatchFallback(unittest.TestCase):
     """
 
     def test_md_to_html_returns_html(self):
-        from rikugan.ui.markdown import md_to_html
+        from lucnhan.ui.markdown import md_to_html
 
         out = md_to_html(_LEGACY_BODY)
         # ``md_to_html`` must return a non-empty string.  The exact

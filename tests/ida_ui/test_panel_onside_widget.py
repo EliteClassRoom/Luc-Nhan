@@ -27,7 +27,7 @@ from unittest import mock
 from unittest.mock import MagicMock
 
 # Make ``tests`` importable and install the IDA + Qt stubs BEFORE any
-# ``rikugan.ida.ui.*`` import. ``rikugan.ida.ui.panel`` pulls in
+# ``lucnhan.ida.ui.*`` import. ``lucnhan.ida.ui.panel`` pulls in
 # ``idaapi`` (via ``tools_form``) at module load time; without these
 # stubs the import raises ``ModuleNotFoundError`` outside IDA Pro.
 # This mirrors the established pattern in ``tests/tools/test_ida_panel.py``.
@@ -40,23 +40,23 @@ from tests.qt_stubs import _qt_class, ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-# ``rikugan.ida.ui.panel`` also imports these siblings at load time; stub
+# ``lucnhan.ida.ui.panel`` also imports these siblings at load time; stub
 # them so the module import succeeds without their heavy transitive deps.
-_panel_core_mod = types.ModuleType("rikugan.ui.panel_core")
-_panel_core_mod.RikuganPanelCore = _qt_class("RikuganPanelCore")
-sys.modules.setdefault("rikugan.ui.panel_core", _panel_core_mod)
+_panel_core_mod = types.ModuleType("lucnhan.ui.panel_core")
+_panel_core_mod.LucNhanPanelCore = _qt_class("LucNhanPanelCore")
+sys.modules.setdefault("lucnhan.ui.panel_core", _panel_core_mod)
 
-_session_mod = types.ModuleType("rikugan.ida.ui.session_controller")
+_session_mod = types.ModuleType("lucnhan.ida.ui.session_controller")
 _session_mod.IdaSessionController = MagicMock()
-sys.modules.setdefault("rikugan.ida.ui.session_controller", _session_mod)
+sys.modules.setdefault("lucnhan.ida.ui.session_controller", _session_mod)
 
-_actions_mod = types.ModuleType("rikugan.ida.ui.actions")
-_actions_mod.RikuganUIHooks = MagicMock()
-sys.modules.setdefault("rikugan.ida.ui.actions", _actions_mod)
+_actions_mod = types.ModuleType("lucnhan.ida.ui.actions")
+_actions_mod.LucNhanUIHooks = MagicMock()
+sys.modules.setdefault("lucnhan.ida.ui.actions", _actions_mod)
 
 
 def _run_oncreate_under_stubs(qt_binding: str) -> tuple[mock.MagicMock, mock.MagicMock]:
-    """Run ``RikuganPanel.OnCreate`` under the standard stub setup.
+    """Run ``LucNhanPanel.OnCreate`` under the standard stub setup.
 
     The ``qt_binding`` argument is preserved for documentation only —
     after the PyQt5 drop, ``OnCreate`` ignores the binding entirely and
@@ -71,8 +71,8 @@ def _run_oncreate_under_stubs(qt_binding: str) -> tuple[mock.MagicMock, mock.Mag
     IDA runtime; we only care which ``FormTo*Widget`` was invoked.
     """
     del qt_binding  # post-Task-5: panel.py no longer reads QT_BINDING
-    panel_mod = importlib.import_module("rikugan.ida.ui.panel")
-    panel = panel_mod.RikuganPanel.__new__(panel_mod.RikuganPanel)
+    panel_mod = importlib.import_module("lucnhan.ida.ui.panel")
+    panel = panel_mod.LucNhanPanel.__new__(panel_mod.LucNhanPanel)
 
     with (
         mock.patch.object(panel, "FormToPySideWidget", create=True) as pyside,
@@ -81,19 +81,19 @@ def _run_oncreate_under_stubs(qt_binding: str) -> tuple[mock.MagicMock, mock.Mag
         # The idaapi.PluginForm base provides these as instance methods;
         # create=True lets us patch them even if the real base is stubbed.
         with (
-            mock.patch.object(panel_mod.RikuganPanel, "FormToPySideWidget", pyside),
-            mock.patch.object(panel_mod.RikuganPanel, "FormToPyQtWidget", pyqt),
+            mock.patch.object(panel_mod.LucNhanPanel, "FormToPySideWidget", pyside),
+            mock.patch.object(panel_mod.LucNhanPanel, "FormToPyQtWidget", pyqt),
         ):
-            # OnCreate constructs QWidget/QVBoxLayout/RikuganPanelCore —
+            # OnCreate constructs QWidget/QVBoxLayout/LucNhanPanelCore —
             # stub them via qt_compat so no real Qt is needed.
-            from rikugan.ui import qt_compat
+            from lucnhan.ui import qt_compat
 
             with (
                 mock.patch.object(qt_compat, "QWidget", return_value=mock.MagicMock()),
                 mock.patch.object(qt_compat, "QVBoxLayout", return_value=mock.MagicMock()),
             ):
-                # RikuganPanelCore.__init__ is heavy; short-circuit it.
-                with mock.patch("rikugan.ui.panel_core.RikuganPanelCore") as core_cls:
+                # LucNhanPanelCore.__init__ is heavy; short-circuit it.
+                with mock.patch("lucnhan.ui.panel_core.LucNhanPanelCore") as core_cls:
                     core_cls.return_value = mock.MagicMock()
                     try:
                         panel.OnCreate(mock.sentinel.form)
@@ -147,7 +147,7 @@ class TestFormToQtWidgetFallback(unittest.TestCase):
     """
 
     def test_falls_back_when_pyside_raises_attribute_error(self) -> None:
-        panel_mod = importlib.import_module("rikugan.ida.ui.panel")
+        panel_mod = importlib.import_module("lucnhan.ida.ui.panel")
         plugin_form_cls = panel_mod.idaapi.PluginForm
         with (
             mock.patch.object(
@@ -167,7 +167,7 @@ class TestFormToQtWidgetFallback(unittest.TestCase):
         self.assertEqual(result, "pyqt_widget")
 
     def test_uses_pyside_when_it_succeeds(self) -> None:
-        panel_mod = importlib.import_module("rikugan.ida.ui.panel")
+        panel_mod = importlib.import_module("lucnhan.ida.ui.panel")
         plugin_form_cls = panel_mod.idaapi.PluginForm
         with (
             mock.patch.object(
@@ -188,7 +188,7 @@ class TestFormToQtWidgetFallback(unittest.TestCase):
 
     def test_falls_back_on_type_error_too(self) -> None:
         """TypeError (e.g. wrong overload) must also trigger fallback."""
-        panel_mod = importlib.import_module("rikugan.ida.ui.panel")
+        panel_mod = importlib.import_module("lucnhan.ida.ui.panel")
         plugin_form_cls = panel_mod.idaapi.PluginForm
         with (
             mock.patch.object(

@@ -4,13 +4,13 @@ This integration test stitches together the real persistence layer
 (``SessionHistory``), the real controller history APIs
 (``capture_history_scope`` / ``list_history_sessions`` /
 ``load_history_session`` / ``attach_history_session`` /
-``find_tab_for_session``), and the real ``RikuganPanelCore`` history
+``find_tab_for_session``), and the real ``LucNhanPanelCore`` history
 coordinator (``_start_history_list_request`` / ``_history_list_worker`` /
 ``_drain_history_results`` / ``_on_history_open_requested`` /
 ``_apply_history_loaded`` / ``on_database_changed`` / ``_invalidate_history``)
 to verify the spec section 14.5 behavioral outline.
 
-The panel is built via ``RikuganPanelCore.__new__`` so ``__init__`` (which
+The panel is built via ``LucNhanPanelCore.__new__`` so ``__init__`` (which
 would touch every heavy IDA / Qt dependency) is bypassed. The
 history-coordinator fields are seeded manually, mirroring the
 ``_make_history_panel`` idiom in ``tests/tools/test_panel_core.py``. The
@@ -19,7 +19,7 @@ session directory so ``SessionHistory`` actually writes JSON, builds a
 manifest, and validates current-IDB matching.
 
 Per the brief, this test must NOT depend on ``install_ida_mocks`` ordering
-nor on the process-wide IDA-flag state cached in ``rikugan.core.host``.
+nor on the process-wide IDA-flag state cached in ``lucnhan.core.host``.
 Each IDB path is assigned a deterministic 32-hex ``db_instance_id`` via a
 module-local map; ``host.set_database_instance_id`` /
 ``host.get_database_instance_id`` are monkey-patched so the controller's
@@ -66,8 +66,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
-# Path + IDA mocks: install BEFORE importing anything from rikugan so
-# ``rikugan.core.host`` caches the IDA path (HOST_IDA) and our patched
+# Path + IDA mocks: install BEFORE importing anything from lucnhan so
+# ``lucnhan.core.host`` caches the IDA path (HOST_IDA) and our patched
 # netnode-backed database-instance helpers are used.
 # ---------------------------------------------------------------------------
 _TESTS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -79,14 +79,14 @@ install_ida_mocks()
 
 # Defensive: drop any ``_StubModule`` entries a sibling test file
 # (e.g. ``tests/tools/test_panel_core.py``) left in ``sys.modules``
-# before we import the real rikugan modules. Without this purge, the
+# before we import the real lucnhan modules. Without this purge, the
 # integration test would see ``MagicMock`` instances for
-# ``rikugan.core.types.Message`` etc. when collected after a panel-core
+# ``lucnhan.core.types.Message`` etc. when collected after a panel-core
 # test in the same pytest invocation. Same pattern as
 # ``tests/providers/test_providers.py``.
-from tests import purge_rikugan_stubs
+from tests import purge_lucnhan_stubs
 
-purge_rikugan_stubs()
+purge_lucnhan_stubs()
 
 # Install PySide6 stubs before importing panel_core (which imports Qt).
 from tests.qt_stubs import ensure_pyside6_stubs
@@ -94,33 +94,33 @@ from tests.qt_stubs import ensure_pyside6_stubs
 ensure_pyside6_stubs()
 
 # ---------------------------------------------------------------------------
-# Stub heavy rikugan submodules so ``panel_core`` can be imported without
+# Stub heavy lucnhan submodules so ``panel_core`` can be imported without
 # the real provider/agent/theme stack. Same idiom as
 # ``tests/tools/test_panel_core.py``: a per-module ``MagicMock`` fallback
 # keeps the stub resilient to new style getters.
 # ---------------------------------------------------------------------------
 _STUBBED_MODULES = [
-    "rikugan.ui.styles",
-    "rikugan.ui.chat_view",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.markdown",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.applicator",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.core.logging",
-    "rikugan.agent.turn",
-    "rikugan.agent.mutation",
-    "rikugan.providers.auth_cache",
-    "rikugan.providers.anthropic_provider",
-    "rikugan.providers.ollama_provider",
-    "rikugan.providers.registry",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.chat_view",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
+    "lucnhan.ui.tool_widgets",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.markdown",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.applicator",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.core.logging",
+    "lucnhan.agent.turn",
+    "lucnhan.agent.mutation",
+    "lucnhan.providers.auth_cache",
+    "lucnhan.providers.anthropic_provider",
+    "lucnhan.providers.ollama_provider",
+    "lucnhan.providers.registry",
 ]
 
 _STUBBED_MODULE_BACKUPS: dict[str, object] = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
@@ -163,7 +163,7 @@ for _mod_name in _STUBBED_MODULES:
     sys.modules[_mod_name] = _stub
 
 # ``DEFAULT_OLLAMA_URL`` must be a real string for comparisons.
-_ollama_stub = sys.modules.get("rikugan.providers.ollama_provider")
+_ollama_stub = sys.modules.get("lucnhan.providers.ollama_provider")
 if _ollama_stub and not isinstance(getattr(_ollama_stub, "DEFAULT_OLLAMA_URL", None), str):
     _ollama_stub.DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
@@ -210,32 +210,32 @@ class _StubThemeManager:
         cls._instance = None
 
 
-_tm_stub = sys.modules.get("rikugan.ui.theme.manager")
+_tm_stub = sys.modules.get("lucnhan.ui.theme.manager")
 if _tm_stub is not None:
     _tm_stub.ThemeManager = _StubThemeManager
 
 # Force-remove any prior stub for panel_core so we import cleanly here.
-sys.modules.pop("rikugan.ui.panel_core", None)
+sys.modules.pop("lucnhan.ui.panel_core", None)
 
 import pytest
 
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role
-from rikugan.ida.ui.session_controller import IdaSessionController
-from rikugan.state.history import SessionHistory
-from rikugan.ui.panel_core import RikuganPanelCore
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import Message, Role
+from lucnhan.ida.ui.session_controller import IdaSessionController
+from lucnhan.state.history import SessionHistory
+from lucnhan.ui.panel_core import LucNhanPanelCore
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _restore_rikugan_modules_after_integration_tests():
-    """Restore the real rikugan modules once this test module finishes.
+def _restore_lucnhan_modules_after_integration_tests():
+    """Restore the real lucnhan modules once this test module finishes.
 
     Task 6 isolation: the host helper patches are applied per-test in
     ``setUp`` and restored in ``tearDown`` (see
     ``_apply_host_helper_patches`` / ``_restore_host_helper_patches``)
     so they never leak across test modules regardless of collection
     order.  This fixture only restores the heavier module-level stubs
-    (``rikugan.ui.chat_view`` etc.) that panel_core imports at module
+    (``lucnhan.ui.chat_view`` etc.) that panel_core imports at module
     scope.
     """
     yield
@@ -255,9 +255,9 @@ def _restore_rikugan_modules_after_integration_tests():
 # Production reads/writes ``db_instance_id`` through an IDA netnode so the
 # same IDB yields the same id across ``IdaSessionController`` instances.
 # ``tests/mocks/ida_mock.py`` already provides a ``_PersistentNetnode`` that
-# achieves this when the mock is installed before ``rikugan.core.host`` is
+# achieves this when the mock is installed before ``lucnhan.core.host`` is
 # imported. However, collection-order pollution (another test module
-# importing ``rikugan.core.host`` before us with ``is_ida() == False``) can
+# importing ``lucnhan.core.host`` before us with ``is_ida() == False``) can
 # disable the persistent path. Rather than depend on collection order, we
 # install a stable path -> id map and monkey-patch the host helpers.
 # ---------------------------------------------------------------------------
@@ -276,21 +276,21 @@ def _stable_instance_for(idb_path: str) -> str:
     if normalized not in _IDB_INSTANCE_MAP:
         # uuid5 is deterministic across runs (unlike Python's hash()).
         # The result is a 32-char lowercase hex string, matching what
-        # ``rikugan.core.host.set_database_instance_id`` writes to the
+        # ``lucnhan.core.host.set_database_instance_id`` writes to the
         # netnode and what ``_canonical_instance_id`` expects.
-        _IDB_INSTANCE_MAP[normalized] = uuid.uuid5(uuid.NAMESPACE_URL, f"rikugan-test://{normalized}").hex
+        _IDB_INSTANCE_MAP[normalized] = uuid.uuid5(uuid.NAMESPACE_URL, f"lucnhan-test://{normalized}").hex
     return _IDB_INSTANCE_MAP[normalized]
 
 
 # Rebind the host helpers used by the controller. The controller module
 # does ``from ..core.host import get_database_instance_id`` at import
 # time, which binds the FUNCTION OBJECT (not a deferred lookup) into its
-# own namespace. So patching only ``rikugan.core.host.X`` has no effect:
+# own namespace. So patching only ``lucnhan.core.host.X`` has no effect:
 # the controller keeps the original reference. We must rebind BOTH the
 # host module attributes AND the controller module's bound imports.
-import rikugan.core.host as _host
-import rikugan.ida.ui.session_controller as _ida_sc
-import rikugan.ui.session_controller_base as _scb
+import lucnhan.core.host as _host
+import lucnhan.ida.ui.session_controller as _ida_sc
+import lucnhan.ui.session_controller_base as _scb
 
 _CURRENT_IDB_PATH = {"path": ""}
 
@@ -315,7 +315,7 @@ def _patched_get_database_path() -> str:
     Task 6 (spec §11.5): the controller's delete boundary compares the
     captured ``HistoryScope.idb_path`` against the live ``_idb_path``
     that ``IdaSessionController`` materialized via
-    ``database_path_getter`` (``rikugan.core.host.get_database_path``).
+    ``database_path_getter`` (``lucnhan.core.host.get_database_path``).
     The IDA mock returns a fixed ``d:\\tmp\\ida_test\\test.idb``, which
     does not match the temp paths we persist sessions under.  Without
     this patch the controller's ``_idb_path`` is the mock's default,
@@ -486,7 +486,7 @@ class _FakeChatView:
 
 # Replace the stubbed ``ChatView`` import on the stub module with our fake
 # so ``_create_tab`` constructs instances of ``_FakeChatView``.
-_chat_view_stub = sys.modules.get("rikugan.ui.chat_view")
+_chat_view_stub = sys.modules.get("lucnhan.ui.chat_view")
 if _chat_view_stub is not None:
     _chat_view_stub.ChatView = _FakeChatView
 
@@ -597,14 +597,14 @@ class _RecordingHistoryPanel:
         pass
 
 
-def _build_panel(ctrl: IdaSessionController) -> RikuganPanelCore:
-    """Construct a real ``RikuganPanelCore`` instance via ``__new__``.
+def _build_panel(ctrl: IdaSessionController) -> LucNhanPanelCore:
+    """Construct a real ``LucNhanPanelCore`` instance via ``__new__``.
 
     Bypasses ``__init__`` (which would touch every IDA / provider / Qt
     dependency) and seeds the history-coordinator fields the brief lists
     so the panel's history code paths can be exercised deterministically.
     """
-    panel = RikuganPanelCore.__new__(RikuganPanelCore)
+    panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
     panel._is_shutdown = False
     panel._polling = False
     panel._pending_answer = False
@@ -672,7 +672,7 @@ class _HistoryOnDemandFacade:
     future resolves.
     """
 
-    def __init__(self, panel: RikuganPanelCore):
+    def __init__(self, panel: LucNhanPanelCore):
         self._panel = panel
 
     # --- assertions helpers --------------------------------------------
@@ -715,7 +715,7 @@ class _HistoryOnDemandFacade:
 
             self._panel._history_executor = ThreadPoolExecutor(
                 max_workers=1,
-                thread_name_prefix="rikugan-history",
+                thread_name_prefix="lucnhan-history",
             )
         self._panel._drain_history_results()
 
@@ -729,7 +729,7 @@ class _HistoryOnDemandFacade:
 
             self._panel._history_executor = ThreadPoolExecutor(
                 max_workers=1,
-                thread_name_prefix="rikugan-history",
+                thread_name_prefix="lucnhan-history",
             )
         self._panel._drain_history_results()
 
@@ -793,7 +793,7 @@ class _HistoryOnDemandFacade:
 
 
 def _persist_session(
-    cfg: RikuganConfig,
+    cfg: LucNhanConfig,
     *,
     idb_path: str,
     db_instance_id: str,
@@ -805,7 +805,7 @@ def _persist_session(
     Returns the persisted ``SessionState.id`` so the test can reference it
     by its manifest identity (not its in-memory tab id).
     """
-    from rikugan.state.session import SessionState
+    from lucnhan.state.session import SessionState
 
     session = SessionState(
         idb_path=idb_path,
@@ -828,8 +828,8 @@ class TestHistoryOnDemandIntegration(unittest.TestCase):
         # Fresh IDB-instance map so each test is hermetic.
         _IDB_INSTANCE_MAP.clear()
         # Fresh controller-backed temp config dir for real persistence.
-        self._tmp_root = tempfile.mkdtemp(prefix="rikugan-int-")
-        self.cfg = RikuganConfig()
+        self._tmp_root = tempfile.mkdtemp(prefix="lucnhan-int-")
+        self.cfg = LucNhanConfig()
         self.cfg._config_dir = self._tmp_root
 
         # IDB-A / IDB-B paths inside the same temp tree.
@@ -897,7 +897,7 @@ class TestHistoryOnDemandIntegration(unittest.TestCase):
             _restore_host_helper_patches()
 
     def test_startup_one_empty_new_chat(self):
-        """Spec 7.1: opening Rikugan shows exactly one empty New Chat."""
+        """Spec 7.1: opening Luc Nhan shows exactly one empty New Chat."""
         self.assertEqual(self.facade.tab_count(), 1)
         self.assertEqual(self.facade.active_session.messages, [])
 
@@ -1144,7 +1144,7 @@ class TestHistoryOnDemandIntegration(unittest.TestCase):
                 raise PermissionError("locked")
             original_remove(path)
 
-        with patch("rikugan.state.history.os.remove", side_effect=fail_target):
+        with patch("lucnhan.state.history.os.remove", side_effect=fail_target):
             self.facade.delete_history_session(self.a1_id)
 
         # Row is preserved (FAILED is non-terminal).

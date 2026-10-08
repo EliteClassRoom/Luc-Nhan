@@ -11,13 +11,13 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from rikugan.agent import report_review
-from rikugan.agent.report_review import ReviewResult, review_memories
-from rikugan.core.config import RikuganConfig
-from rikugan.core.errors import CancellationError
-from rikugan.memory.ingest import make_store
-from rikugan.memory.schema import KnowledgeMemory
-from rikugan.state.session import SessionState
+from lucnhan.agent import report_review
+from lucnhan.agent.report_review import ReviewResult, review_memories
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.errors import CancellationError
+from lucnhan.memory.ingest import make_store
+from lucnhan.memory.schema import KnowledgeMemory
+from lucnhan.state.session import SessionState
 
 
 def _memory(mem_id: str, content: str = "claim", *, verified: bool = False) -> KnowledgeMemory:
@@ -56,7 +56,7 @@ def _make_loop() -> MagicMock:
     loop = MagicMock()
     loop.provider = MagicMock()
     loop.tools = MagicMock()
-    loop.config = RikuganConfig()
+    loop.config = LucNhanConfig()
     loop.session = SessionState()
     loop.host_name = "test"
     loop.skills = None

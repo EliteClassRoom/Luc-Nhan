@@ -10,8 +10,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.orchestra.orchestra_config import SubAgentSpec
-from rikugan.agent.orchestra.subagent_factory import SubAgentFactory
+from lucnhan.agent.orchestra.orchestra_config import SubAgentSpec
+from lucnhan.agent.orchestra.subagent_factory import SubAgentFactory
 
 
 class _FakeManager:

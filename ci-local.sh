@@ -35,9 +35,9 @@ fi
 # ── 1. Ruff — format check ─────────────────────────────────────────────────────
 info "[1/5] Ruff format..."
 if $FIX; then
-    python3 -m ruff format rikugan/ && ok "ruff format (auto-fixed)" || fail "ruff format" "failed"
+    python3 -m ruff format lucnhan/ && ok "ruff format (auto-fixed)" || fail "ruff format" "failed"
 else
-    if python3 -m ruff format --check rikugan/ 2>&1; then
+    if python3 -m ruff format --check lucnhan/ 2>&1; then
         ok "ruff format"
     else
         fail "ruff format" "run with --fix to auto-fix"
@@ -47,13 +47,13 @@ fi
 # ── 2. Ruff — lint (config in pyproject.toml) ────────────────────────────────
 info "[2/5] Ruff lint..."
 if $FIX; then
-    if python3 -m ruff check rikugan/ --fix 2>&1; then
+    if python3 -m ruff check lucnhan/ --fix 2>&1; then
         ok "ruff lint (auto-fixed)"
     else
         fail "ruff lint" "see above"
     fi
 else
-    if python3 -m ruff check rikugan/ 2>&1; then
+    if python3 -m ruff check lucnhan/ 2>&1; then
         ok "ruff lint"
     else
         fail "ruff lint" "see above"
@@ -62,7 +62,7 @@ fi
 
 # ── 3. Mypy — core modules only (config in pyproject.toml) ───────────────────
 info "[3/5] Mypy (core + providers)..."
-MYPY_OUT=$(python3 -m mypy rikugan/core rikugan/providers --pretty \
+MYPY_OUT=$(python3 -m mypy lucnhan/core lucnhan/providers --pretty \
     2>&1) && MYPY_OK=true || MYPY_OK=false
 
 if $MYPY_OK; then

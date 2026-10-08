@@ -47,7 +47,7 @@ Người dùng quyết định **bỏ hoàn toàn cơ chế collapse/expand** ch
 └─────────────────────────────────────────┘
 ```
 
-### Thay đổi trong `rikugan/ui/tool_widgets.py`, class `ExecutePythonWidget`
+### Thay đổi trong `lucnhan/ui/tool_widgets.py`, class `ExecutePythonWidget`
 
 #### a. Header — `_build_header()`
 - **Xóa** `self._toggle_btn` (QToolButton ▶/▼) và dòng `header.addWidget(self._toggle_btn)`.
@@ -183,7 +183,7 @@ Test file: `tests/tools/test_execute_python_widget.py`.
 
 ## File ảnh hưởng
 
-- `rikugan/ui/theme/widgets_mutation.py` (thêm `get_tool_result_editor_style(text_color=None)`).
-- `rikugan/ui/tool_widgets.py` (class `ExecutePythonWidget` — viết lại đáng kể).
-- `rikugan/ui/chat_view.py` (xóa/điều chỉnh caller nếu cần — verify trong implementation).
+- `lucnhan/ui/theme/widgets_mutation.py` (thêm `get_tool_result_editor_style(text_color=None)`).
+- `lucnhan/ui/tool_widgets.py` (class `ExecutePythonWidget` — viết lại đáng kể).
+- `lucnhan/ui/chat_view.py` (xóa/điều chỉnh caller nếu cần — verify trong implementation).
 - `tests/tools/test_execute_python_widget.py` (đảo ngược + thêm test).

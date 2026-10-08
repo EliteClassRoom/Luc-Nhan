@@ -14,17 +14,17 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
 
 class TestReviewerPromptPrefersTool(unittest.TestCase):
     def test_prompt_mentions_lookup_idapython_doc(self):
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         self.assertIn("lookup_idapython_doc", IDA_DOCS_REVIEWER_PROMPT)
 
     def test_prompt_demotes_web_fetch_to_fallback(self):
-        from rikugan.agent.agents.ida_docs_reviewer import (
+        from lucnhan.agent.agents.ida_docs_reviewer import (
             build_ida_docs_reviewer_addendum,
         )
 
@@ -39,7 +39,7 @@ class TestReviewerPromptPrefersTool(unittest.TestCase):
         self.assertLess(tool_idx, web_fetch_idx)
 
     def test_prompt_explains_fallback_reason(self):
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         # The fallback should mention "not in bundle" or similar
         lowered = IDA_DOCS_REVIEWER_PROMPT.lower()
@@ -50,7 +50,7 @@ class TestReviewerPromptPrefersTool(unittest.TestCase):
 
     def test_prompt_offline_first_priority(self):
         """Reviewer must explicitly say 'try offline FIRST' — not just 'prefer' it."""
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         # The prompt must make clear that offline is the first attempt, not just a preferred option
         self.assertIn(
@@ -67,7 +67,7 @@ class TestReviewerPromptPrefersTool(unittest.TestCase):
 
     def test_prompt_fallback_after_offline_fails(self):
         """Fallback trigger must be 'after offline fails', not just 'when module missing'."""
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         lowered = IDA_DOCS_REVIEWER_PROMPT.lower()
         # Must mention BOTH fallback scenarios:
@@ -92,7 +92,7 @@ class TestReviewerPostErrorRole(unittest.TestCase):
 
     def test_reviewer_prompt_describes_post_error_role(self):
         """Reviewer prompt must describe the post-error diagnostician role."""
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         # Phai nhac den runtime error / diagnose failure
         assert "diagnose" in IDA_DOCS_REVIEWER_PROMPT.lower() or "runtime" in IDA_DOCS_REVIEWER_PROMPT.lower()
@@ -101,7 +101,7 @@ class TestReviewerPostErrorRole(unittest.TestCase):
 
     def test_reviewer_prompt_keeps_verdict_contract(self):
         """Output contract (VERDICT/REASONS/API_NOTES/REWRITE_GUIDANCE) stays."""
-        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+        from lucnhan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
 
         assert "VERDICT:" in IDA_DOCS_REVIEWER_PROMPT
         assert "REASONS:" in IDA_DOCS_REVIEWER_PROMPT
@@ -111,7 +111,7 @@ class TestReviewerPostErrorRole(unittest.TestCase):
 
 class TestSkillPrefersTool(unittest.TestCase):
     SKILL_PATH = (
-        Path(__file__).resolve().parent.parent / "rikugan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"
+        Path(__file__).resolve().parent.parent / "lucnhan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"
     )
 
     def setUp(self):
@@ -129,7 +129,7 @@ class TestSkillPrefersTool(unittest.TestCase):
 
     def test_skill_frontmatter_allows_lookup_idapython_doc(self):
         # Frontmatter allowed_tools must include lookup_idapython_doc — otherwise
-        # rikugan/agent/loop.py:2058-2060 filters it out and the agent can't call it
+        # lucnhan/agent/loop.py:2058-2060 filters it out and the agent can't call it
         # even though the skill body recommends it.
         import yaml
 
@@ -282,7 +282,7 @@ class TestIdaScriptingSkillUrlGuidance(unittest.TestCase):
     """
 
     SKILL_PATH = (
-        Path(__file__).resolve().parent.parent / "rikugan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"
+        Path(__file__).resolve().parent.parent / "lucnhan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"
     )
 
     def setUp(self):

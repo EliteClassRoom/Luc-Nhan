@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role
-from rikugan.state.history import SessionHistory
-from rikugan.state.session import SessionState
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import Message, Role
+from lucnhan.state.history import SessionHistory
+from lucnhan.state.session import SessionState
 
 
 def test_session_and_manifest_round_trip_memory_binding(tmp_path: Path) -> None:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     session = SessionState(
         id="bound-session",
@@ -33,7 +33,7 @@ def test_session_and_manifest_round_trip_memory_binding(tmp_path: Path) -> None:
 
 
 def test_list_sessions_filters_by_binary_memory_id(tmp_path: Path) -> None:
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     history = SessionHistory(config)
 
@@ -66,7 +66,7 @@ def test_v1_session_loads_with_empty_memory_fields(tmp_path: Path) -> None:
     """Old session JSON without memory fields loads with empty defaults."""
     import json
 
-    config = RikuganConfig()
+    config = LucNhanConfig()
     config._config_dir = str(tmp_path)
     history = SessionHistory(config)
 

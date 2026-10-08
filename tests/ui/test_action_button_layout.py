@@ -1,6 +1,6 @@
 """Regression test for the horizontal action-button layout.
 
-Pins the contract that ``RikuganPanelCore._build_action_buttons`` returns a
+Pins the contract that ``LucNhanPanelCore._build_action_buttons`` returns a
 ``QHBoxLayout`` and that all eight action buttons remain present with their
 tooltips/accessible names. The existing a11y tests already cover the
 tooltips; this file is the layout-shape contract.
@@ -21,8 +21,8 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-from rikugan.ui.panel_core import RikuganPanelCore
-from rikugan.ui.qt_compat import QHBoxLayout, QVBoxLayout
+from lucnhan.ui.panel_core import LucNhanPanelCore
+from lucnhan.ui.qt_compat import QHBoxLayout, QVBoxLayout
 
 _BUTTON_ATTRS = (
     "_send_btn",
@@ -42,7 +42,7 @@ class TestActionButtonLayout(unittest.TestCase):
         # only exercise the widget-building method under test. Use the
         # native-host-theme branch so the themed stylesheet path
         # (``ThemeManager.tokens()``) is not required by the stub.
-        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._use_native_host_theme = True
         panel._build_action_buttons()
         return panel

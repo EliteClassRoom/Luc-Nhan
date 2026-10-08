@@ -12,9 +12,9 @@ Chuyển hoàn toàn (cutover) persistent memory runtime từ legacy `RIKUGAN.md
 
 ## Bối cảnh
 
-Rikugan có 2 lớp memory:
+Luc Nhan có 2 lớp memory:
 - **Legacy (xóa):** `RIKUGAN.md` file cạnh IDB, ghi bởi `save_memory` tool, đọc bởi `_load_persistent_memory()`, append bởi `append_to_memory_file()`.
-- **Central (giữ, làm default):** `rikugan/memory/` package — `BinaryMemoryService` façade, SQLite repository, `MemoryProjector` ghi managed region vào `MEMORY.md`, `MemoryWriteAuthority` (non-serializable, main-agent-only).
+- **Central (giữ, làm default):** `lucnhan/memory/` package — `BinaryMemoryService` façade, SQLite repository, `MemoryProjector` ghi managed region vào `MEMORY.md`, `MemoryWriteAuthority` (non-serializable, main-agent-only).
 
 Codebase đã có dispatch song song (central vs legacy) tại 3 điểm:
 - `_handle_save_memory_tool` (`loop.py:1625`)
@@ -26,7 +26,7 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
 ## Quyết định thiết kế
 
 1. **Central memory luôn-on.** Xóa flag `memory_workspaces_enabled` — không còn cách disable. `case_memory_enabled` và `peer_retrieval_enabled` cũng xóa (chúng phụ thuộc central memory).
-2. **Không giữ importer.** Xóa `rikugan/memory/legacy.py` hoàn toàn (user chọn clean break — ai đang có `RIKUGAN.md` cũ phải copy thủ công).
+2. **Không giữ importer.** Xóa `lucnhan/memory/legacy.py` hoàn toàn (user chọn clean break — ai đang có `RIKUGAN.md` cũ phải copy thủ công).
 3. **Giữ `sanitize_memory()`.** Hàm này vẫn dùng trong central path để wrap `manual_memory_notes` từ `MEMORY.md` unmanaged region (`system_prompt.py:132`). Đổi docstring mention `RIKUGAN.md` → `MEMORY.md`.
 4. **Không backward-compat runtime.** Legacy branch bị xóa, không giữ "deprecated but functional".
 5. **Identity failure path = silent.** Khi `manager.bind()` trả `ephemeral` (không resolve được workspace — filesystem không hỗ trợ inode, read-only, ...), `_wire_central_memory()` return sớm (dòng 530-531), `loop.memory_service` vẫn `None`. Behavior: memory đơn giản không có — không warning, không log cho user (giữ behavior hiện tại). `save_memory`/`/memory` báo "not available" qua message error đã define ở Phase 2. Đây là edge case hiếm, không cần surfacing.
@@ -36,7 +36,7 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
 
 ### Phase 1 — Config layer (flip flags)
 
-**`rikugan/core/config.py`:**
+**`lucnhan/core/config.py`:**
 - Xóa 3 dataclass field: `memory_workspaces_enabled` (dòng 156), `case_memory_enabled` (dòng 160), `peer_retrieval_enabled` (dòng 165) và comment block dòng 149-165.
 - Xóa 3 entry khỏi load-key tuple (dòng 362-364).
 - Xóa 3 entry khỏi `_BOOLEAN_FIELDS` set (dòng 402-404).
@@ -51,7 +51,7 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
 
 ### Phase 2 — Runtime legacy code cleanup
 
-**`rikugan/agent/system_prompt.py`:**
+**`lucnhan/agent/system_prompt.py`:**
 - Xóa: `_MAX_MEMORY_LINES` (dòng 21), `_MEMORY_CACHE` (dòng 40), `_MEMORY_MISSING_SENTINEL` (dòng 41), toàn bộ `_load_persistent_memory()` (dòng 44-96), comment block dòng 20-39.
 - `build_system_prompt()`: xóa param `idb_dir` (dòng 115). Xóa legacy branch `else` (dòng 133-137). Memory chỉ đến từ `structured_memory` / `manual_memory_notes`. Refactor: nếu cả hai rỗng → không thêm section memory nào.
 - Xóa import `os` (dòng 5) nếu không còn dùng. Giữ import `sanitize_memory` (dòng 10).
@@ -59,32 +59,32 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
   - `loop.py:543` `_build_system_prompt()` — xóa `idb_dir=idb_dir` arg (dòng 552), dọn biến `idb_dir` dòng 516-518 nếu không dùng mục đích khác.
   - `agent/orchestra/main_agent.py:145` — xóa `idb_dir=idb_dir` arg (dòng 152), dọn biến dòng 141-143.
 
-**`rikugan/agent/loop.py`:**
+**`lucnhan/agent/loop.py`:**
 - Xóa `_MEMORY_HEADER` (dòng 84) + `append_to_memory_file()` (dòng 251-...).
 - `_handle_save_memory_tool()` (dòng 1601): xóa legacy `else` branch (dòng 1643-1668) bao gồm `make_store`/`ingest_save_memory` auto-ingest import. Logic mới: nếu `memory_service is None or _memory_authority is None` → trả error "Central memory is not available in this context." (không ghi file).
 - Cập nhật docstring/comment mention `RIKUGAN.md` (dòng 269, 285, 1609, 1617) → `MEMORY.md` hoặc "MEMORY.md managed region".
 - `loop.memory_service` / `_memory_authority` / `_memory_manager` giữ nguyên (vẫn injection point từ controller).
 
-**`rikugan/agent/modes/plan.py`:**
+**`lucnhan/agent/modes/plan.py`:**
 - `persist_plan()` (dòng 109): thay body. Nếu `loop.memory_service is not None and loop._memory_authority is not None` → `loop.memory_service.save_plan(loop._memory_authority, goal=user_goal, steps=steps)`, log success. Không thì no-op + `log_debug`. Xóa import `append_to_memory_file`, xóa `os.path.join(idb_dir, "RIKUGAN.md")`, xóa `time.strftime` formatting (service tự format).
 - **Caller `exploration.py:249`** giữ signature `persist_plan(loop, user_goal, steps)` — không thay đổi.
 
-**`rikugan/agent/loop_commands.py`:**
+**`lucnhan/agent/loop_commands.py`:**
 - `_handle_memory_command()` (dòng 98): xóa legacy branch (dòng 124-147). Nếu `memory_service is None` → `TurnEvent.text_done("Central memory is not available...")` + return.
 
-**`rikugan/agent/loop.py` `_handle_case_command` (dòng 459-461):**
+**`lucnhan/agent/loop.py` `_handle_case_command` (dòng 459-461):**
 - Message lỗi `"Central memory is not enabled. Set memory_workspaces_enabled=true in config."` — flag không còn, sửa thành `"Central memory is not available for this binary."` (không reference flag). Context: message này chạy khi `memory_service is None`, tức identity resolve thất bại.
 
-**`rikugan/agent/modes/research.py`:**
+**`lucnhan/agent/modes/research.py`:**
 - Docstring/prompt mention `RIKUGAN.md` (dòng 146, 162) → `MEMORY.md`.
 
 ### Phase 3 — Module removal + docstring cleanup
 
-- **Xóa file `rikugan/memory/legacy.py`** hoàn toàn.
-- `rikugan/memory/__init__.py`: docstring dòng 7-17 mention `config.memory_workspaces_enabled` + dark mode → cập nhật/rút gọn (xóa đoạn deprecation). Note: module này export `KnowledgeRawStore` cho knowledge subsystem (khác central memory) — **không** xóa, chỉ sửa docstring.
-- `rikugan/memory/paths.py`: docstring dòng 11 mention `RIKUGAN.md` → `MEMORY.md` hoặc bỏ câu. Giữ entity-ID helpers + `knowledge_paths()`.
-- `rikugan/memory/manager.py`: docstring mention dark mode (dòng 7-9) → cập nhật. Xóa guards như Phase 1.
-- `rikugan/core/sanitize.py`: docstring dòng 5 "(skills, RIKUGAN.md)" → "(skills, MEMORY.md)".
+- **Xóa file `lucnhan/memory/legacy.py`** hoàn toàn.
+- `lucnhan/memory/__init__.py`: docstring dòng 7-17 mention `config.memory_workspaces_enabled` + dark mode → cập nhật/rút gọn (xóa đoạn deprecation). Note: module này export `KnowledgeRawStore` cho knowledge subsystem (khác central memory) — **không** xóa, chỉ sửa docstring.
+- `lucnhan/memory/paths.py`: docstring dòng 11 mention `RIKUGAN.md` → `MEMORY.md` hoặc bỏ câu. Giữ entity-ID helpers + `knowledge_paths()`.
+- `lucnhan/memory/manager.py`: docstring mention dark mode (dòng 7-9) → cập nhật. Xóa guards như Phase 1.
+- `lucnhan/core/sanitize.py`: docstring dòng 5 "(skills, RIKUGAN.md)" → "(skills, MEMORY.md)".
 
 ### Phase 4 — Tests
 
@@ -109,7 +109,7 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
 - `tests/agent/test_memory_write_ownership.py`, `tests/agent/test_system_prompt.py` — remove RIKUGAN.md references, update `build_system_prompt` signature.
 
 **Giữ nguyên:**
-- `tests/core/test_sanitize.py`, `rikugan/tests/test_session_restore_sanitization.py` (sanitize_memory vẫn dùng)
+- `tests/core/test_sanitize.py`, `lucnhan/tests/test_session_restore_sanitization.py` (sanitize_memory vẫn dùng)
 - Các test central memory service/repo/workspace/case (chỉ bỏ set-flag, không đổi logic test)
 
 ### Phase 5 — Docs
@@ -134,7 +134,7 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
 ## Out of scope
 
 - Build mới central memory subsystem (đã xong — Tasks 1-6 cutover plan).
-- Knowledge subsystem (`notes/`, `.rikugan-kb/`, `KnowledgeRawStore`) — đây là JSONL knowledge store riêng, **không** phải persistent memory. Giữ nguyên.
+- Knowledge subsystem (`notes/`, `.lucnhan-kb/`, `KnowledgeRawStore`) — đây là JSONL knowledge store riêng, **không** phải persistent memory. Giữ nguyên.
 - Headless memory wiring chi tiết (verify-only, không build mới).
 - Version bump (task riêng theo release flow).
 
@@ -145,4 +145,4 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
 3. Phase 3 (module removal) — sau khi Phase 2 xóa hết caller
 4. Phase 4 (tests) — song song với Phase 2-3 (TDD-style khi sửa logic)
 5. Phase 5 (docs) — cuối cùng
-6. Verify: `./ci-local.sh` + grep "RIKUGAN.md" trong `rikugan/` không còn runtime reference
+6. Verify: `./ci-local.sh` + grep "RIKUGAN.md" trong `lucnhan/` không còn runtime reference

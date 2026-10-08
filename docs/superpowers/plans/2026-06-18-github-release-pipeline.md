@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the 36-line skeleton `.github/workflows/release.yml` with a full 3-job GitHub Actions pipeline (verify → build → publish) that produces a **HCLI-compliant flat-ZIP** plugin archive (`rikugan-v{version}.zip` + `SHA256SUMS`) for every tag push (or workflow_dispatch re-run), validated with `hcli plugin lint`.
+**Goal:** Replace the 36-line skeleton `.github/workflows/release.yml` with a full 3-job GitHub Actions pipeline (verify → build → publish) that produces a **HCLI-compliant flat-ZIP** plugin archive (`lucnhan-v{version}.zip` + `SHA256SUMS`) for every tag push (or workflow_dispatch re-run), validated with `hcli plugin lint`.
 
 **Architecture:** Three-job workflow chain. `verify` parses the tag, validates it matches `ida-plugin.json`, and re-runs the same CI checks that `ci.yml` would (ruff, mypy, pytest, desloppify) inline — bypassing the `ci.yml` branch drift. `build` runs `scripts/build_release.py` (a pure-Python module importable in tests) to assemble a **flat ZIP** (no wrapping subfolder — `ida-plugin.json` at root, per the [Hex-Rays plugin packaging spec](https://hcli.docs.hex-rays.com/reference/plugin-packaging-and-format/)), then validates it with `hcli plugin lint`. `publish` uploads the artifacts via `softprops/action-gh-release@v2`, with pre-release flag auto-detected from the tag suffix.
 
@@ -12,13 +12,13 @@
 
 ## Global Constraints
 
-- **HCLI flat-ZIP layout (HARD CONSTRAINT)**: `ida-plugin.json` and `rikugan_plugin.py` (the `entryPoint`) must be at the ZIP **root**. No wrapping subfolder like `rikugan-v{version}/`. The [Hex-Rays packaging spec](https://hcli.docs.hex-rays.com/reference/plugin-packaging-and-format/) states the metadata file "should be found in the root directory of the plugin within the archive." A wrapped layout breaks `hcli plugin install` / `hcli plugin lint`.
+- **HCLI flat-ZIP layout (HARD CONSTRAINT)**: `ida-plugin.json` and `lucnhan_plugin.py` (the `entryPoint`) must be at the ZIP **root**. No wrapping subfolder like `lucnhan-v{version}/`. The [Hex-Rays packaging spec](https://hcli.docs.hex-rays.com/reference/plugin-packaging-and-format/) states the metadata file "should be found in the root directory of the plugin within the archive." A wrapped layout breaks `hcli plugin install` / `hcli plugin lint`.
 - **ZIP only — no tar.gz**: HCLI accepts only ZIP archives.
 - Python target version: `py311` (per `pyproject.toml [tool.ruff] target-version` and the project's CI baseline).
 - Line length: `120` (per `pyproject.toml [tool.ruff] line-length`).
 - All Python files start with `from __future__ import annotations` (project-wide rule from `AGENTS.md` §"Python Style").
 - All functions have type hints (project-wide rule from `AGENTS.md`).
-- Archive filename: `rikugan-v{version}.zip` (e.g. `rikugan-v1.2.3.zip`).
+- Archive filename: `lucnhan-v{version}.zip` (e.g. `lucnhan-v1.2.3.zip`).
 - `SHA256SUMS` uses two-space separator between hash and filename (GNU coreutils convention; works with `sha256sum -c`).
 - Workflow triggers must accept both `v*` tags (current convention) and bare `[0-9]*.[0-9]*` tags (legacy `1.0` style).
 - Pre-release detection regex: `-(rc|alpha|beta|pre|dev)[0-9]*$`.
@@ -42,7 +42,7 @@
 | `DEVELOPMENT.md` | Edit | Update §"Release Process" with re-run + smoke-test instructions |
 | `.gitignore` | Edit | Add `dist/` so local build output does not leak into git |
 
-**Not touched:** `ci.yml` (drift fix is a separate concern), `install.sh` / `install.ps1` (`curl | bash` install path stays as is — release ZIP is an *additional* install method), `ida-plugin.json` schema, anything under `rikugan/`.
+**Not touched:** `ci.yml` (drift fix is a separate concern), `install.sh` / `install.ps1` (`curl | bash` install path stays as is — release ZIP is an *additional* install method), `ida-plugin.json` schema, anything under `lucnhan/`.
 
 ---
 
@@ -59,14 +59,14 @@
 - Produces:
   - `should_skip(path: Path) -> bool` — return `True` if `path` matches any exclude rule.
   - `collect(source_root: Path) -> list[Path]` — return sorted list of files that are in `INCLUDE_PATHS` and not excluded.
-  - `build_zip(files: list[Path], out_path: Path, source_root: Path) -> None` — build **flat** ZIP: each entry is the file path relative to `source_root` (e.g. `rikugan/core/config.py`), no wrapping prefix.
+  - `build_zip(files: list[Path], out_path: Path, source_root: Path) -> None` — build **flat** ZIP: each entry is the file path relative to `source_root` (e.g. `lucnhan/core/config.py`), no wrapping prefix.
 
 - [ ] **Step 1: Create empty `__init__.py` files for the new packages**
 
 Create `scripts/__init__.py`:
 
 ```python
-"""Build scripts for Rikugan release pipeline."""
+"""Build scripts for Luc Nhan release pipeline."""
 ```
 
 Create `tests/scripts/__init__.py`:
@@ -111,7 +111,7 @@ from scripts.build_release import (
 
 def test_should_skip_excludes_pycache_directory(tmp_path: Path) -> None:
     # Arrange
-    p = tmp_path / "rikugan" / "core" / "__pycache__" / "config.cpython-311.pyc"
+    p = tmp_path / "lucnhan" / "core" / "__pycache__" / "config.cpython-311.pyc"
 
     # Act
     result = should_skip(p)
@@ -133,7 +133,7 @@ def test_should_skip_excludes_dotfiles_in_path(tmp_path: Path) -> None:
 
 def test_should_skip_excludes_pyc_suffix(tmp_path: Path) -> None:
     # Arrange
-    p = tmp_path / "rikugan" / "core" / "config.pyc"
+    p = tmp_path / "lucnhan" / "core" / "config.pyc"
 
     # Act
     result = should_skip(p)
@@ -144,7 +144,7 @@ def test_should_skip_excludes_pyc_suffix(tmp_path: Path) -> None:
 
 def test_should_skip_allows_normal_file(tmp_path: Path) -> None:
     # Arrange
-    p = tmp_path / "rikugan" / "core" / "config.py"
+    p = tmp_path / "lucnhan" / "core" / "config.py"
 
     # Act
     result = should_skip(p)
@@ -159,26 +159,26 @@ def test_should_skip_allows_normal_file(tmp_path: Path) -> None:
 def _seed_fake_repo(root: Path) -> None:
     """Mimic the real repo layout: runtime files, dev files, junk files."""
     # Runtime files (must be included)
-    (root / "rikugan_plugin.py").write_text("# plugin entry", encoding="utf-8")
+    (root / "lucnhan_plugin.py").write_text("# plugin entry", encoding="utf-8")
     (root / "install.sh").write_text("#!/bin/bash\n", encoding="utf-8")
     (root / "install_ida.sh").write_text("#!/bin/bash\n", encoding="utf-8")
     (root / "install.ps1").write_text("# ps1\n", encoding="utf-8")
     (root / "install_ida.bat").write_text("@echo off\n", encoding="utf-8")
     (root / "requirements.txt").write_text("anthropic>=0.39.0\n", encoding="utf-8")
-    (root / "ida-plugin.json").write_text('{"plugin":{"version":"1.2.3","entryPoint":"rikugan_plugin.py"}}\n', encoding="utf-8")
+    (root / "ida-plugin.json").write_text('{"plugin":{"version":"1.2.3","entryPoint":"lucnhan_plugin.py"}}\n', encoding="utf-8")
     (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
-    (root / "README.md").write_text("# Rikugan\n", encoding="utf-8")
-    # rikugan/ package (must be included, recursively)
-    (root / "rikugan").mkdir()
-    (root / "rikugan" / "__init__.py").write_text("", encoding="utf-8")
-    (root / "rikugan" / "core").mkdir()
-    (root / "rikugan" / "core" / "__init__.py").write_text("", encoding="utf-8")
-    (root / "rikugan" / "core" / "config.py").write_text("# config\n", encoding="utf-8")
-    # rikugan/skills/builtins/ subdir (real plugin loads from here)
-    (root / "rikugan" / "skills").mkdir()
-    (root / "rikugan" / "skills" / "builtins").mkdir()
-    (root / "rikugan" / "skills" / "builtins" / "ctf").mkdir()
-    (root / "rikugan" / "skills" / "builtins" / "ctf" / "SKILL.md").write_text("# ctf\n", encoding="utf-8")
+    (root / "README.md").write_text("# Luc Nhan\n", encoding="utf-8")
+    # lucnhan/ package (must be included, recursively)
+    (root / "lucnhan").mkdir()
+    (root / "lucnhan" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "lucnhan" / "core").mkdir()
+    (root / "lucnhan" / "core" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "lucnhan" / "core" / "config.py").write_text("# config\n", encoding="utf-8")
+    # lucnhan/skills/builtins/ subdir (real plugin loads from here)
+    (root / "lucnhan" / "skills").mkdir()
+    (root / "lucnhan" / "skills" / "builtins").mkdir()
+    (root / "lucnhan" / "skills" / "builtins" / "ctf").mkdir()
+    (root / "lucnhan" / "skills" / "builtins" / "ctf" / "SKILL.md").write_text("# ctf\n", encoding="utf-8")
     # Junk that MUST be excluded
     (root / "tests").mkdir()
     (root / "tests" / "test_x.py").write_text("# test\n", encoding="utf-8")
@@ -200,12 +200,12 @@ def _seed_fake_repo(root: Path) -> None:
     (root / "pyproject.toml").write_text("# toml\n", encoding="utf-8")
     (root / "uv.lock").write_text("# lock\n", encoding="utf-8")
     (root / "ci-local.sh").write_text("# ci script\n", encoding="utf-8")
-    # Junk inside rikugan/ that MUST be excluded
-    (root / "rikugan" / "core" / "__pycache__").mkdir()
-    (root / "rikugan" / "core" / "__pycache__" / "config.cpython-311.pyc").write_bytes(b"PYC")
-    (root / "rikugan" / ".mypy_cache").mkdir()
-    (root / "rikugan" / ".mypy_cache" / "x.json").write_text("{}\n", encoding="utf-8")
-    (root / "rikugan" / "core" / "leftover.pyc").write_bytes(b"PYC")
+    # Junk inside lucnhan/ that MUST be excluded
+    (root / "lucnhan" / "core" / "__pycache__").mkdir()
+    (root / "lucnhan" / "core" / "__pycache__" / "config.cpython-311.pyc").write_bytes(b"PYC")
+    (root / "lucnhan" / ".mypy_cache").mkdir()
+    (root / "lucnhan" / ".mypy_cache" / "x.json").write_text("{}\n", encoding="utf-8")
+    (root / "lucnhan" / "core" / "leftover.pyc").write_bytes(b"PYC")
 
 
 def test_collect_includes_runtime_files(tmp_path: Path) -> None:
@@ -218,7 +218,7 @@ def test_collect_includes_runtime_files(tmp_path: Path) -> None:
     # Assert: every INCLUDE_PATHS file appears in result
     included = {p.relative_to(tmp_path).as_posix() for p in result}
     for spec in INCLUDE_PATHS:
-        if spec == "rikugan":
+        if spec == "lucnhan":
             # recursive — covered in other tests
             continue
         assert spec in included, f"expected {spec!r} in collect() output"
@@ -231,11 +231,11 @@ def test_collect_includes_nested_runtime_files(tmp_path: Path) -> None:
     # Act
     result = collect(tmp_path)
 
-    # Assert: nested files inside rikugan/ are present
+    # Assert: nested files inside lucnhan/ are present
     included = {p.relative_to(tmp_path).as_posix() for p in result}
-    assert "rikugan/__init__.py" in included
-    assert "rikugan/core/config.py" in included
-    assert "rikugan/skills/builtins/ctf/SKILL.md" in included
+    assert "lucnhan/__init__.py" in included
+    assert "lucnhan/core/config.py" in included
+    assert "lucnhan/skills/builtins/ctf/SKILL.md" in included
 
 
 def test_collect_excludes_tests_and_docs(tmp_path: Path) -> None:
@@ -282,9 +282,9 @@ def test_collect_excludes_pycache_and_dotfiles(tmp_path: Path) -> None:
 
     # Assert
     included = {p.relative_to(tmp_path).as_posix() for p in result}
-    assert "rikugan/core/__pycache__/config.cpython-311.pyc" not in included
-    assert "rikugan/core/leftover.pyc" not in included
-    assert "rikugan/.mypy_cache/x.json" not in included
+    assert "lucnhan/core/__pycache__/config.cpython-311.pyc" not in included
+    assert "lucnhan/core/leftover.pyc" not in included
+    assert "lucnhan/.mypy_cache/x.json" not in included
 
 
 def test_collect_returns_sorted_output(tmp_path: Path) -> None:
@@ -300,15 +300,15 @@ def test_collect_returns_sorted_output(tmp_path: Path) -> None:
 
 
 def test_collect_handles_missing_specs_gracefully(tmp_path: Path) -> None:
-    # Arrange: a bare-minimum repo with no rikugan/ package
-    (tmp_path / "rikugan_plugin.py").write_text("#\n", encoding="utf-8")
+    # Arrange: a bare-minimum repo with no lucnhan/ package
+    (tmp_path / "lucnhan_plugin.py").write_text("#\n", encoding="utf-8")
 
     # Act
     result = collect(tmp_path)
 
     # Assert: doesn't crash; just collects what exists
     included = {p.relative_to(tmp_path).as_posix() for p in result}
-    assert "rikugan_plugin.py" in included
+    assert "lucnhan_plugin.py" in included
 
 
 # ── build_zip (HCLI flat layout) ──────────────────────────────────────
@@ -357,10 +357,10 @@ def test_build_zip_entry_point_at_root(tmp_path: Path) -> None:
     # Act
     build_zip(files, out, tmp_path)
 
-    # Assert: the entryPoint file (rikugan_plugin.py) is a top-level entry
+    # Assert: the entryPoint file (lucnhan_plugin.py) is a top-level entry
     with zipfile.ZipFile(out) as zf:
         names = zf.namelist()
-    assert "rikugan_plugin.py" in names
+    assert "lucnhan_plugin.py" in names
 
 
 def test_build_zip_no_wrapping_subfolder(tmp_path: Path) -> None:
@@ -372,11 +372,11 @@ def test_build_zip_no_wrapping_subfolder(tmp_path: Path) -> None:
     # Act
     build_zip(files, out, tmp_path)
 
-    # Assert: no entry begins with a single wrapping prefix like "rikugan-v1.2.3/"
+    # Assert: no entry begins with a single wrapping prefix like "lucnhan-v1.2.3/"
     with zipfile.ZipFile(out) as zf:
         names = zf.namelist()
-    wrapping = [n for n in names if "/" in n and not n.startswith(("rikugan/", "install", "scripts/"))]
-    # entries like "rikugan/core/config.py" are fine (real subdir); only a SINGLE
+    wrapping = [n for n in names if "/" in n and not n.startswith(("lucnhan/", "install", "scripts/"))]
+    # entries like "lucnhan/core/config.py" are fine (real subdir); only a SINGLE
     # common prefix on every entry would indicate a wrapping subfolder
     import os.path
     top_dirs = {n.split("/")[0] for n in names if "/" in n}
@@ -399,7 +399,7 @@ def test_build_zip_preserves_file_contents(tmp_path: Path) -> None:
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && python -m pytest tests/scripts/test_build_release.py -v`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && python -m pytest tests/scripts/test_build_release.py -v`
 
 Expected: every test fails with `ImportError: cannot import name 'should_skip' from 'scripts.build_release'` (or similar) — `scripts/build_release.py` does not exist yet.
 
@@ -408,11 +408,11 @@ Expected: every test fails with `ImportError: cannot import name 'should_skip' f
 Create `scripts/build_release.py`. Leave `sha256_file`, `write_sha256sums`, `main` as `NotImplementedError` stubs (filled in Task 3):
 
 ```python
-"""Build curated release archive for Rikugan IDA plugin (HCLI flat-ZIP layout).
+"""Build curated release archive for Luc Nhan IDA plugin (HCLI flat-ZIP layout).
 
 Chỉ include runtime files cần để install và chạy plugin trong IDA:
-- rikugan_plugin.py  (entry point)
-- rikugan/           (Python package, loại __pycache__)
+- lucnhan_plugin.py  (entry point)
+- lucnhan/           (Python package, loại __pycache__)
 - install.sh, install_ida.sh, install.ps1, install_ida.bat
 - requirements.txt
 - ida-plugin.json
@@ -430,7 +430,7 @@ Usage:
     python scripts/build_release.py --version 1.2.3 --out-dir dist
 
 Output:
-    dist/rikugan-v1.2.3.zip
+    dist/lucnhan-v1.2.3.zip
     dist/SHA256SUMS
 """
 from __future__ import annotations
@@ -443,8 +443,8 @@ from pathlib import Path
 
 # Tên file/dir cần include (paths tương đối so với source root).
 INCLUDE_PATHS: list[str] = [
-    "rikugan_plugin.py",
-    "rikugan",  # toàn bộ package
+    "lucnhan_plugin.py",
+    "lucnhan",  # toàn bộ package
     "install.sh",
     "install_ida.sh",
     "install.ps1",
@@ -541,20 +541,20 @@ if __name__ == "__main__":
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && python -m pytest tests/scripts/test_build_release.py -v`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && python -m pytest tests/scripts/test_build_release.py -v`
 
 Expected: all tests pass (4 should_skip + 7 collect + 5 build_zip). The `sha256_file`/`write_sha256sums` stubs are imported but not yet called, so `NotImplementedError` is fine.
 
 - [ ] **Step 6: Run `./ci-local.sh` to confirm no regressions**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && ./ci-local.sh`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && ./ci-local.sh`
 
-Expected: ALL PASSED. The new files are outside `rikugan/` (ruff/mypy skip them); pytest should pick up `tests/scripts/`.
+Expected: ALL PASSED. The new files are outside `lucnhan/` (ruff/mypy skip them); pytest should pick up `tests/scripts/`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
+cd /d/re_dev_projects/vibe-clone/lucnhan
 git add scripts/__init__.py tests/scripts/__init__.py scripts/build_release.py tests/scripts/test_build_release.py
 git commit -m "feat(scripts): add build_release.py with collect/build_zip (flat HCLI layout)"
 ```
@@ -568,7 +568,7 @@ git commit -m "feat(scripts): add build_release.py with collect/build_zip (flat 
 - Create: `tests/scripts/test_validate_archive.py`
 
 **Interfaces:**
-- Consumes: a path to a built `rikugan-v{version}.zip`.
+- Consumes: a path to a built `lucnhan-v{version}.zip`.
 - Produces: `validate_archive(zip_path: Path) -> None` — raises `ArchiveValidationError` if the ZIP is not HCLI-compliant; returns silently otherwise.
 
 **Why a shim instead of only `hcli`:** HCLI (`hex-rays-cli`) install method may change or be unavailable on a given runner. The shim catches the most common packaging mistake (wrapping subfolder / missing `ida-plugin.json` at root / missing `entryPoint`) deterministically in Python, so the build job fails fast even if `hcli` is absent. When `hcli` IS present, the workflow runs `hcli plugin lint` first (authoritative); the shim is the fallback.
@@ -604,13 +604,13 @@ def _make_zip(entries: dict[str, str | bytes]) -> bytes:
 
 
 def test_validate_flat_zip_passes(tmp_path: Path) -> None:
-    # Arrange — ida-plugin.json + entryPoint at root, rikugan/ package
+    # Arrange — ida-plugin.json + entryPoint at root, lucnhan/ package
     data = _make_zip({
-        "ida-plugin.json": json.dumps({"plugin": {"entryPoint": "rikugan_plugin.py"}}),
-        "rikugan_plugin.py": "# entry",
-        "rikugan/__init__.py": "",
+        "ida-plugin.json": json.dumps({"plugin": {"entryPoint": "lucnhan_plugin.py"}}),
+        "lucnhan_plugin.py": "# entry",
+        "lucnhan/__init__.py": "",
     })
-    p = tmp_path / "rikugan-v1.0.zip"
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert — no exception
@@ -619,8 +619,8 @@ def test_validate_flat_zip_passes(tmp_path: Path) -> None:
 
 def test_validate_rejects_missing_ida_plugin_json(tmp_path: Path) -> None:
     # Arrange — no metadata file
-    data = _make_zip({"rikugan_plugin.py": "# entry"})
-    p = tmp_path / "rikugan-v1.0.zip"
+    data = _make_zip({"lucnhan_plugin.py": "# entry"})
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert
@@ -629,12 +629,12 @@ def test_validate_rejects_missing_ida_plugin_json(tmp_path: Path) -> None:
 
 
 def test_validate_rejects_wrapping_subfolder(tmp_path: Path) -> None:
-    # Arrange — ida-plugin.json nested under rikugan-v1.0/
+    # Arrange — ida-plugin.json nested under lucnhan-v1.0/
     data = _make_zip({
-        "rikugan-v1.0/ida-plugin.json": json.dumps({"plugin": {"entryPoint": "rikugan_plugin.py"}}),
-        "rikugan-v1.0/rikugan_plugin.py": "# entry",
+        "lucnhan-v1.0/ida-plugin.json": json.dumps({"plugin": {"entryPoint": "lucnhan_plugin.py"}}),
+        "lucnhan-v1.0/lucnhan_plugin.py": "# entry",
     })
-    p = tmp_path / "rikugan-v1.0.zip"
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert
@@ -645,9 +645,9 @@ def test_validate_rejects_wrapping_subfolder(tmp_path: Path) -> None:
 def test_validate_rejects_missing_entry_point(tmp_path: Path) -> None:
     # Arrange — metadata points to entryPoint that isn't in the zip
     data = _make_zip({
-        "ida-plugin.json": json.dumps({"plugin": {"entryPoint": "rikugan_plugin.py"}}),
+        "ida-plugin.json": json.dumps({"plugin": {"entryPoint": "lucnhan_plugin.py"}}),
     })
-    p = tmp_path / "rikugan-v1.0.zip"
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert
@@ -659,9 +659,9 @@ def test_validate_rejects_invalid_json_metadata(tmp_path: Path) -> None:
     # Arrange
     data = _make_zip({
         "ida-plugin.json": "not json {{{",
-        "rikugan_plugin.py": "# entry",
+        "lucnhan_plugin.py": "# entry",
     })
-    p = tmp_path / "rikugan-v1.0.zip"
+    p = tmp_path / "lucnhan-v1.0.zip"
     p.write_bytes(data)
 
     # Act + Assert
@@ -671,7 +671,7 @@ def test_validate_rejects_invalid_json_metadata(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run the new tests to verify they fail**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && python -m pytest tests/scripts/test_validate_archive.py -v`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && python -m pytest tests/scripts/test_validate_archive.py -v`
 
 Expected: all 5 tests fail with `ImportError: No module named 'scripts.validate_archive'`.
 
@@ -756,14 +756,14 @@ def validate_archive(zip_path: Path) -> None:
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && python -m pytest tests/scripts/test_validate_archive.py -v`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && python -m pytest tests/scripts/test_validate_archive.py -v`
 
 Expected: all 5 tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
+cd /d/re_dev_projects/vibe-clone/lucnhan
 git add scripts/validate_archive.py tests/scripts/test_validate_archive.py
 git commit -m "feat(scripts): add validate_archive.py (HCLI structural shim)"
 ```
@@ -777,7 +777,7 @@ git commit -m "feat(scripts): add validate_archive.py (HCLI structural shim)"
 
 **Interfaces:**
 - Consumes: CLI args (`--version`, `--out-dir`, `--source-root`).
-- Produces: `rikugan-v{version}.zip` + `SHA256SUMS`; exit code 0 on success, 1 on empty collect.
+- Produces: `lucnhan-v{version}.zip` + `SHA256SUMS`; exit code 0 on success, 1 on empty collect.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -824,7 +824,7 @@ def test_sha256_handles_large_file(tmp_path: Path) -> None:
 
 def test_write_sha256sums_format(tmp_path: Path) -> None:
     # Arrange
-    a = tmp_path / "rikugan-v1.0.zip"
+    a = tmp_path / "lucnhan-v1.0.zip"
     a.write_bytes(b"alpha")
     out = tmp_path / "SHA256SUMS"
 
@@ -833,7 +833,7 @@ def test_write_sha256sums_format(tmp_path: Path) -> None:
 
     # Assert: two-space separator, hex + filename
     content = out.read_text(encoding="utf-8").strip()
-    m = re.fullmatch(r"^([0-9a-f]{64})  (rikugan-v1\.0\.zip)$", content)
+    m = re.fullmatch(r"^([0-9a-f]{64})  (lucnhan-v1\.0\.zip)$", content)
     assert m, f"unexpected SHA256SUMS format: {content!r}"
 
 
@@ -866,10 +866,10 @@ def test_main_writes_zip_and_sums(tmp_path: Path) -> None:
 
     # Assert
     assert rc == 0
-    assert (out_dir / "rikugan-v1.2.3.zip").is_file()
+    assert (out_dir / "lucnhan-v1.2.3.zip").is_file()
     assert (out_dir / "SHA256SUMS").is_file()
     # No tar.gz
-    assert not (out_dir / "rikugan-v1.2.3.tar.gz").exists()
+    assert not (out_dir / "lucnhan-v1.2.3.tar.gz").exists()
 
 
 def test_main_archive_is_flat(tmp_path: Path) -> None:
@@ -881,10 +881,10 @@ def test_main_archive_is_flat(tmp_path: Path) -> None:
     _run_main(tmp_path, ["--version", "1.2.3", "--out-dir", str(out_dir), "--source-root", str(tmp_path)])
 
     # Assert: ida-plugin.json at root
-    with zipfile.ZipFile(out_dir / "rikugan-v1.2.3.zip") as zf:
+    with zipfile.ZipFile(out_dir / "lucnhan-v1.2.3.zip") as zf:
         names = zf.namelist()
     assert "ida-plugin.json" in names
-    assert "rikugan_plugin.py" in names
+    assert "lucnhan_plugin.py" in names
 
 
 def test_main_fails_when_no_files_collected(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -909,7 +909,7 @@ def test_main_requires_version_arg(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run the new tests to verify they fail**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && python -m pytest tests/scripts/test_build_release.py -v -k "sha256 or main or sums"`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && python -m pytest tests/scripts/test_build_release.py -v -k "sha256 or main or sums"`
 
 Expected: the new tests fail with `NotImplementedError` (the stubs) or `ImportError`.
 
@@ -947,7 +947,7 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, default=Path("."))
     args = parser.parse_args()
 
-    archive_name = f"rikugan-v{args.version}.zip"
+    archive_name = f"lucnhan-v{args.version}.zip"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     files = collect(args.source_root)
     if not files:
@@ -967,32 +967,32 @@ def main() -> int:
 
 - [ ] **Step 4: Run all build_release tests**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && python -m pytest tests/scripts/test_build_release.py -v`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && python -m pytest tests/scripts/test_build_release.py -v`
 
 Expected: all tests pass (4 should_skip + 7 collect + 5 build_zip + 2 sha256 + 1 sums + 4 main).
 
 - [ ] **Step 5: End-to-end local dry-run**
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
-python scripts/build_release.py --version 9.9.9 --out-dir /tmp/rikugan-dryrun --source-root .
-unzip -l /tmp/rikugan-dryrun/rikugan-v9.9.9.zip | head -20
-cd /tmp/rikugan-dryrun && sha256sum -c SHA256SUMS
-rm -rf /tmp/rikugan-dryrun
+cd /d/re_dev_projects/vibe-clone/lucnhan
+python scripts/build_release.py --version 9.9.9 --out-dir /tmp/lucnhan-dryrun --source-root .
+unzip -l /tmp/lucnhan-dryrun/lucnhan-v9.9.9.zip | head -20
+cd /tmp/lucnhan-dryrun && sha256sum -c SHA256SUMS
+rm -rf /tmp/lucnhan-dryrun
 ```
 
-Expected: `unzip -l` shows `ida-plugin.json` and `rikugan_plugin.py` as top-level entries (no subfolder). `sha256sum -c` prints `OK`.
+Expected: `unzip -l` shows `ida-plugin.json` and `lucnhan_plugin.py` as top-level entries (no subfolder). `sha256sum -c` prints `OK`.
 
 - [ ] **Step 6: Run `./ci-local.sh`**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && ./ci-local.sh`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && ./ci-local.sh`
 
 Expected: ALL PASSED.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
+cd /d/re_dev_projects/vibe-clone/lucnhan
 git add scripts/build_release.py tests/scripts/test_build_release.py
 git commit -m "feat(scripts): add sha256 + CLI entry point (flat zip, no tar.gz)"
 ```
@@ -1006,7 +1006,7 @@ git commit -m "feat(scripts): add sha256 + CLI entry point (flat zip, no tar.gz)
 
 **Interfaces:**
 - Consumes: tag push (`v*` or `[0-9]*.[0-9]*`) OR `workflow_dispatch` input `tag`
-- Produces: GitHub Release with `rikugan-v{version}.zip` + `SHA256SUMS`, pre-release flag from tag suffix
+- Produces: GitHub Release with `lucnhan-v{version}.zip` + `SHA256SUMS`, pre-release flag from tag suffix
 
 - [ ] **Step 1: Write the new workflow**
 
@@ -1083,13 +1083,13 @@ jobs:
         run: |
           set -e
           echo "── ruff format check ──"
-          python -m ruff format --check rikugan/
+          python -m ruff format --check lucnhan/
 
           echo "── ruff lint ──"
-          python -m ruff check rikugan/
+          python -m ruff check lucnhan/
 
           echo "── mypy ──"
-          python -m mypy rikugan/core rikugan/providers
+          python -m mypy lucnhan/core lucnhan/providers
 
           echo "── pytest ──"
           python -m pytest tests/ --tb=short -q
@@ -1128,10 +1128,10 @@ jobs:
           # Prefer hcli plugin lint if available; else run the Python shim.
           if command -v hcli >/dev/null 2>&1; then
             echo "hcli found — running 'hcli plugin lint'"
-            hcli plugin lint "dist/rikugan-v${{ needs.verify.outputs.version }}.zip"
+            hcli plugin lint "dist/lucnhan-v${{ needs.verify.outputs.version }}.zip"
           else
             echo "hcli not found — running structural shim"
-            python scripts/validate_archive.py "dist/rikugan-v${{ needs.verify.outputs.version }}.zip"
+            python scripts/validate_archive.py "dist/lucnhan-v${{ needs.verify.outputs.version }}.zip"
           fi
 
       - name: Upload artifacts
@@ -1156,12 +1156,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.verify.outputs.tag }}
-          name: "Rikugan ${{ needs.verify.outputs.version }}"
+          name: "Luc Nhan ${{ needs.verify.outputs.version }}"
           prerelease: ${{ needs.verify.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist/rikugan-${{ needs.verify.outputs.version }}.zip
+            dist/lucnhan-${{ needs.verify.outputs.version }}.zip
             dist/SHA256SUMS
 ```
 
@@ -1170,7 +1170,7 @@ jobs:
 - [ ] **Step 2: Validate YAML syntax locally**
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
+cd /d/re_dev_projects/vibe-clone/lucnhan
 python -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml').read())" && echo "YAML OK"
 ```
 
@@ -1197,9 +1197,9 @@ if __name__ == "__main__":
 Run a local smoke test of the shim:
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
+cd /d/re_dev_projects/vibe-clone/lucnhan
 python scripts/build_release.py --version 9.9.9 --out-dir /tmp/shim-test --source-root .
-python scripts/validate_archive.py /tmp/shim-test/rikugan-v9.9.9.zip
+python scripts/validate_archive.py /tmp/shim-test/lucnhan-v9.9.9.zip
 rm -rf /tmp/shim-test
 ```
 
@@ -1208,7 +1208,7 @@ Expected: prints `OK`.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
+cd /d/re_dev_projects/vibe-clone/lucnhan
 git add .github/workflows/release.yml scripts/validate_archive.py
 git commit -m "feat(ci): rewrite release.yml as 3-job pipeline (verify→build→publish)"
 ```
@@ -1238,11 +1238,11 @@ Find the "### Release Flow" subsection. Replace it with:
    ```
 4. GitHub Actions workflow `.github/workflows/release.yml` tự động:
    - **`verify`** — validate tag ↔ `ida-plugin.json.version`, re-run toàn bộ CI checks inline (ruff/mypy/pytest/desloppify). Fail → release không publish.
-   - **`build`** — chạy `scripts/build_release.py` tạo `rikugan-v1.x.x.zip` (flat HCLI layout), validate bằng `hcli plugin lint` (hoặc Python shim `scripts/validate_archive.py` nếu HCLI không có), tạo `SHA256SUMS`.
+   - **`build`** — chạy `scripts/build_release.py` tạo `lucnhan-v1.x.x.zip` (flat HCLI layout), validate bằng `hcli plugin lint` (hoặc Python shim `scripts/validate_archive.py` nếu HCLI không có), tạo `SHA256SUMS`.
    - **`publish`** — `softprops/action-gh-release@v2` tạo/cập nhật GitHub Release với artifact + auto-generated notes.
 5. Tag suffix `-rc1`, `-beta1`, `-dev1`, ... → auto pre-release. Tag `v1.x.x` (no suffix) → stable.
 
-**HCLI layout**: ZIP phải phẳng — `ida-plugin.json` và `rikugan_plugin.py` ở gốc, không có subfolder bao quanh (spec Hex-Rays). User install bằng `hcli plugin install rikugan-v1.x.x.zip`.
+**HCLI layout**: ZIP phải phẳng — `ida-plugin.json` và `lucnhan_plugin.py` ở gốc, không có subfolder bao quanh (spec Hex-Rays). User install bằng `hcli plugin install lucnhan-v1.x.x.zip`.
 
 **Re-run cho tag đã push**: Actions tab → workflow "Release" → "Run workflow" → nhập tag name.
 
@@ -1270,9 +1270,9 @@ Pipeline release đầy đủ tự động:
    git tag v1.x.x
    git push origin v1.x.x
    ```
-4. GitHub Actions tự chạy (verify → build → publish). Release xuất hiện tại `https://github.com/EliteClassRoom/rikugan/releases/tag/v1.x.x` với 2 artifact: `rikugan-v1.x.x.zip` + `SHA256SUMS`.
+4. GitHub Actions tự chạy (verify → build → publish). Release xuất hiện tại `https://github.com/EliteClassRoom/Luc-Nhan/releases/tag/v1.x.x` với 2 artifact: `lucnhan-v1.x.x.zip` + `SHA256SUMS`.
 
-**Install artifact** (HCLI): `curl -L https://github.com/EliteClassRoom/rikugan/releases/download/v1.x.x/rikugan-v1.x.x.zip -o rikugan.zip` rồi `hcli plugin install rikugan.zip`. ZIP phẳng theo spec Hex-Rays.
+**Install artifact** (HCLI): `curl -L https://github.com/EliteClassRoom/Luc-Nhan/releases/download/v1.x.x/lucnhan-v1.x.x.zip -o lucnhan.zip` rồi `hcli plugin install lucnhan.zip`. ZIP phẳng theo spec Hex-Rays.
 
 **Re-run**: Actions tab → workflow "Release" → "Run workflow" → nhập tag.
 
@@ -1280,10 +1280,10 @@ Pipeline release đầy đủ tự động:
 
 **Local dry-run** (test trước khi tag):
 ```bash
-python scripts/build_release.py --version 1.x.x-test --out-dir /tmp/rikugan-test
-unzip -l /tmp/rikugan-test/rikugan-v1.x.x-test.zip   # ida-plugin.json phải ở gốc
-python scripts/validate_archive.py /tmp/rikugan-test/rikugan-v1.x.x-test.zip
-rm -rf /tmp/rikugan-test
+python scripts/build_release.py --version 1.x.x-test --out-dir /tmp/lucnhan-test
+unzip -l /tmp/lucnhan-test/lucnhan-v1.x.x-test.zip   # ida-plugin.json phải ở gốc
+python scripts/validate_archive.py /tmp/lucnhan-test/lucnhan-v1.x.x-test.zip
+rm -rf /tmp/lucnhan-test
 ```
 
 **Smoke test pipeline**:
@@ -1291,7 +1291,7 @@ rm -rf /tmp/rikugan-test
 git tag v0.0.0-test && git push origin v0.0.0-test
 # → check Actions tab: 3 jobs xanh
 git push origin :refs/tags/v0.0.0-test
-gh release delete v0.0.0-test --repo EliteClassRoom/rikugan --yes
+gh release delete v0.0.0-test --repo EliteClassRoom/Luc-Nhan --yes
 ```
 ```
 
@@ -1307,7 +1307,7 @@ dist/
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
+cd /d/re_dev_projects/vibe-clone/lucnhan
 git add AGENTS.md DEVELOPMENT.md .gitignore
 git commit -m "docs(ci): document HCLI release pipeline + add dist/ to gitignore"
 ```
@@ -1320,61 +1320,61 @@ git commit -m "docs(ci): document HCLI release pipeline + add dist/ to gitignore
 
 - [ ] **Step 1: Run all build script tests**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && python -m pytest tests/scripts/ -v`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && python -m pytest tests/scripts/ -v`
 
 Expected: all tests pass (`test_build_release.py` + `test_validate_archive.py`).
 
 - [ ] **Step 2: Run `./ci-local.sh`**
 
-Run: `cd /d/re_dev_projects/vibe-clone/rikugan && ./ci-local.sh`
+Run: `cd /d/re_dev_projects/vibe-clone/lucnhan && ./ci-local.sh`
 
 Expected: ALL PASSED.
 
 - [ ] **Step 3: Local end-to-end build + validate**
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
-python scripts/build_release.py --version 1.2 --out-dir /tmp/rikugan-final --source-root .
-python scripts/validate_archive.py /tmp/rikugan-final/rikugan-v1.2.zip
-unzip -l /tmp/rikugan-final/rikugan-v1.2.zip | head -30
-cd /tmp/rikugan-final && sha256sum -c SHA256SUMS
+cd /d/re_dev_projects/vibe-clone/lucnhan
+python scripts/build_release.py --version 1.2 --out-dir /tmp/lucnhan-final --source-root .
+python scripts/validate_archive.py /tmp/lucnhan-final/lucnhan-v1.2.zip
+unzip -l /tmp/lucnhan-final/lucnhan-v1.2.zip | head -30
+cd /tmp/lucnhan-final && sha256sum -c SHA256SUMS
 ```
 
 Expected:
 - `validate_archive.py` prints `OK`.
-- `unzip -l` shows `ida-plugin.json` and `rikugan_plugin.py` as top-level entries; no wrapping subfolder.
+- `unzip -l` shows `ida-plugin.json` and `lucnhan_plugin.py` as top-level entries; no wrapping subfolder.
 - `sha256sum -c` reports `OK`.
 
 Verify excluded files are not present:
 ```bash
-unzip -l /tmp/rikugan-final/rikugan-v1.2.zip | awk '{print $4}' | grep -E "(tests/|docs/|assets/|chat_examples/|webpage/|ci-local|pyproject|uv.lock|AGENTS.md|ARCHITECTURE.md|DEVELOPMENT.md|llms.txt|\.github/)" | head -5
+unzip -l /tmp/lucnhan-final/lucnhan-v1.2.zip | awk '{print $4}' | grep -E "(tests/|docs/|assets/|chat_examples/|webpage/|ci-local|pyproject|uv.lock|AGENTS.md|ARCHITECTURE.md|DEVELOPMENT.md|llms.txt|\.github/)" | head -5
 ```
 
 Expected: empty output.
 
 Clean up:
 ```bash
-rm -rf /tmp/rikugan-final
+rm -rf /tmp/lucnhan-final
 ```
 
 - [ ] **Step 4: Push and watch the GitHub Actions run**
 
 ```bash
-cd /d/re_dev_projects/vibe-clone/rikugan
+cd /d/re_dev_projects/vibe-clone/lucnhan
 git push origin master
 git tag v0.0.0-test
 git push origin v0.0.0-test
 ```
 
-Then open `https://github.com/EliteClassRoom/rikugan/actions`. Confirm:
+Then open `https://github.com/EliteClassRoom/Luc-Nhan/actions`. Confirm:
 - `verify` job green (all 4 CI checks + tag/version match).
 - `build` job green (`build_release.py` + `hcli plugin lint` or shim + upload).
-- `publish` job green (draft release with `rikugan-v0.0.0-test.zip` + `SHA256SUMS`).
+- `publish` job green (draft release with `lucnhan-v0.0.0-test.zip` + `SHA256SUMS`).
 
 Clean up:
 ```bash
 git push origin :refs/tags/v0.0.0-test
-gh release delete v0.0.0-test --repo EliteClassRoom/rikugan --yes
+gh release delete v0.0.0-test --repo EliteClassRoom/Luc-Nhan --yes
 git tag -d v0.0.0-test
 ```
 
@@ -1396,7 +1396,7 @@ If Step 4 surfaced a small fix, commit it. Otherwise the plan is complete.
 | build job — `scripts/build_release.py` flat zip | Tasks 1, 3 |
 | build job — `hcli plugin lint` + shim fallback | Task 2 (shim) + Task 4 (workflow `if command -v hcli`) |
 | build job — INCLUDE_PATHS / EXCLUDE_NAMES | Task 1 |
-| build job — `rikugan-v{version}.zip` flat layout | Task 1 (`build_zip`) + Task 3 (`main`) |
+| build job — `lucnhan-v{version}.zip` flat layout | Task 1 (`build_zip`) + Task 3 (`main`) |
 | build job — `SHA256SUMS` | Task 3 |
 | build job — upload-artifact@v4 | Task 4 |
 | publish job — softprops + prerelease + fail_on_unmatched_files | Task 4 |

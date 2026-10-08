@@ -15,7 +15,7 @@
 6. [Token Budget Guidance](#6-token-budget-guidance)
 7. [Anti-Patterns](#7-anti-patterns-to-avoid)
 8. [Reusability Notes](#8-reusability-notes)
-9. [Worked Example (Rikugan)](#9-worked-example)
+9. [Worked Example (Luc Nhan)](#9-worked-example)
 
 ---
 
@@ -56,7 +56,7 @@ parallel, with adversarial verification to eliminate false positives.
 
 | Input | Type | Example |
 |---|---|---|
-| `project_paths` | `string[]` (1-2 absolute paths) | `["D:/re_dev_projects/vibe-clone/rikugan"]` |
+| `project_paths` | `string[]` (1-2 absolute paths) | `["D:/re_dev_projects/vibe-clone/lucnhan"]` |
 | `project_names` | `string[]` (labels) | `["current", "fork"]` |
 
 ### Optional
@@ -76,7 +76,7 @@ parallel, with adversarial verification to eliminate false positives.
 ```
 You are the Evaluation Orchestrator. Run the Evaluation Workflow on:
 
-PROJECT_PATHS: ["D:/re_dev_projects/vibe-clone/rikugan"]
+PROJECT_PATHS: ["D:/re_dev_projects/vibe-clone/lucnhan"]
 PROJECT_NAMES: ["current"]
 FOCUS_DIMENSIONS: ["quality", "security", "architecture", "testing"]
 RISK_APPETITE: medium
@@ -567,7 +567,7 @@ Output appended to the final report as "Coverage Notes."
 Every CRITICAL and HIGH finding must include a **concrete suggested fix**.
 
 Invalid: "Improve error handling."
-Valid: "Wrap the `json.loads()` call at `rikugan/core/config.py:47` in a try/except that catches `json.JSONDecodeError` and raises `ConfigError` with the file path."
+Valid: "Wrap the `json.loads()` call at `lucnhan/core/config.py:47` in a try/except that catches `json.JSONDecodeError` and raises `ConfigError` with the file path."
 
 ### Gate 3: Migration Specificity
 
@@ -680,7 +680,7 @@ The 4-phase structure works for any project without modification:
 
 ---
 
-## 9. Worked Example (Rikugan)
+## 9. Worked Example (Luc Nhan)
 
 > **Note**: §9 là **snapshot minh họa** từ đợt đánh giá 2026-06, KHÔNG phải state hiện hành
 > của project (LOC, số commit ahead, git state có thể đã đổi). Workflow (§1-8) vẫn chính xác
@@ -690,12 +690,12 @@ The 4-phase structure works for any project without modification:
 
 | Property | Value |
 |---|---|
-| Project | Rikugan -- reverse-engineering agent for IDA Pro with multi-provider LLM |
+| Project | Luc Nhan -- reverse-engineering agent for IDA Pro with multi-provider LLM |
 | Language | Python 3.11+ |
 | Source LOC | ~45,000 across 171 files |
 | Test LOC | ~18,700 across 74 files |
 | Source:test ratio | ~2.4:1 (healthy) |
-| Remotes | `origin` (EliteClassRoom/rikugan), `tuna-main` (tuna1999/Rikugan) |
+| Remotes | `origin` (EliteClassRoom/Luc-Nhan), `tuna-main` (tuna1999/Rikugan) |
 | Modules | `agent/`, `core/`, `providers/`, `ui/`, `ida/`, `skills/`, `mcp/`, `cli/`, `state/`, `plans/` |
 | Tooling | ruff (lint), mypy (types, partial strict), `ci-local.sh` |
 | Key feature | 60+ IDA tools, exploration mode with subagents, deobfuscation, headless mode, MCP |
@@ -703,7 +703,7 @@ The 4-phase structure works for any project without modification:
 ### 9.2 Inputs
 
 ```
-PROJECT_PATHS: ["D:/re_dev_projects/vibe-clone/rikugan"]
+PROJECT_PATHS: ["D:/re_dev_projects/vibe-clone/lucnhan"]
 PROJECT_NAMES: ["current"]
 FOCUS_DIMENSIONS: ["quality", "security", "architecture", "testing"]
 RISK_APPETITE: medium
@@ -719,10 +719,10 @@ SKIP_PHASES: [3]
 |---|---|
 | Total source LOC | 45,118 |
 | Total test LOC | 18,685 |
-| Largest files | `rikugan/agent/system_prompt.py` (prompt construction, likely >800 lines) |
+| Largest files | `lucnhan/agent/system_prompt.py` (prompt construction, likely >800 lines) |
 | Tech stack | Python 3.11, IDA Pro SDK, Qt (PySide/Shiboken), ruff, mypy |
 | CI | Local only (`ci-local.sh`); no GitHub Actions |
-| Type checking | Partial: only `rikugan.core.*` and `rikugan.providers.*` have `disallow_untyped_defs` |
+| Type checking | Partial: only `lucnhan.core.*` and `lucnhan.providers.*` have `disallow_untyped_defs` |
 | Git state | Clean tree, `master` branch, **23 commits ahead** of `tuna-main/main`, 0 behind |
 | Recent activity | Binary Ninja removal, theme system, OpenAI/Anthropic provider updates |
 
@@ -736,15 +736,15 @@ SKIP_PHASES: [3]
 
 | ID | Sev | Dim | File | Description |
 |---|---|---|---|---|
-| Q-001 | MEDIUM | quality | `rikugan/agent/system_prompt.py` | Large prompt construction file (>800 lines) |
-| Q-002 | LOW | quality | `rikugan/core/config.py` | Numeric thresholds without named constants |
-| Q-003 | MEDIUM | quality | `rikugan/ui/*.py` | UI modules excluded from strict mypy |
-| S-001 | HIGH | security | `rikugan/providers/auth_cache.py` | OAuth token caching on disk -- verify encryption at rest |
-| S-002 | MEDIUM | security | `rikugan/core/sanitize.py` | Sanitizer correctness for user-controlled strings |
-| S-003 | MEDIUM | security | `rikugan/core/logging.py` | Ensure LLM API keys are not logged |
-| A-001 | MEDIUM | architecture | `rikugan/ui/chat_view.py` | UI component directly importing agent internals |
-| A-002 | LOW | architecture | `rikugan/ida/` | IDA stubs may contain unused declarations (intentional) |
-| A-003 | MEDIUM | architecture | `rikugan/state/` | Global state patterns need thread-safety audit |
+| Q-001 | MEDIUM | quality | `lucnhan/agent/system_prompt.py` | Large prompt construction file (>800 lines) |
+| Q-002 | LOW | quality | `lucnhan/core/config.py` | Numeric thresholds without named constants |
+| Q-003 | MEDIUM | quality | `lucnhan/ui/*.py` | UI modules excluded from strict mypy |
+| S-001 | HIGH | security | `lucnhan/providers/auth_cache.py` | OAuth token caching on disk -- verify encryption at rest |
+| S-002 | MEDIUM | security | `lucnhan/core/sanitize.py` | Sanitizer correctness for user-controlled strings |
+| S-003 | MEDIUM | security | `lucnhan/core/logging.py` | Ensure LLM API keys are not logged |
+| A-001 | MEDIUM | architecture | `lucnhan/ui/chat_view.py` | UI component directly importing agent internals |
+| A-002 | LOW | architecture | `lucnhan/ida/` | IDA stubs may contain unused declarations (intentional) |
+| A-003 | MEDIUM | architecture | `lucnhan/state/` | Global state patterns need thread-safety audit |
 | T-001 | HIGH | testing | Provider modules | Per-provider test coverage may be incomplete |
 | T-002 | MEDIUM | testing | `tests/agent/` | Agent tests depend on LLM response mock quality |
 | T-003 | LOW | testing | `tests/core/test_thread_safety.py` | Some test names could be more descriptive |
@@ -773,7 +773,7 @@ Deductions: partial type coverage, UI-agent coupling, implicit security practice
 
 **Executive Summary (Vietnamese):**
 
-> Dự án Rikugan có sức khỏe tổng thể ở mức tốt (72/100) với bộ kiểm thử đáng nể
+> Dự án Luc Nhan có sức khỏe tổng thể ở mức tốt (72/100) với bộ kiểm thử đáng nể
 > (tỷ lệ source:test khoảng 2.4:1) và công cụ phát triển hiện đại (ruff, mypy).
 > Ba rủi ro chính: (1) ranh giới UI-agent thiếu lớp trừu tượng, dẫn đến coupling cao;
 > (2) bảo mật (mã hóa token, logging) chưa được thực thi hệ thống; (3) type safety

@@ -13,10 +13,10 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-from rikugan.agent.report_evidence import collect_binary_evidence, fetch_binary_info
-from rikugan.core.errors import ToolError, ToolNotFoundError
-from rikugan.memory.report import EvidenceBlock, synthesize_report
-from rikugan.memory.schema import KnowledgeMemory
+from lucnhan.agent.report_evidence import collect_binary_evidence, fetch_binary_info
+from lucnhan.core.errors import ToolError, ToolNotFoundError
+from lucnhan.memory.report import EvidenceBlock, synthesize_report
+from lucnhan.memory.schema import KnowledgeMemory
 from tests.knowledge._helpers import fresh_store
 
 

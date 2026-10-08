@@ -23,7 +23,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.tools.base import parse_addr
+from lucnhan.tools.base import parse_addr
 
 _SYMBOL = "init_config_and_beacon"
 _SYMBOL_EA = 0x140001000

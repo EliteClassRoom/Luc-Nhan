@@ -1,14 +1,14 @@
 """Guards for where the test suite lives.
 
-The suite is a single root (``tests/``).  ``rikugan/tests/`` used to be a
+The suite is a single root (``tests/``).  ``lucnhan/tests/`` used to be a
 second, in-package root; it was merged here because:
 
 * the tests are not shipped anyway (``scripts/build_release.py`` strips any
   ``tests`` path part), so keeping them inside the importable package only
-  exposed ``rikugan.tests.*`` at runtime and cost a ``sys.path`` bootstrap
+  exposed ``lucnhan.tests.*`` at runtime and cost a ``sys.path`` bootstrap
   plus three mypy overrides;
 * a session that collected both roots imported the real ``PySide6`` binding
-  (``rikugan/tests/conftest.py``) *before* the first ``tests.qt_stubs``
+  (``lucnhan/tests/conftest.py``) *before* the first ``tests.qt_stubs``
   installer ran, so the stubs then overwrote classes inside the real Qt
   modules — two incompatible Qt type universes in one process, which
   fast-fails natively (exit 0xC0000409) instead of raising.
@@ -26,10 +26,10 @@ def test_pytest_testpaths_is_the_single_suite_root() -> None:
 
 
 def test_in_package_test_tree_is_gone() -> None:
-    # ``rikugan/conftest.py`` existed only to make ``rikugan.*`` importable
+    # ``lucnhan/conftest.py`` existed only to make ``lucnhan.*`` importable
     # from inside the package tree, i.e. to serve the removed second root.
-    assert not Path("rikugan/tests").exists()
-    assert not Path("rikugan/conftest.py").exists()
+    assert not Path("lucnhan/tests").exists()
+    assert not Path("lucnhan/conftest.py").exists()
 
 
 def test_tests_relocated_from_the_old_second_root_exist() -> None:

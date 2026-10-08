@@ -1,4 +1,4 @@
-# CODEOWNERS for Rikugan
+# CODEOWNERS for Luc Nhan
 # https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 #
 # Default owner for the fork. When a PR lacks an explicit owner match,
@@ -22,10 +22,10 @@
 # mutate database, run user-supplied Python scripts, sanitize
 # binary→prompt injection surface. Hard requirement that security
 # reviewers see every PR touching these paths.
-/rikugan/agent/mutation.py @tuna1999
-/rikugan/agent/script_guard.py @tuna1999
-/rikugan/core/sanitize.py @tuna1999
-/rikugan/constants.py @tuna1999
+/lucnhan/agent/mutation.py @tuna1999
+/lucnhan/agent/script_guard.py @tuna1999
+/lucnhan/core/sanitize.py @tuna1999
+/lucnhan/constants.py @tuna1999
 
 # ── Python coding-style & lint config ────────────────────────────────
 # Bumping lint rules or line-length sends a ripple through every file.

@@ -1,4 +1,4 @@
-"""Tests for rikugan.ida.tools.types_tools — IDA type engineering tools."""
+"""Tests for lucnhan.ida.tools.types_tools — IDA type engineering tools."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-import rikugan.ida.tools.types_tools as types_tools
-from rikugan.core.errors import ToolError
+import lucnhan.ida.tools.types_tools as types_tools
+from lucnhan.core.errors import ToolError
 
 # ---------------------------------------------------------------------------
 # _require_ida_enum

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory import workspace_store
-from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory import workspace_store
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _create_v2_database(path, owner: str) -> str:

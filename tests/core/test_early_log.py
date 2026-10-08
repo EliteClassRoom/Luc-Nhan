@@ -1,7 +1,7 @@
-"""Unit tests for rikugan.core.early_log.
+"""Unit tests for lucnhan.core.early_log.
 
 The early_log module is intentionally stdlib-only: it must be importable
-even if the rest of ``rikugan.*`` is broken. These tests run in a
+even if the rest of ``lucnhan.*`` is broken. These tests run in a
 subprocess so we can verify that property independently from the test
 runner itself.
 """
@@ -14,8 +14,9 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
-import rikugan.core.early_log as el
+import lucnhan.core.early_log as el
 
 
 class TestEarlyLogBuffer(unittest.TestCase):
@@ -56,6 +57,27 @@ class TestEarlyLogPath(unittest.TestCase):
         # Sibling files, distinct basenames.
         self.assertEqual(os.path.dirname(log_path), os.path.dirname(crash_path))
         self.assertNotEqual(os.path.basename(log_path), os.path.basename(crash_path))
+
+    def test_migrates_legacy_config_dir(self) -> None:
+        """The renamed config dir adopts its pre-rename predecessor once."""
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = os.path.join(tmp, "rikugan")
+            os.makedirs(legacy)
+            with open(os.path.join(legacy, "config.json"), "w", encoding="utf-8") as fh:
+                fh.write("{}")
+            target = os.path.join(tmp, "lucnhan")
+
+            with mock.patch.object(el, "_LEGACY_CONFIG_DIR", legacy):
+                el.migrate_legacy_config_dir(target)
+            self.assertTrue(os.path.isfile(os.path.join(target, "config.json")))
+            self.assertFalse(os.path.exists(legacy))
+
+            # An existing directory always wins — a stale legacy sibling is
+            # never merged over live state.
+            os.makedirs(legacy)
+            with mock.patch.object(el, "_LEGACY_CONFIG_DIR", legacy):
+                el.migrate_legacy_config_dir(target)
+            self.assertTrue(os.path.isdir(legacy))
 
 
 class TestEarlyLogCrash(unittest.TestCase):
@@ -144,10 +166,10 @@ class TestEarlyLogSinksExceptions(unittest.TestCase):
 
 
 class TestEarlyLogImportIsolation(unittest.TestCase):
-    """``import rikugan.core.early_log`` must not pull in heavy rikugan modules.
+    """``import lucnhan.core.early_log`` must not pull in heavy lucnhan modules.
 
-    The package markers ``rikugan`` and ``rikugan.core`` are unavoidably
-    present (Python inserts them when loading any submodule). ``rikugan.constants``
+    The package markers ``lucnhan`` and ``lucnhan.core`` are unavoidably
+    present (Python inserts them when loading any submodule). ``lucnhan.constants``
     is loaded by an ``__init__.py`` as a side effect. What we DO want to
     verify is that no heavy / optional modules get pulled in — otherwise
     ``early_log`` would inherit their failure modes.
@@ -155,37 +177,37 @@ class TestEarlyLogImportIsolation(unittest.TestCase):
 
     # Heavy modules we never want early_log to trigger.
     _FORBIDDEN = (
-        "rikugan.core.logging",
-        "rikugan.ui.qt_compat",
-        "rikugan.ui.panel_core",
-        "rikugan.ida.ui.panel",
-        "rikugan.core.sanitize",
+        "lucnhan.core.logging",
+        "lucnhan.ui.qt_compat",
+        "lucnhan.ui.panel_core",
+        "lucnhan.ida.ui.panel",
+        "lucnhan.core.sanitize",
     )
 
     def test_subprocess_import_isolation(self) -> None:
         """Run a clean subprocess that imports only ``early_log`` and asserts
-        that no heavy rikugan submodule lands in ``sys.modules``.
+        that no heavy lucnhan submodule lands in ``sys.modules``.
         """
         forbidden_list = ", ".join(repr(m) for m in self._FORBIDDEN)
         snippet = textwrap.dedent(
             f"""
             import sys
-            import rikugan.core.early_log  # noqa: F401
+            import lucnhan.core.early_log  # noqa: F401
             leaked = [
                 n for n in sys.modules
                 if n in ({forbidden_list})
             ]
             if leaked:
                 raise AssertionError(f"early_log pulled in heavy modules: {{leaked}}")
-            p = rikugan.core.early_log._early_log_path()
+            p = lucnhan.core.early_log._early_log_path()
             if not p.endswith("early_startup.log"):
                 raise AssertionError(f"unexpected path: {{p}}")
             print("OK")
             """
         )
         # Spawn with PYTHONPATH pointed at the repo root (the directory that
-        # contains the ``rikugan/`` package directory) so that the subprocess
-        # can import ``rikugan``. A bare ``python -c`` does not implicitly add
+        # contains the ``lucnhan/`` package directory) so that the subprocess
+        # can import ``lucnhan``. A bare ``python -c`` does not implicitly add
         # cwd to ``sys.path`` on Python >= 3.4, so we have to pass it
         # explicitly. Without this the test fails for environment reasons,
         # not for any early_log regression.

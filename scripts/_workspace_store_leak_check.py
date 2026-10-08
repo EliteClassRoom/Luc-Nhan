@@ -16,14 +16,14 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-# Make sure we use the local rikugan checkout, not a system install.
+# Make sure we use the local lucnhan checkout, not a system install.
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from rikugan.core.config import RikuganConfig  # noqa: E402
-from rikugan.ida.ui.session_controller import IdaSessionController  # noqa: E402
-from rikugan.memory.workspace import FilesystemIdentity  # noqa: E402
-from rikugan.state.history import SessionHistory  # noqa: E402
+from lucnhan.core.config import LucNhanConfig  # noqa: E402
+from lucnhan.ida.ui.session_controller import IdaSessionController  # noqa: E402
+from lucnhan.memory.workspace import FilesystemIdentity  # noqa: E402
+from lucnhan.state.history import SessionHistory  # noqa: E402
 
 
 def _live_workspace_store_count() -> int:
@@ -31,12 +31,12 @@ def _live_workspace_store_count() -> int:
 
 
 def main() -> int:
-    import rikugan.memory.identity as _ident_mod
+    import lucnhan.memory.identity as _ident_mod
 
     _ident_mod.get_filesystem_identity = lambda _p: FilesystemIdentity("vol", "v")
 
     tmp = tempfile.mkdtemp()
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg._config_dir = tmp
     ctrl = IdaSessionController(cfg)
     ctrl._idb_path = "/fake/test.i64"

@@ -12,7 +12,7 @@
 
 - `MEMORY_WORKSPACE_SCHEMA_VERSION` becomes exactly `3`.
 - Migration v3 is additive: `ALTER TABLE ... ADD COLUMN` only; no backfill of graph metadata on existing rows; defaults are empty (`'[]'` for arrays, `''` for `evidence`).
-- `_LEGACY_JSONL_DUAL_WRITE = True` is a module-level constant in `rikugan/memory/ingest.py`. Exploration/research writes hit SQLite first, JSONL second when the flag is `True`. `save_memory` tool writes remain SQLite-only.
+- `_LEGACY_JSONL_DUAL_WRITE = True` is a module-level constant in `lucnhan/memory/ingest.py`. Exploration/research writes hit SQLite first, JSONL second when the flag is `True`. `save_memory` tool writes remain SQLite-only.
 - Auto-import runs once per workspace, gated by `workspace_meta` key `legacy_jsonl_imported` (ISO timestamp). JSONL files are never deleted.
 - `import_workspace_bundle` (shipped in the durability tranche) is the only import primitive; its stage-validate-write contract is reused.
 - Knowledge panel and retrieved knowledge section fall back to JSONL only when `memory_service` is `None`.
@@ -28,8 +28,8 @@
 
 ### New files
 
-- `rikugan/memory/jsonl_migration.py` — JSONL → bundle envelope adapter, temp bundle writer, one-time auto-import trigger.
-- `rikugan/memory/sqlite_retrieval.py` — adapter that feeds SQLite records into the existing ranker and returns a `RetrievalPack`.
+- `lucnhan/memory/jsonl_migration.py` — JSONL → bundle envelope adapter, temp bundle writer, one-time auto-import trigger.
+- `lucnhan/memory/sqlite_retrieval.py` — adapter that feeds SQLite records into the existing ranker and returns a `RetrievalPack`.
 - `tests/memory/test_workspace_migration_v3.py` — handcrafted v2 fixture, v3 backfill/hash guards.
 - `tests/memory/test_jsonl_migration.py` — adapter, temp bundle, auto-import trigger.
 - `tests/memory/test_dual_write_ingest.py` — flag on/off, SQLite/JSONL failure isolation.
@@ -38,16 +38,16 @@
 
 ### Modified production files
 
-- `rikugan/constants.py` — workspace schema version `3`.
-- `rikugan/memory/workspace_store.py` — `_migrate_v3`, `FactRecord`/`EntityRecord`/`RelationRecord` fields, `put_fact`/`put_entity`/`put_relation`/`save_fact_if_semantically_absent` extensions, `get_fact`/`list_facts`/`get_entity`/`list_entities`/`list_relations` SELECTs.
-- `rikugan/memory/repository.py` — `save_exploration_finding`, `list_entities` reads `tags` column, `upsert_entity` no longer writes `tags` into `metadata`.
-- `rikugan/memory/service.py` — `save_exploration_finding` service wrapper.
-- `rikugan/memory/ingest.py` — `_LEGACY_JSONL_DUAL_WRITE`, dual-write refactor of `ingest_exploration_finding` and `ingest_research_note`.
-- `rikugan/memory/retrieve.py` — extract `retrieve_from_records` from `retrieve`; `retrieve` becomes a thin wrapper.
-- `rikugan/agent/loop.py` — `_build_retrieved_knowledge_section` prefers SQLite, emit `MEMORY_SAVED` event from `_handle_save_memory_tool`.
-- `rikugan/agent/turn.py` — `TurnEventType.MEMORY_SAVED`.
-- `rikugan/ui/session_controller_base.py` — `memory_service` accessor; `maybe_import_legacy_jsonl` call in `_wire_central_memory`.
-- `rikugan/ui/panel_core.py` — `_refresh_knowledge_panel` prefers SQLite; `_on_event` handles `MEMORY_SAVED`.
+- `lucnhan/constants.py` — workspace schema version `3`.
+- `lucnhan/memory/workspace_store.py` — `_migrate_v3`, `FactRecord`/`EntityRecord`/`RelationRecord` fields, `put_fact`/`put_entity`/`put_relation`/`save_fact_if_semantically_absent` extensions, `get_fact`/`list_facts`/`get_entity`/`list_entities`/`list_relations` SELECTs.
+- `lucnhan/memory/repository.py` — `save_exploration_finding`, `list_entities` reads `tags` column, `upsert_entity` no longer writes `tags` into `metadata`.
+- `lucnhan/memory/service.py` — `save_exploration_finding` service wrapper.
+- `lucnhan/memory/ingest.py` — `_LEGACY_JSONL_DUAL_WRITE`, dual-write refactor of `ingest_exploration_finding` and `ingest_research_note`.
+- `lucnhan/memory/retrieve.py` — extract `retrieve_from_records` from `retrieve`; `retrieve` becomes a thin wrapper.
+- `lucnhan/agent/loop.py` — `_build_retrieved_knowledge_section` prefers SQLite, emit `MEMORY_SAVED` event from `_handle_save_memory_tool`.
+- `lucnhan/agent/turn.py` — `TurnEventType.MEMORY_SAVED`.
+- `lucnhan/ui/session_controller_base.py` — `memory_service` accessor; `maybe_import_legacy_jsonl` call in `_wire_central_memory`.
+- `lucnhan/ui/panel_core.py` — `_refresh_knowledge_panel` prefers SQLite; `_on_event` handles `MEMORY_SAVED`.
 
 ### Modified tests
 
@@ -61,8 +61,8 @@
 
 **Files:**
 
-- Modify: `rikugan/constants.py:53`
-- Modify: `rikugan/memory/workspace_store.py`
+- Modify: `lucnhan/constants.py:53`
+- Modify: `lucnhan/memory/workspace_store.py`
 - Create: `tests/memory/test_workspace_migration_v3.py`
 - Modify: `tests/memory/test_workspace_store.py`
 
@@ -90,9 +90,9 @@ import sqlite3
 
 import pytest
 
-from rikugan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
-from rikugan.memory import workspace_store
-from rikugan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+from lucnhan.memory import workspace_store
+from lucnhan.memory.workspace_store import WorkspaceStore
 
 
 def _create_v2_database(path, owner: str) -> str:
@@ -240,13 +240,13 @@ Expected: migration tests fail because schema version remains 2; round-trip test
 
 - [ ] **Step 3: Implement the migration, record fields, and store extensions**
 
-In `rikugan/constants.py`:
+In `lucnhan/constants.py`:
 
 ```python
 MEMORY_WORKSPACE_SCHEMA_VERSION = 3
 ```
 
-In `rikugan/memory/workspace_store.py`, extend the dataclasses:
+In `lucnhan/memory/workspace_store.py`, extend the dataclasses:
 
 ```python
 @dataclass(frozen=True)
@@ -339,7 +339,7 @@ Extend `save_fact_if_semantically_absent` with keyword-only `entity_refs` and `t
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/memory/test_workspace_migration_v3.py tests/memory/test_workspace_store.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/memory/workspace_store.py rikugan/constants.py tests/memory/test_workspace_migration_v3.py tests/memory/test_workspace_store.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/memory/workspace_store.py lucnhan/constants.py tests/memory/test_workspace_migration_v3.py tests/memory/test_workspace_store.py
 ```
 
 Expected: all tests pass; Ruff prints `All checks passed!`.
@@ -347,7 +347,7 @@ Expected: all tests pass; Ruff prints `All checks passed!`.
 - [ ] **Step 5: Commit schema v3**
 
 ```bash
-git add rikugan/constants.py rikugan/memory/workspace_store.py tests/memory/test_workspace_migration_v3.py tests/memory/test_workspace_store.py
+git add lucnhan/constants.py lucnhan/memory/workspace_store.py tests/memory/test_workspace_migration_v3.py tests/memory/test_workspace_store.py
 git commit -m "feat(memory): migrate workspaces to schema v3 with graph metadata"
 ```
 
@@ -357,8 +357,8 @@ git commit -m "feat(memory): migrate workspaces to schema v3 with graph metadata
 
 **Files:**
 
-- Modify: `rikugan/memory/repository.py`
-- Modify: `rikugan/memory/service.py`
+- Modify: `lucnhan/memory/repository.py`
+- Modify: `lucnhan/memory/service.py`
 - Modify: `tests/memory/test_repository.py`
 - Modify: `tests/memory/test_service.py`
 
@@ -373,7 +373,7 @@ git commit -m "feat(memory): migrate workspaces to schema v3 with graph metadata
 
 ```python
 # Append to tests/memory/test_repository.py
-from rikugan.memory.fact_identity import semantic_fact_hash
+from lucnhan.memory.fact_identity import semantic_fact_hash
 
 
 def test_save_exploration_finding_persists_entity_refs_and_tags(tmp_path: Path) -> None:
@@ -403,7 +403,7 @@ Expected: `AttributeError: 'SQLiteKnowledgeRepository' object has no attribute '
 
 - [ ] **Step 3: Implement repository method**
 
-In `rikugan/memory/repository.py`:
+In `lucnhan/memory/repository.py`:
 
 ```python
 def save_exploration_finding(
@@ -490,7 +490,7 @@ Expected: `AttributeError: 'BinaryMemoryService' object has no attribute 'save_e
 
 - [ ] **Step 6: Implement service method**
 
-In `rikugan/memory/service.py`:
+In `lucnhan/memory/service.py`:
 
 ```python
 def save_exploration_finding(
@@ -553,7 +553,7 @@ def save_exploration_finding(
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/memory/test_repository.py tests/memory/test_service.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/memory/repository.py rikugan/memory/service.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/memory/repository.py lucnhan/memory/service.py
 ```
 
 Expected: all tests pass; Ruff clean.
@@ -561,7 +561,7 @@ Expected: all tests pass; Ruff clean.
 - [ ] **Step 8: Commit repository and service extensions**
 
 ```bash
-git add rikugan/memory/repository.py rikugan/memory/service.py tests/memory/test_repository.py tests/memory/test_service.py
+git add lucnhan/memory/repository.py lucnhan/memory/service.py tests/memory/test_repository.py tests/memory/test_service.py
 git commit -m "feat(memory): expose exploration finding write with graph metadata"
 ```
 
@@ -571,12 +571,12 @@ git commit -m "feat(memory): expose exploration finding write with graph metadat
 
 **Files:**
 
-- Create: `rikugan/memory/jsonl_migration.py`
+- Create: `lucnhan/memory/jsonl_migration.py`
 - Create: `tests/memory/test_jsonl_migration.py`
 
 **Interfaces:**
 
-- Consumes: `KnowledgeRawStore.list_memories()`, `list_entities()`, `list_relations()` from `rikugan/memory/raw_store.py`; `KnowledgePaths` from `rikugan/memory/paths.py`; `MEMORY_BUNDLE_SCHEMA_VERSION` and `ManifestFile` from `rikugan/memory/bundle_schema.py`.
+- Consumes: `KnowledgeRawStore.list_memories()`, `list_entities()`, `list_relations()` from `lucnhan/memory/raw_store.py`; `KnowledgePaths` from `lucnhan/memory/paths.py`; `MEMORY_BUNDLE_SCHEMA_VERSION` and `ManifestFile` from `lucnhan/memory/bundle_schema.py`.
 - Produces:
   - `jsonl_to_bundle_envelopes(store, paths) -> list[dict[str, Any]]`
   - `write_envelopes_to_temp_bundle(envelopes, origin_memory_id) -> Path`
@@ -593,13 +593,13 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.memory.jsonl_migration import (
+from lucnhan.memory.jsonl_migration import (
     jsonl_to_bundle_envelopes,
     write_envelopes_to_temp_bundle,
 )
-from rikugan.memory.paths import KnowledgePaths, derive_binary_id
-from rikugan.memory.raw_store import KnowledgeRawStore
-from rikugan.memory.schema import KnowledgeMemory, KnowledgeEntity, KnowledgeRelation
+from lucnhan.memory.paths import KnowledgePaths, derive_binary_id
+from lucnhan.memory.raw_store import KnowledgeRawStore
+from lucnhan.memory.schema import KnowledgeMemory, KnowledgeEntity, KnowledgeRelation
 
 
 def _make_paths(tmp_path: Path) -> KnowledgePaths:
@@ -691,12 +691,12 @@ def test_write_envelopes_to_temp_bundle_creates_valid_zip(tmp_path: Path) -> Non
 uv run --frozen --python 3.11 python -m pytest tests/memory/test_jsonl_migration.py -q
 ```
 
-Expected: `ModuleNotFoundError: No module named 'rikugan.memory.jsonl_migration'`.
+Expected: `ModuleNotFoundError: No module named 'lucnhan.memory.jsonl_migration'`.
 
 - [ ] **Step 3: Implement the adapter and temp bundle writer**
 
 ```python
-# rikugan/memory/jsonl_migration.py
+# lucnhan/memory/jsonl_migration.py
 """Adapter converting legacy JSONL knowledge records into bundle envelopes.
 
 The output matches the wire format consumed by ``import_workspace_bundle``
@@ -809,7 +809,7 @@ def write_envelopes_to_temp_bundle(
         ensure_ascii=False,
     )
 
-    fd, tmp_path_str = tempfile.mkstemp(prefix="rikugan-jsonl-", suffix=".zip")
+    fd, tmp_path_str = tempfile.mkstemp(prefix="lucnhan-jsonl-", suffix=".zip")
     tmp_path = Path(tmp_path_str)
     import os
     os.close(fd)
@@ -829,7 +829,7 @@ def write_envelopes_to_temp_bundle(
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/memory/test_jsonl_migration.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/memory/jsonl_migration.py tests/memory/test_jsonl_migration.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/memory/jsonl_migration.py tests/memory/test_jsonl_migration.py
 ```
 
 Expected: all tests pass; Ruff clean.
@@ -837,7 +837,7 @@ Expected: all tests pass; Ruff clean.
 - [ ] **Step 5: Commit the adapter**
 
 ```bash
-git add rikugan/memory/jsonl_migration.py tests/memory/test_jsonl_migration.py
+git add lucnhan/memory/jsonl_migration.py tests/memory/test_jsonl_migration.py
 git commit -m "feat(memory): convert JSONL records to bundle envelopes"
 ```
 
@@ -847,9 +847,9 @@ git commit -m "feat(memory): convert JSONL records to bundle envelopes"
 
 **Files:**
 
-- Modify: `rikugan/memory/jsonl_migration.py`
+- Modify: `lucnhan/memory/jsonl_migration.py`
 - Create: `tests/memory/test_jsonl_migration.py` (extend)
-- Modify: `rikugan/ui/session_controller_base.py`
+- Modify: `lucnhan/ui/session_controller_base.py`
 
 **Interfaces:**
 
@@ -863,10 +863,10 @@ git commit -m "feat(memory): convert JSONL records to bundle envelopes"
 # Append to tests/memory/test_jsonl_migration.py
 import sqlite3
 
-from rikugan.memory.workspace import MemoryLocator, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
-from rikugan.memory.repository import SQLiteKnowledgeRepository
-from rikugan.memory.jsonl_migration import maybe_import_legacy_jsonl
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.jsonl_migration import maybe_import_legacy_jsonl
 
 
 def test_maybe_import_skips_when_marker_present(tmp_path: Path) -> None:
@@ -973,7 +973,7 @@ def test_maybe_import_failed_leaves_marker_unset(tmp_path: Path, monkeypatch) ->
 
     def boom(*a, **k):
         raise RuntimeError("import crash")
-    monkeypatch.setattr("rikugan.memory.jsonl_migration.import_workspace_bundle", boom)
+    monkeypatch.setattr("lucnhan.memory.jsonl_migration.import_workspace_bundle", boom)
 
     with pytest.raises(RuntimeError, match="import crash"):
         maybe_import_legacy_jsonl(store, owner, jsonl_paths)
@@ -994,7 +994,7 @@ Expected: failures because `maybe_import_legacy_jsonl` does not exist.
 
 - [ ] **Step 3: Implement the trigger**
 
-Add to `rikugan/memory/jsonl_migration.py`:
+Add to `lucnhan/memory/jsonl_migration.py`:
 
 ```python
 from datetime import UTC, datetime
@@ -1046,7 +1046,7 @@ def maybe_import_legacy_jsonl(
 
 - [ ] **Step 4: Wire the trigger into `_wire_central_memory`**
 
-In `rikugan/ui/session_controller_base.py`, after `store = open_workspace_for_write(...)` / `WorkspaceStore.create(...)` and before constructing the repository, add:
+In `lucnhan/ui/session_controller_base.py`, after `store = open_workspace_for_write(...)` / `WorkspaceStore.create(...)` and before constructing the repository, add:
 
 ```python
             from ..memory.paths import derive_knowledge_paths
@@ -1066,7 +1066,7 @@ If `derive_knowledge_paths` does not exist, use the existing `KnowledgePaths(...
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/memory/test_jsonl_migration.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/memory/jsonl_migration.py rikugan/ui/session_controller_base.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/memory/jsonl_migration.py lucnhan/ui/session_controller_base.py
 ```
 
 Expected: all tests pass; Ruff clean.
@@ -1074,7 +1074,7 @@ Expected: all tests pass; Ruff clean.
 - [ ] **Step 6: Commit the auto-import trigger**
 
 ```bash
-git add rikugan/memory/jsonl_migration.py rikugan/ui/session_controller_base.py tests/memory/test_jsonl_migration.py
+git add lucnhan/memory/jsonl_migration.py lucnhan/ui/session_controller_base.py tests/memory/test_jsonl_migration.py
 git commit -m "feat(memory): auto-import legacy JSONL on first IDB open"
 ```
 
@@ -1084,15 +1084,15 @@ git commit -m "feat(memory): auto-import legacy JSONL on first IDB open"
 
 **Files:**
 
-- Modify: `rikugan/memory/ingest.py`
-- Modify: `rikugan/agent/loop.py:1847-1860, 2011-2025`
+- Modify: `lucnhan/memory/ingest.py`
+- Modify: `lucnhan/agent/loop.py:1847-1860, 2011-2025`
 - Create: `tests/memory/test_dual_write_ingest.py`
 
 **Interfaces:**
 
 - Consumes: `BinaryMemoryService.save_exploration_finding` from Task 2; `_LEGACY_JSONL_DUAL_WRITE` module flag.
 - Produces:
-  - `_LEGACY_JSONL_DUAL_WRITE = True` in `rikugan/memory/ingest.py`
+  - `_LEGACY_JSONL_DUAL_WRITE = True` in `lucnhan/memory/ingest.py`
   - `ingest_exploration_finding(..., *, memory_service=None)` and `ingest_research_note(..., *, memory_service=None)` with dual-write behavior
 
 - [ ] **Step 1: Write failing dual-write tests**
@@ -1106,9 +1106,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rikugan.memory import ingest
-from rikugan.memory.paths import KnowledgePaths, derive_binary_id
-from rikugan.memory.raw_store import KnowledgeRawStore
+from lucnhan.memory import ingest
+from lucnhan.memory.paths import KnowledgePaths, derive_binary_id
+from lucnhan.memory.raw_store import KnowledgeRawStore
 
 
 def _make_paths(tmp_path: Path) -> KnowledgePaths:
@@ -1214,7 +1214,7 @@ Expected: failures because `ingest_exploration_finding` does not accept `memory_
 
 - [ ] **Step 3: Add the flag and refactor ingest_exploration_finding**
 
-In `rikugan/memory/ingest.py`, add the module-level constant near the top:
+In `lucnhan/memory/ingest.py`, add the module-level constant near the top:
 
 ```python
 _LEGACY_JSONL_DUAL_WRITE = True
@@ -1277,7 +1277,7 @@ Add a private helper `_relevance_to_confidence(relevance: str) -> float` mapping
 
 - [ ] **Step 4: Update AgentLoop callers**
 
-In `rikugan/agent/loop.py`, the two call sites that invoke `ingest_exploration_finding` (around line 1847) and `ingest_research_note` (around line 2011) must pass `memory_service=self.memory_service`:
+In `lucnhan/agent/loop.py`, the two call sites that invoke `ingest_exploration_finding` (around line 1847) and `ingest_research_note` (around line 2011) must pass `memory_service=self.memory_service`:
 
 ```python
 ingest_exploration_finding(
@@ -1295,7 +1295,7 @@ ingest_exploration_finding(
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/memory/test_dual_write_ingest.py tests/knowledge/test_ingest.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/memory/ingest.py rikugan/agent/loop.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/memory/ingest.py lucnhan/agent/loop.py
 ```
 
 Expected: dual-write tests pass; existing `tests/knowledge/test_ingest.py` remains green (JSONL path still works when `memory_service` is `None`).
@@ -1303,7 +1303,7 @@ Expected: dual-write tests pass; existing `tests/knowledge/test_ingest.py` remai
 - [ ] **Step 6: Commit the dual-write refactor**
 
 ```bash
-git add rikugan/memory/ingest.py rikugan/agent/loop.py tests/memory/test_dual_write_ingest.py
+git add lucnhan/memory/ingest.py lucnhan/agent/loop.py tests/memory/test_dual_write_ingest.py
 git commit -m "refactor(memory): dual-write exploration/research to SQLite and JSONL"
 ```
 
@@ -1313,8 +1313,8 @@ git commit -m "refactor(memory): dual-write exploration/research to SQLite and J
 
 **Files:**
 
-- Modify: `rikugan/memory/retrieve.py`
-- Create: `rikugan/memory/sqlite_retrieval.py`
+- Modify: `lucnhan/memory/retrieve.py`
+- Create: `lucnhan/memory/sqlite_retrieval.py`
 - Create: `tests/memory/test_sqlite_retrieval.py`
 
 **Interfaces:**
@@ -1333,12 +1333,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rikugan.memory.retrieve import RetrievalQuery, retrieve, retrieve_from_records, RetrievalPack
-from rikugan.memory.schema import KnowledgeMemory, KnowledgeEntity, KnowledgeRelation
-from rikugan.memory.sqlite_retrieval import repository_to_retrieval_pack
-from rikugan.memory.workspace import MemoryLocator, new_memory_id
-from rikugan.memory.workspace_store import WorkspaceStore
-from rikugan.memory.repository import SQLiteKnowledgeRepository
+from lucnhan.memory.retrieve import RetrievalQuery, retrieve, retrieve_from_records, RetrievalPack
+from lucnhan.memory.schema import KnowledgeMemory, KnowledgeEntity, KnowledgeRelation
+from lucnhan.memory.sqlite_retrieval import repository_to_retrieval_pack
+from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+from lucnhan.memory.workspace_store import WorkspaceStore
+from lucnhan.memory.repository import SQLiteKnowledgeRepository
 
 
 def _create_repo(tmp_path: Path):
@@ -1363,8 +1363,8 @@ def test_retrieve_from_records_matches_retrieve_for_same_input(tmp_path: Path) -
     )
 
     # Build a JSONL store with the same records and compare.
-    from rikugan.memory.paths import KnowledgePaths, derive_binary_id
-    from rikugan.memory.raw_store import KnowledgeRawStore
+    from lucnhan.memory.paths import KnowledgePaths, derive_binary_id
+    from lucnhan.memory.raw_store import KnowledgeRawStore
     jsonl_paths = KnowledgePaths(
         idb_path=str(tmp_path / "test.i64"),
         notes_dir=str(tmp_path / "notes"),
@@ -1412,7 +1412,7 @@ Expected: import failures for `retrieve_from_records` and `sqlite_retrieval`.
 
 - [ ] **Step 3: Extract `retrieve_from_records` from `retrieve`**
 
-In `rikugan/memory/retrieve.py`, extract the ranking body of `retrieve` (currently starting at line 178 `pack = RetrievalPack()`) into a new function:
+In `lucnhan/memory/retrieve.py`, extract the ranking body of `retrieve` (currently starting at line 178 `pack = RetrievalPack()`) into a new function:
 
 ```python
 def retrieve_from_records(
@@ -1466,7 +1466,7 @@ def retrieve(
 - [ ] **Step 4: Implement the SQLite adapter**
 
 ```python
-# rikugan/memory/sqlite_retrieval.py
+# lucnhan/memory/sqlite_retrieval.py
 """Adapter feeding SQLite repository records into the existing ranker."""
 from __future__ import annotations
 
@@ -1503,7 +1503,7 @@ def repository_to_retrieval_pack(
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/memory/test_sqlite_retrieval.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/memory/retrieve.py rikugan/memory/sqlite_retrieval.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/memory/retrieve.py lucnhan/memory/sqlite_retrieval.py
 ```
 
 Expected: all tests pass; Ruff clean.
@@ -1511,7 +1511,7 @@ Expected: all tests pass; Ruff clean.
 - [ ] **Step 6: Commit the adapter and ranker refactor**
 
 ```bash
-git add rikugan/memory/retrieve.py rikugan/memory/sqlite_retrieval.py tests/memory/test_sqlite_retrieval.py
+git add lucnhan/memory/retrieve.py lucnhan/memory/sqlite_retrieval.py tests/memory/test_sqlite_retrieval.py
 git commit -m "feat(memory): rank retrieved knowledge from SQLite store"
 ```
 
@@ -1521,7 +1521,7 @@ git commit -m "feat(memory): rank retrieved knowledge from SQLite store"
 
 **Files:**
 
-- Modify: `rikugan/ui/session_controller_base.py`
+- Modify: `lucnhan/ui/session_controller_base.py`
 - Modify: `tests/agent/test_session_controller.py`
 
 **Interfaces:**
@@ -1548,7 +1548,7 @@ Expected: `AttributeError: 'IdaSessionController' object has no attribute 'memor
 
 - [ ] **Step 3: Implement the accessor**
 
-In `rikugan/ui/session_controller_base.py`, add a property:
+In `lucnhan/ui/session_controller_base.py`, add a property:
 
 ```python
 @property
@@ -1581,7 +1581,7 @@ Use the simpler form if the loop is reachable; use the stored attribute form oth
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/agent/test_session_controller.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/ui/session_controller_base.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/ui/session_controller_base.py
 ```
 
 Expected: test passes; Ruff clean.
@@ -1589,7 +1589,7 @@ Expected: test passes; Ruff clean.
 - [ ] **Step 5: Commit the accessor**
 
 ```bash
-git add rikugan/ui/session_controller_base.py tests/agent/test_session_controller.py
+git add lucnhan/ui/session_controller_base.py tests/agent/test_session_controller.py
 git commit -m "feat(ui): expose memory_service accessor on SessionControllerBase"
 ```
 
@@ -1599,7 +1599,7 @@ git commit -m "feat(ui): expose memory_service accessor on SessionControllerBase
 
 **Files:**
 
-- Modify: `rikugan/ui/panel_core.py:3650-3718`
+- Modify: `lucnhan/ui/panel_core.py:3650-3718`
 - Create: `tests/ui/test_knowledge_panel_sqlite_read.py`
 
 **Interfaces:**
@@ -1618,8 +1618,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rikugan.ui.knowledge_panel import KnowledgePanel
-from rikugan.ui.panel_core import RikuganPanelCore
+from lucnhan.ui.knowledge_panel import KnowledgePanel
+from lucnhan.ui.panel_core import LucNhanPanelCore
 
 
 def test_refresh_panel_reads_sqlite_when_service_wired(tmp_path: Path) -> None:
@@ -1662,7 +1662,7 @@ Expected: import or attribute failures.
 
 - [ ] **Step 3: Migrate `_refresh_knowledge_panel`**
 
-In `rikugan/ui/panel_core.py`, update `_refresh_knowledge_panel` (around line 3650):
+In `lucnhan/ui/panel_core.py`, update `_refresh_knowledge_panel` (around line 3650):
 
 ```python
 def _refresh_knowledge_panel(self) -> None:
@@ -1758,7 +1758,7 @@ def _refresh_knowledge_panel(self) -> None:
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/ui/test_knowledge_panel_sqlite_read.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/ui/panel_core.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/ui/panel_core.py
 ```
 
 Expected: tests pass; Ruff clean.
@@ -1766,7 +1766,7 @@ Expected: tests pass; Ruff clean.
 - [ ] **Step 5: Commit the panel migration**
 
 ```bash
-git add rikugan/ui/panel_core.py tests/ui/test_knowledge_panel_sqlite_read.py
+git add lucnhan/ui/panel_core.py tests/ui/test_knowledge_panel_sqlite_read.py
 git commit -m "refactor(ui): knowledge panel reads from SQLite store"
 ```
 
@@ -1776,7 +1776,7 @@ git commit -m "refactor(ui): knowledge panel reads from SQLite store"
 
 **Files:**
 
-- Modify: `rikugan/agent/loop.py:596-680`
+- Modify: `lucnhan/agent/loop.py:596-680`
 - Modify: `tests/agent/test_agent_loop.py` (extend)
 
 **Interfaces:**
@@ -1824,7 +1824,7 @@ Expected: failure because `_build_retrieved_knowledge_section` still calls `make
 
 - [ ] **Step 3: Migrate `_build_retrieved_knowledge_section`**
 
-In `rikugan/agent/loop.py`, update `_build_retrieved_knowledge_section` (around line 596):
+In `lucnhan/agent/loop.py`, update `_build_retrieved_knowledge_section` (around line 596):
 
 ```python
 def _build_retrieved_knowledge_section(
@@ -1895,7 +1895,7 @@ def _build_retrieved_knowledge_section(
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/agent/test_agent_loop.py -k "retrieved_knowledge" -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/agent/loop.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/agent/loop.py
 ```
 
 Expected: tests pass; Ruff clean.
@@ -1903,7 +1903,7 @@ Expected: tests pass; Ruff clean.
 - [ ] **Step 5: Commit the section migration**
 
 ```bash
-git add rikugan/agent/loop.py tests/agent/test_agent_loop.py
+git add lucnhan/agent/loop.py tests/agent/test_agent_loop.py
 git commit -m "refactor(agent): retrieved knowledge section reads from SQLite"
 ```
 
@@ -1913,9 +1913,9 @@ git commit -m "refactor(agent): retrieved knowledge section reads from SQLite"
 
 **Files:**
 
-- Modify: `rikugan/agent/turn.py`
-- Modify: `rikugan/agent/loop.py:1950-2000`
-- Modify: `rikugan/ui/panel_core.py:1804-1830`
+- Modify: `lucnhan/agent/turn.py`
+- Modify: `lucnhan/agent/loop.py:1950-2000`
+- Modify: `lucnhan/ui/panel_core.py:1804-1830`
 
 **Interfaces:**
 
@@ -1928,7 +1928,7 @@ git commit -m "refactor(agent): retrieved knowledge section reads from SQLite"
 # Append to tests/agent/test_memory_cutover.py
 def test_save_memory_emits_memory_saved_event(self, tmp_path: Path) -> None:
     """A successful save_memory tool call emits a MEMORY_SAVED event."""
-    from rikugan.agent.turn import TurnEventType
+    from lucnhan.agent.turn import TurnEventType
 
     loop, _service = _make_loop_with_central_memory(tmp_path)
     tc = ToolCall(id="tc1", name="save_memory", arguments={"category": "protocol", "fact": "Uses HTTP"})
@@ -1948,7 +1948,7 @@ Expected: failure because `MEMORY_SAVED` does not exist.
 
 - [ ] **Step 3: Add the event type and emit it**
 
-In `rikugan/agent/turn.py`, add the constant to the `TurnEventType` enum:
+In `lucnhan/agent/turn.py`, add the constant to the `TurnEventType` enum:
 
 ```python
 class TurnEventType(str, Enum):
@@ -1956,7 +1956,7 @@ class TurnEventType(str, Enum):
     MEMORY_SAVED = "memory_saved"
 ```
 
-In `rikugan/agent/loop.py`, in `_handle_save_memory_tool`, after the successful save (after the compact result content is built), emit the event:
+In `lucnhan/agent/loop.py`, in `_handle_save_memory_tool`, after the successful save (after the compact result content is built), emit the event:
 
 ```python
 # After: content = f"{label}: {result.record_id} [{category}]"
@@ -1971,7 +1971,7 @@ The exact `TurnEvent` construction depends on the existing factory methods. If `
 
 - [ ] **Step 4: Extend `_on_event` to handle MEMORY_SAVED**
 
-In `rikugan/ui/panel_core.py`, in `_on_event` (around line 1804-1830), add `MEMORY_SAVED` to the set of event types that trigger a knowledge panel refresh:
+In `lucnhan/ui/panel_core.py`, in `_on_event` (around line 1804-1830), add `MEMORY_SAVED` to the set of event types that trigger a knowledge panel refresh:
 
 ```python
 # Existing code likely checks:
@@ -1984,7 +1984,7 @@ In `rikugan/ui/panel_core.py`, in `_on_event` (around line 1804-1830), add `MEMO
 
 ```bash
 uv run --frozen --python 3.11 python -m pytest tests/agent/test_memory_cutover.py tests/agent/test_agent_loop.py -q
-uv run --frozen --python 3.11 python -m ruff check rikugan/agent/turn.py rikugan/agent/loop.py rikugan/ui/panel_core.py
+uv run --frozen --python 3.11 python -m ruff check lucnhan/agent/turn.py lucnhan/agent/loop.py lucnhan/ui/panel_core.py
 ```
 
 Expected: tests pass; Ruff clean.
@@ -1992,7 +1992,7 @@ Expected: tests pass; Ruff clean.
 - [ ] **Step 6: Commit the event and refresh wiring**
 
 ```bash
-git add rikugan/agent/turn.py rikugan/agent/loop.py rikugan/ui/panel_core.py tests/agent/test_memory_cutover.py
+git add lucnhan/agent/turn.py lucnhan/agent/loop.py lucnhan/ui/panel_core.py tests/agent/test_memory_cutover.py
 git commit -m "feat(ui): refresh knowledge panel on save_memory success"
 ```
 
@@ -2012,8 +2012,8 @@ git commit -m "feat(ui): refresh knowledge panel on save_memory success"
 - [ ] **Step 1: Run formatting and lint**
 
 ```bash
-uv run --frozen --python 3.11 python -m ruff format --check rikugan/ tests/
-uv run --frozen --python 3.11 python -m ruff check rikugan/ tests/
+uv run --frozen --python 3.11 python -m ruff format --check lucnhan/ tests/
+uv run --frozen --python 3.11 python -m ruff check lucnhan/ tests/
 ```
 
 Expected: both commands exit 0 on files touched by this tranche.
@@ -2021,7 +2021,7 @@ Expected: both commands exit 0 on files touched by this tranche.
 - [ ] **Step 2: Run type checks**
 
 ```bash
-uv run --frozen --python 3.11 python -m mypy rikugan/core rikugan/providers rikugan/memory
+uv run --frozen --python 3.11 python -m mypy lucnhan/core lucnhan/providers lucnhan/memory
 ```
 
 Expected: exit 0 with no NEW errors (pre-existing errors in `case_commands.py`, `authority.py`, `markdown.py`, `manager.py` are acceptable).
@@ -2078,7 +2078,7 @@ Dispatch:
 
 1. `python-reviewer` for all Python changes.
 2. `code-reviewer` for cross-layer correctness (UI ↔ memory ↔ agent).
-3. `ida-tooling-reviewer` only if any file under `rikugan/tools/`, `rikugan/ida/tools/`, or `rikugan/agent/mutation.py` changed unexpectedly.
+3. `ida-tooling-reviewer` only if any file under `lucnhan/tools/`, `lucnhan/ida/tools/`, or `lucnhan/agent/mutation.py` changed unexpectedly.
 
 Fix confirmed findings with focused regression tests, then rerun Steps 1–6.
 
@@ -2105,7 +2105,7 @@ Report exact outputs/counts for:
 - Ruff and mypy;
 - working-tree state.
 
-Do not bump the Rikugan version, create a release, push, or open a PR unless separately requested.
+Do not bump the Luc Nhan version, create a release, push, or open a PR unless separately requested.
 
 ---
 

@@ -1,4 +1,4 @@
-"""Tests for rikugan.ui.a2a_widget.A2ABridgeWidget.
+"""Tests for lucnhan.ui.a2a_widget.A2ABridgeWidget.
 
 Strategy: use MagicMock to stand in for the Qt widgets so the test is
 hermetic and doesn't depend on the qt_stubs API surface. The
@@ -10,7 +10,7 @@ The dispatcher itself is mocked so no subprocess or HTTP is exercised
 — those have their own integration tests.
 
 ================================================================
-THREADING MODEL — see rikugan/issues tracking the rewrite task
+THREADING MODEL — see lucnhan/issues tracking the rewrite task
 ----------------------------------------------------------------
 The a2a_widget threading model uses stdlib ``threading.Thread`` with a
 ``queue.Queue`` polled by a ``QTimer`` (see ``_A2ATaskRunner`` +
@@ -18,7 +18,7 @@ The a2a_widget threading model uses stdlib ``threading.Thread`` with a
 it. Tests wait for threads to finish using ``runner.join(timeout)`` —
 ``time.sleep`` is avoided to keep tests non-flaky.
 
-Tracking issue: https://github.com/EliteClassRoom/rikugan/issues/3
+Tracking issue: https://github.com/EliteClassRoom/Luc-Nhan/issues/3
 ================================================================
 """
 
@@ -55,8 +55,8 @@ def _build_widget_with_mocks(agents: list | None = None) -> tuple:
 
     Returns ``(widget, mocks_dict)`` so tests can inspect both.
     """
-    from rikugan.agent.a2a.types import ExternalAgentConfig
-    from rikugan.ui.a2a_widget import A2ABridgeWidget
+    from lucnhan.agent.a2a.types import ExternalAgentConfig
+    from lucnhan.ui.a2a_widget import A2ABridgeWidget
 
     if agents is None:
         agents = [
@@ -84,12 +84,12 @@ def _build_widget_with_mocks(agents: list | None = None) -> tuple:
     # not ``QObject.__init__``: shiboken rejects
     # ``QObject.__init__(widget)`` with "QObject isn't a direct base
     # class" whenever real PySide6 is loaded — which happens when a
-    # sibling test (e.g. ``test_markdown``) imports ``rikugan.ui.*``
+    # sibling test (e.g. ``test_markdown``) imports ``lucnhan.ui.*``
     # before this file runs, leaving real ``PySide6`` modules in
     # ``sys.modules`` (``ensure_pyside6_stubs`` uses ``setdefault`` and
     # keeps them). ``QWidget`` subclasses ``QObject`` so the init still
     # wires the signal machinery.
-    from rikugan.ui.qt_compat import QWidget
+    from lucnhan.ui.qt_compat import QWidget
 
     QWidget.__init__(w)
 
@@ -152,7 +152,7 @@ class _FakeAgent:
 class TestAgentsPane(unittest.TestCase):
     def test_count_label_uses_qt_alignment_flag(self) -> None:
         """PySide6 QLabel rejects a raw integer alignment value."""
-        from rikugan.ui import a2a_widget
+        from lucnhan.ui import a2a_widget
 
         label = MagicMock()
         with (
@@ -236,7 +236,7 @@ class TestSendClick(unittest.TestCase):
         self.assertEqual(w._history_table.insertRow.call_count, 0)
 
     def test_send_appends_history_row(self) -> None:
-        from rikugan.ui.a2a_widget import _HistoryRow
+        from lucnhan.ui.a2a_widget import _HistoryRow
 
         w, _ = _build_widget_with_mocks([_FakeAgent()])
         w._task_edit.toPlainText.return_value = "summarize the binary"
@@ -294,7 +294,7 @@ class TestPollEventHandlers(unittest.TestCase):
 
     def _spawn(self) -> tuple:
         """Create a widget with a runner already registered. No thread is started."""
-        from rikugan.ui.a2a_widget import _A2ATaskRunner, _HistoryRow
+        from lucnhan.ui.a2a_widget import _A2ATaskRunner, _HistoryRow
 
         w, _ = _build_widget_with_mocks([_FakeAgent()])
         task_id = "test-tid"
@@ -306,7 +306,7 @@ class TestPollEventHandlers(unittest.TestCase):
         return w, task_id
 
     def test_started_sets_running(self) -> None:
-        from rikugan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
+        from lucnhan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
 
         w, task_id = self._spawn()
         runner = w._inflight[task_id]
@@ -315,7 +315,7 @@ class TestPollEventHandlers(unittest.TestCase):
         self.assertEqual(w._history[task_id].status, "running")
 
     def test_output_appends(self) -> None:
-        from rikugan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
+        from lucnhan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
 
         w, task_id = self._spawn()
         runner = w._inflight[task_id]
@@ -326,7 +326,7 @@ class TestPollEventHandlers(unittest.TestCase):
         self.assertIn("second chunk", w._history[task_id].result_text)
 
     def test_completed_marks_status(self) -> None:
-        from rikugan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
+        from lucnhan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
 
         w, task_id = self._spawn()
         runner = w._inflight[task_id]
@@ -338,7 +338,7 @@ class TestPollEventHandlers(unittest.TestCase):
         self.assertNotIn(task_id, w._inflight)
 
     def test_failed_marks_error(self) -> None:
-        from rikugan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
+        from lucnhan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
 
         w, task_id = self._spawn()
         runner = w._inflight[task_id]
@@ -348,7 +348,7 @@ class TestPollEventHandlers(unittest.TestCase):
         self.assertEqual(w._history[task_id].error_text, "boom")
 
     def test_cancelled_marks_status(self) -> None:
-        from rikugan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
+        from lucnhan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskEvent
 
         w, task_id = self._spawn()
         runner = w._inflight[task_id]
@@ -455,7 +455,7 @@ class TestHistoryRowModel(unittest.TestCase):
     """The _HistoryRow dataclass behaves as expected."""
 
     def test_status_defaults_to_queued(self) -> None:
-        from rikugan.ui.a2a_widget import _HistoryRow
+        from lucnhan.ui.a2a_widget import _HistoryRow
 
         row = _HistoryRow(task_id="abc", agent_name="claude", task_excerpt="x")
         self.assertEqual(row.status, "queued")
@@ -477,7 +477,7 @@ class TestTaskRunner(unittest.TestCase):
     """
 
     def test_runner_stores_arguments(self) -> None:
-        from rikugan.ui.a2a_widget import _A2ATaskRunner
+        from lucnhan.ui.a2a_widget import _A2ATaskRunner
 
         cancel = threading.Event()
         fake_dispatcher = MagicMock()
@@ -489,8 +489,8 @@ class TestTaskRunner(unittest.TestCase):
         self.assertEqual(runner.task_id, "tid-1")
 
     def test_runner_run_emits_started_output_completed(self) -> None:
-        from rikugan.agent.turn import TurnEvent, TurnEventType
-        from rikugan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskRunner
+        from lucnhan.agent.turn import TurnEvent, TurnEventType
+        from lucnhan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskRunner
 
         cancel = threading.Event()
 
@@ -525,7 +525,7 @@ class TestTaskRunner(unittest.TestCase):
         self.assertEqual(events[2].text, "final result")
 
     def test_runner_run_emits_failed_on_exception(self) -> None:
-        from rikugan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskRunner
+        from lucnhan.ui.a2a_widget import _A2ARunnerEventType, _A2ATaskRunner
 
         cancel = threading.Event()
 

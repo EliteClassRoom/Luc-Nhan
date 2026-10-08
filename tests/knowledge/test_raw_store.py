@@ -1,4 +1,4 @@
-"""Tests for rikugan.memory.raw_store.
+"""Tests for lucnhan.memory.raw_store.
 
 Exercises append/upsert/list/malformed-line tolerance and the file
 plumbing used by the rest of the memory package.
@@ -13,9 +13,9 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from rikugan.memory.paths import KnowledgePaths, knowledge_paths
-from rikugan.memory.raw_store import KnowledgeRawStore
-from rikugan.memory.schema import (
+from lucnhan.memory.paths import KnowledgePaths, knowledge_paths
+from lucnhan.memory.raw_store import KnowledgeRawStore
+from lucnhan.memory.schema import (
     KnowledgeEntity,
     KnowledgeMemory,
     KnowledgeObservation,
@@ -164,7 +164,7 @@ class TestAtomicWrite(unittest.TestCase):
             store = KnowledgeRawStore(paths)
             for i in range(5):
                 store.upsert_memory(make_mem(mem_id=f"mem:{i}"))
-            leftovers = [n for n in os.listdir(paths.kb_dir) if n.startswith(".rikugan-tmp-")]
+            leftovers = [n for n in os.listdir(paths.kb_dir) if n.startswith(".lucnhan-tmp-")]
             self.assertEqual(leftovers, [])
 
 

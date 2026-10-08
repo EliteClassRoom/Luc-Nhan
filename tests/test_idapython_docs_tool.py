@@ -1,4 +1,4 @@
-"""Unit tests for rikugan/tools/idapython_docs.py"""
+"""Unit tests for lucnhan/tools/idapython_docs.py"""
 
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ class TestLookupIdapythonDoc(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _patch_docs_dir(self):
-        return patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir))
+        return patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir))
 
     def test_reads_existing_module_returns_content(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
         with self._patch_docs_dir():
             result = lookup_idapython_doc("ida_typeinf")
@@ -39,7 +39,7 @@ class TestLookupIdapythonDoc(unittest.TestCase):
     def test_name_filter_returns_section_around_match(self):
         """Point-lookup with `name` should return ~20 lines of context around each match
         — much cheaper than reading the full 200 KB module just to confirm one function exists."""
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
         with self._patch_docs_dir():
             result = lookup_idapython_doc("ida_typeinf", name="apply_cdecl")
@@ -60,7 +60,7 @@ class TestLookupIdapythonDoc(unittest.TestCase):
     def test_name_filter_not_found_returns_message(self):
         """When the name doesn't appear anywhere, return a helpful 'not found' message
         instead of an empty string or a confusing empty bundle."""
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
         with self._patch_docs_dir():
             result = lookup_idapython_doc("ida_typeinf", name="nonexistent_function_xyz")
@@ -69,7 +69,7 @@ class TestLookupIdapythonDoc(unittest.TestCase):
 
     def test_name_filter_empty_string_treated_as_full_module(self):
         """Passing name='' (default) should return the full module, not filtered content."""
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
         with self._patch_docs_dir():
             # Default is no name, should match the full module behavior
@@ -79,28 +79,28 @@ class TestLookupIdapythonDoc(unittest.TestCase):
         self.assertNotIn("name=", result)
 
     def test_path_traversal_rejected_dotdot(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
         with self._patch_docs_dir():
             result = lookup_idapython_doc("../../../etc/passwd")
         self.assertIn("invalid module name", result)
 
     def test_path_traversal_rejected_slash(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
         with self._patch_docs_dir():
             result = lookup_idapython_doc("foo/bar")
         self.assertIn("invalid module name", result)
 
     def test_path_traversal_rejected_uppercase(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
         with self._patch_docs_dir():
             result = lookup_idapython_doc("IDA_TYPEINF")
         self.assertIn("invalid module name", result)
 
     def test_path_traversal_rejected_dot(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
         with self._patch_docs_dir():
             result = lookup_idapython_doc(".")
@@ -108,7 +108,7 @@ class TestLookupIdapythonDoc(unittest.TestCase):
 
     def test_tool_does_not_read_outside_docs_dir(self):
         # Create a file outside the patched DOCS_DIR that the tool must NOT access
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
         outside = Path(self.tmpdir).parent / "sensitive_outside.txt"
         outside.write_text("SENSITIVE")
@@ -137,63 +137,63 @@ class TestPaginationAndEdgeCases(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_pagination_first_chunk(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=0, limit=200)
         self.assertIn("showing offset 0-200", result)
 
     def test_pagination_middle_chunk(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=4000, limit=100)
         self.assertIn("showing offset 4000-4100", result)
 
     def test_pagination_past_end_returns_marker(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=20000, limit=100)
         self.assertIn("reached end of content", result)
 
     def test_empty_file_returns_empty_marker(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("empty")
         self.assertIn("[Offline IDAPython docs: empty", result)
         self.assertIn("(empty response)", result)
 
     def test_limit_clamped_to_max(self):
-        from rikugan.tools.idapython_docs import MAX_LIMIT, lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import MAX_LIMIT, lookup_idapython_doc
 
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             # Request way over the max — must clamp to MAX_LIMIT
             result = lookup_idapython_doc("big", offset=0, limit=99999)
         # Header shows total file size ~10K so we see clamped chunk end
         self.assertIn(f"showing offset 0-{MAX_LIMIT}", result)
 
     def test_limit_below_one_clamped_to_one(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=0, limit=0)
         # limit=0 -> clamp to 1 -> shows offset 0-1
         self.assertIn("showing offset 0-1", result)
 
     def test_offset_negative_clamped_to_zero(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big", offset=-5, limit=100)
         self.assertIn("showing offset 0-100", result)
 
     def test_manifest_missing_does_not_break_tool(self):
         # No MANIFEST.json — tool should still work (manifest is informational)
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("big")
         # The "big.rst.txt" fixture contains only 'X' chars, so the result
         # must contain the tool's standard formatted-output header to prove
@@ -202,9 +202,9 @@ class TestPaginationAndEdgeCases(unittest.TestCase):
         self.assertIn("total chars:", result)
 
     def test_zero_byte_file_does_not_crash(self):
-        from rikugan.tools.idapython_docs import lookup_idapython_doc
+        from lucnhan.tools.idapython_docs import lookup_idapython_doc
 
-        with patch("rikugan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
+        with patch("lucnhan.tools.idapython_docs.DOCS_DIR", Path(self.tmpdir)):
             result = lookup_idapython_doc("empty")
         # Must not raise; must include "(empty response)" or similar
         self.assertIsInstance(result, str)

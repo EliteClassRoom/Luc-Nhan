@@ -13,15 +13,15 @@ install_ida_mocks()
 
 # Defensive: drop any ``_StubModule`` entries a sibling test file
 # (e.g. ``tests/tools/test_panel_core.py``) left in ``sys.modules``
-# before we import the real rikugan modules.  Without this purge
+# before we import the real lucnhan modules.  Without this purge
 # the provider tests would see a ``MagicMock`` registry and fail
 # with ``AttributeError: __name__`` on ``assertRaises``.
-from tests import purge_rikugan_stubs
+from tests import purge_lucnhan_stubs
 
-purge_rikugan_stubs()
+purge_lucnhan_stubs()
 
-from rikugan.core.errors import ProviderError
-from rikugan.core.types import (
+from lucnhan.core.errors import ProviderError
+from lucnhan.core.types import (
     LLMRequestContext,
     Message,
     ProviderCapabilities,
@@ -31,7 +31,7 @@ from rikugan.core.types import (
     ToolCall,
     ToolResult,
 )
-from rikugan.providers.registry import ProviderRegistry
+from lucnhan.providers.registry import ProviderRegistry
 
 
 class TestMessageTypes(unittest.TestCase):
@@ -166,8 +166,8 @@ class TestProviderDefaultSync(unittest.TestCase):
     """Ensure PROVIDER_DEFAULT_MODELS stays in sync with provider constructors."""
 
     def test_anthropic_default_matches_constructor(self):
-        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.core.config import PROVIDER_DEFAULT_MODELS
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         p = AnthropicProvider.__new__(AnthropicProvider)
         p.model = ""  # __init__ not called
@@ -178,8 +178,8 @@ class TestProviderDefaultSync(unittest.TestCase):
             self.assertEqual(PROVIDER_DEFAULT_MODELS["anthropic"], constructor_model)
 
     def test_openai_default_matches_constructor(self):
-        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
-        from rikugan.providers.openai_provider import OpenAIProvider
+        from lucnhan.core.config import PROVIDER_DEFAULT_MODELS
+        from lucnhan.providers.openai_provider import OpenAIProvider
 
         OpenAIProvider.__new__(OpenAIProvider)
         default = OpenAIProvider.__init__.__defaults__
@@ -188,8 +188,8 @@ class TestProviderDefaultSync(unittest.TestCase):
             self.assertEqual(PROVIDER_DEFAULT_MODELS["openai"], constructor_model)
 
     def test_gemini_default_matches_constructor(self):
-        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
-        from rikugan.providers.gemini_provider import GeminiProvider
+        from lucnhan.core.config import PROVIDER_DEFAULT_MODELS
+        from lucnhan.providers.gemini_provider import GeminiProvider
 
         GeminiProvider.__new__(GeminiProvider)
         default = GeminiProvider.__init__.__defaults__
@@ -198,8 +198,8 @@ class TestProviderDefaultSync(unittest.TestCase):
             self.assertEqual(PROVIDER_DEFAULT_MODELS["gemini"], constructor_model)
 
     def test_minimax_default_matches_constructor(self):
-        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
-        from rikugan.providers.minimax_provider import MiniMaxProvider
+        from lucnhan.core.config import PROVIDER_DEFAULT_MODELS
+        from lucnhan.providers.minimax_provider import MiniMaxProvider
 
         MiniMaxProvider.__new__(MiniMaxProvider)
         default = MiniMaxProvider.__init__.__defaults__
@@ -212,7 +212,7 @@ class TestAuthenticationGuidance(unittest.TestCase):
     """Verify AuthenticationError includes provider-specific guidance."""
 
     def test_anthropic_guidance(self):
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         err = AuthenticationError(provider="anthropic")
         msg = str(err)
@@ -220,14 +220,14 @@ class TestAuthenticationGuidance(unittest.TestCase):
         self.assertIn("claude setup-token", msg)
 
     def test_openai_guidance(self):
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         err = AuthenticationError(provider="openai")
         msg = str(err)
         self.assertIn("OPENAI_API_KEY", msg)
 
     def test_gemini_guidance(self):
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         err = AuthenticationError(provider="gemini")
         msg = str(err)
@@ -235,14 +235,14 @@ class TestAuthenticationGuidance(unittest.TestCase):
         self.assertIn("GEMINI_API_KEY", msg)
 
     def test_minimax_guidance(self):
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         err = AuthenticationError(provider="minimax")
         msg = str(err)
         self.assertIn("MINIMAX_API_KEY", msg)
 
     def test_ollama_guidance(self):
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         err = AuthenticationError(provider="ollama")
         msg = str(err)
@@ -250,7 +250,7 @@ class TestAuthenticationGuidance(unittest.TestCase):
         self.assertIn("OLLAMA_BASE_URL", msg)
 
     def test_openai_compat_guidance(self):
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         err = AuthenticationError(provider="openai_compat")
         msg = str(err)
@@ -258,7 +258,7 @@ class TestAuthenticationGuidance(unittest.TestCase):
         self.assertIn("base URL", msg)
 
     def test_unknown_provider_generic_guidance(self):
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         err = AuthenticationError(provider="unknown_provider_xyz")
         msg = str(err)
@@ -266,7 +266,7 @@ class TestAuthenticationGuidance(unittest.TestCase):
         self.assertIn("Luc Nhan settings", msg)
 
     def test_explicit_guidance_overrides_provider(self):
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         err = AuthenticationError(
             provider="openai",
@@ -276,7 +276,7 @@ class TestAuthenticationGuidance(unittest.TestCase):
         self.assertIn("Custom instructions here.", msg)
 
     def test_no_provider_default_message(self):
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         err = AuthenticationError()
         msg = str(err)

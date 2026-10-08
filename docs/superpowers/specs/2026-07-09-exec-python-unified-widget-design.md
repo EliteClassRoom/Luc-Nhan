@@ -66,7 +66,7 @@ Hậu quả quan sát được (qua screenshot 2026-07-09):
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  AgentLoop (rikugan/agent/loop.py)                                 │
+│  AgentLoop (lucnhan/agent/loop.py)                                 │
 │                                                                     │
 │  _review_complex_idapython_script()                                 │
 │    ├── yield DOCS_GATE_STATUS(running, reasons)   ← thay TEXT_DELTA │
@@ -81,7 +81,7 @@ Hậu quả quan sát được (qua screenshot 2026-07-09):
                            │ TurnEvent stream (queue.Queue → QTimer)
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  ChatView._handle_tool_event (rikugan/ui/chat_view.py)             │
+│  ChatView._handle_tool_event (lucnhan/ui/chat_view.py)             │
 │                                                                     │
 │  TOOL_CALL_START:                                                   │
 │    if tool_name == EXECUTE_PYTHON_TOOL_NAME:                        │
@@ -95,7 +95,7 @@ Hậu quả quan sát được (qua screenshot 2026-07-09):
 └──────────────────────────┬──────────────────────────────────────────┘
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  ExecutePythonWidget (rikugan/ui/tool_widgets.py) — NEW            │
+│  ExecutePythonWidget (lucnhan/ui/tool_widgets.py) — NEW            │
 │                                                                     │
 │  States: IDLE | PENDING_APPROVAL | RUNNING | DONE                 │
 │                                                                     │
@@ -116,7 +116,7 @@ Hậu quả quan sát được (qua screenshot 2026-07-09):
 
 ## Components
 
-### 1. `DOCS_GATE_STATUS` event (`rikugan/agent/turn.py`)
+### 1. `DOCS_GATE_STATUS` event (`lucnhan/agent/turn.py`)
 
 Thêm vào `TurnEventType`:
 ```python
@@ -131,7 +131,7 @@ Factory method `TurnEvent.docs_gate_status(tool_call_id, state, reasons=(), summ
 
 `metadata` dict: `{"docs_gate_state": state, "docs_gate_reasons": list(reasons), "docs_gate_summary": summary}`.
 
-### 2. AgentLoop changes (`rikugan/agent/loop.py`)
+### 2. AgentLoop changes (`lucnhan/agent/loop.py`)
 
 **`_review_complex_idapython_script()`**:
 - Thay 2 `yield TurnEvent.text_delta("[IDA docs review] ...")` (dòng 1165-1168
@@ -151,7 +151,7 @@ không đổi.
 - Trả `""` (empty) cho `EXECUTE_PYTHON_TOOL_NAME` → `ToolApprovalWidget` cũ
   sẽ không còn dùng cho tool này (widget mới接管), nhưng giữ logic an toàn.
 
-### 3. `ExecutePythonWidget` (`rikugan/ui/tool_widgets.py`)
+### 3. `ExecutePythonWidget` (`lucnhan/ui/tool_widgets.py`)
 
 ```python
 class ExecutePythonWidget(QFrame):
@@ -202,7 +202,7 @@ height + scroll nếu dài (fix QLabel full-height issue). Dùng palette tool
 colors hiện có: success (✓ xanh lá) khi `is_error=False`, error (✗ đỏ) khi
 `is_error=True` — match `ToolCallWidget.set_result()` hiện tại.
 
-### 4. ChatView routing (`rikugan/ui/chat_view.py`)
+### 4. ChatView routing (`lucnhan/ui/chat_view.py`)
 
 **`_handle_tool_event()`**:
 - `TOOL_CALL_START`: nếu `tool_name == EXECUTE_PYTHON_TOOL_NAME`, tạo
@@ -392,9 +392,9 @@ quan trọng: crash của subagent không được biến thành block cứng.
 
 | File | Change |
 |------|--------|
-| `rikugan/agent/turn.py` | + `DOCS_GATE_STATUS` enum + `docs_gate_status()` factory |
-| `rikugan/agent/loop.py` | `_review_complex_idapython_script`: TEXT_DELTA → DOCS_GATE_STATUS. `_describe_tool_call`: empty cho execute_python |
-| `rikugan/ui/tool_widgets.py` | + `ExecutePythonWidget` class |
-| `rikugan/ui/chat_view.py` | routing: ExecutePythonWidget cho execute_python (live + restore), DOCS_GATE_STATUS handler, route TOOL_APPROVAL_REQUEST vào widget hiện có, type hint `_tool_widgets` |
+| `lucnhan/agent/turn.py` | + `DOCS_GATE_STATUS` enum + `docs_gate_status()` factory |
+| `lucnhan/agent/loop.py` | `_review_complex_idapython_script`: TEXT_DELTA → DOCS_GATE_STATUS. `_describe_tool_call`: empty cho execute_python |
+| `lucnhan/ui/tool_widgets.py` | + `ExecutePythonWidget` class |
+| `lucnhan/ui/chat_view.py` | routing: ExecutePythonWidget cho execute_python (live + restore), DOCS_GATE_STATUS handler, route TOOL_APPROVAL_REQUEST vào widget hiện có, type hint `_tool_widgets` |
 | `tests/ui/test_execute_python_widget.py` | NEW — unit tests |
 | `tests/agent/test_idapython_docs_gate.py` | UPDATE — assert DOCS_GATE_STATUS events |

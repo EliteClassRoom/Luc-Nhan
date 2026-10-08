@@ -32,11 +32,11 @@ install_ida_mocks()
 importlib.invalidate_caches()
 
 # Re-import after the mock install so module-level IDA refs land on the mocks.
-if "rikugan.ida.tools.emulation" in sys.modules:
-    del sys.modules["rikugan.ida.tools.emulation"]
-emu = importlib.import_module("rikugan.ida.tools.emulation")
+if "lucnhan.ida.tools.emulation" in sys.modules:
+    del sys.modules["lucnhan.ida.tools.emulation"]
+emu = importlib.import_module("lucnhan.ida.tools.emulation")
 
-from rikugan.core.errors import ToolError
+from lucnhan.core.errors import ToolError
 from tests.subprocess_test_worker import run_in_subprocess
 
 HAVE_UNICORN = importlib.util.find_spec("unicorn") is not None

@@ -41,23 +41,23 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import sys as _sys
 
 _STUB_TARGETS = (
-    "rikugan.core.types",
-    "rikugan.agent.turn",
-    "rikugan.ui.chat_view",
-    "rikugan.ui.styles",
-    "rikugan.ui.theme",
-    "rikugan.ui.theme.manager",
-    "rikugan.ui.theme.tokens",
-    "rikugan.ui.theme.palette_dark",
-    "rikugan.ui.theme.palette_light",
-    "rikugan.ui.theme.palette_ida",
-    "rikugan.ui.markdown",
-    "rikugan.ui.message_widgets",
-    "rikugan.ui.plan_view",
-    "rikugan.ui.tool_widgets",
-    "rikugan.ui.qt_compat",
-    "rikugan.ui.input_area",
-    "rikugan.ui.context_bar",
+    "lucnhan.core.types",
+    "lucnhan.agent.turn",
+    "lucnhan.ui.chat_view",
+    "lucnhan.ui.styles",
+    "lucnhan.ui.theme",
+    "lucnhan.ui.theme.manager",
+    "lucnhan.ui.theme.tokens",
+    "lucnhan.ui.theme.palette_dark",
+    "lucnhan.ui.theme.palette_light",
+    "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.markdown",
+    "lucnhan.ui.message_widgets",
+    "lucnhan.ui.plan_view",
+    "lucnhan.ui.tool_widgets",
+    "lucnhan.ui.qt_compat",
+    "lucnhan.ui.input_area",
+    "lucnhan.ui.context_bar",
 )
 for _name in list(_sys.modules):
     if _name in _STUB_TARGETS:
@@ -79,13 +79,13 @@ try:
 except ImportError:
     pass
 
-from rikugan.core.types import Message, Role
-from rikugan.ui.chat_view import (
+from lucnhan.core.types import Message, Role
+from lucnhan.ui.chat_view import (
     _RESTORE_DEFAULT_MAX_RENDERED,
     ChatView,
     MessagePlaceholder,
 )
-from rikugan.ui.message_widgets import (
+from lucnhan.ui.message_widgets import (
     AssistantMessageWidget,
     UserMessageWidget,
 )
@@ -95,23 +95,23 @@ from tests.qt_real import live_class, requires_real_qt
 def _user_widget_cls() -> type:
     """Live ``UserMessageWidget`` class.
 
-    Resolved per call: another test file may purge ``rikugan.ui.*`` from
+    Resolved per call: another test file may purge ``lucnhan.ui.*`` from
     ``sys.modules`` at import time, which re-imports the module and
     yields a class object that is NOT the one the live widget tree
     used. ``findChildren`` matches by exact type, so a stale reference
     reports zero widgets on a perfectly painted chat.
     """
-    return live_class("rikugan.ui.message_widgets.UserMessageWidget")
+    return live_class("lucnhan.ui.message_widgets.UserMessageWidget")
 
 
 def _assistant_widget_cls() -> type:
     """Live ``AssistantMessageWidget`` class — see :func:`_user_widget_cls`."""
-    return live_class("rikugan.ui.message_widgets.AssistantMessageWidget")
+    return live_class("lucnhan.ui.message_widgets.AssistantMessageWidget")
 
 
 def _chat_view_cls() -> type:
     """Live ``ChatView`` class — see :func:`_user_widget_cls`."""
-    return live_class("rikugan.ui.chat_view.ChatView")
+    return live_class("lucnhan.ui.chat_view.ChatView")
 
 
 def _user_message(content: str, msg_id: str = "") -> Message:

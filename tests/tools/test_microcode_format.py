@@ -11,8 +11,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.errors import ToolError
-from rikugan.ida.tools.microcode_format import (
+from lucnhan.core.errors import ToolError
+from lucnhan.ida.tools.microcode_format import (
     _MATURITY_LEVELS,
     _MATURITY_NAMES,
     maturity_label,
@@ -75,7 +75,7 @@ class TestMaturityLabel(unittest.TestCase):
 
 class TestRequireHexrays(unittest.TestCase):
     def test_raises_when_no_hexrays(self):
-        import rikugan.ida.tools.microcode_format as mod
+        import lucnhan.ida.tools.microcode_format as mod
         orig = mod._HAS_HEXRAYS
         try:
             mod._HAS_HEXRAYS = False

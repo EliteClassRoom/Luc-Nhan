@@ -22,12 +22,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 install_ida_mocks()
 importlib.invalidate_caches()
 
-for _stale in ("rikugan.ida.tools.emulation_memory",):
+for _stale in ("lucnhan.ida.tools.emulation_memory",):
     sys.modules.pop(_stale, None)
-emu_mem = importlib.import_module("rikugan.ida.tools.emulation_memory")
+emu_mem = importlib.import_module("lucnhan.ida.tools.emulation_memory")
 
-from rikugan.core.errors import ToolError
-from rikugan.ida.tools.emulation_types import (
+from lucnhan.core.errors import ToolError
+from lucnhan.ida.tools.emulation_types import (
     ArchMode,
     CaptureRequest,
     MemoryBuffer,

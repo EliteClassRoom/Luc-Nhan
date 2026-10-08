@@ -29,11 +29,11 @@ install_ida_mocks()
 
 importlib.invalidate_caches()
 
-if "rikugan.ida.tools.emulation" in sys.modules:
-    del sys.modules["rikugan.ida.tools.emulation"]
-emu = importlib.import_module("rikugan.ida.tools.emulation")
+if "lucnhan.ida.tools.emulation" in sys.modules:
+    del sys.modules["lucnhan.ida.tools.emulation"]
+emu = importlib.import_module("lucnhan.ida.tools.emulation")
 
-from rikugan.core.errors import ToolError
+from lucnhan.core.errors import ToolError
 from tests.subprocess_test_worker import run_in_subprocess
 
 HAVE_UNICORN = importlib.util.find_spec("unicorn") is not None
@@ -1600,7 +1600,7 @@ class TestRegistryRejection(unittest.TestCase):
         _set_bits(64)
         sys.modules["ida_ida"].inf_get_procname.return_value = "metapc"
         _install_segments([_code_page(bytes.fromhex("83c001"), perm=RWX)])
-        from rikugan.tools.registry import ToolRegistry
+        from lucnhan.tools.registry import ToolRegistry
 
         registry = ToolRegistry()
         registry.register(emu.emulate_code._tool_definition)

@@ -1,10 +1,10 @@
 """Shared PySide6 stub injection for UI tests.
 
-Must be called BEFORE importing any rikugan.ui module. Example::
+Must be called BEFORE importing any lucnhan.ui module. Example::
 
     from tests.qt_stubs import ensure_pyside6_stubs
     ensure_pyside6_stubs()
-    from rikugan.ui.some_module import ...
+    from lucnhan.ui.some_module import ...
 """
 
 from __future__ import annotations
@@ -644,7 +644,7 @@ def _make_qtimer_stub() -> type:
 
         @staticmethod
         def singleShot(ms: int, slot) -> None:
-            """Static class-method used by ``rikugan.ui.theme.watcher``.
+            """Static class-method used by ``lucnhan.ui.theme.watcher``.
 
             Real PySide6 schedules a one-shot timer. The stub is a no-op
             so tests can patch this attribute to verify call counts
@@ -659,7 +659,7 @@ def _make_qcoreapplication_stub() -> type:
     """Build a minimal QCoreApplication stub for tests.
 
     The full PySide6 classmethod contract (instance(), quit(),
-    sendPostedEvents(), etc.) is not needed by Rikugan tests. Only
+    sendPostedEvents(), etc.) is not needed by Luc Nhan tests. Only
     ``processEvents()`` is exercised (and only as a no-op flush). The
     QTimer stub already fires synchronously on start(), so
     ``processEvents`` does not need to dispatch anything for the
@@ -678,7 +678,7 @@ def _make_qthread_stub() -> type:
     """Build a minimal QThread stub for tests.
 
     The real QThread runs ``run()`` in a background thread. For
-    Rikugan tests we only need to drive ``run()`` synchronously so
+    Luc Nhan tests we only need to drive ``run()`` synchronously so
     signal emissions land in the test's own list. ``start()`` just
     calls ``run()`` directly; ``quit()`` / ``wait()`` are no-ops.
     Class-level ``Signal`` attributes work because the descriptor
@@ -837,7 +837,7 @@ _GUI_NAMES = [
 ]
 
 
-_STUB_MARKER = "__rikugan_qt_stub__"
+_STUB_MARKER = "__lucnhan_qt_stub__"
 
 
 def _stub_mod(name: str, **attrs) -> types.ModuleType:
@@ -875,7 +875,7 @@ def ensure_pyside6_stubs() -> None:
     fast-fails natively (0xC0000409/STATUS_STACK_BUFFER_OVERRUN) instead of
     raising, so it takes the whole pytest process down with it.  First
     importer wins: modules that need the fakes must call this before any
-    ``rikugan.ui`` import (see the module docstring).
+    ``lucnhan.ui`` import (see the module docstring).
     """
     global _installed
     if _installed:
@@ -889,7 +889,7 @@ def ensure_pyside6_stubs() -> None:
     _sentinel = type("_Qt", (), {})()
     _sentinel.ItemDataRole = type("_ItemDataRole", (), {"UserRole": 32})()
     _sentinel.TextFormat = type("_TextFormat", (), {"PlainText": 0, "RichText": 1, "AutoText": 2})()
-    # Production code (rikugan/ui/message_widgets.py, tool_widgets.py) uses
+    # Production code (lucnhan/ui/message_widgets.py, tool_widgets.py) uses
     # the ``Qt.TextInteractionFlag(A.value | B.value)`` pattern to bypass
     # IDA 9.4's PyQt5-shim ``__or__`` interceptor. That pattern needs the
     # enum-like ``.value`` attribute and a callable wrapper, so the stub

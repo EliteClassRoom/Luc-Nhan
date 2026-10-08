@@ -8,13 +8,13 @@ from unittest.mock import patch
 
 import pytest
 
-from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.case_schema import (
+from lucnhan.memory.case_repository import CaseRepository
+from lucnhan.memory.case_schema import (
     CaseRelationType,
 )
-from rikugan.memory.registry import MemoryRegistry
-from rikugan.memory.sqlite_backend import SchemaMigrationRequired
-from rikugan.memory.workspace import MemoryLocator
+from lucnhan.memory.registry import MemoryRegistry
+from lucnhan.memory.sqlite_backend import SchemaMigrationRequired
+from lucnhan.memory.workspace import MemoryLocator
 
 from .test_workspace_migration_v2 import _create_v1_database
 
@@ -133,8 +133,8 @@ class TestCaseRelations:
 
     def test_put_relation_routes_through_backup_aware_open(self, tmp_path: Path) -> None:
         """put_case_relation on an existing case DB must use open_workspace_for_write."""
-        from rikugan.memory import workspace_open
-        from rikugan.memory.workspace_store import WorkspaceStore
+        from lucnhan.memory import workspace_open
+        from lucnhan.memory.workspace_store import WorkspaceStore
 
         cases, _, mid_a, mid_b = _setup(tmp_path)
         case = cases.list_cases()[0]

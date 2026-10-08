@@ -1,4 +1,4 @@
-"""Tests for rikugan.ui.mutation_log_view — pure list logic."""
+"""Tests for lucnhan.ui.mutation_log_view — pure list logic."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _make_record(reversible: bool = True, description: str = "desc", tool_name: 
 
 def _make_panel():
     """Build a MutationLogPanel with all Qt calls mocked out."""
-    from rikugan.ui.mutation_log_view import MutationLogPanel
+    from lucnhan.ui.mutation_log_view import MutationLogPanel
     # Use ``MutationLogPanel.__new__`` rather than ``object.__new__``
     # — ``MutationLogPanel`` inherits from ``QFrame`` (a C-level Qt
     # class) which rejects ``object.__new__`` with ``TypeError``.

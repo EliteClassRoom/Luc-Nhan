@@ -4,7 +4,7 @@ Covers:
 
 * ``classify_idapython_script`` — complexity heuristic (still used at
   static-validation time even though the pre-execute gate is gone).
-* ``RikuganConfig`` round-trip of ``docs_review_mode`` + legacy
+* ``LucNhanConfig`` round-trip of ``docs_review_mode`` + legacy
   ``require_ida_docs_for_complex_scripts`` migration.
 * ``AgentLoop._review_failed_script`` — post-error reviewer: only
   spawned when execute_python raises an API-shaped exception AND
@@ -28,12 +28,12 @@ from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import MagicMock
 
-from rikugan.core.config import RikuganConfig
-from rikugan.tools.idapython_complexity import (
+from lucnhan.core.config import LucNhanConfig
+from lucnhan.tools.idapython_complexity import (
     COMPLEX_LINE_THRESHOLD,
     classify_idapython_script,
 )
-from rikugan.tools.validate_idapython import validate_idapython
+from lucnhan.tools.validate_idapython import validate_idapython
 
 # ---------------------------------------------------------------------------
 # Classifier tests
@@ -127,24 +127,24 @@ class TestClassifier(unittest.TestCase):
 
 class TestConfigField(unittest.TestCase):
     def test_default_is_on_error(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         self.assertEqual(cfg.docs_review_mode, "on_error")
 
     def test_round_trip_through_dict(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg.docs_review_mode = "off"
         cfg.save = MagicMock()  # avoid disk side effects
         cfg.load = MagicMock()
         from dataclasses import asdict
 
         d = asdict(cfg)
-        cfg2 = RikuganConfig()
+        cfg2 = LucNhanConfig()
         cfg2.docs_review_mode = d["docs_review_mode"]
         self.assertEqual(cfg2.docs_review_mode, "off")
 
     def test_legacy_false_migrates_to_off(self):
         """Legacy config require_ida_docs_for_complex_scripts=False → off."""
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         # Simulate load() with legacy field present
         legacy_data = {"require_ida_docs_for_complex_scripts": False}
         cfg._apply_loaded_config(legacy_data)
@@ -152,24 +152,24 @@ class TestConfigField(unittest.TestCase):
 
     def test_legacy_true_migrates_to_on_error(self):
         """Legacy config require_ida_docs_for_complex_scripts=True → on_error."""
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         legacy_data = {"require_ida_docs_for_complex_scripts": True}
         cfg._apply_loaded_config(legacy_data)
         self.assertEqual(cfg.docs_review_mode, "on_error")
 
     def test_legacy_missing_defaults_to_on_error(self):
         """No legacy field → on_error default."""
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._apply_loaded_config({})
         self.assertEqual(cfg.docs_review_mode, "on_error")
 
     def test_explicit_off_round_trips(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._apply_loaded_config({"docs_review_mode": "off"})
         self.assertEqual(cfg.docs_review_mode, "off")
 
     def test_invalid_value_defaults_to_on_error(self):
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         cfg._apply_loaded_config({"docs_review_mode": "bogus"})
         self.assertEqual(cfg.docs_review_mode, "on_error")
 
@@ -242,10 +242,10 @@ def _make_loop(*, gate_enabled: bool, runner: _FakeRunner | None = None):
     *gate_enabled* maps to ``config.docs_review_mode``: True → ``"on_error"``,
     False → ``"off"`` (post-error semantics — no pre-execute gate anymore).
     """
-    from rikugan.agent.loop import AgentLoop
-    from rikugan.state.session import SessionState
+    from lucnhan.agent.loop import AgentLoop
+    from lucnhan.state.session import SessionState
 
-    cfg = RikuganConfig()
+    cfg = LucNhanConfig()
     cfg.docs_review_mode = "on_error" if gate_enabled else "off"
 
     loop = AgentLoop(
@@ -295,12 +295,12 @@ class TestPostErrorReviewGate(unittest.TestCase):
         )
 
     def test_api_shaped_error_triggers_reviewer(self):
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
         runner = _FakeRunner(final_text="VERDICT: REWRITE_REQUIRED\nAPI_NOTES:\n- x")
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -326,12 +326,12 @@ class TestPostErrorReviewGate(unittest.TestCase):
         ``_review_failed_script``. This test reproduces the guard's
         decision logic and asserts the reviewer spy is never called.
         """
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
         runner = _FakeRunner(final_text="VERDICT: APPROVED")
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original_runner = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -379,13 +379,13 @@ class TestPostErrorReviewGate(unittest.TestCase):
         (the flag is set by the first reviewer call). Asserts the reviewer
         spy is never invoked on a second API-shaped error in the same task.
         """
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
         loop._docs_reviewer_invoked = True  # already invoked this task
         runner = _FakeRunner(final_text="VERDICT: APPROVED")
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original_runner = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -425,12 +425,12 @@ class TestPostErrorReviewGate(unittest.TestCase):
 
     def test_reviewer_crash_returns_traceback(self):
         """Reviewer crash → emit failed event, return traceback (không augment)."""
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
         runner = _FakeRunner(raise_on_run=RuntimeError("provider down"))
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -467,13 +467,13 @@ class TestPostErrorReviewGate(unittest.TestCase):
         reviewer branch is never entered even for a fully API-shaped
         traceback.
         """
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=False)
         self.assertEqual(loop.config.docs_review_mode, "off")
         runner = _FakeRunner(final_text="VERDICT: APPROVED")
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original_runner = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -517,13 +517,13 @@ class TestPostErrorReviewGate(unittest.TestCase):
 
     def test_reviewed_state_emitted(self):
         """Post-error reviewer emit DOCS_GATE_STATUS running + reviewed."""
-        from rikugan.agent.turn import TurnEventType
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.traceback_classifier import classify_traceback
+        from lucnhan.agent.turn import TurnEventType
+        from lucnhan.core.types import ToolCall
+        from lucnhan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
         runner = _FakeRunner(final_text="VERDICT: APPROVED\nLooks good.")
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -556,8 +556,8 @@ class TestDescribeToolCallExecutePython(unittest.TestCase):
     Other mutating tools keep their human-readable descriptions."""
 
     def test_execute_python_returns_empty_description(self):
-        from rikugan import constants
-        from rikugan.agent.loop import AgentLoop
+        from lucnhan import constants
+        from lucnhan.agent.loop import AgentLoop
 
         desc = AgentLoop._describe_tool_call(
             constants.EXECUTE_PYTHON_TOOL_NAME,
@@ -566,14 +566,14 @@ class TestDescribeToolCallExecutePython(unittest.TestCase):
         self.assertEqual(desc, "")
 
     def test_execute_python_empty_args_returns_empty(self):
-        from rikugan import constants
-        from rikugan.agent.loop import AgentLoop
+        from lucnhan import constants
+        from lucnhan.agent.loop import AgentLoop
 
         desc = AgentLoop._describe_tool_call(constants.EXECUTE_PYTHON_TOOL_NAME, {})
         self.assertEqual(desc, "")
 
     def test_other_mutating_tool_still_described(self):
-        from rikugan.agent.loop import AgentLoop
+        from lucnhan.agent.loop import AgentLoop
 
         desc = AgentLoop._describe_tool_call(
             "rename_function",
@@ -633,7 +633,7 @@ class TestExecuteSingleToolIntegration(unittest.TestCase):
         * drops the ``not self._docs_reviewer_invoked`` check,
         * or breaks the call into ``_review_failed_script`` entirely.
         """
-        from rikugan.core.types import ToolCall
+        from lucnhan.core.types import ToolCall
 
         loop = _make_loop(gate_enabled=True)
         # Bypass the approval prompt — we're testing the except block,
@@ -645,7 +645,7 @@ class TestExecuteSingleToolIntegration(unittest.TestCase):
         self._set_registry_to_raise(loop, api_error)
 
         runner = _FakeRunner(final_text="VERDICT: REWRITE_REQUIRED\nAPI_NOTES:\n- NonExistentThing is hallucinated")
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original_runner = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
@@ -684,7 +684,7 @@ class TestExecuteSingleToolIntegration(unittest.TestCase):
         * The tool result is a one-liner without ``Traceback`` (the
           full traceback stays in the server log only).
         """
-        from rikugan.core.types import ToolCall
+        from lucnhan.core.types import ToolCall
 
         loop = _make_loop(gate_enabled=True)
         loop._always_allow_scripts = True
@@ -703,7 +703,7 @@ class TestExecuteSingleToolIntegration(unittest.TestCase):
                 called["count"] += 1
                 return super().run_task(*args, **kwargs)
 
-        import rikugan.agent.loop as loop_mod
+        import lucnhan.agent.loop as loop_mod
 
         original_runner = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: _CountingRunner()

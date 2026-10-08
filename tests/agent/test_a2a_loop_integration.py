@@ -59,9 +59,9 @@ class TestSlashToDispatcher(unittest.TestCase):
 
     def test_slash_to_dispatcher_streaming_text(self) -> None:
         """``/a2a claude do thing`` parses, dispatches, streams result."""
-        from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
-        from rikugan.agent.modes.a2a import run_a2a_mode
-        from rikugan.agent.turn import TurnEventType
+        from lucnhan.agent.a2a.types import A2AEvent, ExternalAgentConfig
+        from lucnhan.agent.modes.a2a import run_a2a_mode
+        from lucnhan.agent.turn import TurnEventType
 
         loop = _build_minimal_loop()
         agents = [ExternalAgentConfig(
@@ -74,10 +74,10 @@ class TestSlashToDispatcher(unittest.TestCase):
             yield A2AEvent(type="completed", text="all done!", done=True)
 
         with patch(
-            "rikugan.agent.a2a.dispatcher.SubprocessBridge.discover",
+            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
             return_value=agents,
         ), patch(
-            "rikugan.agent.a2a.dispatcher.SubprocessBridge.run_task",
+            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
             new=fake_run,
         ):
             events, _ = _drain(run_a2a_mode(
@@ -97,9 +97,9 @@ class TestSlashToDispatcher(unittest.TestCase):
     def test_slash_to_dispatcher_uses_loop_config(self) -> None:
         """The mode runner reads ``loop.config.a2a_agents`` and
         passes it to the dispatcher."""
-        from rikugan.agent.a2a.types import ExternalAgentConfig
-        from rikugan.agent.modes import a2a as a2a_mode
-        from rikugan.agent.modes.a2a import run_a2a_mode
+        from lucnhan.agent.a2a.types import ExternalAgentConfig
+        from lucnhan.agent.modes import a2a as a2a_mode
+        from lucnhan.agent.modes.a2a import run_a2a_mode
 
         loop = _build_minimal_loop()
         loop.config.a2a_agents = [
@@ -115,7 +115,7 @@ class TestSlashToDispatcher(unittest.TestCase):
             mock_dispatcher_cls.return_value.run_task.return_value = iter([])
 
             with patch(
-                "rikugan.agent.a2a.dispatcher.SubprocessBridge.discover",
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
                 return_value=[],
             ):
                 list(run_a2a_mode(loop, "remote do thing", "", []))
@@ -137,9 +137,9 @@ class TestCancelFlow(unittest.TestCase):
 
     def test_cancelled_event_reaches_subprocess(self) -> None:
         """Setting ``loop._cancelled`` must be observable by the subprocess bridge."""
-        from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
-        from rikugan.agent.modes.a2a import run_a2a_mode
-        from rikugan.core.errors import CancellationError
+        from lucnhan.agent.a2a.types import A2AEvent, ExternalAgentConfig
+        from lucnhan.agent.modes.a2a import run_a2a_mode
+        from lucnhan.core.errors import CancellationError
 
         cancel = threading.Event()
         cancel.set()  # pre-cancelled
@@ -161,10 +161,10 @@ class TestCancelFlow(unittest.TestCase):
             return ""
 
         with patch(
-            "rikugan.agent.a2a.dispatcher.SubprocessBridge.discover",
+            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
             return_value=agents,
         ), patch(
-            "rikugan.agent.a2a.dispatcher.SubprocessBridge.run_task",
+            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
             new=fake_run,
         ):
             with self.assertRaises(CancellationError):
@@ -180,8 +180,8 @@ class TestA2AToolIntegration(unittest.TestCase):
 
     def test_pseudo_tool_dispatches_via_loop(self) -> None:
         """Calling _handle_delegate_external_task_tool streams events."""
-        from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
-        from rikugan.agent.turn import TurnEventType
+        from lucnhan.agent.a2a.types import A2AEvent, ExternalAgentConfig
+        from lucnhan.agent.turn import TurnEventType
 
         # We don't need a real AgentLoop — invoke the
         # pseudo-tool's dispatcher via a minimal harness.
@@ -199,13 +199,13 @@ class TestA2AToolIntegration(unittest.TestCase):
             yield A2AEvent(type="completed", text="42", done=True)
 
         with patch(
-            "rikugan.agent.a2a.dispatcher.SubprocessBridge.discover",
+            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
             return_value=agents,
         ), patch(
-            "rikugan.agent.a2a.dispatcher.SubprocessBridge.run_task",
+            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
             new=fake_run,
         ):
-            from rikugan.agent.a2a import A2ADispatcher
+            from lucnhan.agent.a2a import A2ADispatcher
             dispatcher = A2ADispatcher()
             tc_args = {"agent": "claude", "task": "what is 6*7?"}
             events, result = _drain(dispatcher.run_task(

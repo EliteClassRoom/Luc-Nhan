@@ -14,19 +14,19 @@ It intentionally does not delete the JSONL store, rewrite the ranker, migrate th
 
 ### 2.1 Knowledge panel reads the wrong store
 
-`SessionControllerBase._refresh_knowledge_panel` (in `rikugan/ui/panel_core.py`) calls `make_store(idb_path)` and reads `store.list_memories() / list_entities() / list_relations()`, which all read JSONL files via `KnowledgeRawStore`. The Memory Durability tranche rewired the `save_memory` tool to write SQLite via `BinaryMemoryService.save_fact()`. Facts saved via chat therefore never appear in the Knowledge panel.
+`SessionControllerBase._refresh_knowledge_panel` (in `lucnhan/ui/panel_core.py`) calls `make_store(idb_path)` and reads `store.list_memories() / list_entities() / list_relations()`, which all read JSONL files via `KnowledgeRawStore`. The Memory Durability tranche rewired the `save_memory` tool to write SQLite via `BinaryMemoryService.save_fact()`. Facts saved via chat therefore never appear in the Knowledge panel.
 
 ### 2.2 Retrieved knowledge section reads the wrong store
 
-`AgentLoop._build_retrieved_knowledge_section` (in `rikugan/agent/loop.py`) also calls `make_store` and feeds JSONL data into the existing ranker. The system prompt's "Retrieved Knowledge" block therefore disagrees with what the Knowledge panel shows and with what `save_memory` persists.
+`AgentLoop._build_retrieved_knowledge_section` (in `lucnhan/agent/loop.py`) also calls `make_store` and feeds JSONL data into the existing ranker. The system prompt's "Retrieved Knowledge" block therefore disagrees with what the Knowledge panel shows and with what `save_memory` persists.
 
 ### 2.3 Exploration and research writes still target JSONL only
 
-`ingest_exploration_finding` and `ingest_research_note` (in `rikugan/memory/ingest.py`) continue to write to `KnowledgeRawStore`. Their output is invisible to any future SQLite-only consumer (retrieval adapter, compact projections, cross-binary retrieval) and to the new central-memory prompt source.
+`ingest_exploration_finding` and `ingest_research_note` (in `lucnhan/memory/ingest.py`) continue to write to `KnowledgeRawStore`. Their output is invisible to any future SQLite-only consumer (retrieval adapter, compact projections, cross-binary retrieval) and to the new central-memory prompt source.
 
 ### 2.4 Legacy JSONL users have no upgrade path
 
-A user who has accumulated JSONL knowledge from a pre-durability Rikugan version cannot see that data after upgrading to the SQLite-backed memory subsystem. There is no migration path.
+A user who has accumulated JSONL knowledge from a pre-durability Luc Nhan version cannot see that data after upgrading to the SQLite-backed memory subsystem. There is no migration path.
 
 ## 3. Goals
 
@@ -84,7 +84,7 @@ Older code that only supports schema v2 must continue to reject a v3 workspace r
 ### 6.1 Module-level dual-write flag
 
 ```python
-# rikugan/memory/ingest.py
+# lucnhan/memory/ingest.py
 _LEGACY_JSONL_DUAL_WRITE = True
 ```
 
@@ -137,7 +137,7 @@ The entities table already stores `tags` inside the `metadata` JSON blob (see `r
 
 ### 7.1 Adapter
 
-A new module `rikugan/memory/jsonl_migration.py` provides:
+A new module `lucnhan/memory/jsonl_migration.py` provides:
 
 ```python
 def jsonl_to_bundle_envelopes(
@@ -197,14 +197,14 @@ The adapter does not delete JSONL files. They remain on disk as a fallback if a 
 
 When `memory_service` is `None`, the panel falls back to the existing `make_store` JSONL path. The fallback is the only production code path that continues to call `make_store` after this tranche.
 
-The Knowledge panel subscribes to a new event so it refreshes after a successful `save_memory` tool call. This tranche adds a new `TurnEventType.MEMORY_SAVED = "memory_saved"` constant to the `TurnEventType` enum in `rikugan/agent/turn.py`. `AgentLoop._handle_save_memory_tool` emits a `TurnEvent` of that type when the save outcome is `created` (a new record) or `deduplicated` (a new observation landed). The existing 50 ms debounce in `_on_knowledge_event_refresh` coalesces bursts. The event-type check in `_on_event` (in `panel_core.py`) is extended to include `MEMORY_SAVED` alongside `EXPLORATION_FINDING` and the other existing triggers. Reusing `KNOWLEDGE_RETRIEVED` is rejected because retrieval is a read-side concept and conflating it with a write event would confuse the event stream semantics.
+The Knowledge panel subscribes to a new event so it refreshes after a successful `save_memory` tool call. This tranche adds a new `TurnEventType.MEMORY_SAVED = "memory_saved"` constant to the `TurnEventType` enum in `lucnhan/agent/turn.py`. `AgentLoop._handle_save_memory_tool` emits a `TurnEvent` of that type when the save outcome is `created` (a new record) or `deduplicated` (a new observation landed). The existing 50 ms debounce in `_on_knowledge_event_refresh` coalesces bursts. The event-type check in `_on_event` (in `panel_core.py`) is extended to include `MEMORY_SAVED` alongside `EXPLORATION_FINDING` and the other existing triggers. Reusing `KNOWLEDGE_RETRIEVED` is rejected because retrieval is a read-side concept and conflating it with a write event would confuse the event stream semantics.
 
 ## 9. Retrieved knowledge section
 
 `AgentLoop._build_retrieved_knowledge_section` prefers SQLite via a new adapter:
 
 ```python
-# rikugan/memory/sqlite_retrieval.py
+# lucnhan/memory/sqlite_retrieval.py
 def repository_to_retrieval_pack(
     repo: SQLiteKnowledgeRepository,
     *,

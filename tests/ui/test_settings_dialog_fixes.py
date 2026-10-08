@@ -24,8 +24,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from rikugan.core.types import Message, Role
-from rikugan.providers.openai_provider import OpenAIProvider
+from lucnhan.core.types import Message, Role
+from lucnhan.providers.openai_provider import OpenAIProvider
 from tests.qt_real import requires_real_qt
 
 # ----------------------------------------------------------------------------
@@ -70,7 +70,7 @@ def _ensure_qapplication():
     ``QApplication`` is present, so every widget-touching test helper
     must call this first.
     """
-    from rikugan.ui.qt_compat import QApplication
+    from lucnhan.ui.qt_compat import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -91,12 +91,12 @@ class TestSettingsDialogLazyOK(unittest.TestCase):
     """
 
     def test_accept_with_unopened_lazy_tabs_does_not_raise(self) -> None:
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "ollama"
         config.provider.model = "llama3.1"
 
@@ -138,12 +138,12 @@ class TestSettingsDialogLazyOK(unittest.TestCase):
         edits in the Skills / MCP / Profiles tabs would be silently
         dropped on save.
         """
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         dlg = SettingsDialog(config)
         try:
             # Inject mocks as if the user had already opened the tabs.
@@ -177,8 +177,8 @@ class TestModelFetcherSafety(unittest.TestCase):
     """
 
     def test_fetch_signature_no_longer_accepts_ensure_ready(self) -> None:
-        from rikugan.providers.registry import ProviderRegistry
-        from rikugan.ui.settings_dialog import _ModelFetcher
+        from lucnhan.providers.registry import ProviderRegistry
+        from lucnhan.ui.settings_dialog import _ModelFetcher
 
         fetcher = _ModelFetcher(ProviderRegistry())
         try:
@@ -196,12 +196,12 @@ class TestModelFetcherSafety(unittest.TestCase):
 
     def test_provider_changed_does_not_call_fetcher(self) -> None:
         """Switching the provider combo must NOT trigger a live fetch."""
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "anthropic"
         config.provider.model = "claude-sonnet-4-20250514"
         dlg = SettingsDialog(config)
@@ -213,12 +213,12 @@ class TestModelFetcherSafety(unittest.TestCase):
             dlg.done(0)
 
     def test_key_edited_does_not_call_fetcher(self) -> None:
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "openai"
         config.provider.model = "gpt-4o"
         config.provider.api_key = ""
@@ -233,12 +233,12 @@ class TestModelFetcherSafety(unittest.TestCase):
 
     def test_explicit_refresh_calls_fetcher(self) -> None:
         """The Refresh button is the only live-fetch trigger."""
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "anthropic"
         config.provider.model = "claude-sonnet-4-20250514"
         dlg = SettingsDialog(config)
@@ -263,12 +263,12 @@ class TestModelFetcherSafety(unittest.TestCase):
         empty), clobbering the user's typed text.  The user then
         pressed OK and the empty string got saved.
         """
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "openai_compat"
         config.provider.model = ""
         config.provider.api_key = ""
@@ -313,12 +313,12 @@ class TestModelFetcherSafety(unittest.TestCase):
         """Same regression as ``test_key_edited_preserves_manual_model_for_empty_openai_compat``
         but for a user-added custom OpenAI-compatible connection.
         """
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.add_custom_provider("deepseek")
         config.provider.name = "deepseek"
         config.provider.model = ""
@@ -368,12 +368,12 @@ class TestBuiltinModelPopulation(unittest.TestCase):
     """
 
     def _build_dialog(self, provider_name: str, model: str):
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = provider_name
         config.provider.model = model
         dlg = SettingsDialog(config)
@@ -410,13 +410,13 @@ class TestBuiltinModelPopulation(unittest.TestCase):
             dlg.done(0)
 
     def test_is_local_compat_provider(self) -> None:
-        from rikugan.core.config import RikuganConfig
-        from rikugan.providers.registry import ProviderRegistry
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.providers.registry import ProviderRegistry
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        dlg = SettingsDialog(RikuganConfig())
+        dlg = SettingsDialog(LucNhanConfig())
         try:
             # The dialog needs _registry; assign a registry manually.
             dlg._registry = ProviderRegistry()
@@ -440,7 +440,7 @@ class TestBuiltinModelPopulation(unittest.TestCase):
         (e.g. ``gpt-4o``) instead of the configured custom model
         (e.g. ``custom-model-x``).
         """
-        from rikugan.core.types import ModelInfo
+        from lucnhan.core.types import ModelInfo
 
         dlg, _ = self._build_dialog("ollama", "custom-model-x")
         try:
@@ -474,7 +474,7 @@ class TestBuiltinModelPopulation(unittest.TestCase):
         ``_on_accept()`` must save the configured model, not the first
         built-in model.
         """
-        from rikugan.core.types import ModelInfo
+        from lucnhan.core.types import ModelInfo
 
         dlg, config = self._build_dialog("openai_compat", "custom-model-x")
         try:
@@ -511,13 +511,13 @@ class TestBuiltinModelPopulation(unittest.TestCase):
         ``_get_selected_model_id()`` to return ``'gpt-4o'`` and
         ``_on_accept()`` to persist the previous provider's model.
         """
-        from rikugan.core.config import RikuganConfig
-        from rikugan.core.types import ModelInfo
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.core.types import ModelInfo
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "openai"
         config.provider.model = "gpt-4o"
         dlg = SettingsDialog(config)
@@ -582,13 +582,13 @@ class TestBuiltinModelPopulation(unittest.TestCase):
         """
         # First populate with some OpenAI built-ins so the combo has
         # a non-empty itemData set.
-        from rikugan.core.config import RikuganConfig
-        from rikugan.core.types import ModelInfo
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.core.types import ModelInfo
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "openai"
         config.provider.model = "gpt-4o"
         dlg = SettingsDialog(config)
@@ -627,12 +627,12 @@ class TestBuiltinModelPopulation(unittest.TestCase):
         ``config.custom_providers`` must preserve its configured model
         through ``_populate_builtin_models()`` and ``_on_accept()``.
         """
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
 
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.add_custom_provider("deepseek")
         config.provider.name = "deepseek"
         config.provider.model = "deepseek-chat"
@@ -677,7 +677,7 @@ class TestAnthropicMessageDeltaCoercion(unittest.TestCase):
     """
 
     def test_anthropic_message_delta_string_output_tokens_emits_usage(self) -> None:
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6")
         events = [
@@ -698,7 +698,7 @@ class TestAnthropicMessageDeltaCoercion(unittest.TestCase):
         self.assertEqual(usage_chunks[0].usage.completion_tokens, 12)
 
     def test_anthropic_message_delta_none_output_tokens_does_not_raise(self) -> None:
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6")
         events = [
@@ -763,7 +763,7 @@ class TestModelFetcherOrdering(unittest.TestCase):
         * the polled result is a successful ``("models", "fake", [])``
           tuple (no error tuple).
         """
-        from rikugan.ui.settings_dialog import _ModelFetcher
+        from lucnhan.ui.settings_dialog import _ModelFetcher
 
         calls, thread_calls, FakeRegistry = self._build_fakes()
         fetcher = _ModelFetcher(FakeRegistry())
@@ -992,7 +992,7 @@ class TestOpenAIRetryableErrorMapping(unittest.TestCase):
         return OpenAIProvider(api_key="x", model="gpt-4o")
 
     def test_api_connection_error_is_retryable(self) -> None:
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         provider = self._provider()
         fake_openai = SimpleNamespace(
@@ -1010,7 +1010,7 @@ class TestOpenAIRetryableErrorMapping(unittest.TestCase):
         self.assertTrue(ctx.exception.retryable)
 
     def test_api_timeout_error_is_retryable(self) -> None:
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         provider = self._provider()
         fake_openai = SimpleNamespace(
@@ -1028,7 +1028,7 @@ class TestOpenAIRetryableErrorMapping(unittest.TestCase):
         self.assertTrue(ctx.exception.retryable)
 
     def test_5xx_status_error_is_retryable(self) -> None:
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         provider = self._provider()
         fake_openai = SimpleNamespace(
@@ -1052,7 +1052,7 @@ class TestOpenAIRetryableErrorMapping(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 502)
 
     def test_4xx_status_error_is_not_retryable(self) -> None:
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         provider = self._provider()
         fake_openai = SimpleNamespace(
@@ -1075,7 +1075,7 @@ class TestOpenAIRetryableErrorMapping(unittest.TestCase):
         self.assertFalse(ctx.exception.retryable)
 
     def test_authentication_error_passthrough(self) -> None:
-        from rikugan.core.errors import AuthenticationError
+        from lucnhan.core.errors import AuthenticationError
 
         provider = self._provider()
         fake_openai = SimpleNamespace(
@@ -1092,7 +1092,7 @@ class TestOpenAIRetryableErrorMapping(unittest.TestCase):
                 provider._handle_api_error(err)
 
     def test_rate_limit_error_passthrough(self) -> None:
-        from rikugan.core.errors import RateLimitError
+        from lucnhan.core.errors import RateLimitError
 
         provider = self._provider()
         fake_openai = SimpleNamespace(
@@ -1114,7 +1114,7 @@ class TestOpenAIRetryableErrorMapping(unittest.TestCase):
         errors as timeouts (not generic connection errors) so the
         user sees the more precise timeout-specific message.
         """
-        from rikugan.core.errors import ProviderError
+        from lucnhan.core.errors import ProviderError
 
         provider = self._provider()
         # Build the class graph the way the real SDK does.
@@ -1153,10 +1153,10 @@ class TestAddButtonTabBarTheme(unittest.TestCase):
     """
 
     def test_uses_add_tab_btn_style_for_current_theme(self) -> None:
-        from rikugan.ui import styles
-        from rikugan.ui.panel_core import _AddButtonTabBar
-        from rikugan.ui.theme.manager import ThemeManager
-        from rikugan.ui.theme.tokens import ThemeMode
+        from lucnhan.ui import styles
+        from lucnhan.ui.panel_core import _AddButtonTabBar
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import ThemeMode
 
         _ensure_qapplication()
 
@@ -1503,7 +1503,7 @@ class TestOpenAIFormatMessagesRepair(unittest.TestCase):
 
     def test_duplicate_ids_in_one_assistant_message_are_rewritten(self) -> None:
         provider = OpenAIProvider(api_key="x", model="gpt-4o")
-        from rikugan.core.types import ToolCall, ToolResult
+        from lucnhan.core.types import ToolCall, ToolResult
 
         # Assistant message with two tool calls that share the
         # same id (regression case from a corrupt session).
@@ -1548,7 +1548,7 @@ class TestOpenAIFormatMessagesRepair(unittest.TestCase):
 
     def test_missing_id_is_generated(self) -> None:
         provider = OpenAIProvider(api_key="x", model="gpt-4o")
-        from rikugan.core.types import ToolCall, ToolResult
+        from lucnhan.core.types import ToolCall, ToolResult
 
         msgs = [
             Message(role=Role.USER, content="hi"),
@@ -1577,7 +1577,7 @@ class TestOpenAIFormatMessagesRepair(unittest.TestCase):
         ``call_X``) must not produce a request with duplicate
         assistant tool_calls[].id values."""
         provider = OpenAIProvider(api_key="x", model="gpt-4o")
-        from rikugan.core.types import ToolCall, ToolResult
+        from lucnhan.core.types import ToolCall, ToolResult
 
         msgs = [
             Message(role=Role.USER, content="hi"),
@@ -1626,7 +1626,7 @@ class TestOpenAIFormatMessagesRepair(unittest.TestCase):
         pass through ``_format_messages`` unchanged (no
         rewriting, no synthesized ids)."""
         provider = OpenAIProvider(api_key="x", model="gpt-4o")
-        from rikugan.core.types import ToolCall, ToolResult
+        from lucnhan.core.types import ToolCall, ToolResult
 
         msgs = [
             Message(role=Role.USER, content="hi"),
@@ -1659,7 +1659,7 @@ class TestOpenAIFormatMessagesRepair(unittest.TestCase):
         ``Message.tool_calls`` and ``Message.tool_results`` lists
         must keep their original ids intact."""
         provider = OpenAIProvider(api_key="x", model="gpt-4o")
-        from rikugan.core.types import ToolCall, ToolResult
+        from lucnhan.core.types import ToolCall, ToolResult
 
         tc1 = ToolCall(id="dup", name="f1", arguments={})
         tc2 = ToolCall(id="dup", name="f2", arguments={})
@@ -1691,8 +1691,8 @@ class TestAgentLoopDuplicateToolCallIdGuard(unittest.TestCase):
         feeding it duplicate ``is_tool_call_end`` chunks for the
         same id and asserting the persisted tool list contains
         exactly one entry for that id."""
-        from rikugan.agent.loop import AgentLoop
-        from rikugan.core.types import ToolCall
+        from lucnhan.agent.loop import AgentLoop
+        from lucnhan.core.types import ToolCall
 
         completed_ids: set[str] = set()
         tool_calls: list[ToolCall] = []
@@ -1729,7 +1729,7 @@ class TestAgentLoopDuplicateToolCallIdGuard(unittest.TestCase):
         is the caller's responsibility.  Pin that contract so a
         future refactor cannot silently add the duplicate to the
         set after returning True."""
-        from rikugan.agent.loop import AgentLoop
+        from lucnhan.agent.loop import AgentLoop
 
         seen: set[str] = set()
         # First call returns False and does not mutate.
@@ -1747,17 +1747,17 @@ class TestKnowledgeEnabledSetting(unittest.TestCase):
     """``knowledge_enabled`` must be discoverable in Settings and persist."""
 
     def test_default_is_true(self) -> None:
-        from rikugan.core.config import RikuganConfig
+        from lucnhan.core.config import LucNhanConfig
 
-        cfg = RikuganConfig()
+        cfg = LucNhanConfig()
         self.assertTrue(cfg.knowledge_enabled)
 
     def test_checkbox_default_round_trip(self) -> None:
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
-        config = RikuganConfig()
+        config = LucNhanConfig()
         dlg = SettingsDialog(config)
         try:
             # Checkbox exists and mirrors the config default.
@@ -1770,11 +1770,11 @@ class TestKnowledgeEnabledSetting(unittest.TestCase):
             dlg.done(0)
 
     def test_toggle_persists_via_on_accept(self) -> None:
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
-        config = RikuganConfig()
+        config = LucNhanConfig()
         dlg = SettingsDialog(config)
         try:
             dlg._knowledge_enabled_cb.setChecked(False)
@@ -1805,11 +1805,11 @@ class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
     """
 
     def _make_dialog(self):
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "anthropic"
         config.provider.model = "claude-sonnet-4-20250514"
         dlg = SettingsDialog(config)
@@ -1821,7 +1821,7 @@ class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
             minimum = dlg._max_tokens_spin.minimum()
             maximum = dlg._max_tokens_spin.maximum()
             # Lower bound of 1 matches provider/API minimums and the
-            # RikuganConfig.validate() contract (positivity only).
+            # LucNhanConfig.validate() contract (positivity only).
             self.assertEqual(minimum, 1)
             # Upper bound is generous until a model with known metadata
             # is selected.  This avoids the old hard 65536 cap.
@@ -1832,7 +1832,7 @@ class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
     def test_model_with_high_max_output_tokens_sets_range(self) -> None:
         dlg, _cfg = self._make_dialog()
         try:
-            from rikugan.core.types import ModelInfo
+            from lucnhan.core.types import ModelInfo
 
             dlg._fetched_models = [
                 ModelInfo(
@@ -1862,7 +1862,7 @@ class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
         """
         dlg, _cfg = self._make_dialog()
         try:
-            from rikugan.core.types import ModelInfo
+            from lucnhan.core.types import ModelInfo
 
             dlg._fetched_models = [
                 ModelInfo(
@@ -1892,7 +1892,7 @@ class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
         if it exceeds the model limit)."""
         dlg, cfg = self._make_dialog()
         try:
-            from rikugan.core.types import ModelInfo
+            from lucnhan.core.types import ModelInfo
 
             cfg.provider.model = "claude-sonnet-4-20250514"
             cfg.provider.max_tokens = 8192
@@ -1921,7 +1921,7 @@ class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
         """If the saved value exceeds the model's limit, it is clamped down."""
         dlg, cfg = self._make_dialog()
         try:
-            from rikugan.core.types import ModelInfo
+            from lucnhan.core.types import ModelInfo
 
             cfg.provider.model = "claude-sonnet-4-20250514"
             cfg.provider.max_tokens = 999_999  # absurdly high
@@ -1971,7 +1971,7 @@ class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
         fall through to the ``_MANUAL_MAX_TOKENS`` upper bound."""
         dlg, cfg = self._make_dialog()
         try:
-            from rikugan.providers.minimax_provider import MiniMaxProvider
+            from lucnhan.providers.minimax_provider import MiniMaxProvider
 
             # Pre-populate stale metadata to verify it gets cleared by
             # the local-compat path — otherwise a previous provider's
@@ -2042,7 +2042,7 @@ class TestAnthropicRawPartsPreservation(unittest.TestCase):
     are collected during streaming and replayed by ``_format_messages``."""
 
     def _stream_chunks(self, events):
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-20250514")
         return list(provider._stream_chunks(_FakeAnthropicClient(events), {}))
@@ -2141,8 +2141,8 @@ class TestAnthropicRawPartsPreservation(unittest.TestCase):
         """When an assistant message carries Anthropic-shaped ``_raw_parts``,
         ``_format_messages`` must replay them verbatim instead of
         reconstructing from ``content`` + ``tool_calls``."""
-        from rikugan.core.types import Message, Role
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.core.types import Message, Role
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         raw = [
             {"type": "thinking", "thinking": "reasoning", "signature": "abc"},
@@ -2158,8 +2158,8 @@ class TestAnthropicRawPartsPreservation(unittest.TestCase):
     def test_format_messages_falls_back_without_raw_parts(self) -> None:
         """Without ``_raw_parts``, the existing reconstruction path
         is used (text + tool_use dicts)."""
-        from rikugan.core.types import Message, Role, ToolCall
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.core.types import Message, Role, ToolCall
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         msg = Message(
             role=Role.ASSISTANT,
@@ -2178,8 +2178,8 @@ class TestAnthropicRawPartsPreservation(unittest.TestCase):
     def test_format_messages_rejects_gemini_shaped_raw_parts(self) -> None:
         """Non-dict raw parts (e.g. Gemini ``Part`` objects) must
         not be forwarded as Anthropic content blocks."""
-        from rikugan.core.types import Message, Role
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.core.types import Message, Role
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         # Simulate a Gemini-shaped raw part (SDK object with attributes).
         class _FakeGeminiPart:
@@ -2206,17 +2206,17 @@ class TestRefreshKeepsUnlistedModel(unittest.TestCase):
     """
 
     def _make_dialog(self, model: str):
-        from rikugan.core.config import RikuganConfig
-        from rikugan.ui.settings_dialog import SettingsDialog
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
 
         _ensure_qapplication()
-        config = RikuganConfig()
+        config = LucNhanConfig()
         config.provider.name = "minimax-token-plan"
         config.provider.model = model
         return SettingsDialog(config), config
 
     def _refresh_with(self, dlg, advertised_ids: list[str]) -> str:
-        from rikugan.core.types import ModelInfo
+        from lucnhan.core.types import ModelInfo
 
         dlg._set_manual_model_text(dlg._config.provider.model)
         dlg._on_models_ready([ModelInfo(id=i, name=i, provider="minimax-token-plan") for i in advertised_ids])

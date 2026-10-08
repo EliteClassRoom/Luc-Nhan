@@ -11,29 +11,29 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.ida.tools import annotations
-from rikugan.ida.tools.annotations import RIKUGAN_EVIDENCE_TAG, merge_evidence_line
-from rikugan.tools.registry import ToolRegistry
+from lucnhan.ida.tools import annotations
+from lucnhan.ida.tools.annotations import LUCNHAN_EVIDENCE_TAG, merge_evidence_line
+from lucnhan.tools.registry import ToolRegistry
 
 
 class TestMergeEvidenceLine(unittest.TestCase):
     def test_appends_when_empty(self):
         self.assertEqual(
             merge_evidence_line("", "calls recv"),
-            f"{RIKUGAN_EVIDENCE_TAG} calls recv",
+            f"{LUCNHAN_EVIDENCE_TAG} calls recv",
         )
 
     def test_appends_when_other_text_preserves_analyst_note(self):
         merged = merge_evidence_line("analyst note", "calls recv")
         self.assertIn("analyst note", merged)
-        self.assertIn(f"{RIKUGAN_EVIDENCE_TAG} calls recv", merged)
+        self.assertIn(f"{LUCNHAN_EVIDENCE_TAG} calls recv", merged)
 
     def test_replaces_existing_tagged_line_preserves_following(self):
-        existing = f"analyst note\n{RIKUGAN_EVIDENCE_TAG} old claim\nfollowup analyst"
+        existing = f"analyst note\n{LUCNHAN_EVIDENCE_TAG} old claim\nfollowup analyst"
         merged = merge_evidence_line(existing, "new claim")
         self.assertIn("analyst note", merged)
         self.assertIn("followup analyst", merged)
-        self.assertIn(f"{RIKUGAN_EVIDENCE_TAG} new claim", merged)
+        self.assertIn(f"{LUCNHAN_EVIDENCE_TAG} new claim", merged)
         self.assertNotIn("old claim", merged)
 
     def test_blank_evidence_returns_existing(self):
@@ -41,7 +41,7 @@ class TestMergeEvidenceLine(unittest.TestCase):
         self.assertEqual(merge_evidence_line("hello", "   "), "hello")
 
     def test_tag_constant_matches_helper(self):
-        self.assertEqual(RIKUGAN_EVIDENCE_TAG, "[Rikugan Evidence]")
+        self.assertEqual(LUCNHAN_EVIDENCE_TAG, "[Luc Nhan Evidence]")
 
     def test_helper_not_registered_as_tool(self):
         """merge_evidence_line must NOT be a @tool-registered function."""
@@ -55,7 +55,7 @@ class TestMergeEvidenceLine(unittest.TestCase):
 
 class TestExplorationAddendumContract(unittest.TestCase):
     def _text(self):
-        from rikugan.agent.exploration_mode import EXPLORATION_SYSTEM_ADDENDUM
+        from lucnhan.agent.exploration_mode import EXPLORATION_SYSTEM_ADDENDUM
 
         # Normalize whitespace so the ordering assertions match across
         # line breaks the prompt uses.

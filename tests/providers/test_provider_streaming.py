@@ -19,21 +19,21 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.types import (
+from lucnhan.core.types import (
     LLMRequestContext,
     Message,
     ProviderCapabilities,
     Role,
     StreamChunk,
 )
-from rikugan.providers.base import LLMProvider
+from lucnhan.providers.base import LLMProvider
 
 
 class TestAnthropicStreaming(unittest.TestCase):
     """Test AnthropicProvider.chat_stream with mock Anthropic stream events."""
 
     def _make_provider(self):
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         p = AnthropicProvider(api_key="test-key", model="claude-test")
         return p
@@ -126,7 +126,7 @@ class TestOpenAIStreaming(unittest.TestCase):
     """Test OpenAIProvider.chat_stream with mock OpenAI stream chunks."""
 
     def _make_provider(self):
-        from rikugan.providers.openai_provider import OpenAIProvider
+        from lucnhan.providers.openai_provider import OpenAIProvider
 
         return OpenAIProvider(api_key="test-key", model="gpt-test")
 
@@ -322,7 +322,7 @@ class TestAnthropicCancelDuringStream(unittest.TestCase):
     """User clicks Stop while model is mid-stream. Verify close() is called."""
 
     def test_cancel_event_closes_stream_promptly(self) -> None:
-        from rikugan.providers.anthropic_provider import AnthropicProvider
+        from lucnhan.providers.anthropic_provider import AnthropicProvider
 
         p = AnthropicProvider(api_key="test-key", model="claude-test")
         blocking = _BlockingAnthropicStream()
@@ -393,7 +393,7 @@ class TestOpenAICancelDuringStream(unittest.TestCase):
     """User clicks Stop while OpenAI model is mid-stream."""
 
     def test_cancel_event_closes_stream_promptly(self) -> None:
-        from rikugan.providers.openai_provider import OpenAIProvider
+        from lucnhan.providers.openai_provider import OpenAIProvider
 
         p = OpenAIProvider(api_key="test-key", model="gpt-test")
         blocking = _BlockingOpenAIStream()
@@ -622,7 +622,7 @@ class TestResolveEffectiveKwargs(unittest.TestCase):
     every case the policy specifies."""
 
     def _resolve(self, context, max_tokens=4096, system="safe-system"):
-        from rikugan.providers.base import LLMProvider
+        from lucnhan.providers.base import LLMProvider
 
         return LLMProvider._resolve_effective_kwargs(context, max_tokens, system)
 
@@ -678,7 +678,7 @@ class TestMaxTokensOverride(unittest.TestCase):
     """
 
     def _resolve(self, context, max_tokens=4096, system=""):
-        from rikugan.providers.base import LLMProvider
+        from lucnhan.providers.base import LLMProvider
 
         return LLMProvider._resolve_effective_kwargs(context, max_tokens, system)
 
