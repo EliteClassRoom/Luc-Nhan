@@ -126,7 +126,6 @@ from .theme.widgets_common import (  # noqa: E402,F401 — re-export
     get_history_status_style,
     get_history_title_style,
     get_message_dialog_style,
-    get_mode_bar_style,
     get_ok_status_style,
     get_placeholder_style,
     get_settings_btn_style,

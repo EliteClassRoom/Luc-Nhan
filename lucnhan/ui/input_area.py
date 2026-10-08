@@ -19,6 +19,24 @@ from .styles import build_input_area_stylesheet
 from .theme.manager import ThemeManager
 
 logger = get_logger()
+# Built-in slash commands whose handlers are wired in AgentLoop.  Single
+# source of truth for the autocomplete list (``set_skill_slugs``) and the
+# composer ``/ Commands`` dialog in ``panel_core``.  "report" is NOT here:
+# it is a registered built-in skill, so callers merge
+# ``SkillRegistry.list_slugs()`` in before calling ``set_skill_slugs``.
+BUILTIN_COMMAND_SLUGS: tuple[str, ...] = (
+    "doctor",
+    "explore",
+    "goal",
+    "knowledge",
+    "mcp",
+    "memory",
+    "modify",
+    "plan",
+    "research",
+    "undo",
+    "verify",
+)
 # Maximum number of visible rows in the autocomplete popup. When the
 # filtered list is longer, the popup becomes scrollable so every
 # built-in slash command (including /report) remains reachable.
@@ -277,28 +295,7 @@ class InputArea(QPlainTextEdit):
         skills are loaded.
         """
         combined = set(slugs)
-        # Built-in slash commands whose handlers are wired in
-        # AgentLoop: goal, plan, modify, explore, research, knowledge,
-        # memory, undo, mcp, doctor. The "report" command is now a
-        # registered built-in skill; callers that want the full
-        # autocomplete must merge SkillRegistry.list_slugs() in
-        # before calling set_skill_slugs. This avoids duplicate
-        # definitions that would let a future refactor of the
-        combined.update(
-            (
-                "goal",
-                "plan",
-                "modify",
-                "explore",
-                "research",
-                "knowledge",
-                "memory",
-                "undo",
-                "mcp",
-                "doctor",
-                "verify",
-            )
-        )
+        combined.update(BUILTIN_COMMAND_SLUGS)
         # Keep the normalized list on the widget; `_check_autocomplete`
         # reads this state after each typed character.
         self._skill_slugs = sorted(combined)

@@ -146,7 +146,7 @@ def _resolve_auth_cached_impl(explicit_key=""):
 _ac_stub.resolve_auth_cached = _resolve_auth_cached_impl
 _ac_stub.invalidate_cache = MagicMock()
 
-from lucnhan.ui.settings_dialog import _AddProviderDialog, _ModelFetcher
+from lucnhan.ui.settings_dialog import _SETTINGS_PAGES, _AddProviderDialog, _ModelFetcher
 
 # ---------------------------------------------------------------------------
 # _ModelFetcher
@@ -678,13 +678,15 @@ class TestAppearanceTab(unittest.TestCase):
             config = LucNhanConfig()
         return SettingsDialog(config=config)
 
-    def test_appearance_tab_in_dialog(self):
-        """SettingsDialog should have an 'Appearance' tab at index 1."""
+    def test_appearance_page_in_dialog(self):
+        """SettingsDialog's page host lists 'Appearance' second (G7)."""
         dlg = self._build_dialog()
-        labels = [dlg._tabs.tabText(i) for i in range(dlg._tabs.count())]
+        labels = list(_SETTINGS_PAGES)
         self.assertIn("Appearance", labels)
         appearance_idx = labels.index("Appearance")
         self.assertEqual(appearance_idx, 1)
+        # The subnav is built from the same tuple, in the same order.
+        self.assertEqual(list(dlg._subnav_buttons), labels)
 
     def test_theme_combo_has_four_modes(self):
         dlg = self._build_dialog()

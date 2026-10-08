@@ -207,16 +207,6 @@ class ToolsPanel(QWidget):
             if parent is not None:
                 parent.ensureWidgetVisible(btn[index], 0, 0)
 
-    @property
-    def _tabs(self) -> QStackedWidget:
-        """Compatibility shim for the pre-G8 ``QTabWidget`` attribute.
-
-        Callers (and tests) that still read ``_tabs.currentIndex()`` /
-        ``setCurrentIndex()`` get the page host.  No tab bar is
-        rendered — navigation is the horizontal subnav.
-        """
-        return self._page_host
-
     def set_current_page(self, index: int) -> None:
         """Public navigation entry point used by ``panel_core``."""
         self._select_page(index)

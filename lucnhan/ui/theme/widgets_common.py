@@ -96,18 +96,6 @@ def _cancel_btn_style() -> str:
     )
 
 
-# Mode bar (Chat | Tools tabs) — accent underline on the active tab
-def _mode_bar_style() -> str:
-    t = _tokens()
-    return (
-        f"QTabBar {{ background: {t.button}; border: none; border-bottom: 1px solid {t.mid}; }}"
-        f"QTabBar::tab {{ background: {t.button}; color: {t.muted_text}; padding: 4px 16px; "
-        f"border: none; border-bottom: 2px solid transparent; font-size: inherit; }}"
-        f"QTabBar::tab:selected {{ color: {t.text}; border-bottom: 2px solid {t.accent}; }}"
-        f"QTabBar::tab:hover:!selected {{ color: {t.text}; }}"
-    )
-
-
 # === Workspace chrome (GUI contract G2 geometry) =============================
 #
 # All sizes below are Qt *logical* px and follow the contract table: main
@@ -522,7 +510,10 @@ def _settings_section_style() -> str:
     return (
         f"QFrame#settings_section {{ background: transparent; border: none;"
         f" border-top: 1px solid {t.mid}; }}"
-        f"QFrame#settings_section:first-of-type {{ border-top: none; }}"
+        # Qt QSS has no ``:first-of-type``; the leading section of a page
+        # carries the distinct ``settings_section_first`` object name.
+        f"QFrame#settings_section_first {{ background: transparent; border: none;"
+        f" border-top: none; }}"
         f"QLabel#settings_section_title {{ color: {t.text}; font-size: 12px;"
         f" font-weight: 600; background: transparent; }}"
         f"QLabel#settings_form_label {{ color: {t.muted_text}; font-size: 12px;"
@@ -614,10 +605,6 @@ def get_small_btn_style() -> str:
 
 def get_cancel_btn_style() -> str:
     return _cancel_btn_style()
-
-
-def get_mode_bar_style() -> str:
-    return _mode_bar_style()
 
 
 def get_header_frame_style() -> str:

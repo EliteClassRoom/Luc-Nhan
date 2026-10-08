@@ -40,7 +40,7 @@ from .export_formatting import (
     _export_format_tool_result,
 )
 from .history_panel import HistoryPanel
-from .input_area import InputArea
+from .input_area import BUILTIN_COMMAND_SLUGS, InputArea
 from .model_picker import (
     MAX_TRIGGER_WIDTH_RATIO,
     ModelCatalogCache,
@@ -117,21 +117,6 @@ _PANE_NOMINAL_WIDTH = 295
 # ``QWIDGETSIZE_MAX`` — the narrow presentation releases the width pin so
 # the same widgets fill the whole content region.
 _PANE_WIDTH_UNBOUND = 16777215
-# Built-in slash commands offered by the composer's ``/ Commands`` button.
-# Mirrors the set ``InputArea.set_skill_slugs`` guarantees is autocompleted.
-_BUILTIN_COMMAND_SLUGS = (
-    "doctor",
-    "explore",
-    "goal",
-    "knowledge",
-    "mcp",
-    "memory",
-    "modify",
-    "plan",
-    "research",
-    "undo",
-    "verify",
-)
 # Tooltip / accessible-name text per action-button attribute.  Single
 # source of truth for the toolbar, the composer row and the overflow menu.
 _ACTION_BUTTON_TOOLTIPS = {
@@ -1076,6 +1061,7 @@ class LucNhanPanelCore(QWidget):
         action_row.addLayout(self._build_action_buttons())
 
         self._commands_btn = QToolButton()
+        self._commands_btn.setObjectName("commands_button")
         self._commands_btn.setText("/ Commands")
         self._commands_btn.setToolTip("List the available slash commands")
         self._commands_btn.setAccessibleName("Commands — List the available slash commands")
@@ -1358,6 +1344,12 @@ class LucNhanPanelCore(QWidget):
         if status is not None:
             status.setText("Model unchanged")
             status.setToolTip(message)
+        # The commit was refused, so the popup keeps showing a selection
+        # the controller never accepted.  Snap the checkmark and the
+        # thinking combo back to what the config really holds.
+        picker = getattr(self, "_picker", None)
+        if picker is not None:
+            picker.set_selection(self._current_model_choice())
 
     def _refresh_after_model_commit(self) -> None:
         """Update footer + context metadata without showing() the workspace."""
@@ -1383,7 +1375,7 @@ class LucNhanPanelCore(QWidget):
             footer_left.setToolTip(text)
         footer_tokens = getattr(self, "_footer_tokens", None)
         if footer_tokens is not None and self._context_bar is not None:
-            footer_tokens.setText(self._context_bar._tokens_label[1].text())
+            footer_tokens.setText(self._context_bar.tokens_text())
             footer_tokens.setToolTip("Context tokens used")
 
     # ------------------------------------------------------------------
@@ -1662,10 +1654,13 @@ class LucNhanPanelCore(QWidget):
         danger = {self._cancel_btn}
         for btn in (b for b, _tip in self._iter_action_buttons()):
             btn.setStyleSheet(maybe_host_stylesheet(_cancel_btn_style() if btn in danger else _small_btn_style()))
+        commands = getattr(self, "_commands_btn", None)
+        if commands is not None:
+            commands.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
 
     def _on_show_commands(self) -> None:
         """List the available slash commands in the composer."""
-        slugs = sorted(set(self._ctrl.skill_slugs) | set(_BUILTIN_COMMAND_SLUGS))
+        slugs = sorted(set(self._ctrl.skill_slugs) | set(BUILTIN_COMMAND_SLUGS))
         text = "Available commands:\n" + "\n".join(f"/{slug}" for slug in slugs)
         QMessageBox.information(self, "Commands", text)
 
@@ -4146,23 +4141,6 @@ class LucNhanPanelCore(QWidget):
         #     event — this is the load-bearing race fix.
         self._history_closing = threading.Event()
 
-    def _on_mode_changed(self, index: int) -> None:
-        """Switch between the Chat (0) and Tools (1) workspace pages."""
-        self._mode_stack.setCurrentIndex(index)
-        if index == 1:
-            # Lazy: create the shell on first switch, then activate the
-            # currently selected sub-tab.  ``_ensure_tools_panel_created``
-            # is idempotent so calling it here is safe even if the user
-            # already pressed the Tools button before the stack caught up.
-            self._ensure_tools_panel_created()
-            if self._tools_panel is not None:
-                self._activate_tools_tab(self._tools_panel.current_page())
-            self._tools_btn.setChecked(True)
-            self._chat_btn.setChecked(False)
-        else:
-            self._tools_btn.setChecked(False)
-            self._chat_btn.setChecked(True)
-
     def _on_toggle_chat(self) -> None:
         """Return to the chat workspace from the Tools page."""
         self._mode_stack.setCurrentIndex(0)
@@ -4274,8 +4252,8 @@ class LucNhanPanelCore(QWidget):
         Tools-related heavy work off the main startup tick.
 
         Idempotent — repeated calls are no-ops once the shell exists.
-        Safe to call from any entry point (``_on_mode_changed``,
-        ``_on_toggle_tools``, ``show_tools_panel``).
+        Safe to call from any entry point (``_on_toggle_tools``,
+        ``show_tools_panel``).
         """
         if self._tools_panel is not None:
             return
@@ -4745,6 +4723,11 @@ class LucNhanPanelCore(QWidget):
                 picker.set_busy(bool(self._ctrl.is_agent_running))
             except Exception as exc:  # pragma: no cover - defensive
                 log_debug(f"picker busy sync skipped: {exc}")
+        # The trigger tooltip carries the busy reason (G6), so it has to
+        # follow the same turn transition or it lies until the next resize.
+        trigger = getattr(self, "_footer_trigger", None)
+        if trigger is not None:
+            trigger.setToolTip(self._footer_tooltip())
         # Header status carries the real agent state as *text* (never a
         # bare colour dot — GUI contract G1/G9).
         status = getattr(self, "_status_label", None)

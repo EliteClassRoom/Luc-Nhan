@@ -60,8 +60,6 @@ class ContextBar(QFrame):
     _ROW_MARGIN_H = 12
     _ROW_MARGIN_V = 4
     _ROW_SPACING = 9
-    # G3: single narrow breakpoint for chrome compaction.
-    _NARROW_BREAKPOINT_PX = NARROW_BREAKPOINT_PX
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -176,6 +174,14 @@ class ContextBar(QFrame):
             pct = min(int(count * 100 / context_window), 100)
             text += f" ({pct}%)"
         self._tokens_label[1].setText(text)
+
+    def tokens_text(self) -> str:
+        """The context-token summary as displayed (e.g. ``4.2k (2%)``).
+
+        Public accessor so the footer's token readout never has to reach
+        into the label tuple.
+        """
+        return self._tokens_label[1].text()
 
     def _update_cursor(self) -> None:
         if self._stopped:

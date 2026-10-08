@@ -329,21 +329,31 @@ class TestNoFetchedCatalog(_LogicBase):
         picker.open_above(_anchor())
         self.assertTrue(picker.settings_entry_is_visible())
 
-    def test_settings_entry_stays_visible_when_the_search_matches_nothing(self) -> None:
-        picker, _ = _picker()
-        picker.set_selection(ModelChoice("ollama", "llama3.1", "high"))
-        picker.set_catalog({})
-        picker.set_search_text("nothing-matches-this")
-        self.assertEqual(picker.visible_rows(), [])
-        self.assertEqual(picker.status_text(), NO_MATCHES_TEXT)
-        picker.open_above(_anchor())
-        self.assertTrue(picker.settings_entry_is_visible())
-
     def test_settings_entry_disappears_once_a_connection_is_fetched(self) -> None:
+        """The opposite direction: a fetched catalog hides the entry."""
         picker, _ = _picker()
         picker.set_selection(ModelChoice("openai", "gpt-4o", "high"))
         picker.set_catalog({"openai": [_info("gpt-4o"), _info("o3")]})
         self.assertFalse(picker.settings_entry_is_visible())
+
+    def test_unfetched_entry_survives_a_saved_model_and_an_empty_search(self) -> None:
+        """The unfetched entry stays reachable in both empty shapes.
+
+        ``_sync_rows`` injects the configured model as a real row, so the
+        only thing the entry's visibility can key off is the catalog, not
+        the row count — the two ways an unfetched catalog looks empty are
+        "no fetched connection" and "a query that matches nothing".
+        """
+        picker, _ = _picker()
+        picker.set_selection(ModelChoice("ollama", "llama3.1", "high"))
+        picker.set_catalog({})
+        picker.open_above(_anchor())
+        self.assertTrue(picker.settings_entry_is_visible())
+        self.assertEqual(len(picker.model_rows()), 1, "the saved model is a real row")
+
+        picker.set_search_text("nothing-matches-this")
+        self.assertEqual(picker.visible_rows(), [])
+        self.assertTrue(picker.settings_entry_is_visible())
 
     def test_current_model_without_catalog_is_a_real_row(self) -> None:
         """The configured (connection, model) is a first-class row.

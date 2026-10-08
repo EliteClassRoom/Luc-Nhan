@@ -51,7 +51,6 @@ from .qt_compat import (
     QSpinBox,
     QStackedWidget,
     Qt,
-    QTabWidget,
     QTimer,
     QVBoxLayout,
     QWidget,
@@ -115,9 +114,9 @@ _ZAI_HOSTNAME = "api.z.ai"
 # Dialog order: heading -> horizontal subnav -> scrollable body ->
 # pinned Cancel/Save strip.  The subnav is a row of checkable buttons
 # (not a QTabBar) so the active item keeps the ``selection`` fill and the
-# strip can scroll horizontally on narrow widths.  ``QTabWidget`` stays
-# only as a compatibility shim for the historical ``_tabs`` attribute —
-# nothing renders through it.
+# strip can scroll horizontally on narrow widths.  The body below the
+# strip is a ``QStackedWidget`` — one page per name in
+# ``_SETTINGS_PAGES``.
 _SETTINGS_PAGES: tuple[str, ...] = ("Provider", "Appearance", "Skills", "MCP", "Profiles")
 
 #: Width below which the dialog switches to the narrow geometry (G7:
@@ -339,7 +338,8 @@ class SettingsDialog(QDialog):
         self._is_running_callback = is_running_callback or (lambda: False)
         # Per-connection model catalog cache owned by the panel.  Refresh
         # results land here so the footer picker never has to fetch; only
-        # an endpoint / credential / connection change drops an entry.
+        # an endpoint / credential edit drops an entry (viewing another
+        # connection keeps it).
         self._model_catalog = model_catalog if model_catalog is not None else _fallback_model_catalog()
         self._fetcher = _ModelFetcher(self._registry)
         self._fetched_models: list[ModelInfo] = []
@@ -348,7 +348,7 @@ class SettingsDialog(QDialog):
         self._shown = False
         self._closed = False
         self.encryption_password: str = ""
-        # Form labels collected by ``_form_row`` / ``_make_section`` so the
+        # Form labels collected by ``_form_row`` so the
         # responsive pass (G7) can re-width every label column at once.
         self._form_labels: list[QLabel] = []
         # Per-column-group record of the last applied shape, so the
@@ -759,24 +759,6 @@ class SettingsDialog(QDialog):
         finally:
             host.blockSignals(previous)
 
-    @property
-    def _tabs(self) -> QTabWidget:
-        """Compatibility shim for the pre-G7 ``QTabWidget`` attribute.
-
-        The body is a ``QStackedWidget`` driven by the horizontal
-        subnav; this shim exists so callers/tests that still read
-        ``_tabs.count()`` / ``_tabs.tabText(i)`` see the five page
-        titles in order.  Nothing renders through it.
-        """
-        tabs = self.__dict__.get("_tabs_shim")
-        if tabs is None:
-            tabs = QTabWidget()
-            tabs.setObjectName("lucnhan_settings_legacy_tabs")
-            for title in _SETTINGS_PAGES:
-                tabs.addTab(QWidget(), title)
-            self.__dict__["_tabs_shim"] = tabs
-        return tabs
-
     def _index_of_tab(self, title: str) -> int:
         try:
             return _SETTINGS_PAGES.index(title)
@@ -785,7 +767,7 @@ class SettingsDialog(QDialog):
 
     def _build_provider_group(self) -> QFrame:
         """Build the Connection section (provider, auth, endpoint, model)."""
-        section = self._make_section("Connection")
+        section = self._make_section("Connection", first=True)
         form = self._make_form()
 
         form.addRow(*self._form_row("Connection:", self._build_provider_row()))
@@ -819,10 +801,15 @@ class SettingsDialog(QDialog):
         section.layout().addLayout(form)
         return section
 
-    def _make_section(self, title: str) -> QFrame:
-        """Flat section block: title label + 1 px separator (G7, no cards)."""
+    def _make_section(self, title: str, *, first: bool = False) -> QFrame:
+        """Flat section block: title label + 1 px separator (G7, no cards).
+
+        ``first=True`` marks the leading section of a page, which drops
+        the top border.  Qt QSS has no ``:first-of-type`` selector, so the
+        distinction is carried by the object name instead.
+        """
         section = QFrame()
-        section.setObjectName("settings_section")
+        section.setObjectName("settings_section_first" if first else "settings_section")
         section.setStyleSheet(get_settings_section_style())
         layout = QVBoxLayout(section)
         layout.setContentsMargins(0, _SETTINGS_SECTION_GAP_PX, 0, _SETTINGS_SECTION_GAP_PX)
@@ -1226,7 +1213,7 @@ class SettingsDialog(QDialog):
         Theme selector stays wired to ``ThemeManager`` so the change
         previews live; font controls drive the inline reading sample.
         """
-        appearance_group = self._make_section("Reading and typography")
+        appearance_group = self._make_section("Reading and typography", first=True)
         appearance_form = self._make_form()
 
         self._font_family_combo = QComboBox()
@@ -1954,7 +1941,11 @@ class SettingsDialog(QDialog):
     def _on_provider_changed(self, provider: str) -> None:
         # ``currentText`` is ALREADY the new provider when this slot runs,
         # so the connection being left comes from the live config.
-        self._model_catalog.note_connection_changed(self._config.provider.name)
+        # Merely *viewing* another connection keeps its fetched list — the
+        # picker still shows that connection's real models (G6), and
+        # ``switch_provider`` restores the saved connection snapshot, not
+        # the fetched catalog.  Only an endpoint / credential edit drops
+        # a list (see ``_on_key_edited`` and the api-base lambda).
         # Persist edits from the previous provider before switching.
         # Skip sync if switch_provider was already called externally (e.g. _on_add_custom_provider)
         # to avoid corrupting the new provider's config with stale UI values.

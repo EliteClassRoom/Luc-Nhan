@@ -217,6 +217,7 @@ sys.modules.pop("lucnhan.ui.panel_core", None)
 # after a panel-core test in the same pytest invocation.
 import pytest
 
+import lucnhan.ui.panel_core as panel_core
 from lucnhan.ui.export_formatting import (
     _TOOL_RESULT_TRUNCATE_CHARS,
     _export_detect_lang,
@@ -1206,16 +1207,16 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
                     self.currentChanged.emit(self._current_index)
 
         tools_panel = ToolsPanel.__new__(ToolsPanel)
-        # G8: the page host replaced the QTabWidget (``_tabs`` is now a
-        # compatibility alias); replacing a page must still not re-enter
-        # the lazy activation callback.
+        # G8: the page host replaced the QTabWidget; replacing a page must
+        # still not re-enter the lazy activation callback.
         tools_panel.__dict__["_page_host"] = _Tabs()
 
         tools_panel._replace_tab(ToolsPanel.TAB_AGENTS, MagicMock(), "Agents")
 
-        tools_panel._tabs.currentChanged.emit.assert_not_called()
-        self.assertEqual(tools_panel._tabs.currentIndex(), ToolsPanel.TAB_AGENTS)
-        self.assertFalse(tools_panel._tabs._signals_blocked)
+        host = tools_panel._page_host
+        host.currentChanged.emit.assert_not_called()
+        self.assertEqual(host.currentIndex(), ToolsPanel.TAB_AGENTS)
+        self.assertFalse(host._signals_blocked)
 
     def test_tab_initializer_keys_match_constants(self):
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
@@ -1250,12 +1251,12 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         panel._tools_poll_timer = MagicMock()
         panel._ensure_tools_panel_created = MagicMock()
 
-        # Build a fake ToolsPanel whose ``_tabs`` we can spy on.
+        # Build a fake ToolsPanel whose page host we can spy on.
         from lucnhan.ui.tools_panel import ToolsPanel
 
         fake_panel = MagicMock()
-        fake_panel._tabs.currentIndex.return_value = ToolsPanel.TAB_A2A
-        fake_panel._tabs.count.return_value = ToolsPanel.TAB_COUNT
+        fake_panel._page_host.currentIndex.return_value = ToolsPanel.TAB_A2A
+        fake_panel.current_page.return_value = ToolsPanel.TAB_A2A
         panel._tools_panel = fake_panel
         # ``_ensure_tab_initialized`` should be called with the
         # knowledge tab index.
@@ -1280,7 +1281,6 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         panel._tools_poll_timer = MagicMock()
         panel._ensure_tools_panel_created = MagicMock()
         panel._tools_panel = MagicMock()
-        panel._tools_panel._tabs.count.return_value = ToolsPanel.TAB_COUNT
         panel._tools_panel.current_page.return_value = ToolsPanel.TAB_KNOWLEDGE
         panel._ensure_tab_initialized = MagicMock()
 
@@ -1310,25 +1310,6 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         self.assertFalse(hasattr(panel, "_on_renamer_cancel"))
         self.assertFalse(hasattr(panel, "_ensure_renamer_tab_initialized"))
         self.assertFalse(hasattr(panel, "show_tools_with_renamer"))
-
-    def test_theme_refresh_iterates_only_active_tabs(self):
-        """The theme refresh loop should no longer touch a renamer widget."""
-        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
-        panel._bulk_renamer = None
-        # Look for any ``_bulk_renamer`` mention in the theme refresh
-        # code path. The active attribute list is the simplest check.
-        from lucnhan.ui import panel_core as pc
-
-        # The expected active attribute list is documented inline at
-        # the loop site; verify no ``_bulk_renamer`` is iterated.
-        src = pc.__file__
-        with open(src, encoding="utf-8") as handle:
-            body = handle.read()
-        # Find the theme refresh loop and check it does not name renamer.
-        loop_idx = body.find("for attr in (")
-        self.assertGreaterEqual(loop_idx, 0, "theme refresh loop not found")
-        snippet = body[loop_idx : loop_idx + 200]
-        self.assertNotIn("_bulk_renamer", snippet)
 
 
 # ---------------------------------------------------------------------------
@@ -2175,19 +2156,29 @@ class TestAdaptivePanePresentation(unittest.TestCase):
         panel._history_btn.isVisible.return_value = True
         panel._narrow = False
         panel._pane_narrow = None
+        panel._apply_narrow_presentation = MagicMock()
+        panel._schedule_footer_trigger_width = MagicMock()
+        # ``lucnhan.ui.context_bar`` is stubbed in this module, so the
+        # imported breakpoint is a MagicMock; pin it to the G3 value.
+        patcher = patch.object(panel_core, "NARROW_BREAKPOINT_PX", 640)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         return panel
 
-    def test_breakpoint_comes_from_panel_width(self) -> None:
-        """G3: the single breakpoint is ``panel_width <= 640`` logical px."""
-        import inspect
+    def test_breakpoint_is_the_panel_width(self) -> None:
+        """G3: 640 / 641 px selects the narrow / wide presentation.
 
-        from lucnhan.ui.context_bar import NARROW_BREAKPOINT_PX
-
-        # This module stubs ``lucnhan.ui.context_bar``, so read the
-        # breakpoint from the source file rather than the stubbed symbol.
-        src = inspect.getsource(LucNhanPanelCore.resizeEvent)
-        self.assertIn("self.width() <= NARROW_BREAKPOINT_PX", src)
-        del NARROW_BREAKPOINT_PX
+        Driven through the real slot with a fake ``width()`` so the test
+        pins behaviour instead of the source text.  The 640 px constant
+        itself lives in ``lucnhan.ui.context_bar``; this module stubs
+        that import, so only the boundary behaviour is asserted here.
+        """
+        for width, expected in ((640, True), (641, False), (460, True), (1100, False)):
+            panel = self._panel(panel_width=width)
+            panel._apply_narrow_presentation = MagicMock()
+            panel._schedule_footer_trigger_width = MagicMock()
+            panel.resizeEvent(None)
+            panel._apply_narrow_presentation.assert_called_once_with(expected)
 
     def test_narrow_takes_the_content_region(self) -> None:
         """Narrow: the pane is pinned to the region minus the chat's own
