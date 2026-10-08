@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Native UI/UX redesign: the chat workspace is now a compact technical
+  surface, and the footer model picker is a grouped search popup.** The plugin
+  UI was rebuilt to the GUI design contract (`docs/superpowers/plans/2026-10-08-gui-design-contract.md`,
+  G0-G11): the workspace keeps a strict
+  header -> session strip -> context -> chat -> composer -> footer order with a
+  single narrow breakpoint at 640 logical px (Chat/Tools stay direct, History /
+  Settings / Export move into the header overflow), the composer sends and stops
+  from a compact action row under the editor, tool activity collapsed into
+  single 30 px rows with an on-demand detail surface, and the History /
+  Mutations panes dock beside the chat when wide and cover the content region
+  when narrow. **Settings** and **Tools** lost their `QTabWidget`s in favour of
+  horizontal subnavigation (`Provider | Appearance | Skills | MCP | Profiles`
+  and `Agents | A2A | Knowledge`) over a lazily-built stacked body; the Skills /
+  MCP / Profiles pages are still constructed only on first selection, Cancel /
+  Save stay pinned, and unopened lazy pages are never applied.
+- **The footer model picker supports multiple configured connections.** With
+  more than one connection the flat combo is replaced by a popup with a search
+  box, one group per configured connection, and a per-connection thinking-level
+  control (`Connection / Model | thinking`). Two connections exposing the same
+  model ID stay two independent rows. Selection and thinking are blocked while
+  an agent is running (`Stop the running agent to change model`), the guard is
+  still enforced by the controller at commit time, and a rejected commit snaps
+  the checkmark back to what the config really holds. Search is local — opening
+  or searching the popup never calls a provider API. Model catalogs are cached
+  per connection and populated only by an explicit Settings **Refresh**; an
+  endpoint or credential edit invalidates that connection's entry, a plain
+  view-switch does not.
+
+### Added
+
+- Development documentation for the native smoke and benchmark procedure, its
+  evidence layout, and its known limits (`.superpowers/sdd/`).
+
 - **The Luc Nhan rename is now complete end to end.** The display name was
   already Luc Nhan; the code, packaging and on-disk artifacts now follow. The
   Python package is `lucnhan/`, the IDA entry point is `lucnhan_plugin.py`, the
@@ -28,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Pre-redesign navigation code.** The Settings `QTabWidget` and the Tools tab
+  bar are gone, together with their internal `_tabs` compatibility attributes
+  and the dead workspace mode-bar handler and stylesheet.
 - **The project website is gone.** `webpage/` — a hand-maintained landing page,
   getting-started guide, rendered architecture page and their asset copies — is
   deleted, together with every link to `rikugan.reversing.codes` and to the

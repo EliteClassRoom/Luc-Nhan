@@ -139,6 +139,77 @@ uv add desloppify --dev          # add desloppify (ci-local.sh does this automat
 
 ---
 
+## Native GUI smoke & benchmark
+
+The UI regression suite under `tests/ui/` runs against Qt **stubs** in a
+standalone interpreter, so it can prove state transitions but never geometry,
+focus or paint. Anything that must be verified on the real widget tree —
+region order, geometry against the GUI contract, keyboard focus, the picker's
+anchor and clamping, theme rendering — runs inside the IDA GUI.
+
+Both procedures share one harness: a Python script executed by IDA's own
+interpreter with an **empty throwaway database** (`-t`), never a user IDB.
+
+```powershell
+# 1. Run from the repo root. IDA must not already hold the plugin's database.
+& 'C:\Program Files\IDA Professional 9.4\ida.exe' -t -A -S"<abs path to the harness>.py"
+
+# 2. The harness writes its evidence next to itself and calls ida_pro.qexit().
+```
+
+Use the interpreter named by `IDAPYTHON_VENV_EXECUTABLE` (`$env:IDAPYTHON_VENV_EXECUTABLE`)
+for every `python` / `pytest` / `ruff` / `mypy` invocation — do not fall back to
+a global Python, and do not install a second Qt into the IDAPython venv to make
+a stubbed suite go green.
+
+Evidence lives in `.superpowers/sdd/<slice>/`: `<slice>-smoke-ida.json` for the
+check results, `screenshots/*.png` for native grabs, `evidence/*.txt` for
+captured `pytest` / `ruff` / `mypy` output, and the benchmark JSON artifacts
+kept alongside them for audit. Screenshots must record the **logical viewport,
+DPI, theme and font** in the companion JSON — the HTML mockup PNGs under
+`design-preview/` are composition references, never native proof.
+
+### DPI 150%
+
+Set the scale in the launching environment so Qt does the logical scaling:
+
+```powershell
+$env:QT_SCALE_FACTOR = "1.5"
+& 'C:\Program Files\IDA Professional 9.4\ida.exe' -t -A -S"<harness>.py"
+Remove-Item Env:\QT_SCALE_FACTOR
+```
+
+The harness records the scale it actually received; if the value that comes back
+is 1.0 the run did **not** exercise 150 % and must be reported as such rather
+than described as a 150 % pass.
+
+### Benchmark
+
+Measure the **integrated** widgets, never the design-time prototype: warm up,
+then ≥100 samples per operation, on at least two fresh GUI runs, reporting
+median / p95 / max together with CPU, RAM and the Qt/Python context. Measure
+first paint of the full workspace and of Settings, picker open / search /
+select, config persistence and provider initialization separately, and use
+paired idle (popup closed vs open) numbers. Samples that are slow because of
+SDK or I/O latency stay in the end-to-end measurement — drop them only in the
+isolated component measurement, and say so.
+
+### Limits worth knowing
+
+* `QWidget.grab()` measures the widget's own paint, not the compositor, so
+  timing around `processEvents()` is not GPU latency. Read it as request-to-visible.
+* Click-away dismissal of the `Qt.Popup` picker relies on the platform window
+  mask; assert the flag plus the explicit `close_popup()` focus restore instead
+  of pretending to have exercised a mask.
+* `pytest tests/tools/test_settings_dialog.py` and
+  `tests/ui/test_settings_dialog_fixes.py` interfere when run in the *same*
+  session (stub vs real-Qt ordering); run them separately.
+* `tests/tools/test_web_ssrf.py` fails with `ModuleNotFoundError: requests`
+  unless that optional dependency is present — a pre-existing environment gap,
+  not a UI regression.
+
+---
+
 ## Commit Style
 
 ```

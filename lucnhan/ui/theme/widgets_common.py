@@ -58,13 +58,19 @@ TOOL_COLORS = {
 # accent so keyboard focus and hover read distinctly.
 
 
-def _button_qss(t, hover_bg: str, *, object_name: str | None = None) -> str:
+def _button_qss(t, hover_bg: str, *, object_name: str | None = None, selector: str | None = None) -> str:
     """Shared small-button QSS: button/alt_base/mid/accent tokens.
 
-    ``object_name`` optionally scopes the selectors (e.g. ``#history_nav_btn``)
-    so a widget-local stylesheet does not leak to sibling buttons.
+    ``object_name`` / ``selector`` scope the rule so a widget-local
+    stylesheet (e.g. ``#history_nav_btn``) does not leak to the children of
+    the widget it is set on.
     """
-    sel = f"QPushButton#{object_name}" if object_name else "QPushButton"
+    if selector is not None:
+        sel = selector
+    elif object_name is not None:
+        sel = f"QPushButton#{object_name}"
+    else:
+        sel = "QPushButton"
     # GUI contract G1: 4 px radius, 1 px border.  G2: button min-height
     # 28 px, padding 4 / 9 px, chrome text 12 px, and an accent focus
     # *outline* (G9) rather than a plain border swap.
@@ -79,8 +85,19 @@ def _button_qss(t, hover_bg: str, *, object_name: str | None = None) -> str:
 
 
 def _small_btn_style() -> str:
+    # Scoped to ``QPushButton`` on purpose: this stylesheet is set on a
+    # button instance, and Qt applies a widget stylesheet to its CHILDREN
+    # too, so an unscoped ``QPushButton`` rule would repaint the
+    # ``QToolButton`` Send/Stop/Commands controls in the same row.
     t = _tokens()
-    return _button_qss(t, t.alt_base)
+    return _button_qss(t, t.alt_base, selector="QPushButton") + (
+        # G1/G3: the checked nav item is the active page (selection fill +
+        # accent text). ``QPushButton:checked`` also matches a nav button
+        # while it holds keyboard focus right after the click, which is
+        # exactly the active-page state.
+        f"QPushButton:checked {{ background: {t.selection}; color: {t.accent};"
+        f" border-color: {t.accent}; }}"
+    )
 
 
 def _cancel_btn_style() -> str:
