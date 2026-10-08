@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-10-08
+
+### Fixed
+
+- **The test suite runs in a single process again** — the in-package
+  `rikugan/tests/` tree is merged into the top-level `tests/` root. A bare
+  `pytest` collected both roots, and `rikugan/tests/conftest.py` imported the
+  real PySide6 binding at module scope; the `tests.qt_stubs` fakes were then
+  written over classes inside the already-imported real Qt modules, leaving two
+  incompatible Qt type universes in one process. That fast-fails natively
+  (exit `0xC0000409`) instead of raising, so the run died at ~38% with no usable
+  output. `testpaths` is now `["tests"]`, the three basenames that clashed across
+  roots are folded into their authoritative sibling or moved beside it, and
+  `rikugan/conftest.py` — a `sys.path` bootstrap that existed only for the inner
+  tree — is gone. `ensure_pyside6_stubs()` additionally refuses to install when
+  the real binding is already loaded. Real-Qt widget suites keep the existing
+  `requires_real_qt` convention and skip in the stubbed session; run those files
+  directly to exercise them.
+- **Tests no longer write into the repository root** — a bare `MagicMock()`
+  bound where a `RikuganConfig` was expected satisfies `os.PathLike` and
+  stringifies into a *relative* path, so `SessionHistory` and
+  `MemoryWorkspaceManager` created real
+  `MagicMock/mock.config.checkpoints_dir/<id>/sessions` directories — with real
+  SQLite registries inside — in whatever directory pytest was started from.
+  Every site now binds a real config on a temp directory that is reclaimed in
+  teardown.
+
+### Changed
+
+- `ida-plugin.json` dependency floors are aligned with pyproject/requirements
+  (`tomli>=2.4.1`, `requests>=2.34.2`), and the manifest-consistency test now
+  covers every runtime dependency instead of three packages.
+- `rikugan/agent/mutation.py` uses `EXECUTE_PYTHON_TOOL_NAME` instead of a
+  literal tool name; the unreferenced `pyrightconfig.json` is dropped.
+
+### Security
+
+- CI installs `bandit` alongside `desloppify`. Without it desloppify's
+  `security` detector skips its Python checks, and the PR gate filters findings
+  on exactly that detector — so the gate was passing vacuously.
+
 ## [1.14.0] - 2026-10-08
 
 ### Added
