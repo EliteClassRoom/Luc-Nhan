@@ -231,44 +231,29 @@ class _FakeToolRegistry:
 
 
 def _make_loop(*, gate_enabled: bool, runner: _FakeRunner | None = None):
-    """Construct an AgentLoop with the bare minimum wiring for gate tests.
+    """Construct an AgentLoop through its real ``__init__``.
 
-    Skips ``_build_system_prompt`` and other heavy setup. Replaces
-    ``SubagentRunner`` with a fake so the gate can run without LLM
-    round-trips.
+    ``__init__`` only assigns state (plus a ``ContextWindowManager``), so
+    calling it keeps this harness in sync with the constructor instead of
+    mirroring a hand-copied attribute list that silently omits whatever
+    the next commit adds. Replaces ``SubagentRunner`` with a fake so the
+    gate can run without LLM round-trips.
 
     *gate_enabled* maps to ``config.docs_review_mode``: True → ``"on_error"``,
     False → ``"off"`` (post-error semantics — no pre-execute gate anymore).
     """
     from rikugan.agent.loop import AgentLoop
+    from rikugan.state.session import SessionState
 
     cfg = RikuganConfig()
     cfg.docs_review_mode = "on_error" if gate_enabled else "off"
 
-    loop = AgentLoop.__new__(AgentLoop)
-    loop.provider = _FakeProvider()
-    loop.tools = _FakeToolRegistry()
-    loop.config = cfg
-    from rikugan.state.session import SessionState
-
-    loop.session = SessionState()
-    loop.skills = None
-    loop.host_name = "IDA Pro"
-    import threading
-
-    loop._cancelled = threading.Event()
-    loop._running = False
-    loop._consecutive_errors = 0
-    loop._tools_disabled_for_turn = False
-    # Post-error docs-review: max 1 reviewer call per user message.
-    loop._docs_reviewer_invoked = False
-    import queue
-
-    loop._user_answer_queue = queue.Queue(maxsize=1)
-    loop._tool_approval_queue = queue.Queue(maxsize=1)
-    loop._approval_queue = queue.Queue(maxsize=1)
-    loop._always_allow_scripts = False
-    loop.plan_mode = False
+    loop = AgentLoop(
+        provider=_FakeProvider(),
+        tool_registry=_FakeToolRegistry(),
+        config=cfg,
+        session=SessionState(),
+    )
 
     if runner is not None:
         # Monkey-patch the gate helper to use our fake runner.
@@ -625,7 +610,7 @@ class TestExecuteSingleToolIntegration(unittest.TestCase):
     def _set_registry_to_raise(self, loop, exc):
         """Replace ``tools.execute_coerced`` with a raising stub."""
 
-        def _raise(name, args):
+        def _raise(name, args, **kwargs):
             raise exc
 
         loop.tools.execute_coerced = _raise  # type: ignore[attr-defined]
