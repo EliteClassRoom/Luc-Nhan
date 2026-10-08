@@ -620,7 +620,10 @@ class TestControlHandler(unittest.TestCase):
             body={"run_id": "test-run", "approved": True},
         )
         handler.do_POST()
-        agent_loop.submit_approval.assert_called_with("approve")
+        # /approval serves plan/exploration approval: routes to the user-answer queue
+        # ("yes" -> APPROVE/SAVE), not the orchestra `submit_approval` channel.
+        agent_loop.submit_approval.assert_not_called()
+        agent_loop.submit_user_answer.assert_called_with("yes")
 
     def test_approval_missing_run_id(self):
         handler, _wfile = self._rh.request("POST", "/approval", body={"approved": True})
@@ -1102,7 +1105,10 @@ class TestControlHandler(unittest.TestCase):
             body={"run_id": "test-run", "decision": "approve"},
         )
         handler.do_POST()
-        agent_loop.submit_approval.assert_called_with("approve")
+        # /approval serves plan/exploration approval: routes to the user-answer queue
+        # ("yes" -> APPROVE/SAVE), not the orchestra `submit_approval` channel.
+        agent_loop.submit_approval.assert_not_called()
+        agent_loop.submit_user_answer.assert_called_with("yes")
 
     def test_approval_rejects_invalid_decision(self):
         """POST /approval with invalid decision returns 400."""

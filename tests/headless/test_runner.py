@@ -199,7 +199,10 @@ class TestRunPrompt(unittest.TestCase):
         result = run_prompt(ctrl, "test prompt")
         self.assertEqual(result.exit_code, EXIT_APPROVAL_REQUIRED)
         self.assertEqual(len(result.errors), 3)
-        agent_loop.submit_approval.assert_called()
+        # Plan/save auto-deny routes to the user-answer queue ("no" -> CANCEL/DISCARD),
+        # not the orchestra `submit_approval` channel (which would deadlock the gate).
+        agent_loop.submit_approval.assert_not_called()
+        agent_loop.submit_user_answer.assert_any_call("no")
         agent_loop.submit_user_answer.assert_called_with("")
 
     def test_on_agent_finished_called_on_error(self):

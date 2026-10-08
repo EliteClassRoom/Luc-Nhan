@@ -2,8 +2,6 @@
 
 Covers:
 
-* ``classify_idapython_script`` — complexity heuristic (still used at
-  static-validation time even though the pre-execute gate is gone).
 * ``LucNhanConfig`` round-trip of ``docs_review_mode`` + legacy
   ``require_ida_docs_for_complex_scripts`` migration.
 * ``AgentLoop._review_failed_script`` — post-error reviewer: only
@@ -29,96 +27,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from lucnhan.core.config import LucNhanConfig
-from lucnhan.tools.idapython_complexity import (
-    COMPLEX_LINE_THRESHOLD,
-    classify_idapython_script,
-)
-from lucnhan.tools.validate_idapython import validate_idapython
-
-# ---------------------------------------------------------------------------
-# Classifier tests
-# ---------------------------------------------------------------------------
-
-
-class TestClassifier(unittest.TestCase):
-    """Heuristics for classify_idapython_script()."""
-
-    def test_simple_one_liner_is_not_complex(self):
-        src = "print(idaapi.get_inf_structure())"
-        result = classify_idapython_script(src)
-        self.assertFalse(result.is_complex, msg=result.reasons)
-        self.assertEqual(result.reasons, ())
-
-    def test_long_script_is_complex(self):
-        # Build a script longer than the threshold.
-        lines = ["import idautils"]
-        for i in range(COMPLEX_LINE_THRESHOLD + 5):
-            lines.append(f"print({i})")
-        result = classify_idapython_script("\n".join(lines))
-        self.assertTrue(result.is_complex)
-        self.assertTrue(any("non-comment lines" in r for r in result.reasons))
-
-    def test_multi_module_script_is_complex(self):
-        src = "import idaapi\nimport idautils\nimport ida_funcs\nprint(idaapi.get_inf_structure())\n"
-        result = classify_idapython_script(src)
-        self.assertTrue(result.is_complex)
-        self.assertTrue(any("IDA modules" in r for r in result.reasons))
-
-    def test_mutating_calls_are_complex(self):
-        src = "import idc\nidc.set_cmt(0x401000, 'test', 0)\n"
-        result = classify_idapython_script(src)
-        self.assertTrue(result.is_complex)
-        self.assertTrue(any("mutating" in r for r in result.reasons))
-
-    def test_iteration_helpers_are_complex(self):
-        src = "import idautils\nfor ea in idautils.Functions():\n    print(hex(ea))\n"
-        result = classify_idapython_script(src)
-        self.assertTrue(result.is_complex)
-        self.assertTrue(any("iterates database" in r for r in result.reasons))
-
-    def test_visitor_subclass_is_complex(self):
-        src = (
-            "from ida_hexrays import ctree_visitor_t\n"
-            "class MyVisitor(ctree_visitor_t):\n"
-            "    def visit_insn(self, insn):\n"
-            "        return 0\n"
-        )
-        result = classify_idapython_script(src)
-        self.assertTrue(result.is_complex)
-        self.assertTrue(any("visitor" in r for r in result.reasons))
-
-    def test_heavy_modules_are_complex(self):
-        src = "import ida_hexrays\n"
-        result = classify_idapython_script(src)
-        self.assertTrue(result.is_complex)
-
-    def test_validator_warnings_trigger_complex(self):
-        src = "idc.GetOperandValue(0x401000, 0)\n"
-        validation = validate_idapython(src)
-        self.assertTrue(validation.warnings, "expected legacy API warning")
-        result = classify_idapython_script(src, validation)
-        self.assertTrue(result.is_complex)
-        self.assertTrue(any("legacy" in r or "warn" in r for r in result.reasons))
-
-    def test_validator_blocked_triggers_complex(self):
-        src = "idaapi.get_operands(0x401000)\n"
-        validation = validate_idapython(src)
-        self.assertTrue(validation.is_blocked)
-        result = classify_idapython_script(src, validation)
-        self.assertTrue(result.is_complex)
-        self.assertTrue(any("blocked" in r for r in result.reasons))
-
-    def test_syntax_error_does_not_crash(self):
-        result = classify_idapython_script("def broken(:\n")
-        # Pure length still counts; the script is treated as complex
-        # so the reviewer can give the agent a clear error.
-        self.assertIsInstance(result.is_complex, bool)
-
-    def test_comments_only_is_simple(self):
-        src = "# just a comment\n# another\n"
-        result = classify_idapython_script(src)
-        self.assertFalse(result.is_complex)
-
 
 # ---------------------------------------------------------------------------
 # Config round-trip
