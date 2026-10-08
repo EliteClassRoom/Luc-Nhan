@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..constants import EXECUTE_PYTHON_TOOL_NAME
 from ..core.logging import log_debug
 from ..tools.base import parse_addr
 from ..tools.coercion import coerce_bool
@@ -921,7 +922,7 @@ _INTENTIONALLY_NON_REVERSIBLE: frozenset[tuple[str, str]] = frozenset(
         # without going through other mutating tools, so the agent has no
         # observable pre-state to roll back to.
         (
-            "execute_python",
+            EXECUTE_PYTHON_TOOL_NAME,
             "Arbitrary IDAPython: effects can mutate the IDB in any way "
             "outside the typed tool surface, so no faithful pre-state "
             "captures the changes.",
