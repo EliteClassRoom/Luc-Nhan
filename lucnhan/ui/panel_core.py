@@ -125,7 +125,11 @@ _ACTION_BUTTON_TOOLTIPS = {
     "_cancel_btn": "Stop the running agent (Esc)",
     "_export_btn": "Export this chat to a file",
     "_settings_btn": "Open Luc Nhan settings",
-    "_mutations_btn": "Changes — show the mutation log (IDA database edits made by the agent)",
+    # NOTE: ``_mutations_btn`` is deliberately absent — it is the context
+    # row's ``Changes`` action (G3), whose tooltip, accessible name and style
+    # are owned by ``ContextBar``.  Re-adding it here would both repaint it
+    # with push-button chrome inside a fixed 27 px row and double its
+    # accessible name (``Changes — Changes — …``).
     "_history_btn": "Show past chat sessions",
     "_tools_btn": "Open the tools panel",
 }
@@ -144,11 +148,12 @@ def _small_btn_style() -> str:
 
 
 def _tool_button_style() -> str:
-    """Neutral QSS for ``QToolButton`` controls (G1, same tokens as above).
+    """Neutral QSS for the composer's ``QToolButton`` (G1, same tokens).
 
-    Qt matches QSS selectors by class, so the ``QPushButton``-scoped rules
-    never reach a ``QToolButton`` — the composer's ``/ Commands``, Send and
-    Stop controls would otherwise stay unstyled.
+    Qt matches QSS selectors by class, so the ``QPushButton``-scoped rule
+    never reaches a ``QToolButton``.  The only such control left is the
+    ``/ Commands`` button; Send and Stop are ``QPushButton`` and use
+    ``_small_btn_style`` / ``_cancel_btn_style`` below.
     """
     t = ThemeManager.instance().tokens()
     return (
@@ -713,7 +718,6 @@ class LucNhanPanelCore(QWidget):
         self._mutations_btn = self._context_bar._changes_btn
         self._mutations_btn.setCheckable(True)
         self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
-        self._apply_action_button_tooltips()
         self._context_bar.apply_theme()
         layout.addWidget(self._context_bar)
         _early_log("panel_core:build_ui:context_bar:done")

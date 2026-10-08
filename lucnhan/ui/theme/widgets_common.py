@@ -630,16 +630,6 @@ def get_small_btn_style() -> str:
     return _small_btn_style()
 
 
-def get_tool_button_style() -> str:
-    """``QToolButton`` variant of :func:`get_small_btn_style`.
-
-    Qt matches QSS selectors by class, so the ``QPushButton``-scoped small
-    button rule never applies to a ``QToolButton`` (the composer's
-    ``/ Commands``, Send and Stop controls).  Same tokens, same geometry.
-    """
-    t = _tokens()
-    return _button_qss(t, t.alt_base, selector="QToolButton")
-
 
 def get_cancel_btn_style() -> str:
     return _cancel_btn_style()

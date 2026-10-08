@@ -17,7 +17,6 @@ from .qt_compat import (
     Qt,
     QTimer,
     QWidget,
-    Signal,
 )
 
 if is_ida():
@@ -56,8 +55,6 @@ class ContextBar(QFrame):
     and is hidden at the narrow breakpoint (G3) so a narrow dock still
     reads the binary context.
     """
-
-    changes_requested = Signal()
 
     # GUI contract G2: min-height 27 px, padding 4 / 12, gap 9.
     _ROW_HEIGHT = 27
@@ -107,7 +104,8 @@ class ContextBar(QFrame):
         self._changes_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._changes_btn.setToolTip("Show the mutation log (IDA database edits made by the agent)")
         self._changes_btn.setAccessibleName("Changes — show the mutation log")
-        self._changes_btn.clicked.connect(self.changes_requested.emit)
+        # The panel wires ``clicked`` to its own Mutations handler, so the
+        # button's own signal is the whole contract — no re-emit wrapper.
         layout.addWidget(self._changes_btn)
         self._mutation_count = 0
         self._update_changes_label()
