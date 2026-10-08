@@ -259,6 +259,33 @@ def _qt_class(name: str) -> type:
     def _layout_setter(self, layout):
         self._layout = layout
 
+    def _form_add_row(self, *a, **k):
+        """Append one form row and keep ``rowCount`` in sync."""
+        rows = getattr(self, "_form_rows", 0)
+        self._form_rows = rows + 1
+        # QVBoxLayout/QHBoxLayout share this attr dict on the stub; the
+        # separate ``_items`` list stays authoritative for them.
+        items = getattr(self, "_items", None)
+        if items is not None:
+            items.extend(a)
+
+    def _form_take_row(self, index=None):
+        """Drop the last form row, mirroring ``QFormLayout.takeRow``.
+
+        The stub form keeps a row counter so ``addRow`` /
+        ``takeRow(index)`` / ``rowCount()`` behave like the real class.
+        """
+        rows = getattr(self, "_form_rows", None)
+        if rows is None:
+            rows = 0
+            self._form_rows = rows
+        if index is None:
+            index = rows - 1
+        if 0 <= index < rows:
+            rows = index
+            self._form_rows = rows
+        return None
+
     def _layout_add_widget(self, w, *a, **k):
         items = getattr(self, "_items", None)
         if items is None:
@@ -407,7 +434,14 @@ def _qt_class(name: str) -> type:
         "setHorizontalSpacing": _noop,
         "setVerticalSpacing": _noop,
         "setFieldGrowthPolicy": _noop,
-        "removeRow": _noop,
+        # ``takeRow`` is a NON-destructive detach; ``removeRow`` is NOT —
+        # in real Qt ``removeRow(QWidget*)`` deletes the row's label and
+        # field.  The stub used to make both no-ops, which masked a class
+        # of "responsive reflow deletes the widgets" bugs.  ``takeRow``
+        # now really shrinks the row count and ``removeRow`` delegates to
+        # it, so a production call to ``removeRow`` cannot look harmless.
+        "takeRow": _form_take_row,
+        "removeRow": _form_take_row,
         "setRowWrapPolicy": _noop,
         "setLabelAlignment": _noop,
         "setFormAlignment": _noop,
@@ -519,7 +553,7 @@ def _qt_class(name: str) -> type:
         "setColumnCount": _noop,
         "insertRow": _noop,
         "currentRow": lambda self: 0,
-        "rowCount": lambda self: 0,
+        "rowCount": lambda self: getattr(self, "_form_rows", 0),
         "horizontalHeaderItem": lambda self, *a: None,
         "item": lambda self, *a: None,
         "clear": _noop,
@@ -588,7 +622,7 @@ def _qt_class(name: str) -> type:
         # Text with tracking
         "text": _text_getter,
         # Layout helpers (used by QVBoxLayout / QHBoxLayout / QFormLayout)
-        "addRow": _noop,
+        "addRow": _form_add_row,
         "insertWidget": _layout_insert_widget,
         "insertLayout": _noop,
     }

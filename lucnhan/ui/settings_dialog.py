@@ -739,12 +739,25 @@ class SettingsDialog(QDialog):
         self._replace_page("Profiles", self._profiles_tab)
 
     def _replace_page(self, title: str, widget: QWidget) -> None:
-        """Swap the lazy placeholder for the real page, in place."""
+        """Swap the lazy placeholder for the real page, in place.
+
+        Signals are blocked for the whole remove/insert pair:
+        ``QStackedWidget.removeWidget`` of the *current* last page emits
+        ``currentChanged(min(idx, count - 1))``, which would route through
+        :meth:`_on_page_changed_lazy` and eagerly build a sibling page the
+        user never opened — a SettingsService filesystem scan triggered by
+        pure navigation, which the lazy contract forbids.
+        """
         index = _SETTINGS_PAGES.index(title)
-        current = self._page_host.currentIndex()
-        self._page_host.removeWidget(self._page_host.widget(index))
-        self._page_host.insertWidget(index, widget)
-        self._page_host.setCurrentIndex(current)
+        host = self._page_host
+        current = host.currentIndex()
+        previous = host.blockSignals(True)
+        try:
+            host.removeWidget(host.widget(index))
+            host.insertWidget(index, widget)
+            host.setCurrentIndex(current)
+        finally:
+            host.blockSignals(previous)
 
     @property
     def _tabs(self) -> QTabWidget:
@@ -817,7 +830,10 @@ class SettingsDialog(QDialog):
         label = QLabel(title)
         label.setObjectName("settings_section_title")
         layout.addWidget(label)
-        self._form_labels.append(label)
+        # Section titles are headings, not form labels: they must NOT join
+        # ``_form_labels``, because the responsive pass pins every entry
+        # to the 138/108 px form-label column.  "GLM reasoning resilience"
+        # is ~288 px at 12 px semibold, so it hard-clipped on every open.
         return section
 
     def _make_form(self) -> QFormLayout:
@@ -873,7 +889,15 @@ class SettingsDialog(QDialog):
 
         ``two_columns`` puts the pairs side by side in reading order
         (row-major); otherwise every pair stacks into the single column
-        in the same reading order.  No widget is recreated.
+        in the same reading order.  No widget is recreated or destroyed.
+
+        Rows are detached with ``takeRow``, never ``removeRow``: Qt's
+        ``QFormLayout.removeRow(QWidget*)`` **takes ownership and deletes**
+        the row's label *and* field.  Using it here destroyed the
+        Temperature spin box and the Auto-context checkbox on the first
+        narrow-width crossing, and a later Save then dereferenced a
+        deleted C++ object.  ``takeRow`` only removes the row from the
+        layout and hands the widgets back.
         """
         if getattr(self, "_reflow_in_progress", False):
             return
@@ -886,10 +910,11 @@ class SettingsDialog(QDialog):
         self._reflow_in_progress = True
         try:
             for form in columns:
-                for label, field in rows:
-                    form.removeRow(label)
-                    if field is not label:
-                        form.removeRow(field)
+                for _label, _field in rows:
+                    # Every row in these forms was added as a
+                    # ``(QLabel, QWidget)`` pair, so each is exactly one
+                    # form row.
+                    form.takeRow(form.rowCount() - 1)
             if two_columns:
                 left, right = columns[0], columns[1]
                 for index, (label, field) in enumerate(rows):
