@@ -847,10 +847,13 @@ class LucNhanPanelCore(QWidget):
         close_tab_sc.activated.connect(self._close_current_tab)
 
         # GUI contract G5: Escape is the narrow-dock equivalent of the
-        # pane's Close button — it routes through the same coordinator,
-        # so focus returns to the action that opened the pane.
+        # pane's Close button.  Scoped with ``WidgetWithChildrenShortcut``
+        # (NOT ``WindowShortcut``) so the pane only takes the key while it
+        # actually owns focus: when the user is typing in the composer, the
+        # editor's documented Esc-to-cancel handler keeps it.  See
+        # :meth:`_on_close_pane_shortcut` for the full precedence rule.
         close_pane_sc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
-        close_pane_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+        close_pane_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         close_pane_sc.activated.connect(self._on_close_pane_shortcut)
 
     def _close_current_tab(self) -> None:
@@ -860,12 +863,33 @@ class LucNhanPanelCore(QWidget):
     def _on_close_pane_shortcut(self) -> None:
         """Escape: close the auxiliary pane when one is open.
 
-        Only the coordinator runs; a pane that is already closed leaves
-        the shortcut inert so Escape keeps its existing behaviour
-        elsewhere (approval cancel, dialogs, composer).
+        Precedence (GUI contract G5 must not cost the composer its key):
+
+        1. No pane open  → inert.  Escape keeps whatever meaning it has
+           elsewhere (approval cancel, dialogs).
+        2. Focus in the composer → let the editor own the key.  Its
+           documented Esc-to-cancel-agent behavior always wins; closing a
+           pane is not something the user is asking for while typing.
+        3. Otherwise → close the pane and hand focus to the opener.
+
+        The shortcut is widget-scoped, so case 2 is also enforced by Qt
+        (the pane never sees the key while the editor has focus).  The
+        explicit check keeps the rule correct in the test harness, where
+        focus is simulated rather than dispatched through Qt.
         """
-        if getattr(self, "_pane_name", None) is not None:
-            self._close_right_panel()
+        if getattr(self, "_pane_name", None) is None:
+            return
+        if self._focus_in_composer():
+            return
+        self._close_right_panel()
+
+    def _focus_in_composer(self) -> bool:
+        """True when the composer editor holds keyboard focus."""
+        input_area = getattr(self, "_input_area", None)
+        if input_area is None:
+            return False
+        focus = getattr(input_area, "hasFocus", None)
+        return bool(focus()) if callable(focus) else False
 
     def _build_tab_widget(self) -> None:
         """Create the session strip and the tab widget whose pages it drives.
@@ -1305,40 +1329,38 @@ class LucNhanPanelCore(QWidget):
         """
         stack = getattr(self, "_pane_stack", None)
         layout = getattr(self, "_content_layout", None)
-        last_narrow = getattr(self, "_pane_narrow", None)
-        if last_narrow != narrow:
+        mode = getattr(self, "_mode_stack", None)
+        if getattr(self, "_pane_narrow", None) != narrow:
             self._pane_narrow = narrow
-            if layout is not None and stack is not None:
-                # 3:1 mirrors the splitter's wide ratio.  At the narrow
-                # breakpoint the pane takes the whole stretch and the
-                # conversation falls back to its minimum hint — it is
-                # behind the overlay either way, so that spare column is
-                # exactly what buys the pane the full content region (G5).
-                mode = getattr(self, "_mode_stack", None)
-                if mode is not None:
-                    layout.setStretchFactor(mode, 1)
-                layout.setStretchFactor(stack, 1)
-            if stack is not None:
-                # The width is *pinned*, not merely capped: a cap alone
-                # leaves Qt free to keep the split as-is (real Qt only
-                # honours the minimum), so wide gets the G2 nominal
-                # column and narrow gets the whole content region — the
-                # overlay — from the same widget.
-                stack.setMinimumWidth(_PANE_NOMINAL_WIDTH)
-                if narrow:
-                    # The overlay takes the content region minus the
-                    # conversation's own minimum column — the pane covers
-                    # the transcript without forcing it into a sliver
-                    # (plan §1: never squeeze chat/composer).
-                    # ``self.width()`` is the NEW panel width in
-                    # ``resizeEvent`` — the layout has not been applied
-                    # yet, so the measured region would still be stale.
-                    region = self.width()
-                    chat_min = mode.minimumSizeHint().width() if mode is not None else 0
-                    stack.setMinimumWidth(max(region - chat_min, _PANE_NOMINAL_WIDTH))
-                    stack.setMaximumWidth(_PANE_WIDTH_UNBOUND)
-                else:
-                    stack.setMaximumWidth(_PANE_NOMINAL_WIDTH)
+        if layout is not None and stack is not None:
+            # 3:1 mirrors the splitter's wide ratio.  At the narrow
+            # breakpoint the pane takes the whole stretch and the
+            # conversation falls back to its minimum hint — it is behind
+            # the overlay either way, so that spare column is exactly
+            # what buys the pane the full content region (G5).
+            if mode is not None:
+                layout.setStretchFactor(mode, 1)
+            layout.setStretchFactor(stack, 1)
+        if stack is not None:
+            # The width is *pinned*, not merely capped: a cap alone leaves
+            # Qt free to keep the split as-is, so wide gets the G2 nominal
+            # column and narrow gets the content region minus the
+            # conversation's own minimum column.
+            stack.setMinimumWidth(_PANE_NOMINAL_WIDTH)
+            if narrow:
+                # ``self.width()`` is the NEW panel width in
+                # ``resizeEvent`` — the layout has not been applied yet,
+                # so the measured region would still be stale.  Recomputed
+                # on EVERY resize while narrow, not just when the
+                # breakpoint is crossed, so shrinking the dock inside the
+                # narrow band cannot leave the pane overflowing the region
+                # (which would clip its Close button).
+                region = self.width()
+                chat_min = mode.minimumSizeHint().width() if mode is not None else 0
+                stack.setMinimumWidth(max(region - chat_min, _PANE_NOMINAL_WIDTH))
+                stack.setMaximumWidth(_PANE_WIDTH_UNBOUND)
+            else:
+                stack.setMaximumWidth(_PANE_NOMINAL_WIDTH)
             # Geometry hints changed, so the cached split is stale.
             if layout is not None:
                 layout.invalidate()
@@ -1351,18 +1373,35 @@ class LucNhanPanelCore(QWidget):
             history.set_overlay_presentation(narrow)
 
     def _close_right_panel(self) -> None:
-        """Close the open pane and hand focus back to its opener.
+        """Close the open pane and hand focus back to a *visible* target.
 
-        GUI contract G5: Close returns focus to the action that opened
-        the pane.  The composer draft and caret are never touched.
+        GUI contract G5: Close returns focus to the action that opened the
+        pane, and never silently to nowhere.  At a narrow width the
+        opener is not on screen — the History / Mutations entries live in
+        the header overflow menu — so focusing it would be a no-op the
+        user cannot see.  The fallback chain is:
+
+        1. the opener, when it is still visible;
+        2. the overflow button, which is where that opener now lives;
+        3. the composer editor, which is always visible and always safe
+           (the draft and caret are untouched either way).
         """
         self._show_right_panel(None)
         opener = self._pane_opener
         self._pane_opener = None
-        if opener is not None:
+        target = None
+        if opener is not None and getattr(opener, "isVisible", bool)():
+            target = opener
+        else:
+            # The action moved into the overflow menu at this width, so
+            # put focus where the user can actually reach it.
+            target = getattr(self, "_overflow_btn", None)
+        if target is None or not getattr(target, "isVisible", bool)():
+            target = getattr(self, "_input_area", None)
+        if target is not None:
             # ``setFocus()`` defaults to ``OtherFocusReason`` — no reason
             # argument needed, and the composer draft/caret are untouched.
-            opener.setFocus()
+            target.setFocus()
 
     def _apply_header_styles(self) -> None:
         """Push token-driven chrome + navigation styles onto the header."""

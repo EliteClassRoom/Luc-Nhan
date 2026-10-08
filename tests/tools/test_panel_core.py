@@ -2166,6 +2166,7 @@ class TestAdaptivePanePresentation(unittest.TestCase):
         panel._mode_stack.minimumSizeHint.return_value.width.return_value = 100
         panel.width = MagicMock(return_value=panel_width)
         panel._history_panel.set_overlay_presentation = MagicMock()
+        panel._history_btn.isVisible.return_value = True
         panel._narrow = False
         panel._pane_narrow = None
         return panel
@@ -2236,6 +2237,9 @@ class TestAdaptivePanePresentation(unittest.TestCase):
 
     def test_escape_shortcut_routes_through_the_coordinator(self) -> None:
         panel = self._panel()
+        # Focus outside the composer, so the pane owns the key.
+        panel._input_area = MagicMock()
+        panel._input_area.hasFocus.return_value = False
         panel._show_right_panel("history", opener=panel._history_btn)
         panel._on_close_pane_shortcut()
         self.assertIsNone(panel._pane_name)
@@ -2254,6 +2258,82 @@ class TestAdaptivePanePresentation(unittest.TestCase):
         self.assertNotIn("screenGeometry", src)
         self.assertNotIn("primaryScreen", src)
         self.assertNotIn("QTimer", src)
+
+    def test_narrow_overlay_is_recomputed_on_every_resize(self) -> None:
+        """Defect fix 2: shrinking *inside* the narrow band must re-pin.
+
+        Crossing 640 -> narrow is not the only resize that matters; a
+        further shrink (640 -> 460) would otherwise keep the old pin and
+        let the pane overflow the content region, clipping its Close.
+        """
+        panel = self._panel(panel_width=640)
+        panel._apply_pane_presentation(True)
+        first = panel._pane_stack.setMinimumWidth.call_args[0][0]
+        panel.width.return_value = 460
+        panel._apply_pane_presentation(True)
+        second = panel._pane_stack.setMinimumWidth.call_args[0][0]
+        self.assertNotEqual(first, second)
+        self.assertLess(second, first)
+        self.assertEqual(panel._content_layout.invalidate.call_count, 2)
+        # Presentation only — no pane state was invented or destroyed.
+        self.assertNotIn("_pane_name", vars(panel))
+
+    def test_close_falls_back_to_a_visible_target_in_narrow(self) -> None:
+        """Defect fix 3: the opener is hidden at narrow widths."""
+        panel = self._panel()
+        panel._history_btn.isVisible.return_value = False
+        panel._overflow_btn = MagicMock()
+        panel._overflow_btn.isVisible.return_value = True
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._close_right_panel()
+        panel._history_btn.setFocus.assert_not_called()
+        panel._overflow_btn.setFocus.assert_called_once()
+
+    def test_close_falls_back_to_composer_when_no_button_is_visible(self) -> None:
+        panel = self._panel()
+        panel._history_btn.isVisible.return_value = False
+        panel._overflow_btn = MagicMock()
+        panel._overflow_btn.isVisible.return_value = False
+        panel._input_area = MagicMock()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._close_right_panel()
+        panel._input_area.setFocus.assert_called_once()
+
+    def test_close_uses_the_opener_when_it_is_visible(self) -> None:
+        panel = self._panel()
+        panel._history_btn.isVisible.return_value = True
+        panel._overflow_btn = MagicMock()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._close_right_panel()
+        panel._history_btn.setFocus.assert_called_once()
+        panel._overflow_btn.setFocus.assert_not_called()
+
+    def test_escape_defers_to_the_composer(self) -> None:
+        """Defect fix 1: Esc in the composer cancels the agent, not the pane."""
+        panel = self._panel()
+        panel._input_area = MagicMock()
+        panel._input_area.hasFocus.return_value = True
+        panel._close_right_panel = MagicMock()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._on_close_pane_shortcut()
+        panel._close_right_panel.assert_not_called()
+        self.assertEqual(panel._pane_name, "history")
+
+    def test_escape_closes_pane_when_focus_is_elsewhere(self) -> None:
+        panel = self._panel()
+        panel._input_area = MagicMock()
+        panel._input_area.hasFocus.return_value = False
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._on_close_pane_shortcut()
+        self.assertIsNone(panel._pane_name)
+
+    def test_escape_shortcut_is_widget_scoped_not_window_scoped(self) -> None:
+        """A window-scoped Esc would swallow the composer's key entirely."""
+        import inspect
+
+        src = inspect.getsource(LucNhanPanelCore._install_shortcuts)
+        self.assertIn("Qt.ShortcutContext.WidgetWithChildrenShortcut", src)
+        self.assertNotIn("Qt.ShortcutContext.WindowShortcut)\n        close_pane_sc", src)
 
     def test_panes_share_one_stack_so_they_cannot_coexist(self) -> None:
         """Source-level guard: the panes live in the pane stack, never as

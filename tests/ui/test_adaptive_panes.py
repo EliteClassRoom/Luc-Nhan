@@ -135,6 +135,35 @@ class TestAdaptivePaneGeometry(unittest.TestCase):
         self.assertTrue(self.composer.isVisible())
         self.assertLess(self.composer.height(), 200)
 
+    def test_shrink_inside_narrow_keeps_the_pane_inside_the_region(self) -> None:
+        """Re-pin on every narrow resize, not just on the breakpoint crossing.
+
+        A 640 -> 460 shrink that kept the old pin would let the pane
+        overflow the content region and clip its own Close button.
+        """
+        self.stack.setCurrentWidget(self.history)
+        self.stack.setVisible(True)
+        self.root.resize(640, 700)
+        for _ in range(3):
+            _app.processEvents()
+        self._reconfigure(narrow=True)
+        for _ in range(3):
+            _app.processEvents()
+        self.root.resize(460, 700)
+        for _ in range(3):
+            _app.processEvents()
+        self._reconfigure(narrow=True)
+        for _ in range(3):
+            _app.processEvents()
+        # The invariant that matters is containment, not the exact
+        # pixel width: whatever the pin recomputes to, the pane plus the
+        # conversation's minimum column must exactly fill the region.
+        self.assertEqual(self.stack.width() + self.mode_stack.width(), self.content.width())
+        self.assertEqual(self.mode_stack.width(), self.mode_stack.minimumSizeHint().width())
+        check_right = self.history._close_btn.mapTo(self.root, self.history._close_btn.rect().topRight()).x()
+        self.assertLessEqual(check_right, self.content.width())
+        self.assertTrue(self.history.isVisible())
+
     def test_panes_are_mutually_exclusive(self) -> None:
         self.stack.setCurrentWidget(self.history)
         self.stack.setVisible(True)
