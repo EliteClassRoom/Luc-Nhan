@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import shutil
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import MagicMock, patch
@@ -229,6 +231,7 @@ from tests.qt_real import live_class
 def _restore_rikugan_modules_after_panel_core_tests():
     """Restore the real rikugan modules once this test module finishes."""
     yield
+    _cleanup_temp_configs()
     for name, original in _STUBBED_MODULE_BACKUPS.items():
         if original is None:
             # Module wasn't loaded before this test file — drop the stub
@@ -383,6 +386,31 @@ class TestExportFormatToolResult(unittest.TestCase):
 # Panel logic via object.__new__ injection
 # ---------------------------------------------------------------------------
 
+_TMP_CONFIG_DIRS: list[str] = []
+
+
+def _temp_config():
+    """A ``RikuganConfig`` rooted at a throwaway directory.
+
+    A bare ``MagicMock()`` cannot stand in here: ``SessionHistory``
+    does ``os.makedirs(os.path.join(config.checkpoints_dir,
+    "sessions"))`` and a mock stringifies (``__fspath__``) into the
+    RELATIVE path ``MagicMock/mock.config/<id>`` — so the history
+    worker mkdirs junk inside the repo root.  Real config + real
+    tempdir keeps every write outside the working tree.
+    """
+    from rikugan.core.config import RikuganConfig
+
+    cfg = RikuganConfig()
+    cfg._config_dir = tempfile.mkdtemp(prefix="rikugan-panel-cfg-")
+    _TMP_CONFIG_DIRS.append(cfg._config_dir)
+    return cfg
+
+
+def _cleanup_temp_configs() -> None:
+    while _TMP_CONFIG_DIRS:
+        shutil.rmtree(_TMP_CONFIG_DIRS.pop(), ignore_errors=True)
+
 
 def _make_panel():
     # Use the class's own ``__new__`` rather than ``object.__new__``.
@@ -434,7 +462,7 @@ def _make_panel():
     panel._tab_widget = MagicMock()
     panel._tab_bar = MagicMock()
     panel._ctrl = MagicMock()
-    panel._config = MagicMock()
+    panel._config = _temp_config()
     panel._ui_hooks = None
     panel._awaiting_button_approval = False
     return panel
@@ -1767,7 +1795,7 @@ class TestOnDatabaseChangedNoRestore(unittest.TestCase):
         panel._ctrl._idb_path = "/old/path.i64"
         panel._ctrl.active_tab_id = "tab-new"
         panel._ctrl.reset_for_new_file = MagicMock()
-        panel._config = MagicMock()
+        panel._config = _temp_config()
         panel._ui_hooks = None
         panel._awaiting_button_approval = False
         # Spies / collaborators — replacing the methods with mocks lets
@@ -1869,7 +1897,7 @@ def _make_history_panel():
     panel._tab_widget = MagicMock()
     panel._tab_bar = MagicMock()
     panel._ctrl = MagicMock()
-    panel._config = MagicMock()
+    panel._config = _temp_config()
     panel._ui_hooks = None
     panel._awaiting_button_approval = False
     # Task-8 history coordinator fields (spec §8.1, §11.4).
@@ -1932,6 +1960,10 @@ class TestShowRightPanelMutuallyExclusive(unittest.TestCase):
 
     def _assert_transition(self, name, history_visible, mutation_visible) -> None:
         panel = _make_history_panel()
+        # Opening history submits the list worker to a REAL
+        # single-worker executor; stub the request itself so no
+        # background thread builds a real ``SessionHistory``.
+        panel._start_history_list_request = MagicMock()
         panel._show_right_panel(name)
         panel._history_panel.setVisible.assert_any_call(False)
         panel._mutation_panel.setVisible.assert_any_call(False)
@@ -2055,7 +2087,13 @@ class TestHistoryStartListRequest(unittest.TestCase):
         panel = _make_history_panel()
         panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
         self.assertIsNone(panel._history_executor)
-        panel._start_history_list_request()
+        # No fake executor here, so the request lands on a REAL
+        # single-worker executor whose worker builds a REAL
+        # ``SessionHistory`` on a background thread nothing joins.
+        # Patch the class the worker resolves so only the executor
+        # bookkeeping (the subject of this test) runs.
+        with _patch_session_history():
+            panel._start_history_list_request()
         self.assertIsNotNone(panel._history_executor)
 
     def test_clears_closing_flag_on_new_request(self) -> None:
@@ -2093,7 +2131,7 @@ class TestHistoryListWorker(unittest.TestCase):
 
     def _make_panel_for_worker(self):
         panel = _make_history_panel()
-        panel._ctrl.config = MagicMock()
+        panel._ctrl.config = _temp_config()
         panel._ctrl.list_history_sessions = MagicMock(return_value=[])
         return panel
 
@@ -2608,7 +2646,10 @@ class TestHistoryExecutorDistinctFromSaveExecutor(unittest.TestCase):
     def test_history_executor_is_not_save_executor(self) -> None:
         panel = _make_history_panel()
         panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
-        panel._start_history_list_request()
+        # The REAL executor is the subject here; patch only the worker
+        # it would run so no background thread outlives the test.
+        with _patch_session_history():
+            panel._start_history_list_request()
         from rikugan.state.history import _SAVE_EXECUTOR
 
         self.assertIsNot(panel._history_executor, _SAVE_EXECUTOR)
@@ -2617,7 +2658,8 @@ class TestHistoryExecutorDistinctFromSaveExecutor(unittest.TestCase):
         """The prefix must be ``rikugan-history`` so thread dumps are debuggable."""
         panel = _make_history_panel()
         panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
-        panel._start_history_list_request()
+        with _patch_session_history():
+            panel._start_history_list_request()
         # ThreadPoolExecutor exposes the prefix via ``_thread_name_prefix``.
         prefix = getattr(panel._history_executor, "_thread_name_prefix", "")
         self.assertEqual(prefix, "rikugan-history")
@@ -2641,7 +2683,7 @@ class TestHistoryExecutorDistinctFromSaveExecutor(unittest.TestCase):
         )
 
         panel = _make_history_panel()
-        panel._ctrl.config = MagicMock()
+        panel._ctrl.config = _temp_config()
         panel._ctrl.list_history_sessions = MagicMock(return_value=[])
         # Queue a sentinel save so flush_saves has real work to drain.
         save_future = _SAVE_EXECUTOR.submit(lambda: None)
@@ -4071,7 +4113,7 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
         from rikugan.state.history_types import HistoryScope
 
         panel = _make_history_panel()
-        panel._ctrl.config = MagicMock()
+        panel._ctrl.config = _temp_config()
         panel._ctrl.list_history_sessions = MagicMock(return_value=[])
         panel._history_executor = ThreadPoolExecutor(max_workers=1)
         try:

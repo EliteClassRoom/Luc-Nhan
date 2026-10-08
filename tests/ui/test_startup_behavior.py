@@ -36,6 +36,8 @@ focuses on the cold-start outcome only.
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 
@@ -269,7 +271,16 @@ class TestStartupOutcome(unittest.TestCase):
         panel._history_panel.setVisible(False)
         # Stub controller that returns canned list / load results.
         ctrl = MagicMock()
-        ctrl.config = MagicMock()
+        # A bare ``MagicMock()`` config stringifies (its ``__fspath__``)
+        # into the RELATIVE path ``MagicMock/mock.config/<id>``, so the
+        # ``SessionHistory`` the list worker builds would mkdir junk
+        # inside the repo.  Bind a real config on a tempdir instead.
+        from rikugan.core.config import RikuganConfig
+
+        config = RikuganConfig()
+        config._config_dir = tempfile.mkdtemp(prefix="rikugan-startup-cfg-")
+        self.addCleanup(shutil.rmtree, config._config_dir, ignore_errors=True)
+        ctrl.config = config
         ctrl.active_tab_id = "draft-tab"
 
         def _capture_scope(generation: int) -> HistoryScope:
@@ -361,7 +372,9 @@ class TestStartupOutcome(unittest.TestCase):
                 pass
         panel._chat_views.clear()
 
-    def _pump_for_async_restore(self, chat_view, expected_user: int, expected_assistant: int, timeout_s: float = 2.0) -> tuple[int, int]:
+    def _pump_for_async_restore(
+        self, chat_view, expected_user: int, expected_assistant: int, timeout_s: float = 2.0
+    ) -> tuple[int, int]:
         """Pump the event loop until ``chat_view``'s async restore
         paints the expected number of user/assistant widgets.
 
@@ -541,14 +554,12 @@ class TestStartupOutcome(unittest.TestCase):
         self.assertGreaterEqual(
             user_count,
             1,
-            "The newer session's USER message must paint a "
-            "UserMessageWidget on the new tab.",
+            "The newer session's USER message must paint a UserMessageWidget on the new tab.",
         )
         self.assertGreaterEqual(
             assistant_count,
             1,
-            "The newer session's ASSISTANT message must paint an "
-            "AssistantMessageWidget on the new tab.",
+            "The newer session's ASSISTANT message must paint an AssistantMessageWidget on the new tab.",
         )
         # The draft tab must remain untouched — the OLDER session's
         # content must NOT leak into the draft tab.
@@ -597,19 +608,16 @@ class TestStartupOutcome(unittest.TestCase):
         self.assertEqual(
             len(panel._chat_views),
             1,
-            "With no persisted sessions, no new tab must be created; "
-            "only the draft tab remains.",
+            "With no persisted sessions, no new tab must be created; only the draft tab remains.",
         )
         # The startup flag must have been consumed.
         self.assertFalse(
             panel._startup_restore_pending,
-            "The startup flag must be cleared once the empty list "
-            "result is applied.",
+            "The startup flag must be cleared once the empty list result is applied.",
         )
         self.assertFalse(
             panel._startup_restore_load_pending,
-            "No load was submitted (empty list), so the load-pending "
-            "flag must remain False.",
+            "No load was submitted (empty list), so the load-pending flag must remain False.",
         )
 
 

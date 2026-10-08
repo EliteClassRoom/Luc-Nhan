@@ -467,14 +467,25 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
             ``OPENED`` ``HistoryAttachResult`` with a fresh tab id
             (the controller's real implementation would do this).
         """
-        from rikugan.state.session import SessionState
+        import shutil
+        import tempfile
+
+        from rikugan.core.config import RikuganConfig
         from rikugan.state.history_types import (
             HistoryAttachResult,
             HistoryAttachStatus,
         )
+        from rikugan.state.session import SessionState
 
         ctrl = MagicMock()
-        ctrl.config = MagicMock()
+        # A bare ``MagicMock()`` config stringifies (its ``__fspath__``)
+        # into the RELATIVE path ``MagicMock/mock.config/<id>``, so the
+        # ``SessionHistory`` the load worker builds would mkdir junk
+        # inside the repo.  Bind a real config on a tempdir instead.
+        config = RikuganConfig()
+        config._config_dir = tempfile.mkdtemp(prefix="rikugan-click-cfg-")
+        self.addCleanup(shutil.rmtree, config._config_dir, ignore_errors=True)
+        ctrl.config = config
         ctrl.active_tab_id = "draft-tab"
 
         def _capture_scope(generation: int) -> HistoryScope:
@@ -518,7 +529,9 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
         ctrl.tab_label.return_value = "Loaded chat"
         return ctrl
 
-    def _wait_for_async_restore(self, chat_view, expected_user: int, expected_assistant: int, timeout_s: float = 2.0) -> None:
+    def _wait_for_async_restore(
+        self, chat_view, expected_user: int, expected_assistant: int, timeout_s: float = 2.0
+    ) -> None:
         """Pump the event loop until the async restore on ``chat_view``
         paints the expected number of user/assistant widgets.
 
