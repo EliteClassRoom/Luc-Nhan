@@ -127,6 +127,12 @@ class LucNhanConfig:
     parallel_agent_enabled: bool = True
     parallel_agent_max_concurrent: int = 3
 
+    # Fan-out cap for ``spawn_subagent`` calls issued in a single turn.
+    # Every pending/running child counts as one slot; a spawn call that
+    # would exceed the cap waits for a free slot before its thread starts.
+    # Lower values trade breadth for provider rate-limit headroom.
+    subagent_max_concurrent: int = 4
+
     # IDA Output window verbosity.  Controls which log records appear in
     # IDA's Output window via ``HostOutputHandler``.  File and JSON
     # logging are unaffected — full DEBUG output continues to land in
@@ -445,6 +451,7 @@ class LucNhanConfig:
             "bulk_renamer_max_concurrent",
             "parallel_agent_enabled",
             "parallel_agent_max_concurrent",
+            "subagent_max_concurrent",
             "oauth_consent_accepted",
             "preserve_context",
             "encrypt_api_keys",

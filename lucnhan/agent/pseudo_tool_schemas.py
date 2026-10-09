@@ -160,7 +160,10 @@ SPAWN_SUBAGENT_SCHEMA: dict = {
             "available tools. It returns a concise summary of its "
             "findings. Use this to delegate research-heavy tasks "
             "(e.g. 'analyze all functions referencing the score string') "
-            "without filling your own context with raw tool output."
+            "without filling your own context with raw tool output. "
+            "You may issue multiple spawn_subagent calls in a single turn — "
+            "they run concurrently in parallel and each returns its own "
+            "summary after all of them finish."
         ),
         "parameters": {
             "type": "object",

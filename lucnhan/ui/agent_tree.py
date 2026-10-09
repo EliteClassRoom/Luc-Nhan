@@ -28,6 +28,9 @@ from .styles import (
 )
 from .theme.applicator import bind_theme, disconnect_theme
 
+# Statuses that mean the agent will produce no further updates.
+FINISHED_STATUSES = frozenset({"COMPLETED", "FAILED", "CANCELLED"})
+
 
 @dataclass
 class AgentInfo:
@@ -41,6 +44,9 @@ class AgentInfo:
     elapsed_seconds: float = 0.0
     summary: str = ""
     category: str = ""
+    # Newest-last, newline-joined live feed of the child's tool activity.
+    # Shown instead of ``summary`` while the agent is still running.
+    activity: str = ""
 
 
 class AgentTreeWidget(QWidget):
@@ -145,7 +151,6 @@ class AgentTreeWidget(QWidget):
         If agents are selected, only remove those that are finished.
         If nothing is selected, remove all finished agents.
         """
-        _FINISHED = {"COMPLETED", "FAILED", "CANCELLED"}
         selected = self._tree.selectedItems()
 
         if selected:
@@ -154,10 +159,10 @@ class AgentTreeWidget(QWidget):
                 agent_id = item.data(0, Qt.ItemDataRole.UserRole)
                 if agent_id:
                     info = self._agents.get(agent_id)
-                    if info and info.status in _FINISHED:
+                    if info and info.status in FINISHED_STATUSES:
                         to_remove.append(agent_id)
         else:
-            to_remove = [aid for aid, info in self._agents.items() if info.status in _FINISHED]
+            to_remove = [aid for aid, info in self._agents.items() if info.status in FINISHED_STATUSES]
 
         for agent_id in to_remove:
             # Decrement counters for removed agent
@@ -233,7 +238,20 @@ class AgentTreeWidget(QWidget):
         # Auto-update preview if this agent is selected
         selected = self._tree.selectedItems()
         if selected and selected[0].data(0, Qt.ItemDataRole.UserRole) == info.agent_id:
-            self._preview.setPlainText(info.summary or "(no output yet)")
+            self._preview.setPlainText(self._preview_text(info))
+
+    @staticmethod
+    def _preview_text(info: AgentInfo) -> str:
+        """Text for the preview pane.
+
+        A running agent has no summary yet, so show its live tool feed;
+        once it finishes, the summary is the durable answer and replaces
+        the feed. An agent that has produced neither falls back to a
+        placeholder.
+        """
+        if info.status in FINISHED_STATUSES or not info.activity:
+            return info.summary or "(no output yet)"
+        return info.activity
 
     def _apply_filter(self, _text: str = "") -> None:
         """Show/hide tree items based on the selected category filter."""
@@ -259,7 +277,7 @@ class AgentTreeWidget(QWidget):
         agent_id = items[0].data(0, Qt.ItemDataRole.UserRole)
         info = self._agents.get(agent_id)
         if info:
-            self._preview.setPlainText(info.summary or "(no output yet)")
+            self._preview.setPlainText(self._preview_text(info))
         else:
             self._preview.clear()
 

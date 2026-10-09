@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`spawn_subagent` calls in one turn now run in parallel, and appear in the
+  Agents tab.** Multiple `spawn_subagent` calls issued in a single turn used to
+  run one after another, and the children bypassed the subagent registry, so they
+  never showed up under Tools → Agents. Each call now starts its child on the
+  shared `SubagentManager` and returns immediately; a single join at the end of
+  the turn waits for every child and emits their results in tool-call order.
+  Fan-out is capped by the new `subagent_max_concurrent` setting (default 4) —
+  a spawn call that would exceed the cap waits for a free slot. Concurrent
+  children run unattended, since they would otherwise contend for the parent's
+  single-slot approval/question queues; a batch of one keeps its attended
+  behavior. Chat-spawned children now render as subagent cards in the
+  conversation and appear in the Agents tab with status, turns, elapsed time and
+  Kill, alongside a live `→ tool` / `← result` activity feed in the preview pane
+  while the child is running. Cancelling the parent mid-join cancels the
+  stragglers before aborting the turn.
+
 - **The Luc Nhan rename is now complete end to end.** The display name was
   already Luc Nhan; the code, packaging and on-disk artifacts now follow. The
   Python package is `lucnhan/`, the IDA entry point is `lucnhan_plugin.py`, the

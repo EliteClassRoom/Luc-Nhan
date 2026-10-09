@@ -94,6 +94,7 @@ from .pseudo_tool_schemas import (
     SPAWN_SUBAGENT_SCHEMA,
 )
 from .subagent import SubagentRunner
+from .subagent_manager import SubagentStatus
 from .system_prompt import build_system_prompt
 from .turn import TurnEvent, TurnEventType
 
@@ -525,6 +526,7 @@ class AgentLoop:
         cancel_event: threading.Event | None = None,
         unattended: bool = False,
         max_turns: int | None = None,
+        subagent_manager: Any | None = None,
     ) -> None:
         self.provider = provider
         self.tools = tool_registry
@@ -614,10 +616,37 @@ class AgentLoop:
 
         self._research_state: _RS | None = None
 
+        # SubagentManager shared with the UI (Agents tab + chat cards).
+        # When set, every spawn_subagent in this loop's tree registers with
+        # that manager so the UI polls one event queue. None in headless /
+        # test constructions, where a private manager is built on first use.
+        self._subagent_manager: Any | None = subagent_manager
+
     @property
     def unattended(self) -> bool:
         """True when no UI is attached to answer approval/question gates."""
         return self._unattended
+
+    def _get_or_create_subagent_manager(self) -> Any:
+        """Return the SubagentManager used for spawn_subagent fan-out.
+
+        The UI injects a shared manager at construction so chat-spawned
+        children land in the Agents tab. Headless callers and tests get a
+        private manager built from this loop's own provider/registry, cached
+        so every spawn in the loop reuses the same registry.
+        """
+        if self._subagent_manager is not None:
+            return self._subagent_manager
+        from .subagent_manager import SubagentManager
+
+        self._subagent_manager = SubagentManager(
+            provider=self.provider,
+            tool_registry=self.tools,
+            config=self.config,
+            host_name=self.host_name,
+            skill_registry=self.skills,
+        )
+        return self._subagent_manager
 
     def drain_mutations(self) -> list[MutationRecord]:
         """Return this loop's mutation records and clear the log.
@@ -2396,8 +2425,23 @@ class AgentLoop:
         yield TurnEvent.tool_result_event(tc.id, tc.name, result_text, False)
         return tr
 
-    def _handle_spawn_subagent_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
-        """Handle the spawn_subagent pseudo-tool."""
+    def _handle_spawn_subagent_tool(
+        self, tc: ToolCall, parallel: bool = False
+    ) -> Generator[TurnEvent, None, tuple[ToolResult | None, str | None]]:
+        """Handle the spawn_subagent pseudo-tool — phase 1 of the fan-out.
+
+        Returns ``(tool_result, agent_id)``. On the success path
+        ``tool_result`` is ``None`` and ``agent_id`` names a child already
+        running in its own thread: the ``tool_result`` event is emitted
+        later, by :meth:`_join_subagents`, after the child reaches a
+        terminal status. Validation and construction failures return an
+        error ``ToolResult`` with ``agent_id`` ``None``.
+
+        ``parallel`` is True when the model issued more than one
+        spawn_subagent in this turn. Those children are forced unattended:
+        they run concurrently, so an attended child would contend for the
+        parent's single-slot approval/question queues and stall the fan-out.
+        """
         task = tc.arguments.get("task", "")
         # ``max_turns`` arrives as a raw JSON int from the model — validate
         # it here so a malicious or hallucinated ``0`` (or negative) is
@@ -2412,31 +2456,107 @@ class AgentLoop:
             log_debug(f"spawn_subagent: invalid max_turns={raw_max_turns!r}, falling back to default")
         if not task:
             content = "Error: 'task' is required."
-            is_err = True
-        else:
-            try:
-                runner = SubagentRunner(
-                    provider=self.provider,
-                    tool_registry=self.tools,
-                    config=self.config,
-                    host_name=self.host_name,
-                    skill_registry=self.skills,
-                    parent_loop=self,
-                    unattended=self._unattended,
-                )
-                raw = yield from runner.run_task(task, max_turns=max_turns)
-                content = sanitize_tool_result(raw or "(Subagent produced no output)", "spawn_subagent")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr, None
+
+        try:
+            mgr = self._get_or_create_subagent_manager()
+            # Respect the fan-out cap: extra spawn calls in a batch wait for
+            # a free slot instead of all starting at once.
+            cap = max(1, int(getattr(self.config, "subagent_max_concurrent", 4)))
+            while mgr.active_count() >= cap:
+                self._check_cancelled()
+                time.sleep(0.1)
+
+            cancel = threading.Event()
+            runner = SubagentRunner(
+                provider=self.provider,
+                tool_registry=self.tools,
+                config=self.config,
+                host_name=self.host_name,
+                skill_registry=self.skills,
+                parent_loop=self,
+                unattended=(self._unattended or parallel),
+                cancel_event=cancel,
+                subagent_manager=self._subagent_manager,
+            )
+            agent_id = mgr.spawn(
+                name=(task.splitlines()[0][:40] or "subagent"),
+                task=task,
+                agent_type="custom",
+                max_turns=(max_turns if max_turns is not None else 20),
+                category="",
+                cancel_event=cancel,
+                runner=runner,
+            )
+            return None, agent_id
+        except CancellationError:
+            # A user cancel is not a spawn failure — let it abort the turn.
+            raise
+        except Exception as e:
+            content = f"Subagent error: {e}"
+            log_error(f"spawn_subagent failed: {e}")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr, None
+
+    def _join_subagents(
+        self,
+        pending: list[tuple[int, ToolCall, str]],
+        tool_results: list[ToolResult | None],
+    ) -> Generator[TurnEvent, None, None]:
+        """Wait for every spawned child, then emit its tool result.
+
+        ``pending`` holds ``(index, tool_call, agent_id)`` triples in
+        tool-call order; ``tool_results`` is filled at each index so the
+        caller's result list keeps the order the model emitted.
+        """
+        if not pending:
+            return
+        mgr = self._get_or_create_subagent_manager()
+        ids = [agent_id for _, _, agent_id in pending]
+        try:
+            while not mgr.all_terminal(ids):
+                self._check_cancelled()
+                time.sleep(0.05)
+        except CancellationError:
+            # Kill-style teardown: stop the stragglers so their provider
+            # streams are released before the parent aborts.
+            for agent_id in ids:
+                mgr.cancel(agent_id)
+            raise
+
+        for idx, tc, agent_id in pending:
+            info = mgr.get(agent_id)
+            status = info.status if info is not None else None
+            summary = info.summary if info is not None else ""
+            if status == SubagentStatus.COMPLETED:
+                content = sanitize_tool_result(summary or "(Subagent produced no output)", "spawn_subagent")
                 is_err = False
-                # Store subagent messages separately for export
-                if runner.last_session and runner.last_session.messages:
+            elif status == SubagentStatus.FAILED:
+                # Worker failures already prefix the message; avoid "Subagent
+                # error: Error: ..." when unwrapping.
+                detail = summary[7:] if summary.startswith("Error: ") else summary
+                content = f"Subagent error: {detail}"
+                is_err = True
+            else:
+                content = "Subagent was cancelled."
+                is_err = True
+
+            # Export logs: the worker thread has exited by now, so
+            # ``last_session`` is settled. Guarded because a cancel racing
+            # the join can leave the runner without a session.
+            try:
+                runner = info.runner if info is not None else None
+                if runner is not None and runner.last_session and runner.last_session.messages:
                     self.session.subagent_logs[tc.id] = list(runner.last_session.messages)
             except Exception as e:
-                content = f"Subagent error: {e}"
-                is_err = True
-                log_error(f"spawn_subagent failed: {e}")
-        tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=is_err)
-        yield TurnEvent.tool_result_event(tc.id, tc.name, content, is_err)
-        return tr
+                log_debug(f"subagent log export failed for {agent_id}: {e}")
+
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=is_err)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, is_err)
+            tool_results[idx] = tr
 
     def _handle_activate_skill_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle the activate_skill pseudo-tool."""
@@ -2707,9 +2827,19 @@ class AgentLoop:
         self,
         tool_calls: list[ToolCall],
     ) -> Generator[TurnEvent, None, list[ToolResult]]:
-        """Execute tool calls, yielding result events. Returns ToolResult list."""
-        tool_results: list[ToolResult] = []
-        for tc in tool_calls:
+        """Execute tool calls, yielding result events. Returns ToolResult list.
+
+        ``spawn_subagent`` is two-phase: each call in the batch starts its
+        child on the manager and returns immediately, then a single join
+        at the end waits for every child and emits their results in
+        tool-call order. That is what makes a batch of spawn calls
+        concurrent rather than sequential.
+        """
+        spawn_count = sum(1 for tc in tool_calls if tc.name == "spawn_subagent")
+        parallel = spawn_count > 1
+        tool_results: list[ToolResult | None] = [None] * len(tool_calls)
+        pending: list[tuple[int, ToolCall, str]] = []
+        for idx, tc in enumerate(tool_calls):
             self._check_cancelled()
             state = self._exploration_state
             persisted = self.session.metadata.get("active_mode", "")
@@ -2725,7 +2855,12 @@ class AgentLoop:
             elif tc.name == "save_memory":
                 tr = yield from self._handle_save_memory_tool(tc)
             elif tc.name == "spawn_subagent":
-                tr = yield from self._handle_spawn_subagent_tool(tc)
+                spawn_tr, agent_id = yield from self._handle_spawn_subagent_tool(tc, parallel=parallel)
+                if agent_id is not None:
+                    pending.append((idx, tc, agent_id))
+                else:
+                    tool_results[idx] = spawn_tr
+                continue
             elif tc.name == "activate_skill":
                 tr = yield from self._handle_activate_skill_tool(tc)
             elif tc.name == "ask_user":
@@ -2734,8 +2869,14 @@ class AgentLoop:
                 tr = yield from self._handle_delegate_external_task_tool(tc)
             else:
                 tr = yield from self._execute_single_tool(tc)
-            tool_results.append(tr)
-        return tool_results
+            tool_results[idx] = tr
+        if pending:
+            yield from self._join_subagents(pending, tool_results)
+        # Every slot is filled by inline dispatch or the join; a leftover
+        # None means a branch forgot to store its result, which would
+        # misalign the provider's tool_result ids. Fail loudly.
+        assert all(tr is not None for tr in tool_results), "unfilled tool result slot"
+        return [tr for tr in tool_results if tr is not None]
 
     def _build_tools_schema(
         self, active_skill: Any, use_exploration_mode: bool, use_research_mode: bool = False

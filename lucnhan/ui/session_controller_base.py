@@ -36,6 +36,7 @@ from ..state.history_types import (
 
 if TYPE_CHECKING:
     from ..agent.loop import AgentLoop, BackgroundAgentRunner
+    from ..agent.subagent_manager import SubagentManager
     from ..agent.turn import TurnEvent
     from ..mcp.manager import MCPManager
     from ..memory.service import BinaryMemoryService
@@ -122,6 +123,10 @@ class SessionControllerBase:
         self._tool_registry: ToolRegistry = tool_registry_factory()
         self._skill_registry = SkillRegistry()
         self._mcp_manager = MCPManager()
+        # Session-wide subagent registry/event queue. Created on first use
+        # by ``get_or_create_subagent_manager`` and shared with every
+        # agent loop so chat-spawned children reach the Agents tab.
+        self._subagent_manager: SubagentManager | None = None
         self._idb_path = _normalize_db_path(database_path_getter())
         self._db_instance_id = self._ensure_db_instance_id()
         self._runtime_init_done = threading.Event()
@@ -431,6 +436,31 @@ class SessionControllerBase:
         """Return the lazily-created tool registry."""
         return self.tool_registry
 
+    def get_or_create_subagent_manager(self) -> SubagentManager | None:
+        """Return the session-wide SubagentManager, creating it on first call.
+
+        The manager is the single registry + event queue behind both the
+        Tools → Agents tab and the chat subagent cards, so every agent
+        spawned by an agent loop must share it. Returns None (without
+        caching) when no provider can be built; callers fall back to the
+        loop's private manager in that case.
+        """
+        from ..agent.subagent_manager import SubagentManager
+
+        if self._subagent_manager is not None:
+            return self._subagent_manager
+        provider = self.get_provider()
+        if provider is None:
+            return None
+        self._subagent_manager = SubagentManager(
+            provider=provider,
+            tool_registry=self.tool_registry,
+            config=self.config,
+            host_name=self.host_name,
+            skill_registry=self._skill_registry,
+        )
+        return self._subagent_manager
+
     # --- Advanced / deferred tool registration (host-provided) ---
 
     def ensure_advanced_tools_ready(self) -> bool:
@@ -599,6 +629,10 @@ class SessionControllerBase:
             session,
             skill_registry=self._skill_registry,
             host_name=self.host_name,
+            # Share the session-wide manager so spawn_subagent children
+            # register with the same queue the Agents tab polls. None when
+            # no provider is available — the loop then builds its own.
+            subagent_manager=self.get_or_create_subagent_manager(),
         )
 
         # Inject central memory service for every agent run.

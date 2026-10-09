@@ -56,6 +56,7 @@ class SubagentRunner:
         model_override: str = "",
         unattended: bool | None = None,
         max_turns: int | None = None,
+        subagent_manager: Any | None = None,
     ) -> None:
 
         # Hard ceiling for the child run. ``None`` means each caller
@@ -82,6 +83,11 @@ class SubagentRunner:
         self.skills = skill_registry
         self._parent_loop = parent_loop
         self._cancel_event = cancel_event
+        # Shared SubagentManager forwarded into the child loop so grandchildren
+        # spawned by that loop register with the same registry/event queue the
+        # UI already polls (Agents tab + chat cards). None when the child has
+        # no manager to share — it then builds a private one.
+        self._subagent_manager = subagent_manager
         self._model_override = model_override or ""
         self._last_session: SessionState | None = None
         # Unattended children have no parent UI attached: interactive gates
@@ -187,6 +193,7 @@ class SubagentRunner:
             cancel_event=self._cancel_event,
             unattended=self._unattended,
             max_turns=max_turns if max_turns is not None else self._max_turns,
+            subagent_manager=self._subagent_manager,
         )
 
     @property

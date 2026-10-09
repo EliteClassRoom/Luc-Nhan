@@ -31,6 +31,7 @@ from ..state.history_types import (
 
 if TYPE_CHECKING:
     from ..state.session import SessionState
+    from .agent_tree import AgentInfo
 
 from .chat_view import ChatView
 from .context_bar import ContextBar
@@ -3695,23 +3696,16 @@ class LucNhanPanelCore(QWidget):
         QTimer.singleShot(0, _fire)
 
     def _get_or_create_subagent_manager(self):
-        """Lazily create the SubagentManager."""
-        if hasattr(self, "_subagent_manager"):
-            return self._subagent_manager
+        """Return the session's shared SubagentManager.
 
-        from ..agent.subagent_manager import SubagentManager
-
-        provider = self._ctrl.get_provider()
-        if provider is None:
-            return None
-        self._subagent_manager = SubagentManager(
-            provider=provider,
-            tool_registry=self._ctrl.get_tool_registry(),
-            config=self._config,
-            host_name=self._ctrl.host_name,
-            skill_registry=getattr(self._ctrl, "_skill_registry", None),
-        )
-        return self._subagent_manager
+        Owned by the controller so agent loops and the Tools panel use one
+        registry and one event queue; without this split, chat-spawned
+        children would be invisible to the Agents tab.
+        """
+        manager = self._ctrl.get_or_create_subagent_manager()
+        if manager is not None:
+            self._subagent_manager = manager
+        return manager
 
     def _on_cancel_agent(self, agent_id: str) -> None:
         """Handle agent cancel request from AgentTreeWidget."""
@@ -3733,13 +3727,40 @@ class LucNhanPanelCore(QWidget):
         )
         self._start_agent(text)
 
+    @staticmethod
+    def _agent_info_from(info) -> AgentInfo:
+        """Snapshot a manager record into the tree widget's view model.
+
+        Shared by the event branch and the periodic running sweep so both
+        carry the live activity feed. ``info.activity`` is appended by the
+        worker thread while the Qt thread reads it; list append/truncate
+        plus the join are atomic, so the worst case is a snapshot that
+        misses the very newest entry.
+        """
+        from .agent_tree import AgentInfo
+
+        elapsed = (info.completed_at or time.time()) - info.created_at
+        return AgentInfo(
+            agent_id=info.id,
+            name=info.name,
+            agent_type=info.agent_type,
+            status=info.status.value.upper(),
+            turns=info.turn_count,
+            elapsed_seconds=elapsed,
+            summary=info.summary,
+            category=info.category,
+            activity="\n".join(info.activity),
+        )
+
     def _poll_tools_events(self) -> None:
         """Poll all tools subsystems for events."""
         if self._is_shutdown:
             return
 
-        # Poll subagent manager events
-        mgr = getattr(self, "_subagent_manager", None)
+        # Poll subagent manager events. Go through the accessor (not the raw
+        # attribute) so a manager created by an agent loop's own fallback
+        # is picked up, and so one registry serves the tab and the chat.
+        mgr = self._get_or_create_subagent_manager()
         if mgr is not None:
             for _ in range(10):
                 event = mgr.poll_event()
@@ -3747,25 +3768,11 @@ class LucNhanPanelCore(QWidget):
                     break
                 # Update agent tree
                 if hasattr(self, "_agent_tree"):
-                    from .agent_tree import AgentInfo
-
                     meta = event.metadata or {}
                     agent_id = meta.get("agent_id", "")
                     info = mgr.get(agent_id)
                     if info is not None:
-                        elapsed = (info.completed_at or time.time()) - info.created_at
-                        self._agent_tree.update_agent(
-                            AgentInfo(
-                                agent_id=info.id,
-                                name=info.name,
-                                agent_type=info.agent_type,
-                                status=info.status.value.upper(),
-                                turns=info.turn_count,
-                                elapsed_seconds=elapsed,
-                                summary=info.summary,
-                                category=info.category,
-                            )
-                        )
+                        self._agent_tree.update_agent(self._agent_info_from(info))
                 # Show in chat for spawned/completed/failed — but skip
                 # bulk_rename agents to avoid polluting the conversation.
                 if event.type in (
@@ -3784,23 +3791,11 @@ class LucNhanPanelCore(QWidget):
             last_sweep = getattr(self, "_last_agent_sweep", 0.0)
             if hasattr(self, "_agent_tree") and (now - last_sweep) >= 1.0:
                 self._last_agent_sweep = now
-                from .agent_tree import AgentInfo
-
                 for info in mgr.list_all():
                     if info.status.value == "running":
-                        elapsed = now - info.created_at
-                        self._agent_tree.update_agent(
-                            AgentInfo(
-                                agent_id=info.id,
-                                name=info.name,
-                                agent_type=info.agent_type,
-                                status=info.status.value.upper(),
-                                turns=info.turn_count,
-                                elapsed_seconds=elapsed,
-                                summary=info.summary,
-                                category=info.category,
-                            )
-                        )
+                        snapshot = self._agent_info_from(info)
+                        snapshot.elapsed_seconds = now - info.created_at
+                        self._agent_tree.update_agent(snapshot)
 
     def _on_undo_requested(self, count: int) -> None:
         """Handle undo request from the mutation log panel."""
