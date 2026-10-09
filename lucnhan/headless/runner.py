@@ -211,7 +211,11 @@ def _auto_deny_approval(runner: Any, event_type: TurnEventType) -> None:
             log_debug(f"Headless auto-deny tool_approval failed: {exc}")
     elif event_type in (TurnEventType.PLAN_GENERATED, TurnEventType.SAVE_APPROVAL_REQUEST):
         try:
-            agent_loop.submit_approval("deny")
+            # Plan/save gates block on the user-answer queue (modes/plan.py,
+            # modes/exploration.py), not the orchestra `_approval_queue` that
+            # submit_approval writes — feeding submit_approval here deadlocks
+            # the one-shot run. "no" resolves to CANCEL (plan) / DISCARD (save).
+            agent_loop.submit_user_answer("no")
         except Exception as exc:
             log_debug(f"Headless auto-deny approval failed: {exc}")
     elif event_type == TurnEventType.USER_QUESTION:

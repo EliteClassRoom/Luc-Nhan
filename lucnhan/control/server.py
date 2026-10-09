@@ -720,9 +720,16 @@ class ControlHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            runner.agent_loop.submit_approval(decision)
+            # Plan/exploration approval gates block on the user-answer queue
+            # (modes/plan.py, modes/exploration.py), NOT the orchestra `_approval_queue`
+            # that `submit_approval` writes. Route onto the queue the gates read,
+            # mapping approve/deny to words both parse_approval (plan) and
+            # parse_save_decision (save) resolve to the intended outcome:
+            # "yes" -> APPROVE/SAVE, "no" -> CANCEL/DISCARD.
+            answer = "yes" if decision == "approve" else "no"
+            runner.agent_loop.submit_user_answer(answer)
         except Exception:
-            logger.exception("submit_approval RPC failed")
+            logger.exception("submit_user_answer RPC failed")
             self._send(*make_error_json("Failed to submit approval", status=500))
             return
 

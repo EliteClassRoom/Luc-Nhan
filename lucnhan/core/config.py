@@ -279,6 +279,14 @@ class LucNhanConfig:
             self.knowledge_max_context_chars = max(1000, min(60_000, int(self.knowledge_max_context_chars or 12_000)))
 
         os.makedirs(self._config_dir, exist_ok=True)
+        # Owner-only on POSIX (mirrors memory/storage_guard.ensure_private_directory):
+        # this dir holds plaintext API keys while encryption is off. Windows default
+        # ACLs are already user-scoped, so hardening is POSIX-only and best-effort.
+        if os.name != "nt":
+            try:
+                os.chmod(self._config_dir, 0o700)
+            except OSError:
+                pass
         # Snapshot current provider into the providers dict before saving
         self._snapshot_current_provider()
         d = asdict(self)
@@ -348,6 +356,13 @@ class LucNhanConfig:
 
         with open(self.config_path, "w") as f:
             json.dump(d, f, indent=2)
+        # Owner-only on POSIX (mirrors codex_provider's 0o600 token write); keeps a
+        # pre-existing world-readable config from surviving the rewrite on shared hosts.
+        if os.name != "nt":
+            try:
+                os.chmod(self.config_path, 0o600)
+            except OSError:
+                pass
 
     def load(self) -> None:
         if not os.path.exists(self.config_path):

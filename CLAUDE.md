@@ -13,6 +13,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## IDAPython environment
+
+The project's IDAPython environment is always the interpreter pointed to by the
+`IDAPYTHON_VENV_EXECUTABLE` environment variable. When running any Python tooling
+for this project (uv, virtualenvs, scripts, tests), always use that interpreter,
+never the system/global Python or a different venv.
+
 ## What is Luc Nhan?
 
 Luc Nhan (六眼) is an **IDA Pro** plugin that embeds an LLM agent directly inside the disassembler. It has its **own agentic loop** (not an MCP client), orchestrates 80+ IDA tools, supports parallel subagents, skills, an MCP client, and a **headless mode** (runs inside `idat.exe` / `idat64` without Qt). It supports Claude, OpenAI/Codex, Gemini, GLM (Z.AI), Ollama, MiniMax, and any OpenAI-compatible endpoint.
@@ -249,7 +256,7 @@ The binary being analyzed contains strings, function names, decompiled code — 
 
 - `execute_python` is **NEVER** auto-approved, not even in headless mode, not even in "fast"/"batch" mode
 - **Constant centralization** (security invariant): every reference to the `execute_python` tool name **must** use `lucnhan.constants.EXECUTE_PYTHON_TOOL_NAME` — **never** hardcode the string. A typo anywhere will silently disable the approval gate. Centralizing also makes grep audits easy.
-- **IDAPython docs-review gate** (origin `4295fdc`; post-error migration): the docs-reviewer subagent (`lucnhan/agent/agents/ida_docs_reviewer.py`) runs **after** `execute_python` fails with an API-shaped error (`ImportError`, `AttributeError` for a non-existent module/attr), NOT pre-execute. The traceback classifier (`lucnhan/tools/idapython_complexity.py::classify_traceback`) decides whether to spawn the reviewer. When triggered, the reviewer is injected with a Module Quick Reference (top-N commonly used IDA modules, preloaded in the system prompt section `IDA_API_MODULE_REFERENCE_SECTION`) before judging. Configurable via the `docs_review_mode` enum (`"on_error"` / `"off"`, default `"on_error"`) in Settings. The legacy `require_ida_docs_for_complex_scripts` boolean auto-migrates.
+- **IDAPython docs-review gate** (origin `4295fdc`; post-error migration): the docs-reviewer subagent (`lucnhan/agent/agents/ida_docs_reviewer.py`) runs **after** `execute_python` fails with an API-shaped error (`ImportError`, `AttributeError` for a non-existent module/attr), NOT pre-execute. The traceback classifier (`lucnhan/tools/traceback_classifier.py::classify_traceback`) decides whether to spawn the reviewer. When triggered, the reviewer is injected with a Module Quick Reference (top-N commonly used IDA modules, preloaded in the system prompt section `IDA_API_MODULE_REFERENCE_SECTION`) before judging. Configurable via the `docs_review_mode` enum (`"on_error"` / `"off"`, default `"on_error"`) in Settings. The legacy `require_ida_docs_for_complex_scripts` boolean auto-migrates.
 - Blocklist patterns (`subprocess`, `os.system`, `os.popen`, `os.exec*`, `os.spawn*`, `Popen`, `__import__("subprocess")`) → add to the frozensets in `script_guard.py`: `_BLOCKED_MODULES` (module names), `_BLOCKED_CALLS` (callable names), `_BLOCKED_ATTRS` (`(obj, attr)` pairs), `_BLOCKED_DUNDER_ATTRS` (dangerous dunders), `_REMOVED_BUILTINS` (builtins stripped from the exec namespace). The AST check in `_check_ast()` rejects them before they reach approval.
 - `exec()` runs in a restricted namespace, with `stdout`/`stderr` redirected to `StringIO`
 - Never add `os`, `sys`, `subprocess`, `shutil`, or `pathlib` to the default namespace

@@ -1715,6 +1715,7 @@ class AgentLoop:
             "end_turn",
             "stop_sequence",
             "tool_use",
+            "completed",
         ):
             return None
         if reason in ("length", "max_tokens"):
