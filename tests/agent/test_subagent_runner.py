@@ -82,6 +82,7 @@ class _FakeAgentLoop:
         self.config = kwargs["config"]
         self.tools = kwargs["tool_registry"]
         self._always_allow_scripts = False
+        self._always_allow_tools = False
         _FakeAgentLoop.captures.append(kwargs)
 
     def run(self, user_message: str):
@@ -341,6 +342,7 @@ class TestRunnerInheritsCentralMemory(unittest.TestCase):
         for attr in ("_user_answer_queue", "_tool_approval_queue", "_approval_queue"):
             setattr(parent, attr, queue.Queue(maxsize=1))
         parent._always_allow_scripts = False
+        parent._always_allow_tools = False
         parent.memory_service = object() if wired else None
         parent._memory_authority = object() if wired else None
         return parent

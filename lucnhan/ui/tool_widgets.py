@@ -2740,10 +2740,10 @@ class ExecutePythonWidget(QFrame):
         with Deny still before Allow once inside the group (the contract's
         relative order).
 
-        ``Always Allow`` is hidden here unconditionally: this widget is
-        only ever used for ``execute_python``, and the loop reads an
-        ``allow_all`` decision as "skip the prompt for every later
-        script", which the contract forbids for scripts.
+        ``Allow for this chat`` emits ``allow_all``: the loop then skips the
+        prompt for later scripts of THIS chat's agent loop only (the flag
+        is per loop, so New chat and other tabs still ask). AST blocklist
+        and docs review still run on every script.
         """
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
@@ -2758,14 +2758,15 @@ class ExecutePythonWidget(QFrame):
         btn_layout.addWidget(self._deny_btn)
 
         self._always_btn = QToolButton()
-        self._always_btn.setText("Always Allow")
-        self._always_btn.setToolTip("Allow this tool without asking again this session")
-        self._always_btn.setAccessibleName("Always allow this tool this session")
+        self._always_btn.setText("Allow for this chat")
+        self._always_btn.setToolTip(
+            "Run this and every later script in this chat without asking again "
+            "(blocklist and docs review still apply). New chats still ask."
+        )
+        self._always_btn.setAccessibleName("Allow scripts for this chat")
         self._always_btn.setStyleSheet(get_tool_approval_always_btn_style())
         self._always_btn.clicked.connect(self._on_always_allow)
         btn_layout.addWidget(self._always_btn)
-        # Gate: no always-allow for scripts.
-        self._always_btn.setVisible(False)
 
         self._allow_btn = QToolButton()
         self._allow_btn.setText("Allow once")
@@ -3051,10 +3052,10 @@ class ExecutePythonWidget(QFrame):
         if self._decided:
             return
         self._disable_buttons()
-        self._always_btn.setText("Always Allowed")
+        self._always_btn.setText("Allowed for this chat")
         self._always_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
-        self._approval_state.setText("Allowed")
-        self._set_state("success", text="Allowed")
+        self._approval_state.setText("Allowed for this chat")
+        self._set_state("success", text="Allowed for this chat")
         self.approved.emit(self._tool_call_id, "allow_all")
 
     def _on_deny(self) -> None:

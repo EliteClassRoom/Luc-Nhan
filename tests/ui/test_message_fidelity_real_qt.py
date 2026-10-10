@@ -806,6 +806,24 @@ class TestExecutePythonThemeTransition(_ThemeStateMixin, unittest.TestCase):
             "the retired gate must not keep the warning exception border",
         )
 
+    def test_script_gate_offers_allow_for_this_chat(self) -> None:
+        """The live script gate has a per-chat allow, between Deny and Allow once."""
+        _switch_theme(ThemeMode.LIGHT)
+        widget = ExecutePythonWidget("tc1")
+        self.addCleanup(widget.deleteLater)
+        self.addCleanup(_show(widget).deleteLater)
+        widget.set_code("print(1)\n")
+        widget.show_approval_buttons()
+        labels = [b.text() for b in widget.findChildren(QToolButton)]
+        self.assertLess(labels.index("Deny"), labels.index("Allow for this chat"))
+        self.assertLess(labels.index("Allow for this chat"), labels.index("Allow once"))
+        self.assertFalse(widget._always_btn.isHidden())
+        decisions: list[str] = []
+        widget.approved.connect(lambda _id, decision: decisions.append(decision))
+        widget._always_btn.click()
+        self.assertEqual(decisions, ["allow_all"])
+        self.assertFalse(widget._allow_btn.isEnabled(), "a decided gate locks every button")
+
     def test_execute_python_gate_decides_exactly_once_across_theme_switch(self) -> None:
         """The live script gate: one decision, no matter how it is poked.
 
@@ -863,7 +881,7 @@ class TestPendingApprovalControls(_ThemeStateMixin, unittest.TestCase):
         self.assertLess(labels.index("Deny"), labels.index("Allow once"), "Deny left, Allow once right (G4)")
         self.assertTrue(
             widget._always_btn.isHidden(),
-            "scripts must never offer an always-allow affordance (G4)",
+            "the generic approval card never offers an always-allow for scripts",
         )
 
         # Full script is in the review editor, not a trimmed excerpt.

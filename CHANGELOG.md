@@ -70,6 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name, collapse chevrons use one matched `▸`/`▾` pair, and consecutive
   assistant segments of one turn (separated by tool calls or reasoning) show
   the speaker name once.
+- **Scripts can be allowed for the whole chat.** The `execute_python` approval
+  gate now has **Allow for this chat** between Deny and Allow once. It skips
+  the prompt for later scripts of that chat's agent loop only (New chat and
+  other tabs still ask); the AST blocklist and docs review still run on every
+  script. The "always allow" for other tools is now a separate flag, so
+  allowing one kind no longer silently allows the other.
 
 ### Added
 
