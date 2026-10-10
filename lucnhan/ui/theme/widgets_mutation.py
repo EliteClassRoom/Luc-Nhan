@@ -132,10 +132,17 @@ def _tool_approval_body_style() -> str:
 
 def _tool_row_style() -> str:
     """Compact tool summary row (G2/G4): one row, min-height 30, no card
-    chrome. Padding 5/6, gap 8, radius 4 (control radius)."""
+    chrome. Padding 5/6, gap 8, radius 4 (control radius).
+
+    The collapse chevron is flat: left to the host's button chrome it
+    painted a dark filled square in Light.
+    """
+    t = _tokens()
     return (
         "QFrame#message_tool { background-color: transparent; border: none; }"
-        "QFrame#message_tool QToolButton#collapse_button { border-radius: 3px; }"
+        f"QFrame#message_tool QToolButton#collapse_button {{ background: transparent; border: none; "
+        f"border-radius: 3px; color: {t.muted_text}; padding: 0px; }}"
+        f"QFrame#message_tool QToolButton#collapse_button:hover {{ background: {t.alt_base}; color: {t.text}; }}"
     )
 
 

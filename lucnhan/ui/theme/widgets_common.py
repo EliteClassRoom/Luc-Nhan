@@ -264,6 +264,12 @@ def _transcript_surface_style() -> str:
     t = _tokens()
     return (
         f"QScrollArea#chat_scroll {{ background-color: {t.window}; border: none; }}"
+        f"QScrollArea#chat_scroll QScrollBar:vertical {{ background: {t.window}; width: 10px; margin: 0; border: none; }}"
+        f"QScrollArea#chat_scroll QScrollBar::handle:vertical {{ background: {t.mid}; border-radius: 4px; min-height: 24px; }}"
+        "QScrollArea#chat_scroll QScrollBar::add-line:vertical, QScrollArea#chat_scroll QScrollBar::sub-line:vertical "
+        "{ height: 0px; }"
+        "QScrollArea#chat_scroll QScrollBar::add-page:vertical, QScrollArea#chat_scroll QScrollBar::sub-page:vertical "
+        "{ background: transparent; }"
         f"QWidget#chat_transcript_viewport {{ background-color: {t.window}; }}"
         f"QWidget#chat_container {{ background-color: {t.window}; }}"
     )

@@ -2540,11 +2540,16 @@ class ExecutePythonWidget(QFrame):
             self._status_label.setStyleSheet(_docs_status_style(tool_colors, self._status_text))
         if getattr(self, "_status_detail", None) is not None and self._status_detail.isVisible():
             self._status_detail.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
-        # A decided gate must keep its post-decision styles; the header
-        # icon follows the state the decision moved the widget into.
+        # Decided gates keep their post-decision look; a PENDING gate must
+        # repaint its live buttons too, or they keep the previous theme's
+        # colours (pale mint/pink in Light).
         if getattr(self, "_decided", False):
             for btn in (self._allow_btn, self._always_btn, self._deny_btn):
                 btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        elif getattr(self, "_allow_btn", None) is not None:
+            self._allow_btn.setStyleSheet(get_tool_approval_allow_btn_style())
+            self._always_btn.setStyleSheet(get_tool_approval_always_btn_style())
+            self._deny_btn.setStyleSheet(get_tool_approval_deny_btn_style())
         if getattr(self, "_approval_header", None) is not None:
             self._approval_header.setStyleSheet(get_tool_approval_header_style())
         if getattr(self, "_approval_state", None) is not None:
