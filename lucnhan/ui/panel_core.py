@@ -40,7 +40,7 @@ from .export_formatting import (
     _export_format_tool_result,
 )
 from .history_panel import HistoryPanel
-from .input_area import BUILTIN_COMMAND_SLUGS, InputArea
+from .input_area import InputArea
 from .model_picker import (
     MAX_TRIGGER_WIDTH_RATIO,
     ModelCatalogCache,
@@ -67,15 +67,20 @@ from .qt_compat import (
     QStackedWidget,
     Qt,
     QTabBar,
-    QTabWidget,
     QTimer,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
+from .session_pages import SessionPages
 from .styles import (
-    build_small_button_stylesheet,
+    get_cancel_btn_style,
+    get_composer_frame_style,
+    get_primary_btn_style,
+    get_small_btn_style,
+    get_transcript_surface_style,
     maybe_host_stylesheet,
+    role_size,
     use_native_host_theme,
 )
 from .theme.manager import ThemeManager
@@ -135,60 +140,56 @@ _ACTION_BUTTON_TOOLTIPS = {
 }
 
 
-def _small_btn_style() -> str:
-    """Neutral action-button QSS (4 px radius, G1) from live tokens."""
-    t = ThemeManager.instance().tokens()
-    return (
-        f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
-        f"border-radius: 4px; padding: 4px 9px; min-height: 20px; font-size: 12px; }}"
-        f"QPushButton:hover {{ background: {t.mid}; border-color: {t.accent}; }}"
-        f"QPushButton:pressed {{ background: {t.mid}; }}"
-        f"QPushButton:focus {{ border: 1px solid {t.accent}; outline: 2px solid {t.accent}; }}"
-    )
+def _palette_from_tokens(widget: QWidget, tokens: object) -> object | None:
+    """Build the widget palette for a Luc Nhan surface.
 
-
-def _tool_button_style() -> str:
-    """Neutral QSS for the composer's ``QToolButton`` (G1, same tokens).
-
-    Qt matches QSS selectors by class, so the ``QPushButton``-scoped rule
-    never reaches a ``QToolButton``.  The only such control left is the
-    ``/ Commands`` button; Send and Stop are ``QPushButton`` and use
-    ``_small_btn_style`` / ``_cancel_btn_style`` below.
+    Starts from the widget's own palette and pins only the roles Luc Nhan
+    owns, so everything else still inherits.  Returns ``None`` if the Qt
+    seam is unavailable (headless / Qt-stub sessions) so the caller simply
+    leaves the widget alone.
     """
-    t = ThemeManager.instance().tokens()
-    return (
-        f"QToolButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
-        f"border-radius: 4px; padding: 4px 9px; min-height: 20px; font-size: 12px; }}"
-        f"QToolButton:hover {{ background: {t.mid}; border-color: {t.accent}; }}"
-        f"QToolButton:pressed {{ background: {t.mid}; }}"
-        f"QToolButton:focus {{ border: 1px solid {t.accent}; outline: 2px solid {t.accent}; }}"
-    )
+    try:
+        from .qt_compat import QColor, QPalette
+    except ImportError:  # pragma: no cover — headless fallback
+        return None
+    try:
+        pal = widget.palette()
+        for role, token in (
+            (QPalette.ColorRole.Window, "window"),
+            (QPalette.ColorRole.WindowText, "window_text"),
+            (QPalette.ColorRole.Base, "base"),
+            (QPalette.ColorRole.Text, "text"),
+            (QPalette.ColorRole.Button, "button"),
+            (QPalette.ColorRole.ButtonText, "button_text"),
+            (QPalette.ColorRole.Highlight, "highlight"),
+            (QPalette.ColorRole.HighlightedText, "highlight_text"),
+        ):
+            pal.setColor(role, QColor(getattr(tokens, token)))
+        if hasattr(QPalette.ColorRole, "PlaceholderText"):
+            pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(tokens.muted_text))
+        return pal
+    except Exception as exc:  # pragma: no cover — defensive
+        log_debug(f"palette build skipped: {exc}")
+        return None
 
 
-def _cancel_btn_style() -> str:
-    """Destructive / stop-button QSS (error text, 4 px radius, G1)."""
-    from .theme.manager import blend_hex
-
-    t = ThemeManager.instance().tokens()
-    danger_hover = blend_hex(t.alt_base, t.error, 0.3)
-    return (
-        f"QPushButton {{ background: {t.alt_base}; color: {t.error}; border: 1px solid {t.mid}; "
-        f"border-radius: 4px; padding: 4px 9px; min-height: 20px; font-size: 12px; }}"
-        f"QPushButton:hover {{ background: {danger_hover}; border-color: {t.error}; }}"
-        f"QPushButton:pressed {{ background: {danger_hover}; }}"
-        f"QPushButton:focus {{ border: 1px solid {t.error}; outline: 2px solid {t.accent}; }}"
-    )
+def _format_token_usage(count: int, context_window: int = 0) -> str:
+    """Footer readout for context usage, e.g. ``4.2k (2%)``."""
+    text = f"{count / 1000:.1f}k" if count >= 1000 else str(count)
+    if context_window > 0:
+        text += f" ({min(int(count * 100 / context_window), 100)}%)"
+    return text
 
 
 class _AddButtonTabBar(QTabBar):
     """Session strip: chat tabs plus a trailing ``+`` new-chat button.
 
     The bar is *hosted* in the panel's own session-strip container next to
-    the ``+`` button instead of living inside the ``QTabWidget``.  Qt hides
+    the ``+`` button instead of living inside the pages container.  Qt hides
     a tab bar that is not in the tab widget's own layout (and reserves
     ~30 px of chrome for it), which would either strand New behind the
     strip's scroll buttons in a narrow dock or inflate the strip height.
-    The tabs themselves stay the ``QTabWidget``'s pages — only the tab
+    The tabs themselves stay the pages container's widgets — only the tab
     strip's chrome moves — so tab switching, close buttons and the export
     / fork context menu are unchanged.
     """
@@ -215,23 +216,19 @@ class _AddButtonTabBar(QTabBar):
         self._apply_styles()
 
     def _apply_styles(self) -> None:
-        t = ThemeManager.instance().tokens()
-        self._add_btn.setStyleSheet(
-            maybe_host_stylesheet(
-                f"QToolButton {{ color: {t.text}; font-size: 14px; font-weight: bold; "
-                f"border: none; background: transparent; }}"
-                f"QToolButton:hover {{ background: {t.mid}; border-radius: 3px; }}"
-            )
-        )
+        """Style the bar and the ``+`` button from the shared builders.
 
-    def refresh_inline_styles(self) -> None:
-        """Re-apply the inline stylesheet from the current theme tokens.
-
-        Public counterpart of :meth:`_apply_styles`.  Callers (e.g. the
-        theme-change path in :class:`LucNhanPanelCore`) invoke this after
-        a theme swap so the ``+`` button reflects the new palette.
+        The bar is owned by the session strip, not by the tab widget, so
+        its chrome must be applied to the bar itself — the owner calls
+        ``_apply_session_strip_styles`` once the reparent is done.  The
+        sheet is applied in every mode: in AUTO/IDA the tokens come from
+        the real host palette, and the G3 2 px active underline has to
+        survive there too.
         """
-        self._apply_styles()
+        from .theme.widgets_common import get_add_tab_btn_style, get_tab_widget_style
+
+        self.setStyleSheet(get_tab_widget_style())
+        self._add_btn.setStyleSheet(maybe_host_stylesheet(get_add_tab_btn_style()))
 
     def set_add_tab_callback(self, callback: Callable[[], None] | None) -> None:
         self._add_tab_callback = callback
@@ -278,7 +275,9 @@ class LucNhanPanelCore(QWidget):
         except Exception as _exc:
             _early_log_crash(_exc)
             raise
-        self._use_native_host_theme = use_native_host_theme()
+        # NOTE: the host-theme answer is read live (``use_native_host_theme()``)
+        # on every apply — it changes when the user switches between
+        # AUTO/IDA and Dark/Light, so it is never cached on the instance.
         # Per-connection model catalog owned by the panel; filled from
         # Settings Refresh results, dropped on connection changes only.
         self._model_catalog = ModelCatalogCache()
@@ -396,6 +395,8 @@ class LucNhanPanelCore(QWidget):
         self._pending_token_display: int | None = None
         self._token_display_timer: QTimer | None = None
         self._last_token_display_value: int = -1
+        # Footer readout text; the footer is the only place usage is shown.
+        self._token_text: str = "0"
         # Startup auto-restore flags (Task 1 follow-up — see
         # ``_arm_startup_restore_if_idle``).  ``_startup_restore_pending``
         # is set by the deferred QTimer slot at the end of ``_build_ui``
@@ -584,7 +585,7 @@ class LucNhanPanelCore(QWidget):
             f"background: {warn_bg}; color: {warn_fg}; "
             f"border-top: 1px solid {warn_border}; "
             f"border-bottom: 1px solid {warn_border}; "
-            f"padding: 6px 8px; font-size: 11px; }}"
+            f"padding: 6px 8px; font-size: {role_size(11)}; }}"
         )
 
     def _tab_widget_style(self) -> str:
@@ -597,6 +598,97 @@ class LucNhanPanelCore(QWidget):
         from .theme.widgets_common import get_tab_widget_style
 
         return get_tab_widget_style()
+
+    def _apply_session_strip_styles(self) -> None:
+        """Style the session strip, then the tab bar that lives inside it.
+
+        Qt applies a widget's stylesheet to the widget *and its children*,
+        so the strip rule styles the bar's frame — but only when it is set
+        on the widget that currently *owns* the tab bar.  Setting it on
+        the pages container (or before the reparent) left the bar
+        unstyled.  The bar styles itself and the ``+`` button in turn, so
+        neither can depend on cascade order.
+
+        The sheet is applied in every mode (AUTO/IDA included): the tokens
+        come from the real host palette there, and the 2 px active
+        underline must survive the switch.
+        """
+        strip = getattr(self, "_session_strip", None)
+        if strip is not None:
+            strip.setStyleSheet(self._tab_widget_style())
+        bar = getattr(self, "_tab_bar", None)
+        if bar is not None:
+            bar._apply_styles()
+
+    def _apply_surface_palettes(self) -> None:
+        """Paint the panel root and the content region from live tokens.
+
+        Qt resolves a bare ``QWidget`` background through the *application*
+        palette, and a host stylesheet can leave ``QApplication``'s Window
+        role at the platform default while a plain ``QWidget`` inside the
+        host already carries the host colors — so the transcript kept the
+        host's dark ``#282a36`` while every other region followed Luc
+        Nhan's Light tokens.  Setting the root's palette + auto-fill and
+        letting the children inherit it is the local fix.
+
+        In AUTO/IDA the tokens are derived from the ThemeManager's own
+        independent host probe (see ``ThemeManager._host_probe_widget``) —
+        never from this panel, whose own palette Luc Nhan has just
+        repainted.  The host's application palette and stylesheet are
+        never touched.
+        """
+        try:
+            tokens = ThemeManager.instance().tokens()
+        except Exception as e:  # pragma: no cover - defensive
+            log_debug(f"surface palette skipped: {e}")
+            return
+        for widget in (self, getattr(self, "_content_area", None)):
+            if widget is None:
+                continue
+            pal = _palette_from_tokens(widget, tokens)
+            if pal is None:
+                continue
+            widget.setAutoFillBackground(True)
+            widget.setPalette(pal)
+
+    def _apply_transcript_surface(self) -> None:
+        """Paint the transcript's own surface from the live tokens.
+
+        ``ChatView`` is a ``QScrollArea`` (a ``QFrame`` subclass), so it
+        resolves an unstyled background through the *application* palette
+        — the host default, not the theme.  A stylesheet scoped to the two
+        object names is enough on its own, but the page-level rule loses
+        to a widget stylesheet that sets no background for it, so the
+        scroll area and its container are also given an auto-filled
+        palette.  Neither touches the host application.
+
+        Every transcript widget is walked so a view built later (a second
+        tab) is painted too, not just the draft one.
+        """
+        try:
+            surface = get_transcript_surface_style()
+        except Exception as e:  # pragma: no cover - defensive
+            log_debug(f"transcript surface skipped: {e}")
+            return
+        self.setStyleSheet(surface)
+        try:
+            tokens = ThemeManager.instance().tokens()
+        except Exception:  # pragma: no cover - defensive
+            return
+        for view in list(self._chat_views.values()):
+            # The scroll area's own frame line paints from the application
+            # palette (measured: #828790 at the first row of
+            # ``QScrollArea#chat_scroll`` in Light mode), so the scroll area
+            # itself needs the palette as well as the QSS rule.
+            container = getattr(view, "_container", None)
+            for widget in (view, container, getattr(view, "viewport", lambda: None)()):
+                if widget is None:
+                    continue
+                pal = _palette_from_tokens(widget, tokens)
+                if pal is None:
+                    continue
+                widget.setAutoFillBackground(True)
+                widget.setPalette(pal)
 
     def _main_splitter_style(self) -> str:
         """Themed QSS for the main horizontal splitter handle."""
@@ -714,7 +806,6 @@ class LucNhanPanelCore(QWidget):
         # built here because it belongs to the context row's sequence.
         _early_log("panel_core:build_ui:context_bar:entry")
         self._context_bar = ContextBar()
-        self._context_bar.set_model(self._config.provider.model)
         self._mutations_btn = self._context_bar.changes_button()
         self._mutations_btn.setCheckable(True)
         self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
@@ -759,10 +850,17 @@ class LucNhanPanelCore(QWidget):
         layout.addWidget(self._build_footer())
         _early_log("panel_core:build_ui:footer:done")
 
+        # The typography roles are sized from the configured override, so the
+        # value has to reach the manager BEFORE the first themed QSS is
+        # built — a panel opened with an override already configured would
+        # otherwise paint its default 13/12/11 px chrome.
+        self._apply_font_override()
         # Style every themed control at build time: a panel rebuilt while
         # the persisted theme is already active never receives a
         # ``themeChanged`` signal, so build-time styling is the only path
         # that guarantees the composer controls are not left unstyled.
+        self._apply_surface_palettes()
+        self._apply_transcript_surface()
         self._apply_action_button_styles()
         self._composer_hint_style()
 
@@ -919,39 +1017,55 @@ class LucNhanPanelCore(QWidget):
         return bool(focus()) if callable(focus) else False
 
     def _build_tab_widget(self) -> None:
-        """Create the session strip and the tab widget whose pages it drives.
+        """Create the session strip and the conversation pages it drives.
 
         GUI contract G2/G3: the strip is its own region (min-height 31 px,
         inset 9 px, gap 7 px) holding the tab bar and the ``+`` button; the
-        ``QTabWidget`` below it only owns the conversation pages.
-        """
-        self._tab_widget = QTabWidget()
-        self._tab_widget.setObjectName("session_pages")
-        self._tab_widget.setDocumentMode(True)
-        self._tab_widget.setTabsClosable(True)
-        self._tab_widget.tabCloseRequested.connect(self._on_close_tab)
-        self._tab_widget.currentChanged.connect(self._on_tab_changed)
-        self._tab_widget.setStyleSheet(maybe_host_stylesheet(self._tab_widget_style()))
+        conversation region below it only holds the pages.
 
-        # Session strip: tab bar + trailing ``+``, hidden until 2+ tabs.
+        The pages are a ``SessionPages`` stack, not a ``QTabWidget``: a tab
+        widget reserves a tab-bar row for the bar it owns, and that row
+        rendered as a host-colored band between the strip and the first
+        message (measured natively: 28 px, occupant = the QTabWidget
+        itself).  The stack never lays the bar out, so there is no row to
+        reserve and nothing paints over the transcript.
+        """
+        self._tab_widget = SessionPages()
+        self._tab_widget.currentChanged.connect(self._on_tab_changed)
+        # No pane chrome of its own (the session strip owns the chrome).
+        # Structural only — no theme colors — so it holds in host mode too.
+        self._tab_widget.setStyleSheet("QStackedWidget#session_pages { border: none; }")
+
+        # Session strip: tab bar + trailing ``+``, always visible.
         self._session_strip = QFrame()
         self._session_strip.setObjectName("session_strip")
+        # G2 baseline is 31 px, but a *minimum*: the pin made a larger user
+        # font clip the tabs instead of growing the row (G2 "grow for a
+        # larger font rather than clip").  The layout's own height is the
+        # floor, so 31 px is only what Qt hands the strip today.
         self._session_strip.setMinimumHeight(_SESSION_STRIP_MIN_HEIGHT)
-        self._session_strip.setFixedHeight(_SESSION_STRIP_MIN_HEIGHT)
-        self._session_strip.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self._session_strip.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         self._session_strip_layout = QHBoxLayout(self._session_strip)
         self._session_strip_layout.setContentsMargins(9, 0, 9, 0)
         self._session_strip_layout.setSpacing(7)
 
         self._tab_bar = _AddButtonTabBar()
+        # Hand the strip's bar to the pages container so tab labels and
+        # selection live in one place; the strip still hosts the widget.
         self._tab_widget.setTabBar(self._tab_bar)
-        self._tab_bar.setParent(self._session_strip)
+        self._tab_bar.setTabsClosable(True)
         self._tab_bar.set_add_tab_callback(self._on_new_tab)
         self._tab_bar.set_export_tab_callback(self._on_export_tab)
         self._tab_bar.set_fork_tab_callback(self._on_fork_tab)
         self._tab_bar.setExpanding(False)
+        # Move the bar into the strip last, so nothing above touches the
+        # stylesheet that ``_apply_session_strip_styles`` installs below.
+        self._tab_bar.setParent(self._session_strip)
         self._session_strip_layout.addWidget(self._tab_bar, 1)
         self._session_strip_layout.addWidget(self._tab_bar._add_btn)
+        # Close is wired once, on the bar itself.
+        self._tab_bar.tabCloseRequested.connect(self._on_close_tab)
+        self._apply_session_strip_styles()
 
     def _build_context_bar_for_tests(self) -> ContextBar:
         """Build just the context row, for the lightweight panel harnesses.
@@ -962,8 +1076,6 @@ class LucNhanPanelCore(QWidget):
         ``__init__``.  Wiring is identical to ``_build_ui``.
         """
         self._context_bar = ContextBar()
-        if getattr(self, "_config", None) is not None:
-            self._context_bar.set_model(self._config.provider.model)
         self._mutations_btn = self._context_bar.changes_button()
         self._mutations_btn.setCheckable(True)
         self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
@@ -1098,7 +1210,8 @@ class LucNhanPanelCore(QWidget):
         self._input_area.setMaximumHeight(16777215)
         input_layout.addWidget(self._input_area, 1)
 
-        # Commands left, keyboard hint centre, Send/Stop right.
+        # Keyboard hint centre, Send/Stop right (slash commands are offered
+        # by the editor's own autocomplete, so there is no Commands button).
         action_row = QHBoxLayout()
         action_row.setContentsMargins(0, 2, 0, 0)
         action_row.setSpacing(9)
@@ -1106,14 +1219,6 @@ class LucNhanPanelCore(QWidget):
         # Secondary actions that still need a visible control at narrow
         # widths (GUI contract G3 keeps Mutations out of the overflow).
         action_row.addLayout(self._build_action_buttons())
-
-        self._commands_btn = QToolButton()
-        self._commands_btn.setObjectName("commands_button")
-        self._commands_btn.setText("/ Commands")
-        self._commands_btn.setToolTip("List the available slash commands")
-        self._commands_btn.setAccessibleName("Commands — List the available slash commands")
-        self._commands_btn.clicked.connect(self._on_show_commands)
-        action_row.addWidget(self._commands_btn)
 
         self._hint_label = QLabel("Enter to send · Shift+Enter for newline")
         self._hint_label.setObjectName("composer_hint")
@@ -1173,9 +1278,10 @@ class LucNhanPanelCore(QWidget):
         """Main header strip (min-height 38 px, padding 3 / 10)."""
         header = QFrame()
         header.setObjectName("panel_header")
+        # G2 baseline is 38 px, kept as a *minimum*: with a user font
+        # override the text grows and a fixed height would clip it.
         header.setMinimumHeight(_HEADER_MIN_HEIGHT)
-        header.setFixedHeight(_HEADER_MIN_HEIGHT)
-        header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         self._header = header
         self._header_layout = QHBoxLayout(header)
         self._header_layout.setContentsMargins(10, 3, 10, 3)
@@ -1195,10 +1301,14 @@ class LucNhanPanelCore(QWidget):
         self._status_label.setObjectName("panel_status")
         self._status_label.setStyleSheet(get_header_status_style())
         self._status_label.setToolTip("Agent status")
-        # The status may be shortened at narrow widths, never clipped
-        # without its tooltip (GUI contract G3).
+        # The status may be *shortened* at narrow widths, never clipped
+        # without its tooltip (GUI contract G3).  ``Ignored`` made the
+        # label claim zero width, so ``Ready`` measured 0 px wide even at
+        # 1100 px and disappeared entirely.  The stretch below it is what
+        # absorbs the leftover width, and the minimum width stays 0 so a
+        # long status may still shorten at 460 px (with its tooltip).
         self._status_label.setMinimumWidth(0)
-        self._status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._status_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self._header_layout.addWidget(self._status_label)
         self._header_layout.addStretch()
 
@@ -1261,8 +1371,7 @@ class LucNhanPanelCore(QWidget):
         footer = QFrame()
         footer.setObjectName("panel_footer")
         footer.setMinimumHeight(_FOOTER_MIN_HEIGHT)
-        footer.setFixedHeight(_FOOTER_MIN_HEIGHT)
-        footer.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        footer.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         self._footer = footer
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(11, 2, 11, 2)
@@ -1277,17 +1386,22 @@ class LucNhanPanelCore(QWidget):
         self._footer_trigger.setObjectName("footer_picker_trigger")
         self._footer_trigger.setCursor(Qt.CursorShape.PointingHandCursor)
         self._footer_trigger.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._footer_trigger.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._footer_trigger.setArrowType(Qt.ArrowType.DownArrow)
+        # The text already ends in a ``⌄`` chevron; a native DownArrow icon
+        # on top of it painted a second, oversized triangle before the name.
+        self._footer_trigger.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self._footer_trigger.setText(self._footer_trigger_text())
         self._footer_trigger.setToolTip(self._footer_tooltip())
         self._footer_trigger.setAccessibleName("Model and thinking — choose model, connection or thinking level")
         self._footer_trigger.setMinimumWidth(0)
         # G6: the trigger may never eat the token summary's space.
         self._footer_trigger.setMaximumWidth(int(MAX_TRIGGER_WIDTH_RATIO * 640))
-        self._footer_trigger.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        # Preferred (not Ignored): the button hugs its text at the left edge
+        # and the stretch below takes the spare width; an Ignored trigger
+        # swallowed the whole row and centred the model name in it.
+        self._footer_trigger.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self._footer_trigger.clicked.connect(self._open_model_picker)
         footer_layout.addWidget(self._footer_trigger)
+        footer_layout.addStretch(1)
 
         self._footer_tokens = QLabel("—")
         self._footer_tokens.setObjectName("footer_tokens")
@@ -1371,9 +1485,7 @@ class LucNhanPanelCore(QWidget):
             log_error(f"Model selection failed: {exc}")
             self._show_model_selection_error("Could not save the model selection. Previous selection kept.")
             return
-        self._model_catalog.note_selection_committed(
-            choice.connection_name, choice.model_id, choice.thinking_level
-        )
+        self._model_catalog.note_selection_committed(choice.connection_name, choice.model_id, choice.thinking_level)
         self._refresh_after_model_commit()
 
     def _show_model_selection_error(self, message: str) -> None:
@@ -1389,10 +1501,8 @@ class LucNhanPanelCore(QWidget):
             picker.set_selection(self._current_model_choice())
 
     def _refresh_after_model_commit(self) -> None:
-        """Update footer + context metadata without showing() the workspace."""
+        """Update the footer without showing() the workspace."""
         self._update_footer()
-        if self._context_bar is not None:
-            self._context_bar.set_model(self._config.provider.model)
 
     def _update_footer(self) -> None:
         """Refresh the footer from live config + token state.
@@ -1404,8 +1514,8 @@ class LucNhanPanelCore(QWidget):
             trigger.setText(self._footer_trigger_text())
             trigger.setToolTip(self._footer_tooltip())
         footer_tokens = getattr(self, "_footer_tokens", None)
-        if footer_tokens is not None and self._context_bar is not None:
-            footer_tokens.setText(self._context_bar.tokens_text())
+        if footer_tokens is not None:
+            footer_tokens.setText(self._token_text)
             footer_tokens.setToolTip("Context tokens used")
 
     # ------------------------------------------------------------------
@@ -1451,7 +1561,7 @@ class LucNhanPanelCore(QWidget):
         Wide  : ``Chat``  ``Tools``  ``History``  ``Settings`` + overflow
         Narrow: ``Tools`` direct, ``History`` / ``Settings`` / ``Export``
         move into the overflow menu (labels + tooltips preserved), header
-        gap drops to 5 px and the context row hides its secondary metadata.
+        gap drops to 5 px.
 
         The auxiliary pane presentation (GUI contract G5) is applied here
         too — a resize is exactly when it has to change — but it depends
@@ -1473,9 +1583,6 @@ class LucNhanPanelCore(QWidget):
         overflow = getattr(self, "_overflow_btn", None)
         if overflow is not None:
             overflow.setVisible(True)
-        context_bar = getattr(self, "_context_bar", None)
-        if context_bar is not None:
-            context_bar.set_narrow(narrow)
 
     # ------------------------------------------------------------------
     # Adaptive auxiliary panes (GUI contract G5)
@@ -1571,7 +1678,13 @@ class LucNhanPanelCore(QWidget):
             target.setFocus()
 
     def _apply_header_styles(self) -> None:
-        """Push token-driven chrome + navigation styles onto the header."""
+        """Push token-driven chrome + navigation styles onto the header.
+
+        Every navigation button — the active page and the neutral ones —
+        goes through the *same* shared builder, so the active rule can
+        never be a second, unchecked implementation (GUI contract G1:
+        active nav = ``selection`` fill + ``accent``).
+        """
         from .theme.widgets_common import (
             get_add_tab_btn_style,
             get_header_frame_style,
@@ -1579,14 +1692,18 @@ class LucNhanPanelCore(QWidget):
             get_header_title_style,
         )
 
-        host = self._use_native_host_theme
         self._header.setStyleSheet(maybe_host_stylesheet(get_header_frame_style()))
         self._title_label.setStyleSheet(maybe_host_stylesheet(get_header_title_style()))
         self._status_label.setStyleSheet(maybe_host_stylesheet(get_header_status_style()))
         self._overflow_btn.setStyleSheet(maybe_host_stylesheet(get_add_tab_btn_style()))
 
-        nav_style = build_small_button_stylesheet(self) if host else maybe_host_stylesheet(_small_btn_style())
-        for btn in (self._tools_btn, self._history_btn, self._settings_btn):
+        nav_style = maybe_host_stylesheet(get_small_btn_style())
+        for btn in (
+            self._chat_btn,
+            self._tools_btn,
+            self._history_btn,
+            self._settings_btn,
+        ):
             btn.setStyleSheet(nav_style)
         # ``_mutations_btn`` lives in the context row now and is styled by
         # ``ContextBar.apply_theme``; do not repaint it as header chrome.
@@ -1676,28 +1793,54 @@ class LucNhanPanelCore(QWidget):
         if btn.isCheckable() and btn.isChecked() != chosen.isChecked():
             btn.setChecked(chosen.isChecked())
 
-    def _apply_action_button_styles(self) -> None:
-        """Refresh the action-bar button styles from the current theme."""
-        danger = {self._cancel_btn}
-        for btn in (b for b, _tip in self._iter_action_buttons()):
-            btn.setStyleSheet(maybe_host_stylesheet(_cancel_btn_style() if btn in danger else _small_btn_style()))
-        commands = getattr(self, "_commands_btn", None)
-        if commands is not None:
-            commands.setStyleSheet(maybe_host_stylesheet(_tool_button_style()))
+    def _apply_font_override(self) -> None:
+        """Push the configured font size into the theme manager.
 
-    def _on_show_commands(self) -> None:
-        """List the available slash commands in the composer."""
-        slugs = sorted(set(self._ctrl.skill_slugs) | set(BUILTIN_COMMAND_SLUGS))
-        text = "Available commands:\n" + "\n".join(f"/{slug}" for slug in slugs)
-        QMessageBox.information(self, "Commands", text)
+        The size is in *points* (see ``LucNhanConfig.font_size_override``);
+        the typography builders convert it per role, so a single value
+        rescales the whole G2 hierarchy without touching a global font.
+        Repainting happens through the manager's ``themeChanged``.
+        """
+        try:
+            points = getattr(self._config, "font_size_override", 0) or 0
+            ThemeManager.instance().set_font_size_override(points)
+        except Exception as e:  # pragma: no cover - defensive
+            log_debug(f"font override sync skipped: {e}")
+
+    def _apply_action_button_styles(self) -> None:
+        """Refresh the action-bar button styles from the current theme.
+
+        Three variants, all from the shared token builders: the neutral
+        header actions, the composer's primary ``Send`` (accent fill with
+        ``highlight_text``) and the ``Stop`` danger variant.
+        """
+        send = getattr(self, "_send_btn", None)
+        cancel = getattr(self, "_cancel_btn", None)
+        for btn in (b for b, _tip in self._iter_action_buttons()):
+            if btn is send:
+                style = get_primary_btn_style()
+            elif btn is cancel:
+                style = get_cancel_btn_style()
+            else:
+                style = get_small_btn_style()
+            btn.setStyleSheet(maybe_host_stylesheet(style))
+        # The composer frame repaints with the theme; the editor inside it
+        # is borderless (see ``build_input_area_stylesheet``).
+        container = getattr(self, "_input_container", None)
+        if container is not None:
+            container.setStyleSheet(maybe_host_stylesheet(get_composer_frame_style()))
 
     def _on_theme_changed(self, _tokens) -> None:
         """Refresh themed widgets when the user switches the active theme.
 
+        Every chrome region is re-applied on *every* switch, host mode
+        included: in AUTO/IDA each applier resolves to ``""`` and the
+        previous Luc Nhan stylesheet is cleared, so a Dark → Light → host
+        cycle can never leave the last theme's colors behind (G1).
+
         ``use_native_host_theme()`` is read live (not cached) because the
         user can switch between AUTO/IDA_NATIVE (host styles win) and
-        DARK/LIGHT (Luc Nhan styles win) at runtime. ``_use_native_host_theme``
-        is set once at construction and would be stale in that case.
+        DARK/LIGHT (Luc Nhan styles win) at runtime.
 
         Long-lived panels that are *not* embedded inside a
         :class:`ChatView` (tools panel, mutation log, renamer, agent
@@ -1710,30 +1853,34 @@ class LucNhanPanelCore(QWidget):
         ``try/except`` so a misbehaving panel cannot block the
         others.
         """
-        if not use_native_host_theme():
-            # Re-apply the global QSS template with the new token values.
-            self._apply_action_button_styles()
-            self._apply_header_styles()
-            self._apply_footer_styles()
-            context_bar = getattr(self, "_context_bar", None)
-            if context_bar is not None:
-                context_bar.apply_theme()
-            if hasattr(self, "_dependency_banner") and self._dependency_banner is not None:
-                self._dependency_banner.setStyleSheet(maybe_host_stylesheet(self._dependency_banner_style()))
-            if hasattr(self, "_tab_widget") and self._tab_widget is not None:
-                self._tab_widget.setStyleSheet(maybe_host_stylesheet(self._tab_widget_style()))
-            if hasattr(self, "_main_splitter") and self._main_splitter is not None:
-                self._main_splitter.setStyleSheet(maybe_host_stylesheet(self._main_splitter_style()))
-            if hasattr(self, "_chat_splitter") and self._chat_splitter is not None:
-                self._chat_splitter.setStyleSheet(maybe_host_stylesheet(self._chat_splitter_style()))
-            # The add-tab '+' button lives on the tab bar, not on the
-            # panel itself.  Guard against the tab bar not being
-            # constructed yet (early emit) and against the button
-            # attribute being absent (older tab-bar implementations).
-            tab_bar = getattr(self, "_tab_bar", None)
-            add_btn = getattr(tab_bar, "_add_btn", None) if tab_bar is not None else None
-            if add_btn is not None:
-                tab_bar._apply_styles()
+        host = use_native_host_theme()
+        # Re-apply the token-driven QSS with the new values (or clear it
+        # when the host theme wins).
+        self._apply_action_button_styles()
+        self._apply_header_styles()
+        self._apply_footer_styles()
+        context_bar = getattr(self, "_context_bar", None)
+        if context_bar is not None:
+            context_bar.apply_theme()
+        if hasattr(self, "_dependency_banner") and self._dependency_banner is not None:
+            self._dependency_banner.setStyleSheet(maybe_host_stylesheet(self._dependency_banner_style()))
+        if getattr(self, "_session_strip", None) is not None:
+            self._apply_session_strip_styles()
+        if getattr(self, "_main_splitter", None) is not None:
+            self._main_splitter.setStyleSheet(maybe_host_stylesheet(self._main_splitter_style()))
+        if getattr(self, "_chat_splitter", None) is not None:
+            self._chat_splitter.setStyleSheet(maybe_host_stylesheet(self._chat_splitter_style()))
+        # Surfaces that must never inherit the host's app-wide Window/Base
+        # colors: the panel root and the content region that holds the
+        # transcript.  In host mode the tokens come from the manager's
+        # independent host probe, so the panel still tracks the host
+        # instead of being painted an arbitrary color.
+        self._apply_surface_palettes()
+        # The transcript is its own surface (QScrollArea resolves an
+        # unstyled background through the application palette), so it is
+        # repainted from the tokens here too.
+        self._apply_transcript_surface()
+        if not host:
             # Tools-panel shell (title / placeholders / tab widget chrome).
             tools_panel = getattr(self, "_tools_panel", None)
             if tools_panel is not None:
@@ -1812,6 +1959,9 @@ class LucNhanPanelCore(QWidget):
         index = self._tab_widget.addTab(chat_view, label)
         self._tab_widget.setCurrentIndex(index)
         self._update_tab_bar_visibility()
+        # A tab opened after the last theme switch still needs the
+        # transcript surface (see ``_apply_transcript_surface``).
+        self._apply_transcript_surface()
         return chat_view
 
     def _rebuild_history_tab(self, tab_id: str, session: SessionState | None) -> None:
@@ -1988,8 +2138,8 @@ class LucNhanPanelCore(QWidget):
             dlg.setStyleSheet(
                 maybe_host_stylesheet(
                     f"QDialog {{ background: {t.base}; }}"
-                    f"QLabel {{ color: {t.text}; font-size: 12px; }}"
-                    f"QCheckBox {{ color: {t.text}; font-size: 12px; }}"
+                    f"QLabel {{ color: {t.text}; font-size: {role_size(12)}; }}"
+                    f"QCheckBox {{ color: {t.text}; font-size: {role_size(12)}; }}"
                 )
             )
             layout = QVBoxLayout(dlg)
@@ -2118,7 +2268,7 @@ class LucNhanPanelCore(QWidget):
             chat_view.restore_from_messages_async(messages)
 
     def _update_token_display(self, token_count: int | None = None) -> None:
-        """Update the context bar token display with context window percentage.
+        """Update the footer token readout with context window percentage.
 
         Direct updates are coalesced via :meth:`_schedule_token_display` so
         streaming usage events do not pound the context bar at 30+ Hz. A
@@ -2128,8 +2278,6 @@ class LucNhanPanelCore(QWidget):
         ``0`` is a meaningful value — it is what a fresh session must show —
         so it is passed through rather than treated as "no value".
         """
-        if self._context_bar is None:
-            return
         if token_count is None:
             # Flush any pending value before recomputing from session state.
             self._flush_pending_token_display()
@@ -2143,7 +2291,7 @@ class LucNhanPanelCore(QWidget):
         self._schedule_token_display(token_count)
 
     def _reset_token_display(self) -> None:
-        """Force the context bar back to zero after a session reset.
+        """Force the token readout back to zero after a session reset.
 
         ``_schedule_token_display``'s dedupe remembers the last value it
         *displayed*, which after a fresh session is stale — a reset must
@@ -2162,10 +2310,9 @@ class LucNhanPanelCore(QWidget):
                 timer.stop()
             self._pending_token_display = None
             self._last_token_display_value = -1
-            if self._context_bar is None:
-                return
             ctx_window = self._config.provider.context_window or 0
-            self._context_bar.set_tokens(0, ctx_window)
+            self._token_text = _format_token_usage(0, ctx_window)
+            self._update_footer()
         except Exception as e:  # pragma: no cover - teardown must not raise
             log_debug(f"_reset_token_display failed: {e}")
 
@@ -2203,10 +2350,8 @@ class LucNhanPanelCore(QWidget):
             return
         self._pending_token_display = None
         self._last_token_display_value = value
-        if self._context_bar is None:
-            return
         ctx_window = self._config.provider.context_window or 0
-        self._context_bar.set_tokens(value, ctx_window)
+        self._token_text = _format_token_usage(value, ctx_window)
         self._update_footer()
 
     def _update_tab_label(self, tab_id: str) -> None:
@@ -2494,6 +2639,10 @@ class LucNhanPanelCore(QWidget):
         self._awaiting_approval_tab = None
         # Cancel the active tab's agent (other tabs keep running).
         self._ctrl.cancel()
+        # Stop is also the way out of a pending approval, so the composer
+        # has to be re-enabled and Stop hidden again — otherwise the gate
+        # clears but the panel stays in its blocked presentation.
+        self._set_running(False)
         # Remove [queued] widgets from the active chat view
         chat_view = self._active_chat_view()
         if chat_view is not None:
@@ -2517,8 +2666,6 @@ class LucNhanPanelCore(QWidget):
                 self._ctrl.reload_mcp()
                 # Refresh autocomplete with updated skill list
                 self._input_area.set_skill_slugs(self._ctrl.skill_slugs)
-                if self._context_bar is not None:
-                    self._context_bar.set_model(self._config.provider.model)
                 self._refresh_after_model_commit()
                 log_info(f"Settings updated: {self._config.provider.name}/{self._config.provider.model}")
             dlg.setParent(None)
@@ -2535,9 +2682,9 @@ class LucNhanPanelCore(QWidget):
         dlg.setStyleSheet(
             maybe_host_stylesheet(
                 f"QMessageBox {{ background: {t.base}; color: {t.text}; }}"
-                f"QLabel {{ color: {t.text}; font-size: 12px; }}"
+                f"QLabel {{ color: {t.text}; font-size: {role_size(12)}; }}"
                 f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
-                f"border-radius: 4px; padding: 6px 16px; font-size: 11px; min-width: 80px; }}"
+                f"border-radius: 4px; padding: 6px 16px; font-size: {role_size(11)}; min-width: 80px; }}"
                 f"QPushButton:hover {{ background: {t.mid}; }}"
             )
         )
@@ -2688,6 +2835,17 @@ class LucNhanPanelCore(QWidget):
                 self._awaiting_approval_tab = tid
             if tid == self._ctrl.active_tab_id:
                 self._set_running(False)
+        if event.type == TurnEventType.TOOL_APPROVAL_REQUEST:
+            # Script approval is button-only (GUI contract G4): the gate
+            # lives in the transcript, so free text must not be able to
+            # bypass it.  The event never reached the branch above, which
+            # only covered questions / plan / save.
+            self._awaiting_button_approval = True
+            self._awaiting_approval_tab = tid
+            if tid == self._ctrl.active_tab_id:
+                # ``_set_running(False)`` keeps Stop visible because the
+                # approval is still pending — see ``_set_running``.
+                self._set_running(False)
         if event.type == TurnEventType.MUTATION_RECORDED:
             self._on_mutation_recorded(event)
 
@@ -2701,6 +2859,11 @@ class LucNhanPanelCore(QWidget):
         if self._awaiting_approval_tab in (None, tid):
             self._awaiting_button_approval = False
             self._awaiting_approval_tab = None
+            # Deciding releases the composer immediately (G4: Allow once /
+            # Deny both resume the turn), so re-apply the idle
+            # presentation instead of leaving Send disabled.
+            if tid == self._ctrl.active_tab_id:
+                self._set_running(self._ctrl.is_tab_running(tid))
 
     def _on_user_answer_submitted(self, answer: str, tab_id: str | None = None) -> None:
         """Handle a button click from UserQuestionWidget (plan/save/ask_user).
@@ -3059,7 +3222,7 @@ class LucNhanPanelCore(QWidget):
             self._history_result_queue.put(result)
 
     def _focus_tab(self, tab_id: str) -> None:
-        """Switch the QTabWidget to the tab owning ``tab_id``.
+        """Switch the session pages to the tab owning ``tab_id``.
 
         Spec §10.2 / §10.3: both the pre-load dedupe path and the
         post-load ``ALREADY_OPEN`` path focus an existing tab instead of
@@ -4741,7 +4904,11 @@ class LucNhanPanelCore(QWidget):
         self._send_btn.setAccessibleName(
             "Queue — Queue a follow-up message" if running else "Send — Send the message (Enter)"
         )
-        self._cancel_btn.setVisible(running)
+        # Stop stays available while an approval is pending: the agent is still
+        # blocked and the user needs a way out that does not depend on the
+        # gate's buttons (GUI contract G3/G4).  Tying visibility to
+        # ``running`` alone hid it at the exact moment it mattered.
+        self._cancel_btn.setVisible(running or self._awaiting_button_approval)
         # Picker busy follows the existing turn lifecycle — no timer, no
         # polling.  The controller guard still catches a race at commit.
         picker = getattr(self, "_picker", None)

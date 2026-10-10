@@ -8,15 +8,20 @@ from collections.abc import Callable
 from typing import ClassVar
 
 from .. import constants
-from .message_widgets import _HeightCachedLabel
+from .export_formatting import strip_sanitizer_tags
+from .message_widgets import CHEVRON_COLLAPSED, CHEVRON_EXPANDED, _HeightCachedLabel
 from .qt_compat import (
     QApplication,
     QColor,
+    QEvent,
     QFont,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QObject,
+    QPalette,
     QPlainTextEdit,
+    QScrollArea,
     QSizePolicy,
     QSyntaxHighlighter,
     Qt,
@@ -46,13 +51,25 @@ from .styles import (
     get_tool_row_target_style,
 )
 from .theme.applicator import bind_theme, disconnect_theme
-from .theme.manager import ThemeManager
+from .theme.manager import ThemeManager, blend_hex
+
+# ``get_tool_approval_pending_row_style`` is imported straight from the theme
+# module rather than through ``styles`` (another workstream's file): it has
+# exactly one caller, so a re-export would buy nothing.
+from .theme.widgets_mutation import get_tool_approval_pending_row_style
 
 _MAX_ARGS_DISPLAY = 2000
 _MAX_RESULT_DISPLAY = 3000
 #: Maximum visible lines in the ExecutePythonWidget result editor before it
 #: scrolls. Mirrors the code editor's 15-line cap.
 _RESULT_MAX_LINES = 15
+#: GUI contract G4 — same cap for the READ-ONLY code review surface. The
+#: script is never truncated; the editor scrolls past this many lines.
+#: Single owner so the cap cannot drift between the two code surfaces.
+_CODE_MAX_LINES = 15
+#: Vertical padding Qt adds to a ``QPlainTextEdit`` (border + contents
+#: margins) on top of ``lineSpacing() * visible_lines``.
+_EDITOR_CHROME_PX = 16
 #: GUI contract G2 — tool summary row geometry.
 _TOOL_ROW_MIN_HEIGHT = 30
 #: GUI contract G4 — the expanded detail inset pads 7 top / 10 right-bottom /
@@ -61,6 +78,15 @@ _TOOL_DETAIL_MARGINS = (7, 10, 22, 10)  # (top, right, left, bottom)
 #: Characters kept in the elided target column. Qt elides the rest with
 #: ``…``; the full text always reaches the row tooltip.
 _TOOL_TARGET_MAX_CHARS = 120
+
+#: Plain-language explanation shown inside BOTH approval gates (G4): what
+#: the buttons do, stated next to them, so the decision needs no outside
+#: knowledge. One string, so a script gate and a mutating-tool gate
+#: explain themselves identically.
+_APPROVAL_HINT = (
+    "Review the operation above. Deny stops the tool; Allow once runs it "
+    "exactly one time. The agent stays paused until you decide."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -71,35 +97,6 @@ _TOOL_TARGET_MAX_CHARS = 120
 # chrome. The bordered card look is what G4 replaced; the only bordered
 # surface left in a tool row is the expanded detail inset.
 # ---------------------------------------------------------------------------
-
-
-def _tool_bg(t) -> str:
-    """Background color for the expanded detail surface (base tier)."""
-    return t.base
-
-
-def _tool_border(t) -> str:
-    """Border color for the expanded detail surface (mid tier)."""
-    return t.mid
-
-
-def _tool_card_css(
-    *,
-    accent: str | None = None,
-    background: str | None = None,
-    radius: int = 3,
-    object_name: str = "tool_detail",
-) -> str:
-    """Border/background QSS for an expanded tool-detail inset (G4).
-
-    Only the expanded detail is a bordered surface now. ``accent`` /
-    ``background`` stay accepted so callers can paint a highlighted
-    surface without rebuilding the QSS by hand.
-    """
-    t = ThemeManager.instance().tokens()
-    border = accent or _tool_border(t)
-    bg = background or _tool_bg(t)
-    return f"QFrame#{object_name} {{ background-color: {bg}; border: 1px solid {border}; border-radius: {radius}px;}}"
 
 
 # ---------------------------------------------------------------------------
@@ -141,11 +138,15 @@ _TOOL_GROUP_LABELS: dict[str, tuple[str, str]] = {
 
 #: ``(icon, right-hand text)`` per state. The icon is the non-colour
 #: carrier required by G9; the text is what a screen reader reads.
+#: Every glyph here is a plain geometric/maths character — G1 forbids emoji
+#: as icons, and ``⏸`` (U+23F8) is emoji-presentation by default, so a
+#: host font substituted a saturated blue pictogram next to ``Paused``.
+#: Two bars read as "held" in any font and stay plain text.
 STATE_RUNNING = ("…", "Running")
 STATE_SUCCESS = ("✓", "Done")
 STATE_ERROR = ("✗", "Failed")
 STATE_DISCARDED = ("⊘", "Skipped")
-STATE_APPROVAL = ("⏸", "Paused")
+STATE_APPROVAL = ("||", "Paused")
 
 
 def _row_target_text(summary: str) -> str:
@@ -177,6 +178,42 @@ def _status_style(tool_colors: dict[str, str], state: str) -> str:
     return f"color: {tool_colors.get(key, tool_colors['preview'])}; font-size: inherit;"
 
 
+class _DetailFrame(QFrame):
+    """Expanded-detail inset that re-themes itself (G4).
+
+    Qt never repaints a widget whose QSS was computed with the previous
+    palette, so a detail surface left as a bare ``QFrame`` kept the fill
+    and border of the theme it was built under. Re-issuing the same
+    builder on ``themeChanged`` keeps the expanded surface, its border
+    and its radius aligned with the active theme.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("tool_detail")
+        bind_theme(self, self._refresh)
+
+    def _refresh(self, _tokens: object = None) -> None:
+        self.setStyleSheet(get_tool_detail_surface_style())
+
+
+def _docs_status_style(tool_colors: dict[str, str], status_text: str) -> str:
+    """QSS for the docs-review status line, derived from its state glyph.
+
+    The gate's own markers (``✗`` blocked, ``⚠`` reviewer error, ``✓``
+    passed) already carry the state; deriving the colour from the same
+    marker means a theme refresh cannot repaint a blocked script in the
+    neutral "reviewing" tone (G9: status is colour *and* glyph).
+    """
+    if status_text.startswith("✗"):
+        return f"color: {tool_colors['status_error']}; font-weight: bold; font-size: inherit;"
+    if status_text.startswith("⚠"):
+        return f"color: {tool_colors['status_spinner']}; font-size: inherit;"
+    if status_text.startswith("✓"):
+        return f"color: {tool_colors['status_success']}; font-size: inherit; opacity: 0.7;"
+    return f"color: {tool_colors['preview']}; font-size: inherit;"
+
+
 def _make_detail_frame() -> QFrame:
     """Build the inset detail surface used for expanded tool output (G4).
 
@@ -184,10 +221,7 @@ def _make_detail_frame() -> QFrame:
     compact inset radius from G1), padding 7 top / 10 right-bottom /
     22 left so nested code reads as a block rather than a nested card.
     """
-    frame = QFrame()
-    frame.setObjectName("tool_detail")
-    frame.setStyleSheet(get_tool_detail_surface_style())
-    return frame
+    return _DetailFrame()
 
 
 def _make_detail_layout(parent: QWidget) -> QVBoxLayout:
@@ -203,45 +237,634 @@ def _make_result_actions(
     *,
     on_raw: Callable[[], None],
     on_copy: Callable[[], None],
-) -> tuple[QWidget, QHBoxLayout]:
+) -> tuple[QWidget, list[QToolButton]]:
     """Raw / Copy actions, bottom-right of an expanded detail surface (G4).
 
-    Two flat caption-height buttons sharing one QSS keep the strip
-    unobtrusive; they are appended after a stretch so they land at the
-    bottom-right of the detail surface.
+    Two flat caption-height buttons sharing the shared small-button QSS
+    keep the strip unobtrusive; they are appended after a stretch so they
+    land at the bottom-right of the detail surface.
+
+    Returns the buttons so :func:`_refresh_result_actions` can re-theme
+    them on a theme change instead of leaving the previous palette baked
+    into the widget.
     """
     container = QWidget()
+    # The holder sits inside the detail inset and must not paint a second
+    # rectangle over it (the host stylesheet paints bare QWidgets dark).
+    # The transparency rule itself lives in ``_approval_transparent``.
+    container.setObjectName("tool_action_bar")
     row = QHBoxLayout(container)
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(8)
     row.addStretch()
 
-    t = ThemeManager.instance().tokens()
-    btn_css = (
-        f"QToolButton {{ color: {t.muted_text}; background: transparent; "
-        f"border: 1px solid {t.mid}; border-radius: 3px; padding: 2px 8px; "
-        f"font-size: inherit; }}"
-        f"QToolButton:hover {{ background: {t.alt_base}; color: {t.text}; }}"
-        f"QToolButton:focus {{ border: 1px solid {t.accent}; }}"
-    )
-
     raw_btn = QToolButton()
+    raw_btn.setObjectName("tool_action")
     raw_btn.setText("Raw")
     raw_btn.setToolTip("Show the unformatted tool output")
     raw_btn.setAccessibleName("Show raw tool output")
-    raw_btn.setStyleSheet(btn_css)
     raw_btn.clicked.connect(on_raw)
     row.addWidget(raw_btn)
 
     copy_btn = QToolButton()
+    copy_btn.setObjectName("tool_action")
     copy_btn.setText("Copy")
     copy_btn.setToolTip("Copy the tool output to the clipboard")
     copy_btn.setAccessibleName("Copy tool output to clipboard")
-    copy_btn.setStyleSheet(btn_css)
     copy_btn.clicked.connect(on_copy)
     row.addWidget(copy_btn)
 
-    return container, row
+    _refresh_result_actions((raw_btn, copy_btn))
+
+    return container, [raw_btn, copy_btn]
+
+
+def _chat_viewport(editor) -> QWidget | None:
+    """The transcript viewport that actually owns *editor*.
+
+    Found by *identity*, walking up to the first ``QScrollArea`` ancestor
+    and taking its viewport. Matching Qt's internal ``qt_scrollarea_viewport``
+    name would break the moment the chat gives that viewport its own name
+    (``CHAT_TRANSCRIPT_VIEWPORT``), and class-name matching is mangled per
+    binding. A real ``QScrollArea`` ancestor is the contract, and any other
+    scroll area above us (a code editor inside one) is not an ancestor of
+    this widget. ``None`` while the widget is not parented yet.
+    """
+    widget = editor
+    seen: set[int] = set()
+    while widget is not None and id(widget) not in seen:
+        seen.add(id(widget))
+        parent = widget.parentWidget()
+        if parent is not None and isinstance(parent, QScrollArea):
+            return parent.viewport()
+        widget = parent
+    return None
+
+
+def _transcript_container(editor) -> QWidget | None:
+    """The chat body widget that holds this row inside the scroll area.
+
+    ``QScrollArea.widget()`` is the direct child of the viewport — the
+    transcript container whose G2/G3 padding surrounds every row. The
+    scroll area itself is the viewport's PARENT, so reading margins
+    there yields internal scroll-area margins, not the chat gutter.
+    """
+    viewport = _chat_viewport(editor)
+    scroll = viewport.parentWidget() if viewport is not None else None
+    if scroll is None:
+        return None
+    getter = getattr(scroll, "widget", None)
+    container = getter() if callable(getter) else None
+    return container if container is not None and container.isWidgetType() else None
+
+
+def _layout_widget_height(layout) -> int:
+    """Summed height of the widgets one nested layout row owns."""
+    total = 0
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        widget = item.widget() if item is not None else None
+        if widget is not None:
+            if not widget.isHidden():
+                total += widget.height()
+            continue
+        nested = item.layout() if item is not None else None
+        if nested is not None:
+            total += _layout_widget_height(nested)
+    return total
+
+
+def _gate_code_budget(editor) -> int | None:
+    """Pixels the code region may claim, from the gate's visible rows.
+
+    The total is the height of every VISIBLE row **except the hint and the
+    code row itself**, plus the code row's current editor height. Two
+    details matter:
+
+    * Hidden rows never count. The pending gate hides its docs-status line
+      and output block, and each carries the gate's full stale height, so
+      including them would dwarf the viewport and drive the budget
+      negative.
+    * The hint is excluded and the editor contributes its own current
+      height. Each elastic row sizes itself against the other, so counting
+      the hint here made the editor claim only what was left after the
+      prose had already taken its share — which starved the script (and
+      made a larger font look like it got *more* lines, the inversion).
+      The hint is bounded separately, against everything else.
+    """
+
+    code_section = editor.parentWidget()
+    if code_section is None or code_section.layout() is None:
+        return None
+    gate = code_section.parentWidget()
+    layout = gate.layout() if gate is not None else None
+    if layout is None:
+        return None
+
+    viewport = _chat_viewport(editor)
+    if viewport is None or viewport.height() <= 0:
+        return None
+
+    width = gate.width()
+    if width <= 0:
+        width = code_section.width()
+
+    # Only the VISIBLE rows count. ``totalHeightForWidth`` / ``sizeHint``
+    # are predictions over *every* row, including the ones the pending gate
+    # hides — the docs-status line and the output block each carry the
+    # gate's full stale height, which alone dwarfs the viewport and drives
+    # the budget negative. The laid-out height of the rows actually shown
+    # is the honest chrome cost, so that is what is summed here.
+    margins = layout.contentsMargins()
+    chrome = margins.top() + margins.bottom()
+    chrome += layout.spacing() * max(0, layout.count() - 1)
+    hint = getattr(gate, "_approval_hint", None)
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        widget = item.widget() if item is not None else None
+        if widget is code_section or widget is hint:
+            continue
+        if widget is not None:
+            if not widget.isHidden():
+                chrome += widget.height()
+            continue
+        nested = item.layout() if item is not None else None
+        if nested is not None and not item.isEmpty():
+            chrome += _layout_widget_height(nested)
+
+    # The code row's NON-editor chrome (its caption and margins) belongs to
+    # the budget; the editor's own height must NOT, or the two elastic rows
+    # chase each other: each would compute a budget from the other's
+    # current height and neither could grow. The editor's share is what
+    # this function solves for, so it stays out of the input.
+    section_layout = code_section.layout()
+    section_chrome = section_layout.contentsMargins().top() + section_layout.contentsMargins().bottom()
+    for index in range(section_layout.count()):
+        row = section_layout.itemAt(index).widget()
+        if row is not None and row is not editor and not row.isHidden():
+            section_chrome += row.height()
+    chrome += section_chrome
+
+    container = _transcript_container(editor)
+    container_layout = container.layout() if container is not None else None
+    gutters = 0
+    if container_layout is not None:
+        margins = container_layout.contentsMargins()
+        gutters = margins.top() + margins.bottom()
+
+    return viewport.height() - (chrome + gutters)
+
+
+def _apply_code_region_height(editor, visible_lines: int) -> None:
+    """Cap the read-only code region to the room the chat viewport has.
+
+    G4: "only the code/details region scrolls; header and Deny/Allow once
+    stay visible". The script is never truncated — this only bounds how
+    much vertical space the review surface may claim, so a long script
+    cannot push the decision strip below the dock fold.
+
+    The budget comes from Qt's own layout geometry (see
+    :func:`_gate_code_budget`), so it follows a user font override, a
+    DPI change and a short dock alike instead of reserving a constant.
+
+    The code region is the only row the reviewer cannot do without, so
+    its floor is a HARD one: one text line of the live font plus the
+    editor's own chrome. Prose rows give way first — with a 16 pt font the
+    wrapped hint legitimately needs more than a short dock has, and a
+    hint that is clamped with its full text in a tooltip is a far
+    smaller failure than a script the user cannot read while being asked
+    to approve it.
+    """
+    line_height = max(1, editor.fontMetrics().lineSpacing())
+    chrome = _EDITOR_CHROME_PX
+    floor = line_height + chrome
+
+    budget = _gate_code_budget(editor)
+    if budget is not None:
+        affordable = max(1, (budget - chrome) // line_height)
+        visible_lines = min(visible_lines, affordable)
+
+    editor.setMinimumHeight(0)
+    editor.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
+    editor.setFixedHeight(max(floor, line_height * visible_lines + chrome))
+
+
+class _GateLayoutReflow(QObject):
+    """Re-cap the gate's two elastic rows whenever its chrome changes.
+
+    The review hint re-pins itself from ``heightForWidth`` as its text
+    reflows, so the gate's chrome can change after the code region was
+    last capped. Without a re-measure the editor keeps a height computed
+    against a shorter hint and the decision strip slides below the fold.
+
+    Order matters and is the whole point: the code region is capped
+    FIRST and the hint is given what is left, because the two rows are
+    elastic and each will otherwise take everything available. Running
+    them the other way round starved the script editor to zero pixels —
+    the reviewer could no longer see the code they were being asked to
+    approve.
+
+    :meth:`recap` is idempotent and converges: sizing one row changes
+    the other's budget, so it re-runs until a pass changes nothing. The
+    bound is what makes it deterministic — without it the loop can
+    settle on a different geometry depending on the order the layout
+    events happened to arrive in, which is what made a short dock
+    intermittently render its decisions off screen.
+    """
+
+    #: Passes allowed before giving up on a stable geometry.
+    _MAX_PASSES = 8
+
+    def __init__(self, gate: QWidget, parent: QObject | None = None):
+        super().__init__(parent or gate)
+        self._gate = gate
+        self._pending = False
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() in (
+            QEvent.Type.LayoutRequest,
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+            QEvent.Type.FontChange,
+            QEvent.Type.ApplicationFontChange,
+        ):
+            self.recap()
+        return super().eventFilter(watched, event)
+
+    def recap(self) -> None:
+        """Converge both elastic rows at the current geometry.
+
+        Two phases, because each row sizes itself from the other's *current*
+        height: the code region is capped against the chrome that exists
+        now, then the hint takes what is left, then the region is capped
+        again against the grown chrome. It repeats until a pass changes
+        neither height, bounded by ``_MAX_PASSES`` so the result is
+        deterministic rather than dependent on the order the layout
+        events happened to arrive in.
+        """
+        if self._pending:
+            return
+        self._pending = True
+        try:
+            editor = getattr(self._gate, "_code_edit", None)
+            hint = getattr(self._gate, "_approval_hint", None)
+            for _ in range(self._MAX_PASSES):
+                before = self._heights(editor, hint)
+                if editor is not None:
+                    editor._remeasure()
+                if hint is not None:
+                    hint._grow_to_content()
+                if editor is not None:
+                    editor._remeasure()
+                if self._heights(editor, hint) == before:
+                    return
+        finally:
+            self._pending = False
+
+    @staticmethod
+    def _heights(editor, hint) -> tuple[int, int]:
+        return (
+            editor.height() if editor is not None else 0,
+            hint.height() if hint is not None else 0,
+        )
+
+
+class _HeightForWidthLabel(QLabel):
+    """Word-wrapping label that reports the height its text actually needs.
+
+    A word-wrapping ``QLabel`` inside a ``Fixed``-policy wrapper is a
+    clipping trap: Qt clamps the wrapper's ``heightForWidth`` to the
+    ``sizeHint`` measured for ONE width, so when the gate is finally laid
+    out narrower — or with a larger font — the extra wrapped lines do not
+    fit and get cut off. This reports the live need and re-reports it after
+    every width change so the wrapper can pin itself to a fresh measurement.
+    """
+
+    def __init__(self, text: str, parent: QWidget | None = None):
+        super().__init__(text, parent)
+        self.setWordWrap(True)
+
+    def needed_height(self) -> int:
+        """Height this text needs at the label's current width."""
+        width = max(0, self.width())
+        if width <= 0:
+            return self._size_hint_height()
+        return max(self.heightForWidth(width), self._size_hint_height())
+
+    def _size_hint_height(self) -> int:
+        hint = self.sizeHint()
+        # The lightweight Qt stub reports ``None`` for ``sizeHint``.
+        return int(hint.height()) if hint is not None else 0
+
+    def notify_parent_to_grow(self) -> None:
+        """Ask the owning wrapper to re-pin itself to this label's need."""
+        grow = getattr(self.parentWidget(), "_grow_to_content", None)
+        if grow is not None:
+            grow()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.notify_parent_to_grow()
+
+
+class _HintWrapper(QWidget):
+    """The gate's review-hint row: elastic but never overflowing.
+
+    Vertical ``Fixed`` stops it eating spare height (that surplus is what
+    pushed the approval header off a short dock), and ``_grow_to_content``
+    pins it to the label's live ``heightForWidth`` so no line is clipped.
+
+    It also caps ITSELF: at a narrow width under a large font the prose
+    legitimately needs more than the dock has, and no amount of code-region
+    shrinking can reclaim it — the header and decisions would still fall
+    below the fold. The hint is therefore the elastic row, absorbing the
+    difference: it is CLAMPED to the room left, and because a ``QLabel``
+    cannot scroll, the full text goes into its tooltip so nothing is lost.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        policy = self.sizePolicy()
+        policy.setVerticalPolicy(QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(policy)
+
+    def _grow_to_content(self) -> None:
+        """Pin the row to the space available, up to what the text needs."""
+        layout = self.layout()
+        if layout is None:
+            return
+        needed = 0
+        for index in range(layout.count()):
+            child = layout.itemAt(index).widget()
+            if child is None:
+                continue
+            child_need = child.needed_height() if hasattr(child, "needed_height") else child.sizeHint().height()
+            needed = max(needed, child_need)
+        margins = layout.contentsMargins()
+        chrome = margins.top() + margins.bottom()
+
+        # Never claim more than the chat viewport can give this gate: the
+        # code region is already at its floor and the decision strip must
+        # stay on screen. Anything beyond this is clipped by the label and
+        # kept in full in its tooltip.
+        budget = _gate_hint_budget(self)
+        if budget is not None:
+            needed = min(needed, max(0, budget - chrome))
+        # Unconditional: a label clamped while the gate was on screen must
+        # be released again once it is not (e.g. the chat scrolled out of a
+        # scroll area), otherwise it stays clipped with a tooltip it no
+        # longer needs.
+        self._clamp_label(self, needed if budget is not None else 0)
+
+        target = needed + chrome
+        if target > 0 and target != self.height():
+            self.setMinimumHeight(target)
+            self.setMaximumHeight(target)
+
+    @staticmethod
+    def _clamp_label(wrapper: QWidget, visible_height: int) -> None:
+        """Clamp the label to the room available, or release it fully.
+
+        A ``QLabel`` has no scrolling of its own: clamping simply cuts the
+        text off, so the complete string always goes into the tooltip.
+        ``visible_height <= 0`` means "no clamp", which also clears a
+        tooltip left over from a previous clamp.
+        """
+        for label in wrapper.findChildren(QLabel):
+            if visible_height > 0:
+                label.setMaximumHeight(visible_height)
+                label.setToolTip(label.text())
+            else:
+                label.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
+                label.setToolTip("")
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._grow_to_content()
+
+
+def _gate_hint_budget(wrapper: QWidget) -> int | None:
+    """Vertical space the hint may claim, or ``None`` off-screen.
+
+    Derived from the same real chat viewport the code region uses, minus
+    the gate chrome the hint does NOT own (header, action strip, margins,
+    spacing) — and minus a *reserved floor for the code region*. Without
+    that reservation the two elastic rows starve each other: the hint's
+    natural height is the full wrapped prose, so it claimed nearly the
+    whole viewport and squeezed the script editor to nothing, which is a
+    worse failure than a shortened hint because the reviewer loses the
+    script they are being asked to approve.
+    """
+    viewport = _chat_viewport(wrapper)
+    if viewport is None or viewport.height() <= 0:
+        return None
+
+    gate = wrapper.parentWidget()
+    layout = gate.layout() if gate is not None else None
+    if layout is None:
+        return None
+
+    # Only the VISIBLE rows count: the gate hides its docs-status line and
+    # output block while pending, and their stale geometry would otherwise
+    # dwarf the viewport and cap the hint to nothing. The hint itself is
+    # excluded, so its budget never depends on its current height.
+    margins = layout.contentsMargins()
+    chrome = margins.top() + margins.bottom()
+    chrome += layout.spacing() * max(0, layout.count() - 1)
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        widget = item.widget() if item is not None else None
+        if widget is wrapper:
+            continue
+        if widget is not None:
+            if not widget.isHidden():
+                chrome += widget.height()
+            continue
+        nested = item.layout() if item is not None else None
+        if nested is not None and not item.isEmpty():
+            chrome += _layout_widget_height(nested)
+
+    # The hint may claim only what is left after every OTHER row, with the
+    # code region's reserved floor held back so the prose can never
+    # squeeze the script back to nothing.
+    container = _transcript_container(wrapper)
+    container_layout = container.layout() if container is not None else None
+    gutters = 0
+    if container_layout is not None:
+        container_margins = container_layout.contentsMargins()
+        gutters = container_margins.top() + container_margins.bottom()
+    return viewport.height() - (chrome + gutters) - _code_region_reserve(wrapper)
+
+
+def _code_region_reserve(wrapper: QWidget) -> int:
+    """Vertical space the code region keeps before the hint may grow.
+
+    One text line of the *live* editor font plus the editor's own chrome:
+    the script must stay on screen at any dock size, since a reviewer who
+    cannot see the code cannot approve it. Derived from real font metrics,
+    so it follows a font override and DPI instead of assuming.
+    """
+    gate = wrapper.parentWidget()
+    editor = getattr(gate, "_code_edit", None)
+    if editor is None:
+        return 0
+    line_height = max(1, editor.fontMetrics().lineSpacing())
+    return line_height + _EDITOR_CHROME_PX
+
+
+class _ViewportAwareCodeEditor(QPlainTextEdit):
+    """Read-only code region re-capped from Qt's own layout geometry.
+
+    Three triggers, no timer and no polling:
+    * the owning chat viewport resizes (a short dock resizes the scroll
+      viewport while this fixed-height editor stays put),
+    * this widget resizes,
+    * a font or layout change (``ChangeFont``/``LayoutRequest``), which is
+      how a user font override or a DPI switch arrives — neither fires a
+      resize, so without this the cap would keep the old metrics.
+
+    ``setFixedHeight`` itself posts a ``LayoutRequest``, so every re-measure
+    is guarded by ``_remeasuring``; without that guard the write would
+    re-trigger the event that requested it.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._line_cap = _CODE_MAX_LINES
+        self._observed_viewport = None
+        self._remeasuring = False
+
+    def set_line_cap(self, visible_lines: int) -> None:
+        self._line_cap = max(2, int(visible_lines))
+        self._watch_chat_viewport()
+        self._remeasure()
+
+    def _watch_chat_viewport(self) -> None:
+        viewport = _chat_viewport(self)
+        if viewport is self._observed_viewport:
+            return
+        if self._observed_viewport is not None:
+            try:
+                self._observed_viewport.removeEventFilter(self)
+            except (RuntimeError, TypeError):
+                pass
+        self._observed_viewport = viewport
+        if viewport is not None:
+            viewport.installEventFilter(self)
+
+    def _remeasure(self) -> None:
+        """Recompute the cap, unless a measurement is already in flight."""
+        if self._remeasuring:
+            return
+        self._remeasuring = True
+        try:
+            _apply_code_region_height(self, self._line_cap)
+        finally:
+            self._remeasuring = False
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._observed_viewport and event.type() == QEvent.Type.Resize:
+            self._watch_chat_viewport()
+            self._remeasure()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._watch_chat_viewport()
+        self._remeasure()
+
+    def changeEvent(self, event) -> None:
+        # A font override and a DPI switch both arrive here as
+        # FontChange / ApplicationFontChange, and neither produces a
+        # resize event — without this the cap keeps stale metrics.
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange):
+            self._remeasure()
+
+    def event(self, event) -> None:
+        handled = super().event(event)
+        if event.type() in (QEvent.Type.ParentChange, QEvent.Type.Show):
+            self._watch_chat_viewport()
+            self._remeasure()
+        return handled
+
+
+def _apply_editor_palette(editor, tokens) -> None:
+    """Push the code editor's ``QPalette`` roles from the live tokens.
+
+    QSS paints the code text, but several editor behaviours read the
+    palette instead: the caret, the default text colour used when a QSS
+    selector does not match, and anything a host draws itself. Left
+    alone those roles keep the *previous* theme's values, so a Light gate
+    reported dark-mode ``Text`` over a light ``Base`` — pale on pale. This
+    mirrors ``InputArea.apply_palette``: QSS and palette carry the same
+    tokens, so they cannot disagree.
+    """
+    palette = editor.palette()
+    palette.setColor(QPalette.ColorRole.Base, QColor(tokens.code_bg))
+    palette.setColor(QPalette.ColorRole.Text, QColor(tokens.code_text))
+    # ``WindowText`` tracks ``Text`` for the same reason as the input area:
+    # one widget should never report two different foregrounds.
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(tokens.code_text))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(tokens.code_bg))
+    if hasattr(QPalette.ColorRole, "PlaceholderText"):
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(tokens.muted_text))
+    editor.setPalette(palette)
+
+
+def _approval_transparent() -> str:
+    """Keep an approval gate's plain rows from painting a host fill.
+
+    The IDA application stylesheet paints a dark background on bare
+    ``QWidget``/``QLabel`` containers, so the header, hint and action
+    holder inherited it and read as dark blocks inside a Light gate (the
+    gate frame itself is correct). Object-name scoped, so nothing outside
+    the gate is affected.
+    """
+    return (
+        "QFrame#message_question QWidget#tool_approval_row, "
+        "QFrame#message_question QWidget#tool_approval_hint, "
+        "QFrame#message_question QWidget#tool_action_bar, "
+        "QFrame#message_question QWidget#tool_decision_bar, "
+        "QFrame#message_question QLabel#tool_approval_text, "
+        "QFrame#message_tool QWidget#tool_approval_row, "
+        "QFrame#message_tool QWidget#tool_approval_hint, "
+        "QFrame#message_tool QWidget#tool_action_bar, "
+        "QFrame#message_tool QWidget#tool_decision_bar, "
+        "QFrame#message_tool QWidget#tool_code_section, "
+        "QFrame#message_tool QWidget#tool_group_body, "
+        "QFrame#message_tool QWidget#tool_detail_holder, "
+        "QFrame#message_tool QLabel#tool_code_caption { background: transparent; }"
+    )
+
+
+def _gate_frame_qss(frame_style: str) -> str:
+    """Gate frame chrome plus the transparency its plain rows need.
+
+    Qt applies a widget's stylesheet to its descendants, so composing the
+    two here reaches the header/hint/strip rows of BOTH gates from one
+    place instead of setting a stylesheet on each child.
+    """
+    return f"{frame_style}{_approval_transparent()}"
+
+
+def _refresh_result_actions(buttons) -> None:
+    """Re-apply the Raw/Copy QSS from the live tokens.
+
+    The selector is object-name scoped to ``tool_action`` so the rule
+    cannot leak onto the Send/Stop ``QToolButton`` controls the
+    widget stylesheet cascade reaches from a parent.
+    """
+    t = ThemeManager.instance().tokens()
+    btn_css = (
+        f"QToolButton#tool_action {{ color: {t.muted_text}; background: transparent; "
+        f"border: 1px solid {t.mid}; border-radius: 3px; padding: 2px 8px; "
+        f"font-size: inherit; }}"
+        f"QToolButton#tool_action:hover {{ background: {t.alt_base}; color: {t.text}; }}"
+        f"QToolButton#tool_action:focus {{ border: 1px solid {t.accent}; }}"
+    )
+    for btn in buttons:
+        btn.setStyleSheet(btn_css)
 
 
 def _copy_to_clipboard(text: str) -> None:
@@ -608,6 +1231,7 @@ class ToolCallWidget(QFrame):
         # Detail container starts empty; ``_toggle`` fills it on first
         # expand so nothing is rendered (or height-measured) while collapsed.
         self._detail_holder = QWidget()
+        self._detail_holder.setObjectName("tool_detail_holder")
         self._detail_holder.setVisible(False)
         layout.addWidget(self._detail_holder)
 
@@ -631,7 +1255,7 @@ class ToolCallWidget(QFrame):
         path delivered the refresh (Qt ``Signal`` carries the token;
         ``_DummySignal`` in the headless fallback does not).
         """
-        self.setStyleSheet(get_tool_row_style())
+        self.setStyleSheet(_gate_frame_qss(get_tool_row_style()))
         tool_colors = _row_status_colors()
         if getattr(self, "_name_label", None) is not None:
             self._name_label.setStyleSheet(get_tool_row_name_style())
@@ -639,15 +1263,18 @@ class ToolCallWidget(QFrame):
             self._summary_label.setStyleSheet(get_tool_row_target_style())
         self._apply_status_style(tool_colors)
         # Detail labels exist only after the first expand, hence getattr.
-        if getattr(self, "_args_label", None) is not None:
-            self._args_label.setStyleSheet(get_tool_row_target_style())
+        # Their font/colour come from the detail frame's own rule (it
+        # re-themes itself); only an error result carries its own colour.
         if getattr(self, "_result_header", None) is not None:
             self._result_header.setStyleSheet(get_tool_row_name_style())
         if getattr(self, "_result_label", None) is not None:
-            if getattr(self, "_is_error", False):
-                self._result_label.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
-            else:
-                self._result_label.setStyleSheet(get_tool_row_target_style())
+            self._result_label.setStyleSheet(
+                f"color: {tool_colors['status_error']};" if getattr(self, "_is_error", False) else ""
+            )
+        # The Raw/Copy strip is built on first expand, so it appears
+        # after ``bind_theme`` ran; it needs its own refresh or it keeps
+        # the palette the detail was first expanded under.
+        _refresh_result_actions(getattr(self, "_raw_btns", ()))
 
     def _apply_status_style(self, tool_colors: dict[str, str] | None = None) -> None:
         """Paint the status icon + right-hand status text from the state.
@@ -677,7 +1304,7 @@ class ToolCallWidget(QFrame):
 
         self._toggle_btn = QToolButton()
         self._toggle_btn.setObjectName("collapse_button")
-        self._toggle_btn.setText("▶")
+        self._toggle_btn.setText(CHEVRON_COLLAPSED)
         self._toggle_btn.setFixedSize(14, 14)
         self._toggle_btn.setToolTip("Show the full tool arguments and output")
         self._toggle_btn.setAccessibleName(f"Expand {display_name} details")
@@ -719,6 +1346,7 @@ class ToolCallWidget(QFrame):
         self._args_label = _HeightCachedLabel()
         self._args_label.setObjectName("tool_content")
         self._args_label.setWordWrap(True)
+        self._args_label.setTextFormat(Qt.TextFormat.PlainText)
         self._args_label.setTextInteractionFlags(
             Qt.TextInteractionFlag(
                 Qt.TextInteractionFlag.TextSelectableByMouse.value
@@ -736,6 +1364,7 @@ class ToolCallWidget(QFrame):
         self._result_label = _HeightCachedLabel()
         self._result_label.setObjectName("tool_content")
         self._result_label.setWordWrap(True)
+        self._result_label.setTextFormat(Qt.TextFormat.PlainText)
         self._result_label.setTextInteractionFlags(
             Qt.TextInteractionFlag(
                 Qt.TextInteractionFlag.TextSelectableByMouse.value
@@ -745,7 +1374,7 @@ class ToolCallWidget(QFrame):
         self._result_label.setVisible(False)
         detail_layout.addWidget(self._result_label)
 
-        actions, _row = _make_result_actions(
+        actions, self._raw_btns = _make_result_actions(
             on_raw=self._on_raw,
             on_copy=self._on_copy,
         )
@@ -788,7 +1417,7 @@ class ToolCallWidget(QFrame):
             self._result_label.setVisible(True)
             self._result_header.setVisible(True)
         if self._is_error:
-            self._result_label.setStyleSheet(f"color: {_row_status_colors()['status_error']}; font-size: inherit;")
+            self._result_label.setStyleSheet(f"color: {_row_status_colors()['status_error']};")
 
     def _on_raw(self) -> None:
         """Reveal the untruncated result text inside the detail surface."""
@@ -825,7 +1454,7 @@ class ToolCallWidget(QFrame):
             self._details_built = True
             self._build_detail_section()
         self._detail_holder.setVisible(self._expanded)
-        self._toggle_btn.setText("▼" if self._expanded else "▶")
+        self._toggle_btn.setText(CHEVRON_EXPANDED if self._expanded else CHEVRON_COLLAPSED)
         self._toggle_btn.setAccessibleName(
             f"{'Collapse' if self._expanded else 'Expand'} {_strip_mcp_prefix(self._tool_name)} details"
         )
@@ -873,10 +1502,10 @@ class ToolCallWidget(QFrame):
 
     def set_result(self, result: str, is_error: bool = False) -> None:
         self._stop_spinner()
-        self._result_text = result
+        self._result_text = strip_sanitizer_tags(result)
         self._is_error = is_error
         self._set_state("error" if is_error else "success")
-        self._set_meta(_describe_result(result, is_error))
+        self._set_meta(_describe_result(self._result_text, is_error))
         if self._expanded:
             self._render_detail_text()
 
@@ -957,6 +1586,7 @@ class ToolBatchWidget(QFrame):
 
         layout.addLayout(self._build_header(tool_name))
         self._detail_holder = QWidget()
+        self._detail_holder.setObjectName("tool_detail_holder")
         self._detail_holder.setVisible(False)
         layout.addWidget(self._detail_holder)
 
@@ -969,7 +1599,7 @@ class ToolBatchWidget(QFrame):
         updates the tool name, the elided target, the count and the
         status together.
         """
-        self.setStyleSheet(get_tool_row_style())
+        self.setStyleSheet(_gate_frame_qss(get_tool_row_style()))
         if getattr(self, "_name_label", None) is not None:
             self._name_label.setStyleSheet(get_tool_row_name_style())
         if getattr(self, "_summary_label", None) is not None:
@@ -994,7 +1624,7 @@ class ToolBatchWidget(QFrame):
 
         self._toggle_btn = QToolButton()
         self._toggle_btn.setObjectName("collapse_button")
-        self._toggle_btn.setText("▶")
+        self._toggle_btn.setText(CHEVRON_COLLAPSED)
         self._toggle_btn.setFixedSize(14, 14)
         self._toggle_btn.setToolTip("Show every call in this batch")
         self._toggle_btn.setAccessibleName(f"Expand {display_name} batch")
@@ -1133,7 +1763,7 @@ class ToolBatchWidget(QFrame):
             # their entries now so expanding shows the whole batch.
             self._render_entries()
         self._detail_holder.setVisible(self._expanded)
-        self._toggle_btn.setText("▼" if self._expanded else "▶")
+        self._toggle_btn.setText(CHEVRON_EXPANDED if self._expanded else CHEVRON_COLLAPSED)
 
     def _render_entries(self) -> None:
         """Create one entry label per recorded call (expansion only).
@@ -1193,7 +1823,7 @@ class ToolGroupWidget(QFrame):
 
         self._toggle_btn = QToolButton()
         self._toggle_btn.setObjectName("collapse_button")
-        self._toggle_btn.setText("▶")
+        self._toggle_btn.setText(CHEVRON_COLLAPSED)
         self._toggle_btn.setFixedSize(14, 14)
         self._toggle_btn.setToolTip("Show the tool calls in this run")
         self._toggle_btn.setAccessibleName("Expand grouped tool calls")
@@ -1217,6 +1847,7 @@ class ToolGroupWidget(QFrame):
 
         # Container for child widgets (hidden by default)
         self._body = QWidget()
+        self._body.setObjectName("tool_group_body")
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(22, 4, 0, 4)
         self._body_layout.setSpacing(2)
@@ -1236,7 +1867,7 @@ class ToolGroupWidget(QFrame):
         :meth:`_update_status` so a theme switch preserves the
         running / success / error distinction on the status label.
         """
-        self.setStyleSheet(get_tool_row_style())
+        self.setStyleSheet(_gate_frame_qss(get_tool_row_style()))
         if getattr(self, "_label", None) is not None:
             self._label.setStyleSheet(get_tool_row_name_style())
         tool_colors = _row_status_colors()
@@ -1276,7 +1907,7 @@ class ToolGroupWidget(QFrame):
     def _toggle(self) -> None:
         self._expanded = not self._expanded
         self._body.setVisible(self._expanded)
-        self._toggle_btn.setText("▼" if self._expanded else "▶")
+        self._toggle_btn.setText(CHEVRON_EXPANDED if self._expanded else CHEVRON_COLLAPSED)
 
     @property
     def count(self) -> int:
@@ -1289,14 +1920,37 @@ class ToolGroupWidget(QFrame):
 
 
 class _PythonHighlighter(QSyntaxHighlighter):
-    """Minimal VS Code-dark-style Python syntax highlighter."""
+    """Python syntax highlighter built from the live theme tokens.
 
-    _RULES: ClassVar[list] = []  # built once in __init_subclass__ — see below
+    The previous version built ONE process-wide ``_RULES`` list with
+    hardcoded VS Code-dark hexes, so every highlighted script kept the
+    dark palette forever — the one place where a Light switch left dark
+    glyphs on a light code surface. Rules are now derived from the live
+    tokens and cached per token set, so the same script re-highlights in
+    whatever palette is active (and follows the host palette in
+    AUTO/IDA, where the tokens come from the host ``QPalette``).
+    """
+
+    _RULES: ClassVar[dict[tuple[str, ...], list]] = {}  # keyed by the tokens the rules consume
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        if not _PythonHighlighter._RULES:
-            _PythonHighlighter._RULES = self._build_rules()
+        # Nothing is highlighted yet, so building the rules is enough here;
+        # the repaint belongs to ``refresh_colors`` (a theme switch).
+        self._rules = self._rules_for_tokens()
+
+    def _rules_for_tokens(self) -> list:
+        """Rules for the live tokens, cached per palette."""
+        rules = _PythonHighlighter._RULES.get(_PythonHighlighter._cache_key())
+        if rules is None:
+            rules = self._build_rules()
+            _PythonHighlighter._RULES[_PythonHighlighter._cache_key()] = rules
+        return rules
+
+    def refresh_colors(self) -> None:
+        """Rebuild the rules from the current tokens and repaint."""
+        self._rules = self._rules_for_tokens()
+        self.rehighlight()
 
     @staticmethod
     def _fmt(color: str, bold: bool = False, italic: bool = False) -> QTextCharFormat:
@@ -1309,9 +1963,30 @@ class _PythonHighlighter(QSyntaxHighlighter):
         return f
 
     @staticmethod
+    def _cache_key() -> tuple[str, ...]:
+        """Every token :meth:`_build_rules` reads.
+
+        Two host-derived AUTO/IDA palettes can agree on the surface
+        colours and still differ in the accent/semantic tones, so a
+        partial key would hand back rules built for another palette.
+        """
+        t = ThemeManager.instance().tokens()
+        return (t.code_bg, t.code_text, t.accent, t.success, t.warning, t.muted_text)
+
+    @staticmethod
     def _build_rules():
+        """Token roles for the script preview.
+
+        Keyword / built-in tones are blends of the active ``code_text``
+        and ``accent`` (the one role the contract reserves for accent
+        colour); numbers, strings and comments use the semantic tones so
+        every palette — including one derived from a host ``QPalette`` —
+        gets a readable, self-consistent set.
+        """
+        t = ThemeManager.instance().tokens()
+        keyword = blend_hex(t.accent, t.code_text, 0.25)
         rules = []
-        kw_fmt = _PythonHighlighter._fmt("#c586c0", bold=True)
+        kw_fmt = _PythonHighlighter._fmt(keyword, bold=True)
         for kw in (
             "and",
             "as",
@@ -1348,7 +2023,7 @@ class _PythonHighlighter(QSyntaxHighlighter):
         ):
             rules.append((_re.compile(rf"\b{kw}\b"), kw_fmt))
         # Built-ins
-        bi_fmt = _PythonHighlighter._fmt("#dcdcaa")
+        bi_fmt = _PythonHighlighter._fmt(blend_hex(t.accent, t.code_text, 0.55))
         for bi in (
             "print",
             "len",
@@ -1377,26 +2052,40 @@ class _PythonHighlighter(QSyntaxHighlighter):
         ):
             rules.append((_re.compile(rf"\b{bi}\b"), bi_fmt))
         # Numbers
-        rules.append((_re.compile(r"\b0[xX][0-9a-fA-F]+\b"), _PythonHighlighter._fmt("#b5cea8")))
-        rules.append((_re.compile(r"\b\d+\.?\d*\b"), _PythonHighlighter._fmt("#b5cea8")))
+        num_fmt = _PythonHighlighter._fmt(blend_hex(t.success, t.code_text, 0.3))
+        rules.append((_re.compile(r"\b0[xX][0-9a-fA-F]+\b"), num_fmt))
+        rules.append((_re.compile(r"\b\d+\.?\d*\b"), num_fmt))
         # Strings (single/double, including f/r/b prefixes)
-        str_fmt = _PythonHighlighter._fmt("#ce9178")
+        str_fmt = _PythonHighlighter._fmt(blend_hex(t.warning, t.code_text, 0.3))
         rules.append((_re.compile(r'[brfu]?""".*?"""', _re.DOTALL), str_fmt))
         rules.append((_re.compile(r"[brfu]?'''.*?'''", _re.DOTALL), str_fmt))
         rules.append((_re.compile(r'[brfu]?"[^"\n]*"'), str_fmt))
         rules.append((_re.compile(r"[brfu]?'[^'\n]*'"), str_fmt))
         # Comments
-        rules.append((_re.compile(r"#[^\n]*"), _PythonHighlighter._fmt("#6a9955", italic=True)))
+        rules.append((_re.compile(r"#[^\n]*"), _PythonHighlighter._fmt(t.muted_text, italic=True)))
         # Decorators
-        rules.append((_re.compile(r"@\w+"), _PythonHighlighter._fmt("#dcdcaa")))
+        rules.append((_re.compile(r"@\w+"), bi_fmt))
         # self
-        rules.append((_re.compile(r"\bself\b"), _PythonHighlighter._fmt("#9cdcfe", italic=True)))
+        rules.append((_re.compile(r"\bself\b"), _PythonHighlighter._fmt(keyword, italic=True)))
         return rules
 
     def highlightBlock(self, text: str) -> None:
-        for pattern, fmt in _PythonHighlighter._RULES:
+        for pattern, fmt in self._rules:
             for m in pattern.finditer(text):
                 self.setFormat(m.start(), m.end() - m.start(), fmt)
+
+
+def _refresh_highlighter(highlighter) -> None:
+    """Re-derive *highlighter*'s colours from the live tokens."""
+    refresh = getattr(highlighter, "refresh_colors", None)
+    if refresh is None:
+        return
+    try:
+        refresh()
+    except Exception:
+        # A highlighter whose document is already gone (teardown race)
+        # must not break the rest of the theme refresh.
+        pass
 
 
 class ToolApprovalWidget(QFrame):
@@ -1432,7 +2121,7 @@ class ToolApprovalWidget(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("message_question")
-        self.setStyleSheet(get_tool_approval_frame_style())
+        self.setStyleSheet(_gate_frame_qss(get_tool_approval_frame_style()))
         self._tool_call_id = tool_call_id
         self._tool_name = tool_name
         #: Gate: no always-allow for scripts (see class docstring).
@@ -1523,10 +2212,7 @@ class ToolApprovalWidget(QFrame):
 
     def _build_explanation(self) -> QWidget:
         """Why the gate exists, in plain words, next to the buttons."""
-        explanation = QLabel(
-            "Review the operation above. Deny stops the tool; Allow once runs it exactly "
-            "one time. The agent stays paused until you decide."
-        )
+        explanation = QLabel(_APPROVAL_HINT)
         explanation.setWordWrap(True)
         explanation.setStyleSheet(get_tool_approval_body_style())
         return explanation
@@ -1547,7 +2233,7 @@ class ToolApprovalWidget(QFrame):
         except Exception:
             return
         # Frame / header.
-        self.setStyleSheet(get_tool_approval_frame_style())
+        self.setStyleSheet(_gate_frame_qss(get_tool_approval_frame_style()))
         if getattr(self, "_header", None) is not None:
             self._header.setStyleSheet(get_tool_approval_header_style())
         if getattr(self, "_required_label", None) is not None:
@@ -1560,6 +2246,8 @@ class ToolApprovalWidget(QFrame):
         # Code editor.
         if getattr(self, "_code_edit", None) is not None:
             self._code_edit.setStyleSheet(get_tool_approval_code_editor_style())
+            _apply_editor_palette(self._code_edit, ThemeManager.instance().tokens())
+            _refresh_highlighter(getattr(self, "_highlighter", None))
         # Buttons — preserve disabled state if the user already decided.
         if getattr(self, "_allow_btn", None) is not None:
             if self._allow_btn.isEnabled():
@@ -1598,21 +2286,24 @@ class ToolApprovalWidget(QFrame):
         """
         if not code.strip():
             return None
-        self._code_edit = QPlainTextEdit()
+        self._code_edit = _ViewportAwareCodeEditor()
         self._code_edit.setReadOnly(True)
         self._code_edit.setPlainText(code)
         self._code_edit.setStyleSheet(get_tool_approval_code_editor_style())
         self._code_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        visible_lines = min(len(lines), 15)
-        line_height = self._code_edit.fontMetrics().lineSpacing()
-        self._code_edit.setFixedHeight(line_height * visible_lines + 16)
+        self._code_edit.set_line_cap(min(len(lines), _CODE_MAX_LINES))
         self._highlighter = _PythonHighlighter(self._code_edit.document())
         return self._code_edit
 
     def _build_approval_buttons(self) -> QHBoxLayout:
-        """Action strip, bottom-right: Deny left, Allow once right (G4)."""
+        """Action strip, bottom-RIGHT: Deny left, Allow once right (G4).
+
+        The stretch comes FIRST, so the group sits on the trailing edge
+        of the gate while Deny still precedes Allow once inside it.
+        """
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
+        btn_layout.addStretch()
 
         self._deny_btn = QToolButton()
         self._deny_btn.setText("Deny")
@@ -1642,7 +2333,6 @@ class ToolApprovalWidget(QFrame):
         # script must never be able to set that flag (G4 / brief gate).
         self._always_btn.setVisible(not self._is_script)
 
-        btn_layout.addStretch()
         return btn_layout
 
     # ------------------------------------------------------------------
@@ -1727,10 +2417,34 @@ class ExecutePythonWidget(QFrame):
         layout.setContentsMargins(6, 5, 6, 5)
         layout.setSpacing(2)
 
-        layout.addLayout(self._build_header())
+        # The tool row itself (status glyph, tool name, line count,
+        # lifecycle state) is what the shared ChatView lifecycle writes
+        # to; it is built first and stays on every path. Only the G4
+        # approval rows are conditional.
+        self._header_row = self._build_header()
+        layout.addLayout(self._header_row)
+
+        # G4 order for a pending script gate: real operation +
+        # ``Approval required`` + ``Paused`` FIRST, then the read-only
+        # script, then the review hint, then the action strip last. The
+        # header and the strip are hidden while the gate is pending, so
+        # the operation is not announced twice.
+        self._approval_header_line = self._build_approval_header()
+        layout.addWidget(self._approval_header_line)
         layout.addWidget(self._build_code_section())
         self._status_line = self._build_status_line()
         layout.addWidget(self._status_line)
+        self._approval_hint = self._build_approval_hint()
+        layout.addWidget(self._approval_hint)
+        # The hint re-pins itself as its wrapped text reflows, which changes
+        # how much chrome the gate has — so the code region must re-cap
+        # after every chrome change, or it keeps a height computed against
+        # a shorter hint and shoves the decisions below the fold. The hook
+        # is on the gate WIDGET, not the layout: Qt delivers
+        # ``LayoutRequest`` to widgets, and a ``QLayout`` filter never sees
+        # it. The editor's own guard stops the feedback loop.
+        self._layout_reflow = _GateLayoutReflow(self)
+        self.installEventFilter(self._layout_reflow)
         layout.addLayout(self._build_approval_buttons())
         layout.addWidget(self._build_result_block())
 
@@ -1740,24 +2454,104 @@ class ExecutePythonWidget(QFrame):
     # Builders
     # ------------------------------------------------------------------
 
+    def _recap_gate(self) -> None:
+        """Re-cap the gate's elastic rows in contract order.
+
+        Code region first, then the hint with whatever is left. The two
+        rows are both elastic, so whichever is sized last takes the
+        remaining space; sizing the prose last is what collapsed the
+        script editor to nothing on a short dock.
+        """
+        reflow = getattr(self, "_layout_reflow", None)
+        if reflow is not None:
+            reflow.recap()
+
+    def _gate_pending(self) -> bool:
+        """True while the script is waiting for a human decision.
+
+        G4 makes a pending approval the one bordered exception surface in
+        the transcript, so both the chrome and the hint depend on exactly
+        this state: raised by :meth:`show_approval_buttons`, cleared by
+        every close path in :meth:`_hide_approval_controls`.
+        """
+        return bool(self._buttons_visible) and not self._decided
+
+    def _sync_gate_presentation(self) -> None:
+        """Show/hide the approval rows and re-derive the frame chrome.
+
+        While pending, the tool row is hidden: the G4 approval header
+        already names the operation and the state, so showing both would
+        announce ``execute_python`` twice. The row comes straight back
+        when the gate closes.
+        """
+        pending = self._gate_pending()
+        header = getattr(self, "_header_row", None)
+        if header is not None:
+            for index in range(header.count()):
+                item = header.itemAt(index)
+                widget = item.widget() if item is not None else None
+                if widget is not None:
+                    widget.setVisible(not pending)
+        self._approval_header_line.setVisible(pending)
+        self._approval_hint.setVisible(pending)
+        self._buttons_container.setVisible(pending)
+        # ``_apply_styles`` owns the frame QSS, so a re-derivation here
+        # keeps a decision made before any theme switch consistent too.
+        self._apply_styles()
+
     def _apply_styles(self, _tokens: object = None) -> None:
-        """Re-apply row QSS and refresh child label colours on theme change."""
-        self.setStyleSheet(get_tool_row_style())
+        """Re-apply row QSS and refresh child label colours on theme change.
+
+        The code editor, its ``Script — N lines`` caption, the elided
+        line-count column and the Raw/Copy strip were all missing from
+        this refresh, so switching Light <-> Dark left the script
+        preview painted in the previous theme's ``code_bg`` /
+        ``code_text`` while everything around it had already repainted.
+        """
+        frame_style = get_tool_approval_pending_row_style() if self._gate_pending() else get_tool_row_style()
+        self.setStyleSheet(_gate_frame_qss(frame_style))
         tool_colors = _row_status_colors()
         if getattr(self, "_name_label", None) is not None:
             self._name_label.setStyleSheet(get_tool_row_name_style())
+        if getattr(self, "_script_meta", None) is not None:
+            self._script_meta.setStyleSheet(get_tool_row_target_style())
+        if getattr(self, "_status_label_right", None) is not None:
+            self._status_label_right.setStyleSheet(get_tool_row_meta_style())
+        if getattr(self, "_code_info_label", None) is not None:
+            self._code_info_label.setStyleSheet(get_tool_row_meta_style())
         status_icon = getattr(self, "_status_icon", None)
         if status_icon is not None and status_icon.text():
             status_icon.setStyleSheet(_status_style(tool_colors, self._state))
+        code_edit = getattr(self, "_code_edit", None)
+        if code_edit is not None:
+            code_edit.setStyleSheet(get_tool_approval_code_editor_style())
+            _apply_editor_palette(code_edit, ThemeManager.instance().tokens())
+            _refresh_highlighter(getattr(self, "_code_highlighter", None))
         result_edit = getattr(self, "_result_edit", None)
         if result_edit is not None:
             result_color = tool_colors["status_error"] if getattr(self, "_is_error", False) else None
             result_edit.setStyleSheet(get_tool_result_editor_style(result_color))
+            _apply_editor_palette(result_edit, ThemeManager.instance().tokens())
+        if getattr(self, "_result_header_label", None) is not None:
+            self._result_header_label.setStyleSheet(get_tool_row_name_style())
+        _refresh_result_actions(getattr(self, "_raw_btns", ()))
         # Re-paint the docs-review status label + detail against the live palette.
         if getattr(self, "_status_label", None) is not None and getattr(self, "_status_visible", False):
-            self._status_label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit;")
+            self._status_label.setStyleSheet(_docs_status_style(tool_colors, self._status_text))
         if getattr(self, "_status_detail", None) is not None and self._status_detail.isVisible():
             self._status_detail.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
+        # A decided gate must keep its post-decision styles; the header
+        # icon follows the state the decision moved the widget into.
+        if getattr(self, "_decided", False):
+            for btn in (self._allow_btn, self._always_btn, self._deny_btn):
+                btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        if getattr(self, "_approval_header", None) is not None:
+            self._approval_header.setStyleSheet(get_tool_approval_header_style())
+        if getattr(self, "_approval_state", None) is not None:
+            self._approval_state.setStyleSheet(get_tool_approval_state_style())
+        if getattr(self, "_approval_hint", None) is not None:
+            for label in self._approval_hint.findChildren(QLabel):
+                label.setStyleSheet(get_tool_approval_body_style())
 
     def shutdown(self) -> None:
         """Detach the theme subscription so teardown does not warn."""
@@ -1817,16 +2611,31 @@ class ExecutePythonWidget(QFrame):
 
     def _build_code_section(self) -> QWidget:
         section = QWidget()
+        self._code_section_widget = section
+        # Named so the host's fill cannot reach it: the script caption
+        # and the section wrapper must stay on the transcript surface.
+        section.setObjectName("tool_code_section")
+        # The section is a plain wrapper around two rows whose heights are
+        # already decided (a one-line caption + the capped editor). Its
+        # default ``Preferred`` policy let Qt hand it ALL the gate's
+        # leftover space — measured 234 px against a 51 px hint at a short
+        # dock, which pushed the decision strip ~140 px below the fold.
+        # ``Fixed`` makes the wrapper take exactly the hint, so the gate's
+        # budget arithmetic is comparing like with like.
+        section_policy = section.sizePolicy()
+        section_policy.setVerticalPolicy(QSizePolicy.Policy.Fixed)
+        section.setSizePolicy(section_policy)
         layout = QVBoxLayout(section)
         layout.setContentsMargins(22, 4, 0, 4)
         layout.setSpacing(2)
 
         self._code_info_label = QLabel("")
+        self._code_info_label.setObjectName("tool_code_caption")
         self._code_info_label.setStyleSheet(get_tool_row_meta_style())
         self._code_info_label.setVisible(False)
         layout.addWidget(self._code_info_label)
 
-        self._code_edit = QPlainTextEdit()
+        self._code_edit = _ViewportAwareCodeEditor()
         self._code_edit.setReadOnly(True)
         self._code_edit.setStyleSheet(get_tool_approval_code_editor_style())
         self._code_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -1872,8 +2681,59 @@ class ExecutePythonWidget(QFrame):
         wrapper.setVisible(False)
         return wrapper
 
+    def _build_approval_header(self) -> QWidget:
+        """G4 approval header, revealed only while the gate is pending.
+
+        Layout order is the contract's: real operation +
+        ``Approval required`` left, state ``Paused`` right. Hidden by
+        default so a script that is merely running does not claim to be
+        waiting on the user.
+        """
+        wrapper = QWidget()
+        wrapper.setObjectName("tool_approval_row")
+        row = QHBoxLayout(wrapper)
+        row.setContentsMargins(0, 4, 0, 0)
+        row.setSpacing(8)
+
+        self._approval_header = QLabel("")
+        self._approval_header.setTextFormat(Qt.TextFormat.PlainText)
+        self._approval_header.setStyleSheet(get_tool_approval_header_style())
+        self._approval_header.setAccessibleName("Approval required")
+        row.addWidget(self._approval_header, 1)
+
+        self._approval_state = QLabel(f"{STATE_APPROVAL[0]} {STATE_APPROVAL[1]}")
+        self._approval_state.setStyleSheet(get_tool_approval_state_style())
+        self._approval_state.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self._approval_state)
+
+        wrapper.setVisible(False)
+        return wrapper
+
+    def _build_approval_hint(self) -> QWidget:
+        """The review hint that closes the gate (G4, ``_APPROVAL_HINT``).
+
+        Same words as :class:`ToolApprovalWidget`, so a script gate and a
+        mutating-tool gate explain themselves identically.
+        """
+        wrapper = _HintWrapper()
+        wrapper.setObjectName("tool_approval_hint")
+        wrapper_layout = QVBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(0, 2, 0, 0)
+
+        label = _HeightForWidthLabel(_APPROVAL_HINT)
+        label.setObjectName("tool_approval_text")
+        label.setStyleSheet(get_tool_approval_body_style())
+        wrapper_layout.addWidget(label)
+
+        wrapper.setVisible(False)
+        return wrapper
+
     def _build_approval_buttons(self) -> QHBoxLayout:
-        """Action strip, bottom-right: Deny left, Allow once right (G4).
+        """Action strip, bottom-RIGHT: Deny left, Allow once right (G4).
+
+        The stretch goes FIRST so the buttons land on the trailing edge,
+        with Deny still before Allow once inside the group (the contract's
+        relative order).
 
         ``Always Allow`` is hidden here unconditionally: this widget is
         only ever used for ``execute_python``, and the loop reads an
@@ -1882,6 +2742,7 @@ class ExecutePythonWidget(QFrame):
         """
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
+        btn_layout.addStretch()
 
         self._deny_btn = QToolButton()
         self._deny_btn.setText("Deny")
@@ -1909,10 +2770,12 @@ class ExecutePythonWidget(QFrame):
         self._allow_btn.clicked.connect(self._on_allow)
         btn_layout.addWidget(self._allow_btn)
 
-        btn_layout.addStretch()
-
         # Wrap in a container so we can toggle visibility as a unit.
         self._buttons_container = QWidget()
+        # Named so the host fill cannot reach the decision strip: without
+        # this the container paints the host background over the gate
+        # interior in Light (visible in the 460 native screenshot).
+        self._buttons_container.setObjectName("tool_decision_bar")
         self._buttons_container.setLayout(btn_layout)
         self._buttons_container.setVisible(False)
         # Return a layout-like wrapper: embed the container in a layout.
@@ -1938,7 +2801,7 @@ class ExecutePythonWidget(QFrame):
         self._result_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         layout.addWidget(self._result_edit)
 
-        actions, _row = _make_result_actions(
+        actions, self._raw_btns = _make_result_actions(
             on_raw=self._on_raw,
             on_copy=self._on_copy,
         )
@@ -1962,7 +2825,7 @@ class ExecutePythonWidget(QFrame):
         lines = display.splitlines() if display.strip() else []
         visible = max(min(len(lines), _RESULT_MAX_LINES), 1)
         line_height = self._result_edit.fontMetrics().lineSpacing()
-        self._result_edit.setFixedHeight(line_height * visible + 16)
+        self._result_edit.setFixedHeight(line_height * visible + _EDITOR_CHROME_PX)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1975,12 +2838,21 @@ class ExecutePythonWidget(QFrame):
         if lines:
             count = f"{len(lines)} line{'s' if len(lines) != 1 else ''}"
             self._code_info_label.setText(f"Script — {count}")
+            # This caption is built hidden and revealed here, and a plain
+            # QLabel's vertical policy is ``Preferred`` — Qt therefore hands
+            # it the gate's leftover space. Measured at a short dock it grew
+            # to ~194 px (sizeHint 11 px) and pushed the decision strip
+            # ~140 px below the fold, which made the G4 guarantee fail. A
+            # fixed (non-growing) policy is the correct semantic for a
+            # one-line caption and costs no magic numbers.
+            caption_policy = self._code_info_label.sizePolicy()
+            caption_policy.setVerticalPolicy(QSizePolicy.Policy.Fixed)
+            self._code_info_label.setSizePolicy(caption_policy)
             self._code_info_label.setVisible(True)
             # Real line count in the summary row (G4: only real data).
             self._script_meta.set_full_text(f"{count} of Python")
-            visible = min(len(lines), 15)
-            line_height = self._code_edit.fontMetrics().lineSpacing()
-            self._code_edit.setFixedHeight(line_height * visible + 16)
+            visible = min(len(lines), _CODE_MAX_LINES)
+            self._code_edit.set_line_cap(visible)
             self._code_edit.setVisible(True)
             self._code_section().setVisible(True)
         else:
@@ -2027,28 +2899,19 @@ class ExecutePythonWidget(QFrame):
             self._status_text = "Reviewing script..."
             if reasons:
                 self._status_text += f" (complex: {', '.join(reasons[:3])})"
-            self._status_label.setStyleSheet(f"color: {tool_colors['preview']}; font-size: inherit;")
             self._status_detail.setVisible(False)
         elif state == "approved":
             self._status_text = "✓ Docs review passed"
-            self._status_label.setStyleSheet(
-                f"color: {tool_colors['status_success']}; font-size: inherit; opacity: 0.7;"
-            )
             self._status_detail.setVisible(False)
         elif state == "blocked":
             self._blocked = True
             self._status_text = "✗ Docs review blocked"
-            self._status_label.setStyleSheet(
-                f"color: {tool_colors['status_error']}; font-weight: bold; font-size: inherit;"
-            )
             self._status_detail.setText(summary or "The reviewer flagged the script.")
             self._status_detail.setStyleSheet(f"color: {tool_colors['status_error']}; font-size: inherit;")
             self._status_detail.setVisible(True)
-            self._buttons_visible = False
-            self._buttons_container.setVisible(False)
+            self._hide_approval_controls()
         elif state == "failed":
             self._status_text = f"⚠ Docs review error — review manually. ({summary})"
-            self._status_label.setStyleSheet(f"color: {tool_colors['status_spinner']}; font-size: inherit;")
             self._status_detail.setVisible(False)
             # FAILED keeps buttons visible so the user can still approve.
         else:
@@ -2056,6 +2919,9 @@ class ExecutePythonWidget(QFrame):
             self._status_visible = False
             self._status_detail.setVisible(False)
 
+        # One place derives the status colour from the state marker, so
+        # a later theme refresh repaints the same state the same way.
+        self._status_label.setStyleSheet(_docs_status_style(tool_colors, self._status_text))
         self._status_label.setText(self._status_text)
         self._status_line.setVisible(self._status_visible)
 
@@ -2063,7 +2929,14 @@ class ExecutePythonWidget(QFrame):
         if not self._status_visible or not self._status_text.startswith("✗"):
             # Keep buttons hidden if currently hard-blocked by docs gate.
             self._buttons_visible = True
-            self._buttons_container.setVisible(True)
+            # G4 pins the literal ``Approval required`` next to the real operation
+            # name, matching ToolApprovalWidget's header, so the review
+            # target is never guesswork from the row alone.
+            self._approval_header.setText(f"Approval required · {constants.EXECUTE_PYTHON_TOOL_NAME}")
+            self._sync_gate_presentation()
+            # Revealing the gate makes both elastic rows visible at once for
+            # the first time; cap them in order so neither starves the other.
+            self._recap_gate()
             # G4/G9: the row says the agent is waiting on a human.
             self._set_state("running", text=f"{STATE_APPROVAL[0]} {STATE_APPROVAL[1]}")
 
@@ -2081,10 +2954,8 @@ class ExecutePythonWidget(QFrame):
         JSON) instead of executed.
         """
         self._set_state("discarded", text=f"Skipped — {reason}")
-        # Hide approval buttons — no result will arrive.
-        self._buttons_visible = False
-        if hasattr(self, "_buttons_container"):
-            self._buttons_container.setVisible(False)
+        # Hide approval controls — no result will arrive.
+        self._hide_approval_controls()
         # Show a short status line instead of a result.
         self._result_text = f"({reason})"
         self._result_header_label.setVisible(True)
@@ -2103,23 +2974,22 @@ class ExecutePythonWidget(QFrame):
     def set_result(self, result: str, is_error: bool = False) -> None:
         tool_colors = _row_status_colors()
         self._is_error = is_error
+        result = strip_sanitizer_tags(result)
         self._result_text = result
         # When the docs gate blocked the script, the loop emits a TOOL_RESULT
         # carrying the reviewer summary as an error. That summary already
         # lives in the status detail line — rendering a separate result block
         # would duplicate it. Skip.
         if self._blocked:
-            self._buttons_visible = False
-            self._buttons_container.setVisible(False)
+            self._hide_approval_controls()
             return
         display = result[:_MAX_RESULT_DISPLAY] + "\n... (truncated)" if len(result) > _MAX_RESULT_DISPLAY else result
         self._result_edit.setPlainText(display)
         self._fit_result_height()
         self._result_header_label.setVisible(True)
         self._result_block.setVisible(True)
-        # Hide approval buttons after result arrives.
-        self._buttons_visible = False
-        self._buttons_container.setVisible(False)
+        # Hide approval controls after result arrives.
+        self._hide_approval_controls()
 
         if is_error:
             self._result_edit.setStyleSheet(get_tool_result_editor_style(tool_colors["status_error"]))
@@ -2133,14 +3003,34 @@ class ExecutePythonWidget(QFrame):
     # ------------------------------------------------------------------
 
     def _code_section(self) -> QWidget:
-        # The code section is the 2nd widget in the main layout.
-        return self.layout().itemAt(1).widget()
+        """The script section this widget built.
+
+        Direct reference, not ``layout().itemAt(1)``: the G4 ordering
+        (approval header first) puts a row in front of the editor, so a
+        positional lookup would silently resolve to the wrong widget.
+        """
+        return self._code_section_widget
 
     def _disable_buttons(self) -> None:
         self._decided = True
         self._allow_btn.setEnabled(False)
         self._always_btn.setEnabled(False)
         self._deny_btn.setEnabled(False)
+        # The gate is closed: retire the G4 exception surface + rows. The
+        # decision text stays visible in the header so the outcome is not
+        # lost when the strip goes.
+        self._sync_gate_presentation()
+
+    def _hide_approval_controls(self) -> None:
+        """Close the pending-gate presentation.
+
+        Used wherever the loop can no longer act on a decision: docs
+        hard block, discard, and a result arriving. Re-derives the frame
+        chrome through :meth:`_sync_gate_presentation` so the row retires
+        from the G4 warning exception back to a plain tool row.
+        """
+        self._buttons_visible = False
+        self._sync_gate_presentation()
 
     def _on_allow(self) -> None:
         if self._decided:
@@ -2148,6 +3038,7 @@ class ExecutePythonWidget(QFrame):
         self._disable_buttons()
         self._allow_btn.setText("Allowed")
         self._allow_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        self._approval_state.setText("Allowed")
         self._set_state("success", text="Allowed")
         self.approved.emit(self._tool_call_id, "allow")
 
@@ -2157,6 +3048,7 @@ class ExecutePythonWidget(QFrame):
         self._disable_buttons()
         self._always_btn.setText("Always Allowed")
         self._always_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        self._approval_state.setText("Allowed")
         self._set_state("success", text="Allowed")
         self.approved.emit(self._tool_call_id, "allow_all")
 
@@ -2166,5 +3058,6 @@ class ExecutePythonWidget(QFrame):
         self._disable_buttons()
         self._deny_btn.setText("Denied")
         self._deny_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
+        self._approval_state.setText("Denied")
         self._set_state("error", text="Denied")
         self.approved.emit(self._tool_call_id, "deny")

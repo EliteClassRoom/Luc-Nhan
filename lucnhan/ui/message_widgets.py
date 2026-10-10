@@ -23,11 +23,17 @@ from .qt_compat import (
     QWidget,
     Signal,
 )
-from .styles import host_stylesheet
+from .styles import host_stylesheet, role_size
 from .theme.manager import ThemeManager, blend_hex
 from .theme.tokens import hex_luminance
 
 logger = get_logger()
+
+# Matched pair of small triangles for every collapse toggle. ``▶``/``▼`` come
+# from different glyph designs and ``▼`` rendered visibly larger than ``▶``,
+# so an expanded row looked like a different control from a collapsed one.
+CHEVRON_COLLAPSED = "\u25b8"
+CHEVRON_EXPANDED = "\u25be"
 
 _THINKING_PHRASES = [
     "analyzing binary structure...",
@@ -113,21 +119,55 @@ def _pick_contrasting_text(bg_hex: str, dark_candidate: str, light_candidate: st
     return dark_candidate if dark_contrast >= light_contrast else light_candidate
 
 
-def _user_bubble_bg(t) -> str:
-    # Darker user bubble: blend highlight toward base.
-    return blend_hex(t.highlight, t.base, 0.4)
+def _user_surface(t) -> str:
+    """User-message fill (G3): one subdued ``alt_base`` tier.
 
-
-def _user_bubble_border(t) -> str:
-    return t.highlight
-
-
-def _assistant_bubble_bg(t) -> str:
+    The old accent-tinted fill made every user turn read as a filled
+    pill; the transcript is now one surface and only the sender is
+    marked, by the left rule.
+    """
     return t.alt_base
 
 
-def _assistant_bubble_border(t) -> str:
-    return t.mid
+def _user_frame_css(t) -> str:
+    """Flat user message: ``alt_base`` fill, 3 px accent left rule, radius 4.
+
+    The stripe is the sender affordance — no accent fill, no 10 px pill
+    (G1: controls and message chrome stay at 4 px or less).
+    """
+    return (
+        f"QFrame#message_user {{ background-color: {_user_surface(t)}; "
+        f"border: none; border-left: 3px solid {t.accent}; border-radius: 4px; }}"
+    )
+
+
+def _body_label_css(t) -> str:
+    """Flat body-text rule shared by user and assistant content labels.
+
+    ``transparent`` is load-bearing: the host application stylesheet
+    paints a dark background on bare ``QLabel``s, so a label that only
+    sets ``color`` lets that paint through and the body text disappears.
+    Each frame below paints its own surface; the label must not paint
+    another one on top (G3: assistant content is full-width flat).
+    """
+    return host_stylesheet(
+        f"background: transparent; color: {_body_text(t)}; font-size: {role_size(13)};",
+        f"background: transparent; color: {_body_text(t)}; {_native_text_style(size=13)}",
+    )
+
+
+def _transcript_surface_css(t) -> str:
+    """Paint the transcript surface a row sits on.
+
+    A frame with no background rule inherits the host's own window paint
+    (dark in the IDA application), which swallowed assistant body text in
+    Light. Naming the surface here keeps the row flat and readable in
+    every palette, and in host mode it follows the live host palette.
+    """
+    return host_stylesheet(
+        f"QFrame#message_assistant {{ background-color: {t.window}; border: none; }}",
+        f"QFrame#message_assistant {{ background-color: {t.window}; border: none; }}",
+    )
 
 
 def _thinking_surface_bg(t) -> str:
@@ -150,26 +190,9 @@ def _tool_border(t) -> str:
     return t.mid
 
 
-def _frame_css(*, background: str, border: str | None = None, radius: int = 8) -> str:
+def _frame_css(*, background: str, border: str | None = None, radius: int = 4) -> str:
     border_css = f"border: 1px solid {border}; " if border else "border: none; "
     return f"background-color: {background}; {border_css}border-radius: {radius}px;"
-
-
-def _bubble_css(
-    *,
-    background: str,
-    text_color: str,
-    border: str | None = None,
-    radius: int = 10,
-    padding: str = "8px 12px",
-    size: int = 13,
-) -> str:
-    border_css = f"border: 1px solid {border}; " if border else "border: none; "
-    return (
-        f"background-color: {background}; color: {text_color}; "
-        f"{border_css}border-radius: {radius}px; "
-        f"padding: {padding}; font-size: {size}px;"
-    )
 
 
 def _native_text_style(
@@ -181,7 +204,7 @@ def _native_text_style(
 ) -> str:
     parts: list[str] = []
     if size is not None:
-        parts.append(f"font-size: {size}px;")
+        parts.append(f"font-size: {role_size(size)};")
     if bold:
         parts.append("font-weight: bold;")
     if italic:
@@ -204,7 +227,7 @@ def _tool_frame_style(
         tokens = ThemeManager.instance().tokens()
     border = accent or _tool_border(tokens)
     bg = background or _tool_bg(tokens)
-    return f"QFrame#{object_name} {{ {_frame_css(background=bg, border=border, radius=6)} }}"
+    return f"QFrame#{object_name} {{ {_frame_css(background=bg, border=border)} }}"
 
 
 # Re-export tool widgets so existing consumers that import from this module
@@ -308,7 +331,7 @@ class CollapsibleSection(QFrame):
         header = QHBoxLayout()
         self._toggle_btn = QToolButton()
         self._toggle_btn.setObjectName("collapse_button")
-        self._toggle_btn.setText("▶")
+        self._toggle_btn.setText(CHEVRON_COLLAPSED)
         self._toggle_btn.setFixedSize(16, 16)
         self._toggle_btn.clicked.connect(self.toggle)
 
@@ -330,12 +353,12 @@ class CollapsibleSection(QFrame):
     def toggle(self) -> None:
         self._expanded = not self._expanded
         self._content.setVisible(self._expanded)
-        self._toggle_btn.setText("▼" if self._expanded else "▶")
+        self._toggle_btn.setText(CHEVRON_EXPANDED if self._expanded else CHEVRON_COLLAPSED)
 
     def set_expanded(self, expanded: bool) -> None:
         self._expanded = expanded
         self._content.setVisible(expanded)
-        self._toggle_btn.setText("▼" if expanded else "▶")
+        self._toggle_btn.setText(CHEVRON_EXPANDED if expanded else CHEVRON_COLLAPSED)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         # The toggle button has no parent QSS that can theme it
@@ -357,7 +380,7 @@ class CollapsibleSection(QFrame):
         )
         self._title_label.setStyleSheet(
             host_stylesheet(
-                f"color: {tokens.text}; font-size: 11px;",
+                f"color: {tokens.text}; font-size: {role_size(11)};",
                 f"color: {tokens.text}; {_native_text_style(size=11)};",
             )
         )
@@ -406,22 +429,12 @@ class UserMessageWidget(QFrame):
         tokens = ThemeManager.instance().tokens()
         self._role_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_user_role(tokens)}; font-weight: bold; font-size: 11px;",
+                f"color: {_user_role(tokens)}; font-weight: bold; font-size: {role_size(11)};",
                 f"color: {_user_role(tokens)}; {_native_text_style(size=11, bold=True)}",
             )
         )
-        self._content.setStyleSheet(
-            host_stylesheet(
-                f"background-color: {_user_bubble_bg(tokens)}; "
-                f"color: {_pick_contrasting_text(_user_bubble_bg(tokens), tokens.text, tokens.highlight_text)}; "
-                "border-radius: 10px; padding: 8px 12px; font-size: 13px;",
-                _bubble_css(
-                    background=_user_bubble_bg(tokens),
-                    text_color=_pick_contrasting_text(_user_bubble_bg(tokens), tokens.text, tokens.highlight_text),
-                    border=_user_bubble_border(tokens),
-                ),
-            )
-        )
+        self.setStyleSheet(_user_frame_css(tokens))
+        self._content.setStyleSheet(_body_label_css(tokens))
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +566,7 @@ class _ThinkingBlock(QFrame):
 
         self._toggle = QToolButton()
         self._toggle.setObjectName("collapse_button")
-        self._toggle.setText("\u25b6")  # ▶
+        self._toggle.setText(CHEVRON_COLLAPSED)
         self._toggle.setFixedSize(14, 14)
         self._toggle.clicked.connect(self._on_toggle)
 
@@ -627,13 +640,13 @@ class _ThinkingBlock(QFrame):
         )
         self._header_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_muted_text(tokens)}; font-size: 11px; font-style: italic;",
+                f"color: {_muted_text(tokens)}; font-size: {role_size(11)}; font-style: italic;",
                 f"color: {_muted_text(tokens)}; {_native_text_style(size=11, italic=True)}",
             )
         )
         self._content.setStyleSheet(
             host_stylesheet(
-                f"color: {_muted_text(tokens)}; font-size: 12px;",
+                f"color: {_muted_text(tokens)}; font-size: {role_size(12)};",
                 f"color: {_muted_text(tokens)}; {_native_text_style(size=12, italic=True)}",
             )
         )
@@ -647,7 +660,7 @@ class _ThinkingBlock(QFrame):
     def _on_toggle(self) -> None:
         self._expanded = not self._expanded
         self._content.setVisible(self._expanded)
-        self._toggle.setText("\u25bc" if self._expanded else "\u25b6")
+        self._toggle.setText(CHEVRON_EXPANDED if self._expanded else CHEVRON_COLLAPSED)
 
     def _render_content(self) -> None:
         """Render ``_source_text`` to HTML and update the label."""
@@ -767,21 +780,12 @@ class AssistantMessageWidget(QFrame):
         tokens = ThemeManager.instance().tokens()
         self._role_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_assistant_role(tokens)}; font-weight: bold; font-size: 11px;",
+                f"color: {_assistant_role(tokens)}; font-weight: bold; font-size: {role_size(11)};",
                 f"color: {_assistant_role(tokens)}; {_native_text_style(size=11, bold=True)}",
             )
         )
-        self._content.setStyleSheet(
-            host_stylesheet(
-                f"background-color: {_assistant_bubble_bg(tokens)}; color: {_body_text(tokens)}; "
-                "border-radius: 10px; padding: 8px 12px; font-size: 13px;",
-                _bubble_css(
-                    background=_assistant_bubble_bg(tokens),
-                    text_color=_body_text(tokens),
-                    border=_assistant_bubble_border(tokens),
-                ),
-            )
-        )
+        self.setStyleSheet(_transcript_surface_css(tokens))
+        self._content.setStyleSheet(_body_label_css(tokens))
         # The HTML rendered by ``_render`` bakes inline color/border
         # styles from the *previous* theme. Re-render with the new
         # tokens so code blocks, backticks, tables, and tool calls all
@@ -789,6 +793,11 @@ class AssistantMessageWidget(QFrame):
         # yet (avoids a wasted render on plugin startup).
         if self._full_text:
             self._render()
+
+    def set_continuation(self, continuation: bool) -> None:
+        """Hide the speaker name when this segment continues the previous
+        assistant message of the same turn (after tool calls)."""
+        self._role_label.setVisible(not continuation)
 
     def _render(self) -> None:
         text_len = len(self._full_text)
@@ -947,13 +956,13 @@ class ThinkingWidget(QFrame):
         )
         self._star_label.setStyleSheet(
             host_stylesheet(
-                f"color: {tokens.warning}; font-size: 14px;",
+                f"color: {tokens.warning}; font-size: {role_size(14)};",
                 f"color: {tokens.warning}; {_native_text_style(size=14)}",
             )
         )
         self._phrase_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_muted_text(tokens)}; font-style: italic; font-size: 12px;",
+                f"color: {_muted_text(tokens)}; font-style: italic; font-size: {role_size(12)};",
                 f"color: {_muted_text(tokens)}; {_native_text_style(size=12, italic=True)}",
             )
         )
@@ -1019,25 +1028,20 @@ class QueuedMessageWidget(QFrame):
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
         queued_css = (
-            f"QFrame#message_queued {{ border: 1px dashed {tokens.highlight}; "
-            f"border-radius: 6px; background: {_thinking_block_bg(tokens)}; }}"
+            f"QFrame#message_queued {{ border: 1px dashed {tokens.mid}; "
+            f"border-radius: 4px; background: {_thinking_block_bg(tokens)}; }}"
         )
         self.setStyleSheet(host_stylesheet(queued_css, queued_css))
         self._role_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_user_role(tokens)}; font-weight: bold; font-size: 11px;",
+                f"color: {_user_role(tokens)}; font-weight: bold; font-size: {role_size(11)};",
                 f"color: {_user_role(tokens)}; {_native_text_style(size=11, bold=True)}",
             )
         )
-        self._content.setStyleSheet(
-            host_stylesheet(
-                f"color: {_body_text(tokens)}; font-size: 13px;",
-                f"color: {_body_text(tokens)}; {_native_text_style(size=13)}",
-            )
-        )
+        self._content.setStyleSheet(_body_label_css(tokens))
         self._badge.setStyleSheet(
             host_stylesheet(
-                f"color: {_muted_text(tokens)}; font-size: 10px; font-style: italic;",
+                f"color: {_muted_text(tokens)}; font-size: {role_size(10)}; font-style: italic;",
                 f"color: {_muted_text(tokens)}; {_native_text_style(size=10, italic=True)}",
             )
         )
@@ -1112,16 +1116,11 @@ class UserQuestionWidget(QFrame):
         )
         self._header.setStyleSheet(
             host_stylesheet(
-                f"color: {tokens.warning}; font-weight: bold; font-size: 11px;",
+                f"color: {tokens.warning}; font-weight: bold; font-size: {role_size(11)};",
                 f"color: {tokens.warning}; {_native_text_style(size=11, bold=True)}",
             )
         )
-        self._q_label.setStyleSheet(
-            host_stylesheet(
-                f"color: {_body_text(tokens)}; font-size: 13px;",
-                f"color: {_body_text(tokens)}; {_native_text_style(size=13)}",
-            )
-        )
+        self._q_label.setStyleSheet(_body_label_css(tokens))
         if self._buttons:
             btn_bg = blend_hex(tokens.highlight, tokens.base, 0.55)
             btn_bg_hover = blend_hex(tokens.highlight, tokens.base, 0.40)
@@ -1139,7 +1138,7 @@ class UserQuestionWidget(QFrame):
             button_css = (
                 f"QPushButton {{ background: {btn_bg}; color: {btn_fg}; "
                 f"border: 1px solid {btn_border}; border-radius: 4px; "
-                f"padding: 4px 14px; font-size: 12px; }}"
+                f"padding: 4px 14px; font-size: {role_size(12)}; }}"
                 f"QPushButton:hover {{ background: {btn_bg_hover}; }}"
                 f"QPushButton:pressed {{ background: {btn_bg_pressed}; }}"
                 f"QPushButton:disabled {{ color: {_muted_text(tokens)}; "
@@ -1219,14 +1218,14 @@ class ExplorationPhaseWidget(QFrame):
         )
         self._phase_label.setStyleSheet(
             host_stylesheet(
-                f"color: {phase_accent}; font-weight: bold; font-size: 11px;",
+                f"color: {phase_accent}; font-weight: bold; font-size: {role_size(11)};",
                 f"color: {phase_accent}; {_native_text_style(size=11, bold=True)}",
             )
         )
         if self._reason_text:
             self._reason_label.setStyleSheet(
                 host_stylesheet(
-                    f"color: {phase_reason}; font-size: 11px;",
+                    f"color: {phase_reason}; font-size: {role_size(11)};",
                     f"color: {phase_reason}; {_native_text_style(size=11)}",
                 )
             )
@@ -1294,27 +1293,27 @@ class ExplorationFindingWidget(QFrame):
         self.setStyleSheet(_tool_frame_style(tokens=tokens, accent=color))
         self._cat_label.setStyleSheet(
             host_stylesheet(
-                f"color: {color}; font-weight: bold; font-size: 10px;",
+                f"color: {color}; font-weight: bold; font-size: {role_size(10)};",
                 f"color: {color}; {_native_text_style(size=10, bold=True)}",
             )
         )
         if self._address:
             self._addr_label.setStyleSheet(
                 host_stylesheet(
-                    f"color: {_muted_text(tokens)}; font-family: monospace; font-size: 10px;",
+                    f"color: {_muted_text(tokens)}; font-family: monospace; font-size: {role_size(10)};",
                     f"color: {_muted_text(tokens)}; {_native_text_style(size=10, monospace=True)}",
                 )
             )
         self._summary_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_body_text(tokens)}; font-size: 11px;",
+                f"color: {_body_text(tokens)}; font-size: {role_size(11)};",
                 f"color: {_body_text(tokens)}; {_native_text_style(size=11)}",
             )
         )
         if self._rel_label is not None:
             self._rel_label.setStyleSheet(
                 host_stylesheet(
-                    f"color: {tokens.warning}; font-size: 12px;",
+                    f"color: {tokens.warning}; font-size: {role_size(12)};",
                     f"color: {tokens.warning}; {_native_text_style(size=12, bold=True)}",
                 )
             )
@@ -1377,26 +1376,26 @@ class ResearchNoteWidget(QFrame):
         self._title_label.setText(f"{icon}  {self._title}")
         self._title_label.setStyleSheet(
             host_stylesheet(
-                f"color: {accent}; font-weight: bold; font-size: 11px;",
+                f"color: {accent}; font-weight: bold; font-size: {role_size(11)};",
                 f"color: {accent}; {_native_text_style(size=11, bold=True)}",
             )
         )
         self._genre_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_muted_text(tokens)}; font-size: 10px; font-style: italic;",
+                f"color: {_muted_text(tokens)}; font-size: {role_size(10)}; font-style: italic;",
                 f"color: {_muted_text(tokens)}; {_native_text_style(size=10, italic=True)}",
             )
         )
         self._path_label.setStyleSheet(
             host_stylesheet(
-                f"color: {blend_hex(tokens.text, tokens.mid, 0.3)}; font-family: monospace; font-size: 10px;",
+                f"color: {blend_hex(tokens.text, tokens.mid, 0.3)}; font-family: monospace; font-size: {role_size(10)};",
                 f"color: {blend_hex(tokens.text, tokens.mid, 0.3)}; {_native_text_style(size=10, monospace=True)}",
             )
         )
         if self._preview_label is not None:
             self._preview_label.setStyleSheet(
                 host_stylesheet(
-                    f"color: {_subtle_text(tokens)}; font-size: 11px;",
+                    f"color: {_subtle_text(tokens)}; font-size: {role_size(11)};",
                     f"color: {_subtle_text(tokens)}; {_native_text_style(size=11)}",
                 )
             )
@@ -1460,20 +1459,20 @@ class SubagentEventWidget(QFrame):
         )
         self._icon.setStyleSheet(
             host_stylesheet(
-                f"color: {color}; font-size: 14px;",
+                f"color: {color}; font-size: {role_size(14)};",
                 f"color: {color}; {_native_text_style(size=14)}",
             )
         )
         self._label.setStyleSheet(
             host_stylesheet(
-                f"color: {color}; font-weight: bold; font-size: 11px;",
+                f"color: {color}; font-weight: bold; font-size: {role_size(11)};",
                 f"color: {color}; {_native_text_style(size=11, bold=True)}",
             )
         )
         if self._detail is not None:
             self._detail.setStyleSheet(
                 host_stylesheet(
-                    f"color: {_subtle_text(tokens)}; font-size: 11px;",
+                    f"color: {_subtle_text(tokens)}; font-size: {role_size(11)};",
                     f"color: {_subtle_text(tokens)}; {_native_text_style(size=11)}",
                 )
             )
@@ -1506,7 +1505,15 @@ class KnowledgeContextWidget(QFrame):
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(6)
 
-        self._icon = QLabel("\U0001f50d")  # magnifying glass
+        self._icon = QLabel("")
+        # G1 forbids emoji as icons and the magnifier this row used to
+        # carry was one; the caption already says "Retrieved Knowledge",
+        # so the marker column stays empty rather than inventing a
+        # substitute glyph (a "?" would read as a question). Kept for
+        # layout parity with the sibling status rows and as the
+        # accessible-name anchor.
+        self._icon.setAccessibleName("Retrieved Knowledge")
+        self._icon.setFixedWidth(10)
         layout.addWidget(self._icon)
 
         self._label = QLabel("Retrieved Knowledge")
@@ -1550,20 +1557,20 @@ class KnowledgeContextWidget(QFrame):
         )
         self._icon.setStyleSheet(
             host_stylesheet(
-                f"color: {color}; font-size: 14px;",
+                f"color: {color}; font-size: {role_size(14)};",
                 f"color: {color}; {_native_text_style(size=14)}",
             )
         )
         self._label.setStyleSheet(
             host_stylesheet(
-                f"color: {color}; font-weight: bold; font-size: 11px;",
+                f"color: {color}; font-weight: bold; font-size: {role_size(11)};",
                 f"color: {color}; {_native_text_style(size=11, bold=True)}",
             )
         )
         if self._detail is not None:
             self._detail.setStyleSheet(
                 host_stylesheet(
-                    f"color: {_subtle_text(tokens)}; font-size: 11px;",
+                    f"color: {_subtle_text(tokens)}; font-size: {role_size(11)};",
                     f"color: {_subtle_text(tokens)}; {_native_text_style(size=11)}",
                 )
             )
@@ -1607,13 +1614,13 @@ class ErrorMessageWidget(QFrame):
         )
         self._header.setStyleSheet(
             host_stylesheet(
-                f"color: {tokens.error}; font-weight: bold; font-size: 11px;",
+                f"color: {tokens.error}; font-weight: bold; font-size: {role_size(11)};",
                 f"color: {tokens.error}; {_native_text_style(size=11, bold=True)}",
             )
         )
         self._content.setStyleSheet(
             host_stylesheet(
-                f"color: {tokens.error}; font-size: 12px;",
+                f"color: {tokens.error}; font-size: {role_size(12)};",
                 f"color: {tokens.error}; {_native_text_style(size=12)}",
             )
         )

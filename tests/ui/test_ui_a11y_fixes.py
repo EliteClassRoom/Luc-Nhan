@@ -164,7 +164,6 @@ class TestActionButtonTooltips(unittest.TestCase):
         # Skip the heavyweight __init__ (config load, controller, timers).
         # The action buttons now live in the header / composer builders.
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
-        panel._use_native_host_theme = False
         panel._skills_refresh_timer = None
         panel._ctrl = type("_Ctrl", (), {"skill_slugs": []})()
         panel._build_header()
@@ -194,7 +193,6 @@ class TestActionButtonTooltips(unittest.TestCase):
                 pass
 
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
-        panel._use_native_host_theme = False
         panel._skills_refresh_timer = None
         panel._ctrl = type("_Ctrl", (), {"skill_slugs": []})()
         panel._config = type(

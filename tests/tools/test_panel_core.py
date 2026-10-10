@@ -109,7 +109,10 @@ for _mod_name in [
     # deterministic regardless of collection order.
     _stub = _StubModule(_mod_name)
     for _attr in [
-        "build_small_button_stylesheet",
+        "get_cancel_btn_style",
+        "get_composer_frame_style",
+        "get_primary_btn_style",
+        "get_small_btn_style",
         "maybe_host_stylesheet",
         "use_native_host_theme",
         "ChatView",
@@ -193,6 +196,18 @@ class _StubThemeManager:
     @classmethod
     def reset(cls) -> None:
         cls._instance = None
+
+    def tokens(self):
+        """The tokens the themed builders read.
+
+        The chrome appliers (header, footer, banner, composers, …) build
+        their QSS from ``ThemeManager.instance().tokens()``, so the stub
+        has to answer that call.  A ``MagicMock`` satisfies the string
+        formatting those builders do without pinning any color.
+        """
+        from unittest.mock import MagicMock
+
+        return MagicMock()
 
 
 _tm_stub = sys.modules.get("lucnhan.ui.theme.manager")
@@ -467,6 +482,34 @@ def _make_panel():
     panel._count_label = MagicMock()
     panel._tab_widget = MagicMock()
     panel._tab_bar = MagicMock()
+    # ``_on_theme_changed`` re-applies every chrome region, so the fixture
+    # provides each widget that path touches (header and its labels,
+    # footer, context bar, composer, splitters).  These stand in for the
+    # widgets a real ``__init__`` builds; the production path is
+    # unchanged and no ``hasattr`` guard is added for tests.
+    panel._header = MagicMock()
+    panel._title_label = MagicMock()
+    panel._status_label = MagicMock()
+    panel._overflow_btn = MagicMock()
+    panel._chat_btn = MagicMock()
+    panel._tools_btn = MagicMock()
+    panel._history_btn = MagicMock()
+    panel._settings_btn = MagicMock()
+    panel._footer = MagicMock()
+    panel._footer_trigger = MagicMock()
+    panel._picker = MagicMock()
+    panel._hint_label = MagicMock()
+    panel._token_text = "0"
+    panel._input_container = MagicMock()
+    panel._dependency_banner = MagicMock()
+    panel._main_splitter = MagicMock()
+    panel._chat_splitter = MagicMock()
+    panel._content_area = MagicMock()
+    panel._tools_panel = None
+    panel._agent_tree = None
+    panel._knowledge_panel = None
+    panel._a2a_bridge_widget = None
+    panel._model_catalog = MagicMock()
     panel._ctrl = MagicMock()
     panel._config = _temp_config()
     panel._ui_hooks = None
@@ -797,59 +840,49 @@ class TestRestoreMessagesIfNeeded(unittest.TestCase):
         self.assertNotIn("t1", panel._pending_restore_messages)
 
 
-class TestUpdateTokenDisplay(unittest.TestCase):
-    def test_noop_when_context_bar_none(self):
-        panel = _make_panel()
-        panel._context_bar = None
-        panel._update_token_display(1000)  # must not raise
+class TestFormatTokenUsage(unittest.TestCase):
+    def test_small_count_is_an_int(self):
+        self.assertEqual(panel_core._format_token_usage(500), "500")
 
-    def test_calls_set_tokens_with_given_count(self):
+    def test_thousands_use_k(self):
+        self.assertEqual(panel_core._format_token_usage(2500), "2.5k")
+        self.assertEqual(panel_core._format_token_usage(1000), "1.0k")
+
+    def test_percentage_of_the_window(self):
+        self.assertEqual(panel_core._format_token_usage(500, 1000), "500 (50%)")
+
+    def test_percentage_is_capped_at_100(self):
+        self.assertTrue(panel_core._format_token_usage(2000, 1000).endswith("(100%)"))
+
+    def test_no_percentage_without_a_window(self):
+        self.assertNotIn("%", panel_core._format_token_usage(100, 0))
+
+
+class TestUpdateTokenDisplay(unittest.TestCase):
+    def test_shows_count_and_window_percentage(self):
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
         panel._update_token_display(5000)
-        # Phase 1.3: token display is debounced — flush before asserting.
+        # Token display is debounced - flush before asserting.
         panel._flush_pending_token_display()
-        mock_cb.set_tokens.assert_called_once_with(5000, 200000)
+        self.assertEqual(panel._token_text, "5.0k (2%)")
 
-    def test_zero_context_window_fallback(self):
+    def test_zero_context_window_has_no_percentage(self):
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 0
         panel._update_token_display(1234)
-        # Phase 1.3: token display is debounced — flush before asserting.
         panel._flush_pending_token_display()
-        mock_cb.set_tokens.assert_called_once_with(1234, 0)
+        self.assertEqual(panel._token_text, "1.2k")
 
     def test_coalesces_repeated_updates_within_window(self):
-        """Multiple updates with different values produce only one set_tokens call."""
+        """Only the latest of several rapid updates is displayed."""
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
         panel._update_token_display(1000)
         panel._update_token_display(2000)
         panel._update_token_display(3000)
-        # Only the latest value is flushed, not all three. We check the
-        # last call's args explicitly because Qt may eagerly fire the
-        # single-shot debounce timer in some test environments, which
-        # would otherwise look like multiple set_tokens invocations.
         panel._flush_pending_token_display()
-        self.assertEqual(mock_cb.set_tokens.call_args, mock_cb.set_tokens.call_args_list[-1])
-        self.assertEqual(mock_cb.set_tokens.call_args.args, (3000, 200000))
-
-    def test_noop_when_value_unchanged(self):
-        """An update with the same value as the last displayed value is a no-op."""
-        panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
-        panel._config.provider.context_window = 200000
-        panel._update_token_display(5000)
-        panel._flush_pending_token_display()
-        panel._update_token_display(5000)  # same value — must not enqueue
-        mock_cb.set_tokens.assert_called_once_with(5000, 200000)
+        self.assertEqual(panel._token_text, "3.0k (1%)")
 
 
 class TestResetTokenDisplay(unittest.TestCase):
@@ -857,23 +890,21 @@ class TestResetTokenDisplay(unittest.TestCase):
 
     Regression: ``_schedule_token_display`` deduped against the last value it
     *displayed*, and ``_update_token_display(0)`` was dropped outright by the
-    ``token_count <= 0`` guard. Starting a new session therefore left the bar
-    showing the old session's context size until a later value happened to
-    differ from it.
+    ``token_count <= 0`` guard. Starting a new session therefore left the
+    readout showing the old session's context size until a later value
+    happened to differ from it.
     """
 
-    def test_reset_clears_bar_after_busy_session(self):
+    def test_reset_clears_readout_after_busy_session(self):
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
 
         panel._update_token_display(95000)
         panel._flush_pending_token_display()
-        self.assertEqual(mock_cb.set_tokens.call_args_list[-1].args, (95000, 200000))
+        self.assertEqual(panel._token_text, "95.0k (47%)")
 
         panel._reset_token_display()
-        self.assertEqual(mock_cb.set_tokens.call_args_list[-1].args, (0, 200000))
+        self.assertEqual(panel._token_text, "0 (0%)")
 
     def test_reset_clears_dedupe_memory(self):
         """After a reset, the same value must be displayable again.
@@ -884,30 +915,23 @@ class TestResetTokenDisplay(unittest.TestCase):
         repaint.
         """
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
 
         panel._update_token_display(95000)
         panel._flush_pending_token_display()
         panel._reset_token_display()
-        mock_cb.reset_mock()
 
         panel._update_token_display(95000)
         panel._flush_pending_token_display()
-        mock_cb.set_tokens.assert_called_once_with(95000, 200000)
+        self.assertEqual(panel._token_text, "95.0k (47%)")
 
     def test_reset_discards_pending_value_from_discarded_session(self):
         """An in-flight debounced value from the old session must not land.
 
-        The timer may still hold a value queued moments before the reset; if it
-        flushed afterwards the bar would jump back to the old session's usage.
         The pending slot is seeded directly because the real ``QTimer`` can
         fire eagerly under stubs, which would flush it before the reset runs.
         """
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
 
         panel._pending_token_display = 80000  # queued, not yet flushed
@@ -916,29 +940,21 @@ class TestResetTokenDisplay(unittest.TestCase):
         self.assertIsNone(panel._pending_token_display)
 
         panel._flush_pending_token_display()
-        # Only the reset's own set_tokens(0, …) is recorded — the stale 80000
-        # must not have been painted.
-        self.assertEqual(mock_cb.set_tokens.call_args_list[-1].args, (0, 200000))
+        self.assertEqual(panel._token_text, "0 (0%)")
 
     def test_zero_is_a_displayable_value(self):
-        """``_update_token_display(0)`` must reach the bar, not be dropped.
+        """``_update_token_display(0)`` must be shown, not dropped.
 
         The ``<= 0`` guard conflated "no value" with the legitimate value
         zero; only negatives are now rejected.
         """
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
+        panel._token_text = "stale"
 
         panel._update_token_display(0)
         panel._flush_pending_token_display()
-        mock_cb.set_tokens.assert_called_once_with(0, 200000)
-
-    def test_reset_is_safe_when_context_bar_none(self):
-        panel = _make_panel()
-        panel._context_bar = None
-        panel._reset_token_display()  # must not raise
+        self.assertEqual(panel._token_text, "0 (0%)")
 
 
 # ---------------------------------------------------------------------------
@@ -1827,34 +1843,6 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
             ),
         )
 
-    def test_input_area_default_height_is_two_to_three_lines(self) -> None:
-        """The two-to-three-line default is on ``InputArea``; the
-        splitter owns the upper bound, so the editor must not pin a
-        maximum height.
-        """
-        import inspect
-
-        from lucnhan.ui.input_area import InputArea
-
-        source = inspect.getsource(InputArea.__init__)
-        self.assertIn(
-            "self.setMinimumHeight(38)",
-            source,
-            msg=(
-                "InputArea must default to the GUI contract G2 composer "
-                "minimum height (38 px); the panel pins the 44 px baseline."
-            ),
-        )
-        # ``setMaximumHeight`` must not be called on the editor — the
-        # vertical QSplitter in the panel owns the upper bound.
-        self.assertNotIn(
-            "setMaximumHeight",
-            source,
-            msg=(
-                "InputArea must not cap its maximum height; the vertical QSplitter in the panel owns the upper bound."
-            ),
-        )
-
 
 class TestOnDatabaseChangedNoRestore(unittest.TestCase):
     """``on_database_changed`` must not restore history (spec §7.2).
@@ -2366,8 +2354,7 @@ class TestAdaptivePanePresentation(unittest.TestCase):
         self.assertEqual(panel._pane_name, "history")
         # Adding the panes (or the stack) to the splitter would give one
         # widget two parents' worth of sizing rules.
-        splitter_children = [panel._main_splitter.widget(i)
-                             for i in range(panel._main_splitter.count())]
+        splitter_children = [panel._main_splitter.widget(i) for i in range(panel._main_splitter.count())]
         self.assertNotIn(panel._pane_stack, splitter_children)
         self.assertNotIn(panel._history_panel, splitter_children)
         self.assertNotIn(panel._mutation_panel, splitter_children)

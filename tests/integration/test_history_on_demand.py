@@ -139,7 +139,6 @@ class _StubModule(types.ModuleType):
 for _mod_name in _STUBBED_MODULES:
     _stub = _StubModule(_mod_name)
     for _attr in [
-        "build_small_button_stylesheet",
         "maybe_host_stylesheet",
         "use_native_host_theme",
         "ChatView",

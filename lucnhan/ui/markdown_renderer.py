@@ -144,16 +144,21 @@ def _build_theme_styles(source: Any = None) -> dict[str, str]:
     the active palette is owned by :class:`ThemeManager`.
     """
     del source  # unused; kept for API parity
-    from .styles import is_host_theme
+    from .styles import is_host_theme, role_size
     from .theme.manager import ThemeManager, blend_hex
 
     if is_host_theme():
         # Minimal host-friendly defaults — Qt picks up the host's
         # QPalette for body text in most cases, so we just need
-        # enough CSS for code spans and links.
+        # enough CSS for code spans and links. Typography still follows
+        # the user's font override, so the code role keeps its 12px
+        # baseline instead of inheriting the body's size.
         return {
-            "inline_code_style": "font-family:monospace;",
-            "block_code_style": ("font-family:monospace; white-space:pre-wrap; padding:6px; border-radius:3px;"),
+            "inline_code_style": f"font-family:monospace; font-size:{role_size(12)};",
+            "block_code_style": (
+                f"font-family:monospace; font-size:{role_size(12)}; "
+                "white-space:pre-wrap; padding:6px; border-radius:3px;"
+            ),
             "link_style": "text-decoration: underline;",
             "hr_style": "",
             "heading_style": "font-weight:bold;",
@@ -175,12 +180,12 @@ def _build_theme_styles(source: Any = None) -> dict[str, str]:
         "inline_code_style": (
             f"background-color:{code_bg}; color:{inline_fg}; "
             "padding:1px 4px; border-radius:3px; "
-            "font-family:monospace; font-size:12px;"
+            f"font-family:monospace; font-size:{role_size(12)};"
         ),
         "block_code_style": (
             f"background-color:{tokens.base}; color:{tokens.text}; "
             f"border:1px solid {border}; border-radius:4px; "
-            "padding:8px; font-family:monospace; font-size:12px; "
+            f"padding:8px; font-family:monospace; font-size:{role_size(12)}; "
             "white-space:pre-wrap; word-break:break-all;"
         ),
         "link_style": f"color:{tokens.highlight};",
@@ -338,7 +343,9 @@ class QtRenderer:
                 # empty content instead of crashing.
                 inner = self._render_inline(self._inline_children_after(tokens, i))
                 size = {1: 18, 2: 16, 3: 14, 4: 13, 5: 12, 6: 11}.get(level, 13)
-                heading_style = f"{styles['heading_style']}font-size:{size}px;margin:6px 0 2px 0;"
+                from .styles import role_size
+
+                heading_style = f"{styles['heading_style']}font-size:{role_size(size)};margin:6px 0 2px 0;"
                 out.append(self._styled("div", heading_style, inner))
                 i += 3
                 continue

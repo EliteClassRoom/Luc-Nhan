@@ -109,6 +109,7 @@ from .theme.widgets_common import (  # noqa: E402,F401 — re-export
     TOOL_COLORS,
     get_add_tab_btn_style,
     get_cancel_btn_style,
+    get_composer_frame_style,
     get_err_status_style,
     get_error_label_style,
     get_hint_status_style,
@@ -128,6 +129,7 @@ from .theme.widgets_common import (  # noqa: E402,F401 — re-export
     get_message_dialog_style,
     get_ok_status_style,
     get_placeholder_style,
+    get_primary_btn_style,
     get_settings_btn_style,
     get_small_btn_style,
     get_splitter_handle_style,
@@ -136,6 +138,8 @@ from .theme.widgets_common import (  # noqa: E402,F401 — re-export
     get_tools_panel_btn_style,
     get_tools_panel_header_style,
     get_tools_panel_style,
+    get_transcript_surface_style,
+    role_size,
 )
 
 # Mutation/tool-approval style getters moved to ui/theme/widgets_mutation.py;
@@ -222,17 +226,6 @@ def host_stylesheet(css: str, fallback: str = "") -> str:
 def maybe_host_stylesheet(css: str, fallback: str = "") -> str:
     """Alias for :func:`host_stylesheet` (older name)."""
     return host_stylesheet(css, fallback)
-
-
-def build_small_button_stylesheet(widget: object, danger: bool = False) -> str:
-    """Build a small-button stylesheet; delegates to the token-driven getters.
-
-    When ``danger=True`` the cancel/remove color palette is used so destructive
-    actions (e.g. "Undo All") are visually distinct from regular buttons.
-    """
-    if danger:
-        return get_cancel_btn_style()
-    return get_small_btn_style()
 
 
 # =============================================================================
@@ -342,29 +335,38 @@ def build_input_area_stylesheet(tokens: object) -> str:
     Targets the ``QPlainTextEdit#input_area`` object name only, so
     the styles do not bleed into other plain text editors in the
     host.  The stylesheet is applied in every theme mode — including
-    host/IDA-native — so the editor border, focus, and selection
-    colors are always token-driven.  Foreground/background/placeholder
-    colors are applied through ``InputArea.apply_palette`` via
-    ``QPalette`` roles because Qt does not expose those properties
-    as QSS sub-controls.
+    host/IDA-native — so the typed-text foreground, surface, selection
+    and scrollbar colors are always token-driven.
+
+    The foreground lives here *and* in ``InputArea.apply_palette``'s
+    QPalette roles: QSS is what paints, the palette is what a resolved
+    ``QPalette()`` read reports.  Both are the same tokens, so the two
+    can never disagree.
+
+    The editor is borderless on purpose: GUI contract G3 puts ONE
+    4 px radius-4 frame around the editor *and* its command/send row
+    (see ``theme.widgets_common._composer_frame_style``), so a second
+    border here would double the composer chrome.  Placeholder color
+    stays palette-only (Qt exposes no QSS sub-control for it).
     """
     base = getattr(tokens, "base", "#ffffff")
-    mid = getattr(tokens, "mid", "#cccccc")
+    text = getattr(tokens, "text", "#1e1e1e")
     highlight = getattr(tokens, "highlight", "#0066cc")
     highlight_text = getattr(tokens, "highlight_text", "#ffffff")
     return (
         f"QPlainTextEdit#input_area {{"
         f" background-color: {base};"
+        f" color: {text};"
         f" selection-background-color: {highlight};"
         f" selection-color: {highlight_text};"
-        # GUI contract G1: 4 px radius, 1 px border.  G2: input padding
-        # 5 / 8 px.
-        f" border: 1px solid {mid}; border-radius: 4px;"
+        # G2: input padding 5 / 8 px, 13 px body text — via the shared
+        # role helper so a user font override reaches the editor too.
+        # No border here: the composer wrapper owns the frame.
+        f" border: none;"
         f" padding: 5px 8px;"
-        f" font-size: 13px;"
+        f" font-size: {role_size(13)};"
         f"}}"
         f"QPlainTextEdit#input_area QScrollBar {{ background: {base}; }}"
-        f"QPlainTextEdit#input_area:focus {{ border-color: {highlight}; }}"
     )
 
 

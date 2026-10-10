@@ -15,7 +15,7 @@ from ..core.types import Role
 # Truncate exported tool-result previews so the exported transcript stays bounded.
 _TOOL_RESULT_TRUNCATE_CHARS = 2000
 
-# Strip the sanitization wrappers the LLM sees so exports show clean content.
+# Strip the sanitization wrappers the LLM sees so exports and the UI show clean content.
 _SANITIZER_TAG_RE = re.compile(
     r"^\[The following is (?:a tool execution result|output from an EXTERNAL MCP server)"
     r"[^\]]*\]\n?",
@@ -37,8 +37,8 @@ _TOOL_LANG_MAP = {
 }
 
 
-def _strip_sanitizer_tags(text: str) -> str:
-    """Remove sanitization wrappers added for the LLM from exported content."""
+def strip_sanitizer_tags(text: str) -> str:
+    """Remove sanitization wrappers added for the LLM (for export and display)."""
     text = _SANITIZER_TAG_RE.sub("", text)
     text = _SANITIZER_WRAP_RE.sub("", text)
     return text.strip()
@@ -91,7 +91,7 @@ def _export_format_tool_args(tc) -> str:
 
 def _export_format_tool_result(tr) -> str:
     """Format tool result content as a markdown code block."""
-    content = _strip_sanitizer_tags(tr.content)
+    content = strip_sanitizer_tags(tr.content)
     if len(content) > _TOOL_RESULT_TRUNCATE_CHARS:
         content = content[:_TOOL_RESULT_TRUNCATE_CHARS] + "\n... (truncated)"
     lang = _export_detect_lang(content, tr.name)

@@ -47,12 +47,29 @@ from .styles import (
     get_history_nav_button_style,
     get_history_nav_frame_style,
     get_history_nav_label_style,
-    get_tool_colors,
     is_host_theme,
 )
+from .theme.manager import ThemeManager
 from .tool_widgets import ExecutePythonWidget, ToolApprovalWidget, ToolCallWidget, ToolGroupWidget
 
 _THINKING_MIN_DISPLAY_MS = 500
+
+#: Object name set on ``ChatView``'s scroll viewport.
+#:
+#: ``QAbstractScrollArea`` keeps its viewport as a private plain ``QWidget``
+#: child with no object name of its own, so it resolved its background
+#: through the *application* palette — in a host that is the platform
+#: default — leaving the strip above the first message in the host colour
+#: while the container below it was token-painted. The unique name lets the
+#: shared panel rule paint exactly this viewport; a broad scroll-area
+#: selector would also match the nested code editors' own viewports.
+#: ``tool_widgets`` detects the same viewport by identity, not by name.
+CHAT_TRANSCRIPT_VIEWPORT = "chat_transcript_viewport"
+
+#: GUI contract G3 — the single narrow breakpoint for chrome compaction
+#: (panel width, not screen width). Kept here so the chat body has one
+#: source for the decision its own padding depends on.
+_NARROW_CHAT_PX = 640
 
 # How many MessageSpec objects the worker accumulates before emitting
 # a single ``chunk_ready`` signal to the main thread.  Larger chunks
@@ -217,6 +234,29 @@ def _plan_step_done_status(outcome: str) -> str:
     # ``completed`` (default) and any unknown outcome render as the
     # regular "done" state.
     return "done"
+
+
+def _chat_gutter_margins(narrow: bool) -> tuple[int, int, int, int]:
+    """G2 chat body padding: 15 horizontal / 14 top / 12 bottom.
+
+    At the narrow breakpoint (G3) the whole body tightens to 12 px.
+    Returned as ``(left, top, right, bottom)`` for
+    ``QLayout.setContentsMargins``.
+    """
+    if narrow:
+        return (12, 12, 12, 12)
+    return (15, 14, 15, 12)
+
+
+def _recovery_status_style() -> str:
+    """Inline QSS for the transient "Recovery (attempt N)" row.
+
+    Built from the live tokens instead of the legacy branch-keyed tool
+    dict, and re-issued by :meth:`ChatView.refresh_inline_styles` so a
+    theme switch does not leave the row in the previous palette (the one
+    chat-view row that is not owned by a self-refreshing message widget).
+    """
+    return f"color: {ThemeManager.instance().tokens().muted_text}; font-style: italic; padding: 2px 8px;"
 
 
 class MessagePlaceholder(QFrame):
@@ -561,6 +601,9 @@ class ChatView(QScrollArea):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("chat_scroll")
+        # Name the viewport so the shared panel rule can paint this one and
+        # not the nested code editors' own viewports.
+        self.viewport().setObjectName(CHAT_TRANSCRIPT_VIEWPORT)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
@@ -570,7 +613,10 @@ class ChatView(QScrollArea):
         # this is critical for word-wrap to work inside a QScrollArea.
         self._container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self._layout = QVBoxLayout(self._container)
-        self._layout.setContentsMargins(4, 4, 4, 4)
+        # G2 chat body padding: 15 horizontal / 14 top / 12 bottom. Applied
+        # through one helper so the narrow breakpoint (12 px all round)
+        # stays a single source and no region re-adds its own gutter.
+        self._apply_chat_gutters(narrow=False)
         self._layout.setSpacing(4)
         self._layout.addStretch()
         self.setWidget(self._container)
@@ -1235,10 +1281,7 @@ class ChatView(QScrollArea):
             status_text += f": {reason}"
         status_label = QLabel(status_text)
         status_label.setObjectName("recovery_status")
-        tool_colors = get_tool_colors()
-        status_label.setStyleSheet(
-            f"color: {tool_colors.get('preview', '#888')}; font-style: italic; font-size: 0.9em; padding: 2px 8px;"
-        )
+        status_label.setStyleSheet(_recovery_status_style())
         self._insert_widget(status_label)
         self._scroll_to_bottom()
 
@@ -1787,6 +1830,36 @@ class ChatView(QScrollArea):
                 # Widget may have been deleted; drop the stale ref.
                 pass
         self._nav_widgets = alive_navs
+        self._refresh_recovery_status_rows()
+
+    def _refresh_recovery_status_rows(self) -> None:
+        """Re-issue the recovery-row QSS after a theme change.
+
+        The message/tool widgets subscribe to ``themeChanged`` themselves;
+        these bare transcript labels are the remaining chat-owned rows with
+        a widget-local stylesheet.
+        """
+        recovery_qss = _recovery_status_style()
+        try:
+            labels = self.findChildren(QLabel)
+        except RuntimeError:
+            return
+        for label in labels:
+            if label.objectName() == "recovery_status":
+                label.setStyleSheet(recovery_qss)
+
+    def _apply_chat_gutters(self, narrow: bool) -> None:
+        """Apply the G2/G3 chat body padding.
+
+        Presentation only: the layout margins never touch the transcript,
+        the session, the draft or the caret. Re-applying the same margins
+        is a no-op, so crossing the breakpoint back and forth is safe.
+        """
+        layout = getattr(self, "_layout", None)
+        if layout is None:
+            return
+        layout.setContentsMargins(*_chat_gutter_margins(narrow))
+        self._narrow_gutters = bool(narrow)
 
     def _render_restore_window(
         self,
@@ -2658,8 +2731,32 @@ class ChatView(QScrollArea):
         self._restore_live_tail_started = False
         self._nav_widgets = []
 
+    def _continues_assistant_turn(self) -> bool:
+        """True when the last conversational widget is an assistant message.
+
+        Tool rows and reasoning blocks between two assistant segments belong
+        to the same turn, so the second segment does not repeat the speaker
+        name. A user message, a plan or an empty placeholder breaks the run.
+        """
+        skipped = (
+            ToolCallWidget,
+            ToolGroupWidget,
+            ExecutePythonWidget,
+            ToolApprovalWidget,
+            _ThinkingBlock,
+            ThinkingWidget,
+        )
+        for i in range(self._layout.count() - 2, -1, -1):
+            item = self._layout.itemAt(i).widget()
+            if item is None or isinstance(item, skipped):
+                continue
+            return isinstance(item, AssistantMessageWidget) and bool(getattr(item, "_full_text", ""))
+        return False
+
     def _insert_widget(self, widget: QWidget) -> None:
         """Insert before the stretch at the end."""
+        if isinstance(widget, AssistantMessageWidget) and self._continues_assistant_turn():
+            widget.set_continuation(True)
         idx = self._layout.count() - 1
         self._layout.insertWidget(idx, widget)
 
@@ -2680,6 +2777,10 @@ class ChatView(QScrollArea):
         super().resizeEvent(event)
         if self._container is not None and not getattr(self, "_in_restore", False):
             self._container.setFixedWidth(self.viewport().width())
+        # G3: chat padding tightens to 12 px at the 640 px breakpoint. Pure
+        # layout presentation — transcript, session, draft and caret are
+        # untouched, and re-applying the same margins is a no-op.
+        self._apply_chat_gutters(self.width() <= _NARROW_CHAT_PX)
 
     def _is_near_bottom(self) -> bool:
         """True if the user hasn't scrolled up (within ~60px of bottom)."""

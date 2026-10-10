@@ -1,4 +1,4 @@
-"""Context bar: shows current address, function, model, and token count."""
+"""Context bar: shows the current function / address and the Changes action."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from .qt_compat import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     Qt,
     QTimer,
     QWidget,
@@ -49,11 +50,9 @@ NARROW_BREAKPOINT_PX = 640
 class ContextBar(QFrame):
     """Context row showing current binary context and session info.
 
-    GUI contract G3: ``CONTEXT`` label -> symbol -> address -> optional
-    binary metadata -> actions.  Address / symbol are the primary context
-    and are never hidden; the model / token-count metadata is secondary
-    and is hidden at the narrow breakpoint (G3) so a narrow dock still
-    reads the binary context.
+    GUI contract G3: ``CONTEXT`` label -> symbol -> address -> actions.
+    Model and token usage live in the footer only — showing them here too
+    duplicated the same numbers in two places.
     """
 
     # GUI contract G2: min-height 27 px, padding 4 / 12, gap 9.
@@ -65,7 +64,10 @@ class ContextBar(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("context_bar")
-        self.setFixedHeight(self._ROW_HEIGHT)
+        # G2's 27 px is a minimum: a user font override grows the text and
+        # a fixed height would clip the row.
+        self.setMinimumHeight(self._ROW_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(self._ROW_MARGIN_H, self._ROW_MARGIN_V, self._ROW_MARGIN_H, self._ROW_MARGIN_V)
@@ -84,21 +86,12 @@ class ContextBar(QFrame):
             layout.addWidget(label)
             layout.addWidget(value)
 
-        # Secondary metadata (hides at the narrow breakpoint).
-        self._model_label = self._make_pair("MODEL:", "—")
-        self._tokens_label = self._make_pair("TOKENS:", "0")
-        for pair in (self._model_label, self._tokens_label):
-            layout.addWidget(pair[0])
-            layout.addWidget(pair[1])
-        self._secondary_pairs = (self._model_label, self._tokens_label)
-
         layout.addStretch()
 
         # G3 context row: label -> symbol -> address -> optional binary
         # metadata -> ``Changes`` action/count.  Changes opens Mutations; it
         # is a real action, not a setting, and carries the live record
-        # count.  It is NOT part of the secondary metadata that collapses
-        # at the narrow breakpoint, so it stays reachable there too.
+        # count.
         self._changes_btn = QPushButton("Changes")
         self._changes_btn.setObjectName("context_changes_btn")
         self._changes_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -110,7 +103,6 @@ class ContextBar(QFrame):
         self._mutation_count = 0
         self._update_changes_label()
 
-        self._narrow = False
         self._stopped = False
 
         # Auto-update cursor position
@@ -127,20 +119,6 @@ class ContextBar(QFrame):
             self.setStyleSheet(maybe_host_stylesheet(get_context_bar_style()))
         except Exception as e:  # never let theming break the context row
             log_debug(f"ContextBar.apply_theme failed: {e}")
-
-    def set_narrow(self, narrow: bool) -> None:
-        """Compact the row for the narrow dock (GUI contract G3).
-
-        Only *secondary metadata* hides — the symbol and the address stay
-        visible so the primary context is always readable.  Presentation
-        only: no value is reset and no timer restarts.
-        """
-        if self._narrow == narrow:
-            return
-        self._narrow = narrow
-        for pair in self._secondary_pairs:
-            for widget in pair:
-                widget.setVisible(not narrow)
 
     def _make_pair(self, label_text: str, initial: str):
         label = QLabel(label_text)
@@ -179,19 +157,6 @@ class ContextBar(QFrame):
             value.setText(name[:27] + "...")
             value.setToolTip(name)
 
-    def set_model(self, model: str) -> None:
-        self._model_label[1].setText(model)
-
-    def set_tokens(self, count: int, context_window: int = 0) -> None:
-        if count >= 1000:
-            text = f"{count / 1000:.1f}k"
-        else:
-            text = str(count)
-        if context_window > 0:
-            pct = min(int(count * 100 / context_window), 100)
-            text += f" ({pct}%)"
-        self._tokens_label[1].setText(text)
-
     def changes_button(self) -> QPushButton:
         """The row's ``Changes`` action — the panel's Mutations entry point.
 
@@ -218,14 +183,6 @@ class ContextBar(QFrame):
             else f"Show {count} recorded database edit{'s' if count != 1 else ''}"
         )
         self._changes_btn.setAccessibleName(f"Changes — show the mutation log ({count} recorded)")
-
-    def tokens_text(self) -> str:
-        """The context-token summary as displayed (e.g. ``4.2k (2%)``).
-
-        Public accessor so the footer's token readout never has to reach
-        into the label tuple.
-        """
-        return self._tokens_label[1].text()
 
     def _update_cursor(self) -> None:
         if self._stopped:

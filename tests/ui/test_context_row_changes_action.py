@@ -58,7 +58,6 @@ def _panel_with_context_row(*, with_workspace_buttons: bool = False):
 
     panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
     QWidget.__init__(panel)
-    panel._use_native_host_theme = True
     panel._config = type("_Cfg", (), {"provider": type("_P", (), {"name": "n", "model": "m"})()})()
     if not with_workspace_buttons:
         return panel._build_context_bar_for_tests(), panel
@@ -90,17 +89,16 @@ class TestContextRowChangesAction(unittest.TestCase):
         self.assertIn("mutation", bar.changes_button().accessibleName().lower())
         self.assertEqual(bar.changes_button().focusPolicy(), Qt.FocusPolicy.StrongFocus)
 
-    def test_changes_survives_the_narrow_breakpoint(self) -> None:
-        """G3 only lets *secondary metadata* hide at narrow, not actions."""
+    def test_row_does_not_repeat_the_footer_readouts(self) -> None:
+        """Model and token usage live in the footer only; the row must not
+        carry a second copy (it showed the same numbers twice)."""
+        from PySide6.QtWidgets import QLabel
+
         bar, _panel = _panel_with_context_row()
-        bar.set_narrow(True)
-        # The row is not shown here, so read the widget flag (``isHidden`` is
-        # only meaningful once the ancestor chain is visible).
-        self.assertTrue(bar._model_label[0].isHidden(), "MODEL: hides at narrow")
-        self.assertTrue(bar._tokens_label[0].isHidden(), "TOKENS: hides at narrow")
+        texts = " ".join(label.text() for label in bar.findChildren(QLabel))
+        self.assertNotIn("TOKENS", texts)
+        self.assertNotIn("MODEL", texts)
         self.assertFalse(bar.changes_button().isHidden(), "Changes must stay reachable")
-        bar.set_narrow(False)
-        self.assertFalse(bar._model_label[0].isHidden(), "MODEL: returns when wide")
 
     def test_count_follows_recorded_mutations(self) -> None:
         bar, _panel = _panel_with_context_row()

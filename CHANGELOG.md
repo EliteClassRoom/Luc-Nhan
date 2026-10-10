@@ -37,6 +37,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint or credential edit invalidates that connection's entry, a plain
   view-switch does not.
 
+### Fixed
+
+- **Native UI fidelity after the redesign, verified in a real IDA 9.4 GUI at
+  100 % and 150 % scale.** Light/Dark/Auto/IDA themes now repaint every
+  surface from the active tokens (composer text, transcript gutter and scroll
+  frame, tool and approval rows, code and result editors — widget `QPalette`
+  roles now track tokens too, not only QSS). The conversation pages are a
+  `SessionPages` stack instead of a `QTabWidget` that reserved a host-coloured
+  28 px row above the transcript; the tab close button works again (the
+  detached bar's `tabCloseRequested` is wired once, directly). The approval
+  gate keeps its header and both Deny / Allow once buttons on screen on short
+  docks: the code region is capped from Qt's own laid-out geometry, always
+  keeps at least one line, and the hint row yields first (clamped, with the full
+  text in its tooltip). A user font override now scales rendered Markdown (code,
+  headings) and every tool/mutation role, and a configured font family is
+  applied through a rule validated against the installed font families (an
+  unknown or injected name is ignored). Approval requests lock the composer but
+  keep Stop reachable. The host font/palette (`QApplication`) is never
+  modified.
+- **Tool output, composer and footer cleanups.** An expanded tool group no
+  longer paints the host's window colour behind its rows (the IDA application
+  stylesheet fills bare `QWidget` containers; the group body and detail holder
+  are now explicitly transparent). Tool results show the real output instead
+  of the `[The following is a tool execution result ...]` / `<tool_result>`
+  wrapper that exists only for the model, in monospace and as plain text, so
+  `<` in decompiler output is never parsed as HTML; the row meta line and line
+  count come from the clean text. The `/ Commands` composer button is gone
+  (slash commands are offered by the editor's autocomplete). Model and token
+  usage are shown once, in the footer, instead of also in the context row. The
+  footer picker no longer draws a second, oversized arrow before the model
+  name, collapse chevrons use one matched `▸`/`▾` pair, and consecutive
+  assistant segments of one turn (separated by tool calls or reasoning) show
+  the speaker name once.
+
 ### Added
 
 - Development documentation for the native smoke and benchmark procedure and

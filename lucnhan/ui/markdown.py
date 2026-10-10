@@ -25,7 +25,7 @@ from typing import Any
 
 from ..core.logging import log_debug
 from .profiling import probe as ui_probe
-from .styles import is_host_theme
+from .styles import is_host_theme, role_size
 from .theme.manager import ThemeManager, blend_hex
 
 # ---------------------------------------------------------------------------
@@ -177,9 +177,12 @@ _MARKDOWN_HINT_RE = _re.compile(
 
 def _legacy_theme_styles(source=None) -> dict[str, str]:
     if is_host_theme():
+        # Host palette: the host owns colour, but typography still follows
+        # the user's font override, so the code roles keep their 12px
+        # baseline rather than inheriting whatever the body resolved to.
         return {
-            "inline_code_style": "font-family:monospace;",
-            "block_code_style": "font-family:monospace; white-space:pre-wrap;",
+            "inline_code_style": f"font-family:monospace; font-size:{role_size(12)};",
+            "block_code_style": f"font-family:monospace; font-size:{role_size(12)}; white-space:pre-wrap;",
             "link_style": "text-decoration: underline;",
             "hr_style": "",
             "heading_style": "font-weight:bold;",
@@ -194,12 +197,12 @@ def _legacy_theme_styles(source=None) -> dict[str, str]:
     return {
         "inline_code_style": (
             f"background-color:{code_bg}; color:{inline_fg}; "
-            "padding:1px 4px; border-radius:3px; font-family:monospace; font-size:12px;"
+            f"padding:1px 4px; border-radius:3px; font-family:monospace; font-size:{role_size(12)};"
         ),
         "block_code_style": (
             f"background-color:{code_bg}; color:{text_color}; "
             f"border:1px solid {border}; border-radius:4px; "
-            "padding:8px; font-family:monospace; font-size:12px; "
+            f"padding:8px; font-family:monospace; font-size:{role_size(12)}; "
             "white-space:pre-wrap; word-break:break-all;"
         ),
         "link_style": f"color:{tokens.highlight};",
@@ -271,7 +274,7 @@ def _legacy_md_to_html(text: str, source=None) -> str:
             size = sizes.get(level, 13)
             h_text = _legacy_inline(hm.group(2), theme)
             out_lines.append(
-                f'<div style="{theme["heading_style"]}font-size:{size}px;margin:6px 0 2px 0;">{h_text}</div>'
+                f'<div style="{theme["heading_style"]}font-size:{role_size(size)};margin:6px 0 2px 0;">{h_text}</div>'
             )
             i += 1
             continue
@@ -507,7 +510,7 @@ def md_to_html(text: str, source=None) -> str:
     return result
 
 
-def _cache_put(key: tuple[str, int], value: str) -> None:
+def _cache_put(key: tuple[str, int, int], value: str) -> None:
     """Bounded insert into :data:`_HTML_CACHE` (drop oldest half when full)."""
     if len(_HTML_CACHE) >= 256:
         for k in list(_HTML_CACHE.keys())[:128]:
@@ -519,13 +522,16 @@ def _cache_put(key: tuple[str, int], value: str) -> None:
 # Cache
 # ---------------------------------------------------------------------------
 
-# Bounded dict cache. Keyed by (text_hash, theme_token_id). The theme
-# token id is the id() of the live ThemeTokens object — when the theme
-# changes, ThemeManager produces a new instance, so id() differs and we
-# miss the cache. This avoids re-rendering after theme change but
-# allows the same content to be re-rendered with the same theme
-# without re-running markdown-it-py.
-_HTML_CACHE: dict[tuple[str, int], str] = {}
+# Bounded dict cache. Keyed by (text_hash, theme_token_id, font_override).
+# The theme token id is the id() of the live ThemeTokens object — when the
+# theme changes, ThemeManager produces a new instance, so id() differs and
+# we miss the cache. The font override is part of the key too: the token
+# identity is unchanged by a font-size change, yet the rendered HTML
+# carries role sizes, so a stale entry would pin the previous type scale.
+# This avoids re-rendering after a theme or font change but allows the same
+# content to be re-rendered with the same theme without re-running
+# markdown-it-py.
+_HTML_CACHE: dict[tuple[str, int, int], str] = {}
 
 # Explicit code-block colour overrides from
 # :func:`set_code_block_theme`.  ``None`` slots mean "use the
@@ -534,8 +540,8 @@ _HTML_CACHE: dict[tuple[str, int], str] = {}
 _CODE_BLOCK_OVERRIDES: dict[str, str | None] = {"bg": None, "border": None, "text": None}
 
 
-def _cache_key(text: str) -> tuple[str, int]:
-    """Build a (text_hash, theme_token_id) cache key."""
+def _cache_key(text: str) -> tuple[str, int, int]:
+    """Build a (text_hash, theme_token_id, font_override) cache key."""
     from .theme.manager import ThemeManager
 
     # SHA1 is fine here — this hash is a non-security HTML-cache key, not a
@@ -545,7 +551,8 @@ def _cache_key(text: str) -> tuple[str, int]:
         text.encode("utf-8", errors="replace"),
         usedforsecurity=False,
     ).hexdigest()
-    return (text_hash, id(ThemeManager.instance().tokens()))
+    manager = ThemeManager.instance()
+    return (text_hash, id(manager.tokens()), manager.font_size_override)
 
 
 def _on_theme_changed(_tokens) -> None:

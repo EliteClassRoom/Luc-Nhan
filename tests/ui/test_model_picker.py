@@ -168,9 +168,7 @@ class TestLocalSearch(_LogicBase):
         """
         import lucnhan.ui.model_picker as mp
 
-        blob = "\n".join(
-            open(mp.__file__, encoding="utf-8").read().splitlines()
-        )
+        blob = "\n".join(open(mp.__file__, encoding="utf-8").read().splitlines())
         for banned in ("import requests", "import httpx", "ProviderRegistry", "list_models", "urlopen"):
             self.assertNotIn(banned, blob, f"picker must not reference {banned!r}")
 
@@ -660,7 +658,6 @@ class TestModelPickerNative(unittest.TestCase):
 
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         QWidget.__init__(panel)
-        panel._use_native_host_theme = True
         panel._footer_width_timer = None
         panel._ctrl = type("_Ctrl", (), {"is_agent_running": False})()
         panel._config = type(

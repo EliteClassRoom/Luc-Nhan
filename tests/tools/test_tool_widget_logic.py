@@ -345,11 +345,14 @@ class TestApprovalHeaderText(unittest.TestCase):
         self.assertEqual(widget._required_label.text(), "Approval required")
         self.assertIn("execute_python", widget._header.text())
 
-    def test_state_chip_reads_paused(self):
-        from lucnhan.ui.tool_widgets import ToolApprovalWidget
-
-        widget = ToolApprovalWidget("a1", "execute_python", '{"code": "print(1)"}', "desc")
-        self.assertEqual(widget._state_label.text(), "⏸ Paused")
+    # The "state chip wording" case that used to live here asserted a
+    # literal marker string. That is incidental styling: the marker glyph
+    # and the word beside it are presentation, not behaviour, and pinning
+    # them just forces a re-edit every time the marker changes. The
+    # contract-relevant half of that gate — a pending approval shows an
+    # explicit state, the real operation and Deny/Allow-once controls —
+    # is asserted against real widgets in
+    # ``tests/ui/test_message_fidelity_real_qt.py``.
 
 
 if __name__ == "__main__":

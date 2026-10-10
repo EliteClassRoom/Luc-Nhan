@@ -66,7 +66,6 @@ for _mod_name in [
         "resolve_auth_cached",
         "DEFAULT_OLLAMA_URL",
         "ProviderRegistry",
-        "build_small_button_stylesheet",
         "maybe_host_stylesheet",
         "use_native_host_theme",
         "get_err_status_style",
@@ -225,7 +224,9 @@ class TestGLMControlsPersistence(unittest.TestCase):
     def _select_level(dlg, level: str) -> None:
         """Select ``level`` in the shared Thinking combo."""
         idx = dlg._thinking_combo.findData(level)
-        assert idx >= 0, f"level {level!r} not offered: {[dlg._thinking_combo.itemData(i) for i in range(dlg._thinking_combo.count())]}"
+        assert idx >= 0, (
+            f"level {level!r} not offered: {[dlg._thinking_combo.itemData(i) for i in range(dlg._thinking_combo.count())]}"
+        )
         dlg._thinking_combo.setCurrentIndex(idx)
 
     def test_sync_config_from_ui_persists_exact_extra(self) -> None:
@@ -390,7 +391,6 @@ class TestGLMEndpointType(unittest.TestCase):
             )
         finally:
             dlg.done(0)
-
 
 
 # ---------------------------------------------------------------------------

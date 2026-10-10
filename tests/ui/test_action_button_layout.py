@@ -69,11 +69,16 @@ _BUTTON_ATTRS = (
 class TestActionButtonLayout(unittest.TestCase):
     def _build_panel_buttons(self):
         # Bypass heavyweight __init__ (config load, controller, timers);
-        # only exercise the widget-building methods under test. Use the
-        # native-host-theme branch so the themed stylesheet path
-        # (``ThemeManager.tokens()``) is not required by the stub.
+        # only exercise the widget-building methods under test.  The
+        # host-theme answer is read live from ``styles`` (the Qt stub has
+        # no QApplication), so it is set explicitly for the builders.
+        import lucnhan.ui.styles as _styles
+
+        orig_theme = _styles._current_theme
+        _styles._current_theme = "ida"
+        self.addCleanup(_styles.__setattr__, "_current_theme", orig_theme)
+
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
-        panel._use_native_host_theme = True
         panel._build_header()
         panel._skills_refresh_timer = None
         panel._ctrl = type("_Ctrl", (), {"skill_slugs": []})()

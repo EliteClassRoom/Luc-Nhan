@@ -249,6 +249,33 @@ def _blend_colors(rgb1: tuple[int, int, int], rgb2: tuple[int, int, int], alpha:
     )
 
 
+def _installed_font_family(family: str) -> str:
+    """The installed family matching ``family``, or ``""``.
+
+    Only a name the host actually has installed is ever returned, so a
+    configured value cannot smuggle QSS into the wrapper's stylesheet
+    (``Consolas'; font-size: 100pt`` matches nothing).  A case-insensitive
+    hit returns the host's own spelling, which is what Qt expects.
+    """
+    name = (family or "").strip()
+    if not name:
+        return ""
+    try:
+        from lucnhan.ui.qt_compat import QFontDatabase
+
+        installed = list(QFontDatabase.families())
+    except Exception:  # pragma: no cover — no Qt / no font database
+        return ""
+    for candidate in installed:
+        if candidate == name:
+            return candidate
+    lowered = name.casefold()
+    for candidate in installed:
+        if candidate.casefold() == lowered:
+            return candidate
+    return ""
+
+
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     """Convert RGB tuple to hex color string."""
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
@@ -332,15 +359,20 @@ class LucNhanPanel(idaapi.PluginForm):
         _early_log("ida_panel:on_create:done")
 
     def _apply_ida_theme(self) -> None:
-        """Apply the IDA Pro theme-aware stylesheet to the panel.
+        """Align the panel with the user's theme setting.
 
-        This method respects the config's theme setting. If theme is "dark"
-        or "light", use the predefined stylesheets. If "ida" (default),
-        apply a minimal targeted stylesheet for Luc Nhan-specific elements while
-        inheriting IDA's Qt stylesheet for everything else.  If ``"auto"``,
-        keep the manager in AUTO mode (so the live QApplication palette drives
-        the effective theme) while still deriving per-widget color hints from
-        the current IDA palette.
+        ``dark`` / ``light`` hand the panel to the bundled Luc Nhan
+        palettes.  ``ida`` / ``auto`` keep the host palette: the manager
+        stays in its host-inherit mode and derives tokens from the
+        *effective* widget palette (the panel registers itself as the
+        palette source), so the plugin tracks IDA instead of the
+        light ``QApplication`` default.
+
+        The wrapper paints no colors of its own: the transcript surface
+        and all other chrome belong to the single token pipeline in
+        ``panel_core``, and a wrapper stylesheet would cascade onto — and
+        overwrite — those widgets.  The user's font is applied to this
+        form's own root widget (see :meth:`_apply_font_override`).
         """
         from lucnhan.ui.markdown import clear_code_block_theme, set_code_block_theme
 
@@ -348,12 +380,8 @@ class LucNhanPanel(idaapi.PluginForm):
         if config_theme is not None:
             config_theme = config_theme.theme
 
-        if config_theme == "dark":
-            self._core.set_theme("dark")
-            clear_code_block_theme()
-            return
-        elif config_theme == "light":
-            self._core.set_theme("light")
+        if config_theme in ("dark", "light"):
+            self._core.set_theme(config_theme)
             clear_code_block_theme()
             return
 
@@ -363,32 +391,22 @@ class LucNhanPanel(idaapi.PluginForm):
         # widgets (action buttons, mode bar, history nav, etc.).
         c = _get_ida_theme_colors()
         is_dark = bool(c.get("is_dark", False))
-
-        if config_theme == "auto":
-            # AUTO: keep the manager in AUTO so its ``tokens()`` is
-            # recomputed from the live QApplication palette.  The
-            # effective theme we pass here only feeds the *legacy*
-            # ``styles.set_current_theme`` helper used by
-            # ``is_dark_theme()``/``is_host_theme()``-aware style
-            # getters; the new ``ThemeManager.tokens()`` derives its
-            # own value.
-            self._core.set_theme("auto", effective_theme="dark" if is_dark else "light")
-        else:
-            # config_theme == "ida" (or any non-dark/light value):
-            # tell the core to use the host's Qt theme.  Inline-styled
-            # widgets get the helper palette so action buttons render
-            # with the right contrast in a dark IDA.
-            self._core.set_theme("ida", effective_theme="dark" if is_dark else "light")
+        # ``set_code_block_theme`` is IDA's own API (no QSS sub-control
+        # for the syntax-highlighted code blocks), so it stays — the values
+        # come from the same IDA palette the helper widgets use.
         set_code_block_theme(
             bg=_rgb_to_hex(c["code_block_bg"]),
             border=_rgb_to_hex(c["code_block_border"]),
             text=_rgb_to_hex(c["code_text"]),
         )
 
-        self._reapply_minimal_style()
-        # Subscribe AFTER the first apply so theme switches repaint the
-        # host-scoped minimal_style (message/input/button objects).
-        self._subscribe_theme_changes()
+        # The effective theme only feeds the *legacy* ``styles`` helpers
+        # used by ``is_dark_theme()`` / ``is_host_theme()``-aware getters;
+        # the manager's tokens derive their own value from the host.
+        self._core.set_theme(
+            "auto" if config_theme == "auto" else "ida",
+            effective_theme="dark" if is_dark else "light",
+        )
 
         # Spin up the IDAThemeWatcher for live palette tracking. Only
         # AUTO and IDA_NATIVE read QPalette tokens, so the watcher is
@@ -396,220 +414,15 @@ class LucNhanPanel(idaapi.PluginForm):
         # tests/tools/test_theme_watcher.py::TestPluginWatcherGate.
         self._maybe_start_theme_watcher(config_theme)
 
-    def _reapply_minimal_style(self) -> None:
-        """Rebuild and re-apply the host-scoped minimal QSS.
-
-        Called once at construction and again on every theme change so the
-        message/input/button objects pick up the new palette. The QSS is
-        object-name-scoped (QFrame#thinking_block etc.) so it never bleeds
-        into the host (IDA) UI.
-        """
-        # Apply a minimal targeted stylesheet — only Luc Nhan's custom widgets.
-        # Everything else inherits IDA's Qt stylesheet.
-        c = _get_ida_theme_colors()
-        is_dark = bool(c.get("is_dark", False))
-        surface = _rgb_to_hex(c["surface"])
-        surface_variant = _rgb_to_hex(c["surface_variant"])
-        border = _rgb_to_hex(c["border"])
-        text_color = _rgb_to_hex(c["text"])
-        text_secondary = _rgb_to_hex(c["text_secondary"])
-        accent = _rgb_to_hex(c["accent"])
-        accent_hover = _rgb_to_hex(c["accent_hover"])
-        error_color = _rgb_to_hex(c["error"])
-
-        # Input / send button need explicit colors so they do not inherit
-        # the light-default Qt palette when IDA's host theme is dark.
-        if is_dark:
-            input_bg = _rgb_to_hex(c["surface_variant"])
-            input_text = text_color
-            send_bg = accent
-            send_hover = accent_hover
-            btn_bg = surface
-            btn_text = text_color
-            btn_border = border
-            btn_hover = surface_variant
-        else:
-            input_bg = _rgb_to_hex(c["background"])
-            input_text = text_color
-            send_bg = accent
-            send_hover = accent_hover
-            btn_bg = surface
-            btn_text = text_color
-            btn_border = border
-            btn_hover = surface_variant
-
-        minimal_style = f"""
-        QFrame#thinking_block {{
-            background-color: {surface};
-            border-left: 3px dashed {accent};
-            border-top: 1px solid {border};
-            border-right: 1px solid {border};
-            border-bottom: 1px solid {border};
-            border-radius: 4px;
-        }}
-        QFrame#message_queued {{
-            border: 1px dashed {accent};
-            border-radius: 6px;
-            background-color: {surface};
-        }}
-        QFrame#message_question {{
-            border: 1px solid {accent};
-            border-radius: 6px;
-            background-color: {surface_variant};
-        }}
-        QFrame#message_thinking {{
-            background-color: {surface};
-            border-radius: 6px;
-            padding: 4px 8px;
-            margin: 2px 8px;
-        }}
-        QLabel#thinking_header {{
-            color: {text_secondary};
-            font-style: italic;
-        }}
-        QLabel#thinking_content {{
-            color: {text_color};
-        }}
-        QLabel#star_label {{
-            color: {accent};
-        }}
-        QLabel#phrase_label {{
-            color: {text_secondary};
-            font-style: italic;
-        }}
-        QToolButton#collapse_button {{
-            color: {text_secondary};
-            background: transparent;
-            border: none;
-        }}
-        QToolButton#collapse_button:hover {{
-            color: {text_color};
-        }}
-        QPlainTextEdit#input_area {{
-            background-color: {input_bg};
-            color: {input_text};
-            border: 1px solid {border};
-            border-radius: 8px;
-            padding: 8px;
-        }}
-        QPushButton {{
-            background-color: {btn_bg};
-            color: {btn_text};
-            border: 1px solid {btn_border};
-            border-radius: 6px;
-            padding: 4px;
-        }}
-        QPushButton:hover {{
-            background-color: {btn_hover};
-        }}
-        QPushButton#send_button {{
-            background-color: {send_bg};
-            color: white;
-            border: none;
-        }}
-        QPushButton#send_button:hover {{
-            background-color: {send_hover};
-        }}
-        QPushButton#cancel_button {{
-            color: {error_color};
-        }}
-        /* History navigation strip (paginated restore) — object-name-scoped
-           so the host's generic QPushButton/QLabel rules above do not leak
-           into Luc Nhan's nav widgets.  These selectors are kept identical
-           in shape to the per-theme scoped variants so the same widget
-           object names resolve cleanly in every host theme. */
-        QFrame#history_nav {{
-            background-color: {surface};
-            border: 1px solid {border};
-            border-radius: 4px;
-        }}
-        QLabel#history_nav_label {{
-            color: {text_secondary};
-        }}
-        QPushButton#history_nav_btn {{
-            background-color: {surface_variant};
-            color: {text_color};
-            border: 1px solid {border};
-            border-radius: 3px;
-            padding: 2px 10px;
-        }}
-        QPushButton#history_nav_btn:hover {{
-            background-color: {btn_hover};
-        }}
-        QPushButton#history_nav_btn:pressed {{
-            background-color: {border};
-        }}
-        QPushButton#history_nav_btn:disabled {{
-            color: {text_secondary};
-            background-color: {surface};
-            border-color: {border};
-        }}
-        """
-        if self._core is not None:
-            self._core.setStyleSheet(minimal_style)
-
-    def _subscribe_theme_changes(self) -> None:
-        """Connect _on_theme_changed to ThemeManager.themeChanged.
-
-        Unlike panel_core (host-agnostic), this wrapper owns the host-scoped
-        minimal_style QSS for message/input/button objects. It must rebuild
-        that QSS on every theme switch or those objects keep the old palette.
-        """
-        try:
-            from lucnhan.ui.theme.manager import ThemeManager
-
-            ThemeManager.instance().themeChanged.connect(self._on_theme_changed)
-        except Exception as e:
-            try:
-                from lucnhan.core.logging import log_debug
-
-                log_debug(f"themeChanged subscribe failed: {type(e).__name__}: {e}")
-            except Exception as msg_exc:
-                _log_teardown("themeChanged subscribe fallback log", msg_exc)
-
-    def _unsubscribe_theme_changes(self) -> None:
-        """Disconnect _on_theme_changed from ThemeManager.themeChanged.
-
-        Called from shutdown() so a themeChanged firing after _core is torn
-        down (set to None) does not dereference a stale core.
-        """
-        try:
-            import warnings
-
-            from lucnhan.ui.theme.manager import ThemeManager
-
-            # PySide6 emits a RuntimeWarning (NOT an exception) when
-            # disconnecting a slot that was never connected. Suppress
-            # just that case to keep test output clean; the call itself
-            # is idempotent at the Qt level.
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    category=RuntimeWarning,
-                    message=".*Failed to disconnect.*",
-                )
-                ThemeManager.instance().themeChanged.disconnect(self._on_theme_changed)
-        except Exception as exc:
-            _log_teardown("themeChanged disconnect", exc)
-
-    def _on_theme_changed(self, _tokens) -> None:
-        """Adapter slot for ThemeManager.themeChanged (carries new tokens).
-
-        themeChanged emits with one argument (the new ThemeTokens); this slot
-        ignores it and rebuilds the host-scoped minimal_style from the live
-        IDA palette. Mirrors panel_core._on_theme_changed's signature so the
-        same signal can fan out to both layers.
-        """
-        self._reapply_minimal_style()
-
     def _maybe_start_theme_watcher(self, config_theme: str) -> None:
         """Start IDAThemeWatcher when the active theme mode reads QPalette.
 
-        AUTO and IDA_NATIVE derive tokens from the live QApplication
-        palette, so the watcher is required for them to track user-driven
-        IDA theme switches. DARK and LIGHT return bundled constants and
-        never touch the palette, so starting the watcher there is pure
-        overhead (and risks spurious refresh_from_host calls).
+        AUTO and IDA_NATIVE derive tokens from the independent host
+        palette probe (see ``ThemeManager._host_probe_widget``), so the
+        watcher is required for them to track user-driven IDA theme
+        switches. DARK and LIGHT return bundled constants and never touch
+        the palette, so starting the watcher there is pure overhead (and
+        risks spurious refresh_from_host calls).
         """
         if self._theme_watcher is not None:
             return  # already started
@@ -641,7 +454,25 @@ class LucNhanPanel(idaapi.PluginForm):
             self._theme_watcher = None
 
     def _apply_font_override(self) -> None:
-        """Apply custom font settings via stylesheet so it propagates to all children."""
+        """Apply the user's font settings.
+
+        Two effects, both needed.  The configured point size goes to the
+        ThemeManager, which the typography role builders read and which
+        repaints through ``themeChanged``.  The family goes onto this
+        wrapper's ``_root`` and onto the panel core via ``QFont``, plus a
+        single family rule on ``_root``'s own stylesheet so descendants that
+        carry their own sheet still take it (a widget stylesheet does not
+        inherit the parent's ``setFont`` family — measured).
+
+        ``_core``'s stylesheet is never touched: the core owns every color
+        rule, and writing to it is what wiped them before.  The family name
+        is validated against the installed families first, so a configured
+        value cannot smuggle QSS into the wrapper's sheet.
+
+        Clearing the family restores the inherited host font rather than
+        freezing the previous override.  Reading the *live* config
+        matters: Settings writes the new value into it.
+        """
         config = getattr(self._core, "_config", None)
         if config is None:
             try:
@@ -651,29 +482,40 @@ class LucNhanPanel(idaapi.PluginForm):
             except Exception:
                 pass
             return
+        try:
+            from lucnhan.ui.theme.manager import ThemeManager
 
-        font_family = getattr(config, "font_family", "") or ""
-        font_size = getattr(config, "font_size_override", 0) or 0
-
-        if not font_family and not font_size:
+            ThemeManager.instance().set_font_size_override(getattr(config, "font_size_override", 0) or 0)
+        except Exception:
+            pass
+        if self._root is None:
             return
+        try:
+            from lucnhan.ui.qt_compat import QFont
 
-        font_parts = []
-        if font_family:
-            font_parts.append(f"font-family: '{font_family}'")
-        if font_size > 0:
-            font_parts.append(f"font-size: {font_size}pt")
-
-        font_css = "; ".join(font_parts)
-        font_stylesheet = f"* {{ {font_css}; }}"
-
-        current = self._core.styleSheet()
-        self._core.setStyleSheet(current + "\n" + font_stylesheet)
-
+            family = getattr(config, "font_family", "") or ""
+            # A widget whose own stylesheet sets a size or a color does not
+            # take its family from the parent's ``setFont`` (measured: the
+            # status label stayed on the host family while root and core
+            # took the override).  An ancestor stylesheet rule *does* merge
+            # with a descendant's own sheet, so the family belongs there.
+            # The name is validated against the installed families first:
+            # an unknown or injected string is simply not applied.
+            canonical = _installed_font_family(family)
+            self._root.setStyleSheet(f'*{{ font-family: "{canonical}"; }}' if canonical else "")
+            font = QFont()
+            if canonical:
+                font.setFamily(canonical)
+            for widget in (self._root, self._core):
+                if widget is not None:
+                    widget.setFont(font)
+        except Exception as exc:  # pragma: no cover — defensive
+            _early_log_crash_safe(exc)
+            return
         try:
             from lucnhan.core.logging import log_debug
 
-            log_debug(f"Font: applied stylesheet font: {font_css}")
+            log_debug(f"Font: applied to the form root: {getattr(config, 'font_family', '') or '<inherit>'}")
         except Exception:
             pass
 
@@ -705,9 +547,9 @@ class LucNhanPanel(idaapi.PluginForm):
             except Exception as exc:
                 _log_teardown("theme watcher stop", exc)
             self._theme_watcher = None
-        # Disconnect the theme-changed slot so an emit during/after teardown
-        # does not dereference _core (set to None below).
-        self._unsubscribe_theme_changes()
+        # The panel's own theme subscription lives on ``_core`` (it owns
+        # every color stylesheet), and ``shutdown`` there disconnects it —
+        # so this wrapper has no slot left to unsubscribe.
         if self._core is not None:
             self._core.shutdown()
             self._core.setParent(None)

@@ -14,6 +14,39 @@ so a builder would add friction without value.
 
 from __future__ import annotations
 
+# GUI contract G2 body baseline, in logical px.  Every other typography
+# role is expressed relative to it (see :func:`role_size`).
+_ROLE_BASELINE_PX = 13
+
+
+def role_size(px: int) -> str:
+    """Size for a typography role, honouring the user's font override.
+
+    The contract's sizes are logical px (G2: 13 body / 12 nav / 11 hint).
+    With no override configured a role renders at exactly ``px`` px, so
+    the default appearance is unchanged.  With an override configured the
+    body role becomes exactly that many *points* and the other roles keep
+    their hierarchy, scaled by the same ratio — Qt resolves points against
+    the real DPI, so no assumed DPI factor appears here.
+
+    Set through :class:`ThemeManager` (``set_font_size_override``), whose
+    lifetime is the process, so this stays a plain read.
+    """
+    override = _font_size_override_points()
+    if override <= 0:
+        return f"{px}px"
+    return f"{override * px / _ROLE_BASELINE_PX:g}pt"
+
+
+def _font_size_override_points() -> int:
+    """The configured body point size (0 = inherit, i.e. no override)."""
+    try:
+        from .manager import ThemeManager
+
+        return ThemeManager.instance().font_size_override
+    except Exception:  # pragma: no cover — headless / stub session
+        return 0
+
 
 def _tokens():
     """Return the live ThemeTokens (lazy import to avoid a cycle)."""
@@ -77,7 +110,7 @@ def _button_qss(t, hover_bg: str, *, object_name: str | None = None, selector: s
     return (
         f"{sel} {{ background: {t.button}; color: {t.button_text}; "
         f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 9px; "
-        f"min-height: 20px; font-size: 12px; }}"
+        f"min-height: 20px; font-size: {role_size(12)}; }}"
         f"{sel}:hover {{ background: {hover_bg}; border-color: {t.accent}; }}"
         f"{sel}:pressed {{ background: {t.mid}; }}"
         f"{sel}:focus {{ border: 1px solid {t.accent}; outline: 2px solid {t.accent}; }}"
@@ -95,8 +128,27 @@ def _small_btn_style() -> str:
         # accent text). ``QPushButton:checked`` also matches a nav button
         # while it holds keyboard focus right after the click, which is
         # exactly the active-page state.
-        f"QPushButton:checked {{ background: {t.selection}; color: {t.accent};"
-        f" border-color: {t.accent}; }}"
+        f"QPushButton:checked {{ background: {t.selection}; color: {t.accent}; border-color: {t.accent}; }}"
+    )
+
+
+def _primary_btn_style() -> str:
+    """Primary action (Send): accent fill, ``highlight_text`` label.
+
+    GUI contract G1: "use ``highlight_text`` for filled primary buttons,
+    never ``button_text`` by default".  Disabled keeps its slot with a
+    muted label (G9) so the action never vanishes from the row.
+    """
+    t = _tokens()
+    return (
+        f"QPushButton {{ background: {t.highlight}; color: {t.highlight_text}; "
+        f"border: 1px solid {t.highlight}; border-radius: 4px; padding: 4px 9px; "
+        f"min-height: 20px; font-size: {role_size(12)}; font-weight: 600; }}"
+        f"QPushButton:hover {{ background: {t.accent}; border-color: {t.accent}; }}"
+        f"QPushButton:pressed {{ background: {t.mid}; border-color: {t.accent}; }}"
+        f"QPushButton:focus {{ border: 1px solid {t.accent}; outline: 2px solid {t.accent}; }}"
+        f"QPushButton:disabled {{ background: {t.alt_base}; color: {t.muted_text}; "
+        f"border-color: {t.mid}; }}"
     )
 
 
@@ -106,7 +158,7 @@ def _cancel_btn_style() -> str:
     return (
         f"QPushButton {{ background: {t.button}; color: {t.error}; "
         f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 9px; "
-        f"min-height: 20px; font-size: 12px; }}"
+        f"min-height: 20px; font-size: {role_size(12)}; }}"
         f"QPushButton:hover {{ background: {t.alt_base}; border-color: {t.error}; }}"
         f"QPushButton:pressed {{ background: {t.mid}; }}"
         f"QPushButton:focus {{ border: 1px solid {t.error}; outline: 2px solid {t.accent}; }}"
@@ -137,14 +189,14 @@ def _header_frame_style() -> str:
 def _header_title_style() -> str:
     """``Luc Nhan`` wordmark (13 px, semibold) — inherits the host font."""
     t = _tokens()
-    return f"color: {t.text}; font-size: 13px; font-weight: 600;"
+    return f"color: {t.text}; font-size: {role_size(13)}; font-weight: 600;"
 
 
 def _header_status_style() -> str:
     """Agent status label (11 px muted).  Status is never colour-only:
     the text itself carries the state (GUI contract G1)."""
     t = _tokens()
-    return f"color: {t.muted_text}; font-size: 11px;"
+    return f"color: {t.muted_text}; font-size: {role_size(11)};"
 
 
 def _context_bar_style() -> str:
@@ -158,18 +210,62 @@ def _context_bar_style() -> str:
         f"QFrame#context_bar {{ background: {t.window}; border: none; "
         f"border-bottom: 1px solid {t.mid}; }}"
         f"QFrame#context_bar QLabel {{ background: transparent; border: none; }}"
-        f"QFrame#context_bar QLabel#context_label {{ color: {t.muted_text}; font-size: 11px; }}"
-        f"QFrame#context_bar QLabel#context_value {{ color: {t.text}; font-size: 11px; }}"
+        f"QFrame#context_bar QLabel#context_label {{ color: {t.muted_text}; font-size: {role_size(11)}; }}"
+        # ``context_title`` is the ``CONTEXT`` wordmark.  It carries its own
+        # object name, so without this rule it fell through to the host's
+        # default text color and was invisible against the bar.
+        f"QFrame#context_bar QLabel#context_title {{ color: {t.muted_text}; "
+        f"font-size: {role_size(11)}; font-weight: 600; }}"
+        f"QFrame#context_bar QLabel#context_value {{ color: {t.text}; font-size: {role_size(11)}; }}"
         # G3 context-row ``Changes`` action: flat neutral control, accent
         # on hover/focus, muted text so it never competes with the symbol
         # or the address.
         f"QFrame#context_bar QPushButton#context_changes_btn {{ background: transparent; "
         f"color: {t.muted_text}; border: 1px solid transparent; border-radius: 4px; "
-        f"padding: 0 6px; font-size: 11px; }}"
+        f"padding: 0 6px; font-size: {role_size(11)}; }}"
         f"QFrame#context_bar QPushButton#context_changes_btn:hover {{ color: {t.text}; "
         f"border-color: {t.mid}; }}"
         f"QFrame#context_bar QPushButton#context_changes_btn:focus {{ color: {t.accent}; "
         f"border-color: {t.accent}; outline: 2px solid {t.accent}; }}"
+    )
+
+
+def _composer_frame_style() -> str:
+    """Composer wrapper: ONE radius-4 frame around editor + action row.
+
+    GUI contract G3: "one 4 px border around input + action row".  The
+    wrapper owns that frame (background ``base`` so the editor inset and
+    the command/send row read as one box); the editor itself is
+    borderless, so there is no doubled chrome and no second border to
+    keep in sync.  G2 padding 7 / 10 / 5 comes from the wrapper layout.
+    """
+    t = _tokens()
+    return (
+        f"QWidget#composer {{ background: {t.base}; color: {t.text}; "
+        f"border: 1px solid {t.mid}; border-radius: 4px; }}"
+        f"QWidget#composer QLabel {{ background: transparent; border: none; }}"
+    )
+
+
+def _transcript_surface_style() -> str:
+    """The transcript's own surfaces, always applied — never theme-gated.
+
+    Three layers need this, not one: the ``QScrollArea`` frame, the page
+    widget it scrolls, and the *viewport* in between.  The viewport is a
+    plain ``QAbstractScrollArea`` child with its own object name, so it
+    resolved through the application palette and left the strip above the
+    first message in the host color while the container below it was
+    token-painted.
+
+    The viewport gets its own, unique object name rather than a broad
+    ``QAbstractScrollArea`` rule, so nested code editors (which are
+    ``QPlainTextEdit`` viewports of their own) are never recolored.
+    """
+    t = _tokens()
+    return (
+        f"QScrollArea#chat_scroll {{ background-color: {t.window}; border: none; }}"
+        f"QWidget#chat_transcript_viewport {{ background-color: {t.window}; }}"
+        f"QWidget#chat_container {{ background-color: {t.window}; }}"
     )
 
 
@@ -194,7 +290,7 @@ def _footer_picker_trigger_style() -> str:
     t = _tokens()
     return (
         f"QToolButton#footer_picker_trigger {{ background: transparent; border: none; "
-        f"border-radius: 4px; padding: 1px 4px; color: {t.text}; font-size: 11px; }}"
+        f"border-radius: 4px; padding: 1px 4px; color: {t.text}; font-size: {role_size(11)}; }}"
         f"QToolButton#footer_picker_trigger:hover {{ background: {t.alt_base}; "
         f"border: 1px solid {t.mid}; padding: 0px 3px; }}"
         f"QToolButton#footer_picker_trigger:focus {{ background: {t.alt_base}; "
@@ -214,24 +310,24 @@ def _model_picker_popup_style() -> str:
         f"border-radius: 5px; }}"
         f"QFrame#model_picker QLabel {{ background: transparent; border: none; }}"
         f"QFrame#model_picker QLabel#model_picker_title {{ color: {t.text}; "
-        f"font-size: 12px; font-weight: semibold; }}"
+        f"font-size: {role_size(12)}; font-weight: semibold; }}"
         f"QFrame#model_picker QLabel#model_picker_thinking_label, "
-        f"QFrame#model_picker QLabel#model_picker_hint {{ color: {t.muted_text}; font-size: 11px; }}"
+        f"QFrame#model_picker QLabel#model_picker_hint {{ color: {t.muted_text}; font-size: {role_size(11)}; }}"
         f"QFrame#model_picker QLineEdit {{ background: {t.base}; color: {t.text}; "
-        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 7px; font-size: 12px; }}"
+        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 7px; font-size: {role_size(12)}; }}"
         f"QFrame#model_picker QLineEdit:focus {{ border: 2px solid {t.accent}; padding: 3px 6px; }}"
         f"QFrame#model_picker QTreeWidget {{ background: {t.base}; color: {t.text}; "
-        f"border: 1px solid {t.mid}; border-radius: 4px; font-size: 12px; "
+        f"border: 1px solid {t.mid}; border-radius: 4px; font-size: {role_size(12)}; "
         f"outline: none; show-decoration-selected: 0; }}"
         f"QFrame#model_picker QTreeWidget::item {{ border: none; padding: 0px; }}"
         f"QFrame#model_picker QTreeWidget::item:selected {{ background: {t.selection}; color: {t.text}; }}"
         f"QFrame#model_picker QTreeWidget::item:hover {{ background: {t.alt_base}; }}"
         f"QFrame#model_picker QComboBox {{ background: {t.button}; color: {t.button_text}; "
-        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 3px 7px; font-size: 12px; "
+        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 3px 7px; font-size: {role_size(12)}; "
         f"min-height: 20px; }}"
         f"QFrame#model_picker QComboBox:focus {{ border: 2px solid {t.accent}; padding: 2px 6px; }}"
         f"QFrame#model_picker QPushButton {{ background: transparent; color: {t.accent}; "
-        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 8px; font-size: 11px; "
+        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 8px; font-size: {role_size(11)}; "
         f"text-align: left; }}"
         f"QFrame#model_picker QPushButton:hover {{ background: {t.alt_base}; border-color: {t.accent}; }}"
     )
@@ -239,24 +335,45 @@ def _model_picker_popup_style() -> str:
 
 # Session strip (chat tabs) — active tab uses selection fill + accent underline
 def _tab_widget_style() -> str:
+    """Session strip + chat tabs (G2/G3), applied in EVERY theme mode.
+
+    One builder, no geometry/colour split: in AUTO/IDA the tokens come
+    from the real host ``QPalette``, so these are the host's own colors,
+    not a forced bundled palette.  Keeping the whole sheet applied is
+    what preserves the G3 2 px active underline — clearing the colour half
+    in host mode dropped the active state along with the colors.
+
+    The panel sets this string on the ``#session_strip`` frame (which
+    cascades it to the reparented ``_AddButtonTabBar`` inside it) and on
+    the bar itself, so the chrome never depends on which widget happens
+    to own the bar.
+    """
     t = _tokens()
     return (
-        f"QTabWidget::pane {{ border: none; }}"
         # G2: session strip min-height 31 px, inset 9 px, gap 7 px.
-        f"QTabBar {{ background: {t.window}; border: none; "
+        f"QFrame#session_strip {{ background: {t.window}; border: none; "
         f"border-bottom: 1px solid {t.mid}; }}"
+        f"_AddButtonTabBar {{ background: {t.window}; border: none; }}"
+        f"QTabBar {{ background: {t.window}; border: none; }}"
+        # G2: 9 px inset padding and a 2 px active underline, sized so the
+        # 12 px tab text reaches the 31 px strip baseline.
         f"QTabBar::tab {{ background: transparent; color: {t.muted_text}; "
-        f"padding: 2px 9px; margin: 2px 2px 0 2px; min-width: 40px; "
+        f"padding: 4px 9px; margin: 2px 2px 0 2px; min-width: 40px; "
         f"border: none; border-bottom: 2px solid transparent; "
-        f"font-size: 12px; max-width: 160px; }}"
+        f"font-size: {role_size(12)}; max-width: 160px; }}"
         # G1/G3: active nav = selection fill + accent underline; the label
         # uses ``text`` (``highlight_text`` is white in light mode and
         # would be invisible on a near-white surface).
         f"QTabBar::tab:selected {{ background: {t.selection}; color: {t.text}; "
         f"border-bottom: 2px solid {t.accent}; }}"
         f"QTabBar::tab:hover:!selected {{ background: {t.alt_base}; color: {t.text}; }}"
-        f"QTabBar::close-button {{ image: none; border: none; padding: 1px; }}"
-        f"QTabBar::close-button:hover {{ background: {t.error}; border-radius: 2px; }}"
+        # Close affordance keeps Qt's native glyph (dropping the image
+        # made the tab look like a bare label) and only tints on hover.
+        f"QTabBar::close-button {{ border: none; border-radius: 2px; }}"
+        f"QTabBar::close-button:hover {{ background: {t.error}; }}"
+        # G3: every session tab stays reachable at 460 px through the bar's
+        # native scroll buttons.
+        f"QTabBar::scroll-button {{ background: {t.alt_base}; border: none; }}"
     )
 
 
@@ -433,7 +550,7 @@ def _history_scope_style() -> str:
     # width policy (set by the panel) lets the scope badge drop out at
     # narrow pane widths instead of squeezing the title — the header
     # still names the pane and keeps Close reachable.
-    return f"color: {t.muted_text}; font-size: 11px; border-radius: 3px;"
+    return f"color: {t.muted_text}; font-size: {role_size(11)}; border-radius: 3px;"
 
 
 def _history_status_style() -> str:
@@ -506,7 +623,7 @@ def _history_delete_btn_style() -> str:
 def _settings_heading_style() -> str:
     """``Settings`` page heading (G2: 15 px semibold)."""
     t = _tokens()
-    return f"color: {t.text}; font-size: 15px; font-weight: 600; background: transparent;"
+    return f"color: {t.text}; font-size: {role_size(15)}; font-weight: 600; background: transparent;"
 
 
 def _settings_subnav_style() -> str:
@@ -523,7 +640,7 @@ def _settings_subnav_style() -> str:
         f"QWidget#settings_subnav {{ background: {t.window}; border-bottom: 1px solid {t.mid}; }}"
         f"QPushButton#settings_subnav_btn {{ background: transparent; color: {t.muted_text};"
         f" border: none; border-radius: 4px; padding: 5px 10px; min-height: 19px;"
-        f" font-size: 12px; text-align: left; }}"
+        f" font-size: {role_size(12)}; text-align: left; }}"
         f"QPushButton#settings_subnav_btn:hover {{ background: {t.alt_base}; color: {t.text}; }}"
         f"QPushButton#settings_subnav_btn:checked {{ background: {t.selection}; color: {t.accent};"
         f" font-weight: 600; }}"
@@ -541,9 +658,9 @@ def _settings_section_style() -> str:
         # carries the distinct ``settings_section_first`` object name.
         f"QFrame#settings_section_first {{ background: transparent; border: none;"
         f" border-top: none; }}"
-        f"QLabel#settings_section_title {{ color: {t.text}; font-size: 12px;"
+        f"QLabel#settings_section_title {{ color: {t.text}; font-size: {role_size(12)};"
         f" font-weight: 600; background: transparent; }}"
-        f"QLabel#settings_form_label {{ color: {t.muted_text}; font-size: 12px;"
+        f"QLabel#settings_form_label {{ color: {t.muted_text}; font-size: {role_size(12)};"
         f" background: transparent; }}"
     )
 
@@ -553,11 +670,11 @@ def _settings_footer_style() -> str:
     t = _tokens()
     return (
         f"QFrame#settings_footer {{ background: {t.window}; border-top: 1px solid {t.mid}; }}"
-        f"QLabel#settings_footer_hint {{ color: {t.muted_text}; font-size: 11px;"
+        f"QLabel#settings_footer_hint {{ color: {t.muted_text}; font-size: {role_size(11)};"
         f" background: transparent; }}"
         f"QPushButton#settings_footer_btn {{ background: {t.button}; color: {t.button_text};"
         f" border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 9px;"
-        f" min-width: 55px; min-height: 20px; font-size: 12px; }}"
+        f" min-width: 55px; min-height: 20px; font-size: {role_size(12)}; }}"
         f"QPushButton#settings_footer_btn:hover {{ background: {t.alt_base}; border-color: {t.accent}; }}"
         f"QPushButton#settings_footer_btn:pressed {{ background: {t.mid}; }}"
         f"QPushButton#settings_footer_btn:focus {{ border-color: {t.accent}; outline: 2px solid {t.accent}; }}"
@@ -582,7 +699,7 @@ def _tools_subnav_style() -> str:
         f"QWidget#tools_subnav {{ background: {t.window}; border-bottom: 1px solid {t.mid}; }}"
         f"QPushButton#tools_subnav_btn {{ background: transparent; color: {t.muted_text};"
         f" border: none; border-radius: 4px; padding: 5px 10px; min-height: 19px;"
-        f" font-size: 12px; text-align: left; }}"
+        f" font-size: {role_size(12)}; text-align: left; }}"
         f"QPushButton#tools_subnav_btn:hover {{ background: {t.alt_base}; color: {t.text}; }}"
         f"QPushButton#tools_subnav_btn:checked {{ background: {t.selection}; color: {t.accent};"
         f" font-weight: 600; }}"
@@ -596,14 +713,14 @@ def _tools_section_style() -> str:
     return (
         f"QFrame#tools_section {{ background: transparent; border: none;"
         f" border-top: 1px solid {t.mid}; }}"
-        f"QLabel#tools_section_title {{ color: {t.text}; font-size: 12px;"
+        f"QLabel#tools_section_title {{ color: {t.text}; font-size: {role_size(12)};"
         f" font-weight: 600; background: transparent; }}"
         f"QTableWidget#tools_table {{ background: {t.base}; color: {t.text};"
         f" border: 1px solid {t.mid}; gridline-color: {t.mid}; }}"
         f"QTableWidget#tools_table::item {{ padding: 6px 8px; }}"
         f"QTableWidget#tools_table::item:selected {{ background: {t.selection}; color: {t.text}; }}"
         f"QHeaderView::section {{ background: {t.button}; color: {t.text};"
-        f" border: none; border-bottom: 1px solid {t.mid}; padding: 3px 6px; font-size: 12px; }}"
+        f" border: none; border-bottom: 1px solid {t.mid}; padding: 3px 6px; font-size: {role_size(12)}; }}"
         f"QPlainTextEdit#tools_detail {{ background: {t.code_bg}; color: {t.code_text};"
         f" border: 1px solid {t.mid}; padding: 7px; }}"
         f"QTextEdit#tools_detail {{ background: {t.code_bg}; color: {t.code_text};"
@@ -630,6 +747,9 @@ def get_small_btn_style() -> str:
     return _small_btn_style()
 
 
+def get_primary_btn_style() -> str:
+    return _primary_btn_style()
+
 
 def get_cancel_btn_style() -> str:
     return _cancel_btn_style()
@@ -649,6 +769,14 @@ def get_header_status_style() -> str:
 
 def get_context_bar_style() -> str:
     return _context_bar_style()
+
+
+def get_transcript_surface_style() -> str:
+    return _transcript_surface_style()
+
+
+def get_composer_frame_style() -> str:
+    return _composer_frame_style()
 
 
 def get_footer_style() -> str:

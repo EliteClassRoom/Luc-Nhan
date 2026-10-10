@@ -20,8 +20,7 @@ from .theme.manager import ThemeManager
 
 logger = get_logger()
 # Built-in slash commands whose handlers are wired in AgentLoop.  Single
-# source of truth for the autocomplete list (``set_skill_slugs``) and the
-# composer ``/ Commands`` dialog in ``panel_core``.  "report" is NOT here:
+# source of truth for the autocomplete list (``set_skill_slugs``).  "report" is NOT here:
 # it is a registered built-in skill, so callers merge
 # ``SkillRegistry.list_slugs()`` in before calling ``set_skill_slugs``.
 BUILTIN_COMMAND_SLUGS: tuple[str, ...] = (
@@ -257,14 +256,15 @@ class InputArea(QPlainTextEdit):
     def apply_palette(self, tokens: object) -> None:
         """Push the editor's Base / Text / PlaceholderText roles from tokens.
 
-        ``QPlainTextEdit`` does not expose foreground, background, or
-        placeholder colors as QSS sub-controls; the only way to make
-        typed text visible in every theme (including host/IDA-native
-        where the surrounding chrome may be light-on-light or
-        dark-on-dark) is to set the ``QPalette`` roles explicitly.
-        ``QColor`` and ``QPalette`` are re-exported from
-        ``lucnhan.ui.qt_compat`` (the project binding seam) so the
-        test stub layer is honoured consistently with production.
+        Foreground, background and placeholder are set as ``QPalette``
+        roles because Qt exposes no QSS sub-control for them; the role
+        set is kept internally consistent (WindowText tracks Text) so a
+        reader of the resolved palette cannot see a foreground that
+        disagrees with the one the widget is styled with.
+
+        ``QColor`` / ``QPalette`` come from the ``lucnhan.ui.qt_compat``
+        seam so the test stub layer is honoured consistently with
+        production.
         """
         base = getattr(tokens, "base", "#ffffff")
         text = getattr(tokens, "text", "#1e1e1e")
@@ -272,6 +272,9 @@ class InputArea(QPlainTextEdit):
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Base, QColor(base))
         pal.setColor(QPalette.ColorRole.Text, QColor(text))
+        # ``WindowText`` tracks ``Text`` for consistency: a resolved palette
+        # should not report two different foregrounds for one widget.
+        pal.setColor(QPalette.ColorRole.WindowText, QColor(text))
         # ``PlaceholderText`` exists on Qt 5.12+ / Qt 6.  Guarded so
         # older PySide6 builds (where the role is absent) silently
         # skip the placeholder role but still keep Base/Text visible.

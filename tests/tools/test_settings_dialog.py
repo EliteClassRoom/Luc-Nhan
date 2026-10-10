@@ -68,7 +68,6 @@ for _mod_name in [
         "resolve_auth_cached",
         "DEFAULT_OLLAMA_URL",
         "ProviderRegistry",
-        "build_small_button_stylesheet",
         "maybe_host_stylesheet",
         "use_native_host_theme",
         "get_err_status_style",

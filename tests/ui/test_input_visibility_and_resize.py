@@ -7,27 +7,21 @@ Pins the contract that:
   * ``InputArea.apply_palette`` sets the ``Base``, ``Text``, and
     ``PlaceholderText`` palette roles on the editor from the live
     tokens so typed text is visible in every theme.
-  * ``InputArea.__init__`` enforces a 2-3 line minimum height without
-    capping the maximum, and uses ``Expanding`` vertical size policy
-    so the editor fills the chat-splitter bottom pane when the user
-    drags the handle taller.
-  * ``LucNhanPanelCore._build_ui`` wires a vertical chat splitter
-    between the main conversation area and the input section, so the
-    user can drag the handle to grow the input.
   * ``LucNhanPanelCore.showEvent`` seeds the chat splitter default
     sizes on first show and leaves the splitter alone on subsequent
     shows so the user can drag the handle afterwards.
 
-Most assertions are source-level guards so the tests do not depend
-on the shared Qt-stub layer evolving with unrelated widget APIs.
-The behavioural checks (``apply_palette``, ``showEvent``) install a
-tiny local fake receiver / use ``MagicMock`` for the splitter
-without changing the shared stub.
+The editor's *geometry* (min 38 px, ``Expanding`` vertical policy, no
+maximum cap) is a real-widget property, so it is covered by
+``tests/ui/test_input_geometry_smoke.py`` instead of being pinned as
+source text here.
+
+The ``apply_palette`` check installs a tiny local fake receiver and the
+splitter check uses ``MagicMock``, without changing the shared stub.
 """
 
 from __future__ import annotations
 
-import inspect
 import os
 import sys
 import unittest
@@ -138,12 +132,12 @@ class TestInputQssDarkTheme(unittest.TestCase):
         qss = build_input_area_stylesheet(DARK_TOKENS)
         self.assertTrue(qss, "dark input QSS must not be empty")
         self.assertIn(DARK_TOKENS.base, qss)
-        self.assertIn(DARK_TOKENS.mid, qss)
+        self.assertIn(DARK_TOKENS.highlight, qss)
 
 
 class TestInputQssHostTheme(unittest.TestCase):
     """Host/IDA-native mode must still emit a non-empty QSS so the
-    editor's border / focus / selection stay token-driven. The
+    editor's selection colors stay token-driven. The
     foreground / background / placeholder text are handled by
     ``InputArea.apply_palette`` (QPalette roles), so the host palette
     never bleeds through to render typed text invisible.
@@ -192,6 +186,7 @@ class TestInputPalette(unittest.TestCase):
             {
                 "Base": "Base",
                 "Text": "Text",
+                "WindowText": "WindowText",
                 "PlaceholderText": "PlaceholderText",
             },
         )
@@ -212,59 +207,16 @@ class TestInputPalette(unittest.TestCase):
             LIGHT_TOKENS.text.lower(),
         )
         self.assertEqual(
+            receiver._palette._roles["WindowText"]._name,
+            LIGHT_TOKENS.text.lower(),
+        )
+        self.assertEqual(
             receiver._palette._roles["PlaceholderText"]._name,
             LIGHT_TOKENS.muted_text.lower(),
         )
         # Drop the class-level ``ColorRole`` so other tests in the
         # same process do not observe the monkey-patched attribute.
         del _FakePalette.ColorRole
-
-
-class TestInputSizing(unittest.TestCase):
-    """The two-to-three-line default is on ``InputArea``; the splitter
-    owns the upper bound, so the editor must not pin a maximum
-    height.  The vertical size policy must be ``Expanding`` so the
-    editor fills the chat-splitter bottom pane when the user drags
-    the handle taller.  Source-level guards so the tests do not
-    depend on the shared Qt stub returning real ``maximumHeight``
-    or actual splitter geometry.
-    """
-
-    def test_input_area_sizing_contract(self) -> None:
-        from lucnhan.ui.input_area import InputArea
-
-        source = inspect.getsource(InputArea.__init__)
-        self.assertIn(
-            "self.setMinimumHeight(38)",
-            source,
-            msg=(
-                "InputArea must default to the GUI contract G2 composer "
-                "minimum height (38 px); the panel pins the 44 px baseline."
-            ),
-        )
-        # ``setMaximumHeight`` must not be called on the editor — the
-        # vertical QSplitter in the panel owns the upper bound.
-        self.assertNotIn(
-            "setMaximumHeight",
-            source,
-            msg=(
-                "InputArea must not cap its maximum height; the vertical QSplitter in the panel owns the upper bound."
-            ),
-        )
-        # Vertical policy must be ``Expanding`` so the editor fills
-        # the chat-splitter bottom pane when the user drags the
-        # handle taller.  ``Preferred`` would let the splitter grow
-        # the pane but leave the editor at its size hint with empty
-        # space below.
-        self.assertIn(
-            "QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding",
-            source,
-            msg=(
-                "InputArea must use Expanding vertical size policy so "
-                "the editor fills the chat-splitter bottom pane when "
-                "the user drags the handle taller."
-            ),
-        )
 
 
 class TestChatSplitterShowEventSizes(unittest.TestCase):
