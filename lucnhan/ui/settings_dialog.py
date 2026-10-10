@@ -614,10 +614,11 @@ class SettingsDialog(QDialog):
         """Refresh the footer hint: pending selection + unsaved marker."""
         if getattr(self, "_closed", False) or not hasattr(self, "_footer_hint"):
             return
-        pending = f"Pending: {self._provider_combo.currentText()} / {self._get_selected_model_id() or '(no model)'}"
+        pending = f"{self._provider_combo.currentText()} / {self._get_selected_model_id() or '(no model)'}"
         level = self._thinking_combo.currentData() or "none"
         pending = f"{pending} · thinking {'off' if level == 'none' else level}"
-        self._footer_hint.setText(f"{pending}\nFooter: {self._current_selection_text()}")
+        # Hint only shows when there is an unsaved delta; otherwise stays empty.
+        self._footer_hint.setText("" if pending == self._current_selection_text() else f"Unsaved: {pending}")
 
     def _build_placeholder_page(self, title: str) -> QWidget:
         """Empty-state placeholder for a lazily constructed page."""
