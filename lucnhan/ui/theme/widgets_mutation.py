@@ -145,7 +145,8 @@ def _tool_row_style() -> str:
     return (
         f"QFrame#message_tool {{ background-color: {t.alt_base}; border: 1px solid {strong_border(t)}; "
         f"border-radius: 4px; }}"
-        'QFrame#message_tool[nested="true"] { background-color: transparent; border: none; }'
+        f'QFrame#message_tool[nested="true"] {{ background-color: transparent; border: none; '
+        f"border-top: 1px solid {t.mid}; border-radius: 0px; }}"
         f"QFrame#message_tool QToolButton#collapse_button {{ background: transparent; border: none; "
         f"border-radius: 3px; color: {t.text}; padding: 0px; font-size: {_role_size(12)}; }}"
         f"QFrame#message_tool QToolButton#collapse_button:hover {{ background: {t.mid}; color: {t.text}; }}"
