@@ -179,7 +179,9 @@ def _thinking_block_bg(t) -> str:
 
 
 def _thinking_block_border(t) -> str:
-    return t.mid
+    from .theme.manager import strong_border
+
+    return strong_border(t)
 
 
 def _tool_bg(t) -> str:
@@ -950,6 +952,7 @@ class ThinkingWidget(QFrame):
         self.setStyleSheet(
             _tool_frame_style(
                 tokens=tokens,
+                accent=_thinking_block_border(tokens),
                 background=_thinking_surface_bg(tokens),
                 object_name="message_thinking",
             )

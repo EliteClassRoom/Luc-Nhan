@@ -131,18 +131,24 @@ def _tool_approval_body_style() -> str:
 
 
 def _tool_row_style() -> str:
-    """Compact tool summary row (G2/G4): one row, min-height 30, no card
-    chrome. Padding 5/6, gap 8, radius 4 (control radius).
+    """Tool activity row (G2/G4): one row, min-height 30, 1px high-contrast
+    outline so it is easy to see where a tool ran. Rows nested in an
+    expanded group are flat (``nested`` property): the group already
+    carries the outline.
 
     The collapse chevron is flat: left to the host's button chrome it
     painted a dark filled square in Light.
     """
+    from .manager import strong_border
+
     t = _tokens()
     return (
-        "QFrame#message_tool { background-color: transparent; border: none; }"
+        f"QFrame#message_tool {{ background-color: {t.alt_base}; border: 1px solid {strong_border(t)}; "
+        f"border-radius: 4px; }}"
+        'QFrame#message_tool[nested="true"] { background-color: transparent; border: none; }'
         f"QFrame#message_tool QToolButton#collapse_button {{ background: transparent; border: none; "
-        f"border-radius: 3px; color: {t.muted_text}; padding: 0px; }}"
-        f"QFrame#message_tool QToolButton#collapse_button:hover {{ background: {t.alt_base}; color: {t.text}; }}"
+        f"border-radius: 3px; color: {t.text}; padding: 0px; font-size: {_role_size(12)}; }}"
+        f"QFrame#message_tool QToolButton#collapse_button:hover {{ background: {t.mid}; color: {t.text}; }}"
     )
 
 

@@ -76,6 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other tabs still ask); the AST blocklist and docs review still run on every
   script. The "always allow" for other tools is now a separate flag, so
   allowing one kind no longer silently allows the other.
+- **Tool rows and Thinking blocks have a high-contrast outline.** Tool calls,
+  batches and groups are now outlined boxes (border derived from the active
+  palette to reach 3:1 against the transcript, in Dark, Light and host
+  themes), so it is easy to see where a tool ran; rows inside an expanded
+  group stay flat under the group's outline, and the approval gate keeps its
+  warning-coloured border as the one exception. The Thinking block uses the
+  same stronger border. Clicking anywhere on a tool row's header expands it,
+  and the chevron uses the text colour.
 
 ### Added
 

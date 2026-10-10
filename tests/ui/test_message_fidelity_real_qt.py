@@ -1477,7 +1477,8 @@ class TestGroupBodyBackground(_ThemeStateMixin, unittest.TestCase):
 
         image = holder.grab().toImage()
         origin = group._body.mapTo(holder, QPoint(3, 1))
-        self.assertEqual(image.pixelColor(origin).name(), "#00aa00")
+        # The group paints its own token fill; the host's magenta must not win.
+        self.assertEqual(image.pixelColor(origin).name(), _tokens().alt_base.lower())
 
 
 @requires_real_qt

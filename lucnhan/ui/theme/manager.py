@@ -35,7 +35,7 @@ except (ImportError, ModuleNotFoundError):  # pragma: no cover — headless fall
 
 from .palette_dark import DARK_TOKENS
 from .palette_light import LIGHT_TOKENS
-from .tokens import (  # noqa: F401 — re-exported
+from .tokens import (
     ThemeMode,
     ThemeTokens,
     hex_luminance,
@@ -107,6 +107,23 @@ def blend_hex(h1: str, h2: str, t: float) -> str:
     c2 = _hex_to_linear_rgb(h2)
     out = tuple(c1[i] * (1 - t) + c2[i] * t for i in range(3))
     return _linear_rgb_to_hex(out)
+
+
+def strong_border(tokens: Any, target: float = 3.0) -> str:
+    """Border colour that reads against ``tokens.window`` (WCAG non-text 3:1).
+
+    ``mid`` is a quiet divider (about 1.3:1) - fine between sections, too
+    faint to outline a control or a block. This walks from the window colour
+    toward the text colour until the contrast target is met, so it holds in
+    Dark, Light and any derived host palette.
+    """
+    lw = hex_luminance(tokens.window)
+    for step in range(1, 21):
+        colour = blend_hex(tokens.window, tokens.text, step / 20)
+        lc = hex_luminance(colour)
+        if (max(lw, lc) + 0.05) / (min(lw, lc) + 0.05) >= target:
+            return colour
+    return tokens.text
 
 
 def asdict_fields() -> list[str]:

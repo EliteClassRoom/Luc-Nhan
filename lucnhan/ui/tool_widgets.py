@@ -58,6 +58,19 @@ from .theme.manager import ThemeManager, blend_hex
 # exactly one caller, so a re-export would buy nothing.
 from .theme.widgets_mutation import get_tool_approval_pending_row_style
 
+
+def set_tool_row_nested(widget: QWidget, nested: bool) -> None:
+    """Mark a tool row as living inside a group (flat) or on its own (outlined).
+
+    The row QSS keys on this property, and Qt only re-evaluates a property
+    selector after a repolish.
+    """
+    widget.setProperty("nested", nested)
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+
+
 _MAX_ARGS_DISPLAY = 2000
 _MAX_RESULT_DISPLAY = 3000
 #: Maximum visible lines in the ExecutePythonWidget result editor before it
@@ -1191,7 +1204,21 @@ class _SharedSpinnerTimer:
             cls._instance = None
 
 
-class ToolCallWidget(QFrame):
+class _HeaderClickToggle:
+    """Clicking anywhere on a tool row's header toggles it, not only the chevron.
+
+    The chevron is 14 px; the 30 px row is the target the eye finds. Clicks
+    below the header (the expanded detail: selectable text, Raw/Copy) are
+    left alone.
+    """
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= _TOOL_ROW_MIN_HEIGHT + 2:
+            self._toggle()
+        super().mouseReleaseEvent(event)
+
+
+class ToolCallWidget(_HeaderClickToggle, QFrame):
     """Compact tool activity row (GUI contract G2/G4).
 
     Row order is fixed by G4: ``chevron -> status icon -> tool name ->
@@ -1557,7 +1584,7 @@ def _describe_result(result: str, is_error: bool) -> str:
 # ---------------------------------------------------------------------------
 
 
-class ToolBatchWidget(QFrame):
+class ToolBatchWidget(_HeaderClickToggle, QFrame):
     """Groups consecutive calls to the same tool.
 
     Same one-row G4 shape as :class:`ToolCallWidget`; the right-hand
@@ -1794,7 +1821,7 @@ class ToolBatchWidget(QFrame):
 # ---------------------------------------------------------------------------
 
 
-class ToolGroupWidget(QFrame):
+class ToolGroupWidget(_HeaderClickToggle, QFrame):
     """Collapsible group for a consecutive run of tool calls.
 
     One row like every other tool surface (G2/G4): chevron, status icon,
@@ -1878,6 +1905,7 @@ class ToolGroupWidget(QFrame):
 
     def add_widget(self, widget: QWidget, tool_name: str = "") -> None:
         """Add a tool widget into this group."""
+        set_tool_row_nested(widget, True)
         self._count += 1
         self._tool_names.append(tool_name)
         self._body_layout.addWidget(widget)

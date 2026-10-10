@@ -50,7 +50,13 @@ from .styles import (
     is_host_theme,
 )
 from .theme.manager import ThemeManager
-from .tool_widgets import ExecutePythonWidget, ToolApprovalWidget, ToolCallWidget, ToolGroupWidget
+from .tool_widgets import (
+    ExecutePythonWidget,
+    ToolApprovalWidget,
+    ToolCallWidget,
+    ToolGroupWidget,
+    set_tool_row_nested,
+)
 
 _THINKING_MIN_DISPLAY_MS = 500
 
@@ -1202,6 +1208,7 @@ class ChatView(QScrollArea):
         # trailing stretch. Guard ``_container`` for test paths that bypass
         # ``__init__``.
         container = getattr(self, "_container", None)
+        set_tool_row_nested(widget, False)
         widget.setParent(container)
         self._insert_widget(widget)
 
