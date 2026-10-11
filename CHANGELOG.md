@@ -39,6 +39,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Follow-up UI/UX fixes, verified in the native IDA 9.4 GUI at 100 % and
+  150 % scale.** Approval state and composer drafts (including caret/selection)
+  are isolated per chat tab; rejected submissions retain their text, and
+  Send/Queue/Stop follow the active session. Undo history survives successive
+  runs within a session, retains failed reversals, and refreshes the Changes
+  pane without exposing another tab's mutations. Deleting a profile then
+  saving no longer recreates it, and cancelling Settings restores the live
+  theme as well as the saved configuration. Settings pages fit 400/460 logical
+  px without horizontal body scrolling while preserving editable model entry
+  and an accessible Refresh button. The composer and action labels size from
+  the active font. History rows support Return/Enter/Space and left-click only;
+  model search supports Up/Down and single-commit Enter without host shortcuts
+  intercepting those keys. These changes do not alter the host application
+  font/palette or bypass approval gates.
+
 - **Native UI fidelity after the redesign, verified in a real IDA 9.4 GUI at
   100 % and 150 % scale.** Light/Dark/Auto/IDA themes now repaint every
   surface from the active tokens (composer text, transcript gutter and scroll

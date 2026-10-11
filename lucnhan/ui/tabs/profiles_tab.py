@@ -90,6 +90,7 @@ class ProfilesTab(QWidget):
     def _build_profile_selector(self) -> QHBoxLayout:
         """Build the profile selector row with combo box and action buttons."""
         top_row = QHBoxLayout()
+        button_style = get_profiles_btn_style() + "QPushButton { min-width: 0px; padding: 4px 8px; }"
         top_row.addWidget(QLabel("Active Profile:"))
         self._profile_combo = QComboBox()
         self._populate_combo()
@@ -97,17 +98,17 @@ class ProfilesTab(QWidget):
         top_row.addWidget(self._profile_combo, 1)
 
         self._new_btn = QPushButton("+ New")
-        self._new_btn.setStyleSheet(get_profiles_btn_style())
+        self._new_btn.setStyleSheet(button_style)
         self._new_btn.clicked.connect(self._on_new_profile)
         top_row.addWidget(self._new_btn)
 
         self._clone_btn = QPushButton("Clone")
-        self._clone_btn.setStyleSheet(get_profiles_btn_style())
+        self._clone_btn.setStyleSheet(button_style)
         self._clone_btn.clicked.connect(self._on_clone_profile)
         top_row.addWidget(self._clone_btn)
 
         self._delete_btn = QPushButton("Delete")
-        self._delete_btn.setStyleSheet(get_profiles_btn_style())
+        self._delete_btn.setStyleSheet(button_style)
         self._delete_btn.clicked.connect(self._on_delete_profile)
         top_row.addWidget(self._delete_btn)
 
@@ -531,6 +532,12 @@ class ProfilesTab(QWidget):
             return
         self._custom_profiles.pop(name, None)
         self._populate_combo()
+        # The combo no longer offers the deleted profile, but the form
+        # still holds its values and ``_displayed_profile`` still names
+        # it, so the next profile switch or Save re-created the profile
+        # from the stale fields.  Load the selection that is actually
+        # left so both stay consistent.
+        self._load_profile(self._profile_combo.currentText())
 
     def _prompt_new_profile(self, title: str) -> tuple | None:
         """Prompt for name + description. Returns (name, description) or None."""

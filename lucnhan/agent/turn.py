@@ -34,6 +34,7 @@ class TurnEventType(str, Enum):
     SAVE_COMPLETED = "save_completed"
     SAVE_DISCARDED = "save_discarded"
     MUTATION_RECORDED = "mutation_recorded"
+    MUTATION_UNDONE = "mutation_undone"
     RESEARCH_NOTE_SAVED = "research_note_saved"
     RESEARCH_NOTE_REVIEWED = "research_note_reviewed"
     SUBAGENT_SPAWNED = "subagent_spawned"
@@ -353,6 +354,20 @@ class TurnEvent:
                 "reverse_tool": reverse_tool,
                 "reverse_args": reverse_args or {},
             },
+        )
+
+    @staticmethod
+    def mutation_undone(count: int) -> TurnEvent:
+        """Notify the UI that *count* mutations were successfully reversed.
+
+        Only emitted for reversals whose reverse tool actually succeeded;
+        a failed reverse stays in the undo stack and produces no event.
+        Non-reversible records that ``/undo`` dropped are deliberately
+        NOT counted here — nothing was restored for them.
+        """
+        return TurnEvent(
+            type=TurnEventType.MUTATION_UNDONE,
+            metadata={"count": max(0, int(count))},
         )
 
     @staticmethod

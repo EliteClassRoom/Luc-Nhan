@@ -50,7 +50,9 @@ from lucnhan.ui.qt_compat import (
     QApplication,
     QEvent,
     QEventLoop,
+    QKeyEvent,
     QPalette,
+    Qt,
     QTabBar,
     QTimer,
     QWidget,
@@ -64,6 +66,20 @@ _HEIGHT_PX = 800
 
 def _app() -> QApplication:
     return QApplication.instance() or QApplication(sys.argv)
+
+
+def _press_key(widget: QWidget, key) -> None:
+    """Deliver a real key press/release pair to *widget*.
+
+    IDA's bundled PySide6 ships no ``QtTest``, so events go through
+    ``QApplication.sendEvent`` with the real ``QKeyEvent`` — the same
+    path the native smoke uses.  ``InputArea.keyPressEvent`` is reached
+    through the normal Qt dispatch, so the test exercises the shipped
+    keyboard handling rather than calling it directly.
+    """
+    app = _app()
+    for event_type in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+        app.sendEvent(widget, QKeyEvent(event_type, key, Qt.KeyboardModifier.NoModifier))
 
 
 def _settle(ms: int = 400) -> None:
@@ -164,6 +180,20 @@ class _StubController:
         self.session = None
         self._next = 0
         self._tabs = ["tab-0"]
+        self._idb_path = ""
+        # Per-tab undo stacks, addressed by the panel's active-session
+        # scoped Mutations pane (``SessionControllerBase.mutation_records``
+        # returns a private copy of exactly this, records a successful
+        # /undo removed excluded).
+        self.mutations: dict[str, list] = {}
+        # Per-tab run state, so a test can model "tab A is still
+        # streaming while tab B is idle" the way the panel sees it.
+        self.running: set[str] = set()
+
+    def mutation_records(self, tab_id: str | None = None) -> list:
+        """Inert, real snapshot: a copy of the tab's own records."""
+        tid = tab_id if tab_id is not None else self.active_tab_id
+        return list(self.mutations.get(tid, []))
 
     def create_tab(self) -> str:
         self._next += 1
@@ -176,16 +206,32 @@ class _StubController:
         if tab_id in self._tabs:
             self._tabs.remove(tab_id)
 
-    def cancel(self, tab_id: str | None = None) -> None:
-        """Inert: the panel clears its own gate, the controller just stops."""
+    def new_chat(self) -> None:
+        self.mutations.pop(self.active_tab_id, None)
+        self.running.discard(self.active_tab_id)
+        self.is_agent_running = bool(self.running)
+        self.session = None
+
+    def reset_for_new_file(self, path: str) -> None:
+        self._idb_path = path
+        self._tabs.clear()
+        self.mutations.clear()
+        self.running.clear()
         self.is_agent_running = False
+        self.active_tab_id = self.create_tab()
+        self.session = None
+
+    def cancel(self, tab_id: str | None = None) -> None:
+        """Stop one tab only — the real controller cancels per tab."""
+        self.running.discard(tab_id if tab_id is not None else self.active_tab_id)
+        self.is_agent_running = bool(self.running)
 
     def get_runner(self, tab_id: str):
         """Inert runner — the panel only forwards the decision to it."""
         return None
 
     def is_tab_running(self, tab_id: str) -> bool:
-        return False
+        return tab_id in self.running
 
     def switch_tab(self, tab_id: str) -> None:
         self.active_tab_id = tab_id
@@ -1106,6 +1152,372 @@ class TestApprovalGate(_WorkspacePanelTest):
         self.assertFalse(panel._input_area.isReadOnly(), "Stop must unlock the composer")
         self.assertFalse(panel._cancel_btn.isVisible(), "Stop hides once the gate clears")
         self.assertEqual(panel._status_label.text(), "Ready")
+
+
+@requires_real_qt
+class TestConcurrentGatesArePerTab(_WorkspacePanelTest):
+    """A gate belongs to the tab that asked — two tabs wait independently.
+
+    Before the repair the panel kept ONE panel-wide approval flag plus the
+    id of the tab that set it.  Sending from a second tab therefore looked
+    like the answer to the first tab's gate, and switching back showed an
+    unlocked composer with Stop hidden and a "Ready" status while the agent
+    was still blocked.
+    """
+
+    def _new_tab(self, panel) -> str:
+        """Create and focus a second chat tab through the real path."""
+        panel._tab_bar._add_btn.click()
+        _settle(50)
+        return panel._ctrl.active_tab_id
+
+    def _request_script_approval(self, tab_id: str, tool_call_id: str) -> None:
+        from lucnhan import constants
+        from lucnhan.agent.turn import TurnEvent
+
+        # A script approval only reaches the unified gate when the widget
+        # already exists, so drive the real tool sequence first.
+        for event in (
+            TurnEvent.tool_call_start(tool_call_id, constants.EXECUTE_PYTHON_TOOL_NAME),
+            TurnEvent.tool_call_done(
+                tool_call_id,
+                constants.EXECUTE_PYTHON_TOOL_NAME,
+                json.dumps({"code": "print(1)"}),
+            ),
+            TurnEvent.tool_approval_request(
+                tool_call_id,
+                constants.EXECUTE_PYTHON_TOOL_NAME,
+                '{"code":"print(1)"}',
+                "Synthetic gate; the script is never executed",
+            ),
+        ):
+            self._panel._on_event(event, tab_id)
+        _settle(50)
+
+    def test_idle_second_tab_sends_while_first_waits(self) -> None:
+        panel = self._panel
+        tab_a = panel._ctrl.active_tab_id
+        self._request_script_approval(tab_a, "gate-A")
+        tab_b = self._new_tab(panel)
+
+        self.assertNotEqual(tab_b, tab_a)
+        self.assertFalse(
+            panel._input_area.isReadOnly(),
+            "a background gate must not lock another tab's composer",
+        )
+        self.assertTrue(panel._send_btn.isEnabled(), "an idle tab must be able to send")
+        self.assertEqual(panel._status_label.text(), "Ready")
+
+        # The message leaves tab B: it is neither answered into tab A's
+        # gate nor queued behind it.
+        sent: list[tuple[str, str]] = []
+        panel._input_area.setPlainText("Question for tab B")
+        with patch.object(type(panel), "_start_agent_for_tab", lambda self, tid, text: sent.append((tid, text))):
+            panel._send_btn.click()
+        self.assertEqual(sent, [(tab_b, "Question for tab B")])
+
+    def test_switching_back_shows_the_pending_gate_and_stop(self) -> None:
+        panel = self._panel
+        tab_a = panel._ctrl.active_tab_id
+        self._request_script_approval(tab_a, "gate-A")
+        tab_b = self._new_tab(panel)
+        panel._input_area.setPlainText("Typed into tab B")
+        self._request_script_approval(tab_b, "gate-B")
+
+        # Both tabs wait; tab B is on screen, so tab B's gate is shown.
+        self.assertTrue(panel._input_area.isReadOnly())
+        panel._tab_widget.setCurrentIndex(0)
+        _settle(50)
+
+        self.assertEqual(panel._ctrl.active_tab_id, tab_a)
+        self.assertTrue(panel._input_area.isReadOnly(), "switching back must show tab A's gate")
+        self.assertFalse(panel._send_btn.isEnabled(), "Send must be disabled for tab A")
+        self.assertTrue(panel._cancel_btn.isVisible(), "Stop must stay reachable for tab A")
+        self.assertEqual(panel._status_label.text(), "Waiting for approval")
+
+    def test_stop_on_one_tab_leaves_the_other_gate_locked(self) -> None:
+        panel = self._panel
+        tab_a = panel._ctrl.active_tab_id
+        self._request_script_approval(tab_a, "gate-A")
+        tab_b = self._new_tab(panel)
+        self._request_script_approval(tab_b, "gate-B")
+
+        panel._cancel_btn.click()
+        _settle(50)
+
+        self.assertFalse(panel._input_area.isReadOnly(), "Stop must unlock the tab it targets")
+        panel._tab_widget.setCurrentIndex(0)
+        _settle(50)
+        self.assertEqual(panel._ctrl.active_tab_id, tab_a)
+        self.assertTrue(panel._input_area.isReadOnly(), "Stop on tab B must not clear tab A's gate")
+        self.assertTrue(panel._cancel_btn.isVisible(), "tab A must keep Stop")
+        self.assertIn("approval", panel._status_label.text().lower(), panel._status_label.text())
+
+    def test_deciding_one_gate_leaves_the_other_locked(self) -> None:
+        panel = self._panel
+        tab_a = panel._ctrl.active_tab_id
+        self._request_script_approval(tab_a, "gate-A")
+        tab_b = self._new_tab(panel)
+        self._request_script_approval(tab_b, "gate-B")
+
+        # Answer tab B through its own gate widget.
+        from lucnhan.ui.tool_widgets import ExecutePythonWidget
+
+        gates = panel._chat_views[tab_b].findChildren(ExecutePythonWidget)
+        self.assertTrue(gates, "tab B's transcript must render its gate")
+        gates[-1]._allow_btn.click()
+        _settle(50)
+        self.assertFalse(panel._input_area.isReadOnly(), "deciding tab B releases tab B")
+
+        panel._tab_widget.setCurrentIndex(0)
+        _settle(50)
+        self.assertTrue(panel._input_area.isReadOnly(), "tab A must still be waiting")
+
+    def test_refused_send_and_enter_keep_the_draft(self) -> None:
+        panel = self._panel
+        tab_b = self._new_tab(panel)
+        self._request_script_approval(tab_b, "gate-B")
+        draft = "Draft I refuse to lose"
+        panel._input_area.setPlainText(draft)
+        self.assertTrue(panel._input_area.isReadOnly(), "the gate must be up before sending")
+
+        # The Send button path.
+        panel._send_btn.click()
+        self.assertEqual(panel._input_area.toPlainText(), draft, "a refused Send must keep the draft")
+
+        # The Enter path, which clears the editor only on acceptance.
+        _press_key(panel._input_area, Qt.Key.Key_Return)
+        self.assertEqual(panel._input_area.toPlainText(), draft, "a refused Enter must keep the draft")
+
+
+@requires_real_qt
+class TestPerTabDrafts(_WorkspacePanelTest):
+    """Each tab owns its composer text, caret and selection.
+
+    The composer is a single widget shared by every tab, so without a
+    per-tab store a draft typed in one tab is overwritten (or inherited)
+    by the next.
+    """
+
+    def _new_tab(self, panel) -> str:
+        panel._tab_bar._add_btn.click()
+        _settle(50)
+        return panel._ctrl.active_tab_id
+
+    @staticmethod
+    def _select(editor, anchor: int, position: int) -> None:
+        cursor = editor.textCursor()
+        cursor.setPosition(anchor)
+        cursor.setPosition(position, cursor.MoveMode.KeepAnchor)
+        editor.setTextCursor(cursor)
+
+    def test_new_tab_starts_empty_and_returns_the_first_draft(self) -> None:
+        panel = self._panel
+        editor = panel._input_area
+        tab_a = panel._ctrl.active_tab_id
+        editor.setPlainText("Draft A only")
+        self._select(editor, 2, 7)
+
+        tab_b = self._new_tab(panel)
+        self.assertNotEqual(tab_b, tab_a)
+        self.assertEqual(editor.toPlainText(), "", "a new tab must not inherit A's draft")
+
+        editor.setPlainText("Draft B only")
+        panel._tab_widget.setCurrentIndex(0)
+        _settle(50)
+        self.assertEqual(editor.toPlainText(), "Draft A only", "A must get its own draft back")
+        cursor = editor.textCursor()
+        self.assertEqual((cursor.anchor(), cursor.position()), (2, 7), "A must get its selection back")
+
+        panel._tab_widget.setCurrentIndex(1)
+        _settle(50)
+        self.assertEqual(editor.toPlainText(), "Draft B only", "B must get its own draft back")
+
+    def test_survives_repeated_switches_without_drift(self) -> None:
+        panel = self._panel
+        editor = panel._input_area
+        editor.setPlainText("stable draft")
+        self._select(editor, 0, 6)
+        self._new_tab(panel)
+
+        for _ in range(3):
+            panel._tab_widget.setCurrentIndex(0)
+            _settle(50)
+            self.assertEqual(editor.toPlainText(), "stable draft")
+            self.assertEqual(editor.textCursor().selectedText(), "stable")
+            panel._tab_widget.setCurrentIndex(1)
+            _settle(50)
+
+    def test_closing_a_tab_releases_only_that_draft(self) -> None:
+        panel = self._panel
+        editor = panel._input_area
+        panel._input_area.setPlainText("kept draft")
+        self._new_tab(panel)
+        editor.setPlainText("doomed draft")
+
+        # Close tab B (index 1) and confirm tab A's draft is intact.
+        panel._on_close_tab(1)
+        _settle(50)
+        self.assertEqual(panel._ctrl.active_tab_id, "tab-0")
+        self.assertEqual(editor.toPlainText(), "kept draft", "closing B must not touch A's draft")
+
+    def test_database_switch_never_resurrects_the_previous_binary_draft(self) -> None:
+        panel = self._panel
+        panel._input_area.setPlainText("Only meaningful for the previous binary")
+        panel.on_database_changed("synthetic-next-binary.i64")
+        self.assertEqual(panel._input_area.toPlainText(), "")
+        self._new_tab(panel)
+        panel._tab_widget.setCurrentIndex(0)
+        _settle(50)
+        self.assertEqual(panel._input_area.toPlainText(), "")
+
+
+@requires_real_qt
+class TestComposerFitsLargeFont(_WorkspacePanelTest):
+    """The composer and its buttons must fit the text at any font size.
+
+    ``setFixedWidth(64)`` clipped ``Send`` / ``Stop`` / ``Queue`` and the
+    fixed 38 px editor floor cut the first typed line at a 24 pt override.
+    Both minima are now metric-derived; the default font is unchanged.
+    """
+
+    def _fit_report(self) -> dict:
+        panel = self._panel
+        editor = panel._input_area
+        return {
+            "editor_height": editor.height(),
+            "font_height": editor.fontMetrics().height(),
+            "buttons": {
+                btn.text(): (btn.width(), btn.fontMetrics().horizontalAdvance(btn.text()))
+                for btn in (panel._send_btn, panel._cancel_btn)
+            },
+        }
+
+    def test_default_font_keeps_the_compact_baseline(self) -> None:
+        _set_theme(self._panel, "dark")
+        report = self._fit_report()
+        self.assertGreaterEqual(report["editor_height"], 38, "the default composer floor is 38 px")
+        for label, (width, text_width) in report["buttons"].items():
+            self.assertGreaterEqual(width, text_width + 8, f"{label} must fit its label at the default font")
+
+    def test_large_font_shows_a_full_line_and_unclipped_buttons(self) -> None:
+        panel = self._panel
+        _set_theme(panel, "dark")
+        try:
+            self._config.font_size_override = 24
+            panel._apply_font_override()
+            _settle()
+            report = self._fit_report()
+            self.assertGreaterEqual(
+                report["editor_height"],
+                report["font_height"] + 4,
+                "the composer must show a full text line at 24 pt",
+            )
+            for label, (width, text_width) in report["buttons"].items():
+                self.assertGreaterEqual(width, text_width + 8, f"{label} must fit its label at 24 pt")
+        finally:
+            self._config.font_size_override = 0
+            panel._apply_font_override()
+            _settle()
+
+    def test_large_font_queue_transition_fits_the_current_label(self) -> None:
+        panel = self._panel
+        self._config.font_size_override = 24
+        panel._apply_font_override()
+        _settle()
+        panel._ctrl.running.add(panel._ctrl.active_tab_id)
+        panel._ctrl.is_agent_running = True
+        panel._sync_composer_state()
+        _settle()
+        self.assertEqual(panel._send_btn.text(), "Queue")
+        self.assertGreaterEqual(panel._send_btn.width(), panel._send_btn.sizeHint().width())
+
+
+@requires_real_qt
+class TestMutationPaneIsSessionScoped(_WorkspacePanelTest):
+    """The Mutations pane lists the ACTIVE session's undo stack only."""
+
+    def _record(self, description: str):
+        from lucnhan.agent.mutation import MutationRecord
+
+        return MutationRecord(
+            tool_name="patch_binary",
+            arguments={},
+            reverse_tool="restore_patch",
+            reverse_arguments={},
+            description=description,
+            reversible=True,
+        )
+
+    def _add(self, panel, tab_id: str, count: int) -> None:
+        panel._ctrl.mutations.setdefault(tab_id, []).extend(self._record(f"{tab_id} change {i}") for i in range(count))
+        panel._refresh_mutation_pane()
+
+    def test_pane_follows_the_active_tab_only(self) -> None:
+        panel = self._panel
+        tab_a = panel._ctrl.active_tab_id
+        self._add(panel, tab_a, 2)
+        self.assertEqual(panel._mutation_panel.entry_count(), 2)
+
+        panel._tab_bar._add_btn.click()
+        _settle(50)
+        tab_b = panel._ctrl.active_tab_id
+        self._add(panel, tab_b, 1)
+        self.assertEqual(panel._mutation_panel.entry_count(), 1, "the pane must show tab B's own stack")
+
+        panel._tab_widget.setCurrentIndex(0)
+        _settle(50)
+        self.assertEqual(panel._mutation_panel.entry_count(), 2, "the pane must follow back to tab A")
+
+    def test_successful_undo_drops_the_record(self) -> None:
+        from lucnhan.agent.turn import TurnEvent
+
+        panel = self._panel
+        tab_id = panel._ctrl.active_tab_id
+        self._add(panel, tab_id, 2)
+
+        # The /undo run reversed the newest record; the controller's
+        # stack is the source of truth for the pane.
+        panel._ctrl.mutations[tab_id].pop()
+        panel._on_event(TurnEvent.mutation_undone(1), tab_id)
+
+        self.assertEqual(panel._mutation_panel.entry_count(), 1, "a successful undo removes the record")
+
+    def test_background_undo_does_not_touch_the_visible_pane(self) -> None:
+        from lucnhan.agent.turn import TurnEvent
+
+        panel = self._panel
+        tab_a = panel._ctrl.active_tab_id
+        self._add(panel, tab_a, 2)
+        panel._tab_bar._add_btn.click()
+        _settle(50)
+        tab_b = panel._ctrl.active_tab_id
+        self._add(panel, tab_b, 1)
+        panel._tab_widget.setCurrentIndex(0)
+        _settle(50)
+        before = panel._mutation_panel.entry_count()
+
+        # Tab B (in the background) undoes its only record.
+        panel._ctrl.mutations[tab_b].clear()
+        panel._on_event(TurnEvent.mutation_undone(1), tab_b)
+
+        self.assertEqual(
+            panel._mutation_panel.entry_count(),
+            before,
+            "a background undo must not re-scope or alter the active pane",
+        )
+
+    def test_clearing_current_chat_drops_visible_mutations(self) -> None:
+        from types import SimpleNamespace
+
+        panel = self._panel
+        self._add(panel, panel._ctrl.active_tab_id, 1)
+        self.assertEqual(panel._mutation_panel.entry_count(), 1)
+        panel._ctrl.session = SimpleNamespace(messages=[object()], last_prompt_tokens=0)
+        with patch.object(panel, "_show_new_chat_dialog", return_value="clear"):
+            panel._tab_bar._add_btn.click()
+        self.assertEqual(panel._ctrl.mutation_records(), [])
+        self.assertEqual(panel._mutation_panel.entry_count(), 0)
 
 
 if __name__ == "__main__":

@@ -7,17 +7,14 @@ Pins the contract that:
   * ``InputArea.apply_palette`` sets the ``Base``, ``Text``, and
     ``PlaceholderText`` palette roles on the editor from the live
     tokens so typed text is visible in every theme.
-  * ``LucNhanPanelCore.showEvent`` seeds the chat splitter default
-    sizes on first show and leaves the splitter alone on subsequent
-    shows so the user can drag the handle afterwards.
 
 The editor's *geometry* (min 38 px, ``Expanding`` vertical policy, no
 maximum cap) is a real-widget property, so it is covered by
 ``tests/ui/test_input_geometry_smoke.py`` instead of being pinned as
 source text here.
 
-The ``apply_palette`` check installs a tiny local fake receiver and the
-splitter check uses ``MagicMock``, without changing the shared stub.
+The ``apply_palette`` check installs a tiny local fake receiver without
+changing the shared stub; geometry is covered by native widget smoke tests.
 """
 
 from __future__ import annotations
@@ -25,7 +22,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -217,46 +214,6 @@ class TestInputPalette(unittest.TestCase):
         # Drop the class-level ``ColorRole`` so other tests in the
         # same process do not observe the monkey-patched attribute.
         del _FakePalette.ColorRole
-
-
-class TestChatSplitterShowEventSizes(unittest.TestCase):
-    """``LucNhanPanelCore.showEvent`` seeds the chat splitter default
-    sizes on first show, then leaves the splitter alone on subsequent
-    shows so the user can drag the handle afterwards.  The test
-    uses ``LucNhanPanelCore.__new__`` to bypass the heavy ``__init__``
-    and installs ``MagicMock`` stand-ins for the splitter, so the
-    test does not depend on real Qt construction.
-    """
-
-    def _make_panel(self, *, total_height: int):
-        from lucnhan.ui.panel_core import LucNhanPanelCore
-
-        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
-        panel._chat_splitter = MagicMock()
-        panel._chat_splitter.height.return_value = total_height
-        return panel
-
-    def test_first_show_seeds_composer_baseline(self) -> None:
-        """The one-shot seed pins the composer to its GUI contract G2
-        baseline (44 px editor + action row); the transcript above takes
-        the remainder.  The user can drag from there.
-        """
-        panel = self._make_panel(total_height=400)
-        panel._seed_chat_splitter()
-        panel._chat_splitter.setSizes.assert_called_once()
-        sizes = panel._chat_splitter.setSizes.call_args[0][0]
-        self.assertEqual(sizes[1], 44 + 34)
-        self.assertEqual(sizes[0], 400 - (44 + 34))
-
-    def test_second_show_does_not_reset_sizes(self) -> None:
-        """After the first seed, later seeds must NOT clobber the
-        user-dragged sizes with the one-shot default.
-        """
-        panel = self._make_panel(total_height=400)
-        panel._seed_chat_splitter()
-        panel._seed_chat_splitter()
-        panel._seed_chat_splitter()
-        self.assertEqual(panel._chat_splitter.setSizes.call_count, 1)
 
 
 if __name__ == "__main__":

@@ -294,6 +294,12 @@ def _qt_class(name: str) -> type:
     def _accessible_name_getter(self) -> str:
         return getattr(self, "_accessible_name", "")
 
+    def _set_accessible_description(self, value: object) -> None:
+        self._accessible_description = "" if value is None else str(value)
+
+    def _accessible_description_getter(self) -> str:
+        return getattr(self, "_accessible_description", "")
+
     def _set_enabled(self, value: object) -> None:
         self._enabled = bool(value)
 
@@ -504,6 +510,7 @@ def _qt_class(name: str) -> type:
         # its chrome reflows. The stub has no event delivery, so a truthful
         # no-op is the whole behaviour.
         "installEventFilter": _noop,
+        "eventFilter": lambda _self, _watched, _event: False,
         "removeEventFilter": _noop,
         "parentWidget": _parent_getter,
         "findChildren": _find_children,
@@ -541,9 +548,13 @@ def _qt_class(name: str) -> type:
         "hasFocus": _has_focus,
         "setFocusPolicy": _set_focus_policy,
         "focusPolicy": _focus_policy,
+        "keyPressEvent": _noop,
+        "mouseReleaseEvent": _noop,
         "toolTip": _tooltip_getter,
         "setAccessibleName": _set_accessible_name,
         "accessibleName": _accessible_name_getter,
+        "setAccessibleDescription": _set_accessible_description,
+        "accessibleDescription": _accessible_description_getter,
         "setTextFormat": _set_text_format,
         "textFormat": _text_format_getter,
         "setTextInteractionFlags": _noop,
@@ -1081,7 +1092,9 @@ _GUI_NAMES = [
     "QColor",
     "QFont",
     "QIntValidator",
+    "QKeyEvent",
     "QKeySequence",
+    "QMouseEvent",
     "QPalette",
     "QShortcut",
     "QSyntaxHighlighter",
@@ -1177,6 +1190,25 @@ def ensure_pyside6_stubs() -> None:
         },
     )()
     _sentinel.Orientation = type("_Orientation", (), {"Horizontal": 1, "Vertical": 2})()
+    _sentinel.Key = type(
+        "_Key",
+        (),
+        {
+            "Key_Space": 0x20,
+            "Key_A": 0x41,
+            "Key_Escape": 0x01000000,
+            "Key_Tab": 0x01000001,
+            "Key_Enter": 0x01000004,
+            "Key_Return": 0x01000005,
+            "Key_Up": 0x01000013,
+            "Key_Down": 0x01000015,
+        },
+    )()
+    _sentinel.MouseButton = type(
+        "_MouseButton",
+        (),
+        {"NoButton": 0, "LeftButton": 1, "RightButton": 2, "MiddleButton": 4, "BackButton": 8, "ForwardButton": 0x10},
+    )()
     # Qt.FocusPolicy enum — used by QPushButton.setFocusPolicy so a
     # keyboard user can reach the row's delete button via Tab. The
     # stub only needs the values production code references
@@ -1247,13 +1279,19 @@ def ensure_pyside6_stubs() -> None:
         },
     )()
 
+    qevent = _qt_class("QEvent")
+    qevent.Type = type(
+        "_EventType",
+        (),
+        {"KeyPress": 6, "KeyRelease": 7, "ShortcutOverride": 51, "WindowDeactivate": 36},
+    )()
     sys.modules.setdefault("PySide6", _stub_mod("PySide6"))
     sys.modules.setdefault(
         "PySide6.QtCore",
         _stub_mod(
             "PySide6.QtCore",
             Signal=_Signal,
-            QEvent=_qt_class("QEvent"),
+            QEvent=qevent,
             # ``qt_compat`` re-exports it, so a stubbed session must be
             # able to import the same symbol set the real seam provides.
             # ``exec``/``quit`` mirror the real names; nothing here runs a
@@ -1261,6 +1299,7 @@ def ensure_pyside6_stubs() -> None:
             QEventLoop=_make_qeventloop_stub(),
             Qt=_sentinel,
             QObject=_qt_class("QObject"),
+            QPointF=_qt_class("QPointF"),
             QSize=_make_qsize_stub(),
             QTimer=_make_qtimer_stub(),
             # Minimal QCoreApplication stub — real tests that need a
@@ -1798,7 +1837,7 @@ def ensure_pyside6_stubs() -> None:
         return _QTabWidget
 
     def _make_qcombobox_stub() -> type:
-        class _QComboBox:
+        class _QComboBox(_qt_class("QComboBox")):
             def __init__(self, parent=None):
                 self._items: list = []  # list of (label, data)
                 self._current = -1

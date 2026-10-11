@@ -8,9 +8,9 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import CancelledError, ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from ..agent.mutation import MutationRecord
 from ..agent.turn import TurnEvent, TurnEventType
 from ..constants import HISTORY_DELETE_SLOW_NOTICE_SECONDS
 from ..core.config import LucNhanConfig
@@ -40,7 +40,7 @@ from .export_formatting import (
     _export_format_tool_result,
 )
 from .history_panel import HistoryPanel
-from .input_area import InputArea
+from .input_area import InputArea, _composer_min_height
 from .model_picker import (
     MAX_TRIGGER_WIDTH_RATIO,
     ModelCatalogCache,
@@ -97,9 +97,11 @@ _HISTORY_RESULT_QUEUE_MAXSIZE = 2
 # Distinct prefix for the history worker pool (spec §6.1, §11.4).
 _HISTORY_EXECUTOR_PREFIX = "lucnhan-history"
 
-# Fixed width for header action buttons (Send, Cancel, New, Export,
-# Settings, Mutations, Tools). Square-ish so icon + short label fit
-# without the row growing when one button gets a longer label.
+# Baseline width for the fixed-width action buttons (Send, Stop, New,
+# Export, Settings, Mutations, Tools). Square-ish so icon + short label
+# fit without the row growing when one button gets a longer label — but
+# only a *floor*: the real width is metric-derived (see
+# ``_action_button_width``) so a large user font is not clipped.
 _ACTION_BUTTON_WIDTH = 64
 
 # GUI contract G2 / G3 — workspace geometry, all values in Qt logical px.
@@ -110,9 +112,15 @@ _HEADER_GAP = 10
 _HEADER_GAP_NARROW = 5
 # Session strip: min-height 31 px, inset 9 px, gap 7 px.
 _SESSION_STRIP_MIN_HEIGHT = 31
-# Composer text baseline / minimum, and the action-control row.
+# Composer text baseline / minimum, and the action-control row.  Both
+# values are *baselines*: the effective minimum is metric-derived
+# (``InputArea._composer_min_height``) so a user font override grows the
+# composer instead of clipping it.
 _COMPOSER_TEXT_HEIGHT = 44
 _COMPOSER_MIN_HEIGHT = 38
+# Action-row chrome (button padding + border) the composer seed adds on
+# top of the editor baseline.
+_COMPOSER_ACTION_ROW_CHROME = 34
 # Footer: min-height 25 px, padding 2 / 11 px.
 _FOOTER_MIN_HEIGHT = 25
 # GUI contract G2: wide auxiliary pane nominal width.  Pinned (not
@@ -138,6 +146,48 @@ _ACTION_BUTTON_TOOLTIPS = {
     "_history_btn": "Show past chat sessions",
     "_tools_btn": "Open the tools panel",
 }
+
+
+@dataclass
+class _TabGateState:
+    """One tab's blocking gates.
+
+    ``pending_answer`` and ``button_only`` are separate because a single
+    tab can hold both at once: a question the user answers with buttons
+    (plan / save / option-only ask_user) is a pending answer *and* a
+    button-only gate, while a free-text question only blocks the answer
+    channel.  Both are per tab — the panel-wide booleans they replace
+    could only ever describe ONE tab and silently cleared another tab's
+    gate.
+    """
+
+    pending_answer: bool = False
+    button_only: bool = False
+
+
+@dataclass
+class _TabDraft:
+    """A tab's composer draft: text plus the caret/selection to restore."""
+
+    text: str = ""
+    anchor: int = 0
+    position: int = 0
+
+
+def _action_button_width(button: QPushButton) -> int:
+    """Width that fits *button*'s styled label, never below the contract.
+
+    ``setFixedWidth(64)`` clipped ``Send`` / ``Stop`` / ``Queue`` at a 24 pt
+    user font.  ``sizeHint()`` is the only measure that already accounts
+    for the QSS the button carries (its ``font-size``, padding and
+    borders), so it tracks a font override without a second copy of the
+    padding numbers.  The 64 px floor keeps the compact default layout
+    byte-identical, and the splitter resize is unaffected.
+    """
+    try:
+        return max(_ACTION_BUTTON_WIDTH, int(button.sizeHint().width()))
+    except (AttributeError, RuntimeError, TypeError, ValueError):  # stubbed / torn-down button
+        return _ACTION_BUTTON_WIDTH
 
 
 def _palette_from_tokens(widget: QWidget, tokens: object) -> object | None:
@@ -302,13 +352,16 @@ class LucNhanPanelCore(QWidget):
         _early_log("panel_core:post_controller_fields:entry")
         self._poll_timer: QTimer | None = None
         self._polling = False
-        self._pending_answer = False
-        self._awaiting_button_approval = False
-        # Multi-tab: which tab's runner awaits an answer/approval. The
-        # input area is global, so the booleans above still gate it
-        # panel-wide (C1); these route the answer to the right runner.
-        self._pending_answer_tab: str | None = None
-        self._awaiting_approval_tab: str | None = None
+        # Per-tab gate state.  The composer is global, but every gate
+        # (pending question, button-only approval) belongs to ONE tab's
+        # runner, so each tab owns its own entry: two tabs can wait on
+        # separate questions without either clearing the other, and the
+        # composer / Send / Stop / status presentation is derived from the
+        # ACTIVE tab only.
+        self._tab_gates: dict[str, _TabGateState] = {}
+        # Per-tab composer draft (text + caret/selection).  Lives in
+        # memory only — never persisted, never part of the session schema.
+        self._tab_drafts: dict[str, _TabDraft] = {}
         self._is_shutdown = False
         self._ui_hooks_factory = ui_hooks_factory
         self._ui_hooks = None
@@ -944,8 +997,11 @@ class LucNhanPanelCore(QWidget):
         if total <= 0:
             return
         self._chat_splitter_seeded = True
-        composer_size = _COMPOSER_TEXT_HEIGHT + 34  # editor baseline + action row
-        composer_size = min(composer_size, max(_COMPOSER_MIN_HEIGHT, total - 80))
+        composer_size = _COMPOSER_TEXT_HEIGHT + _COMPOSER_ACTION_ROW_CHROME
+        # Never seed below what the editor now demands (a large user font
+        # needs more than the 44 px baseline for one full line).
+        floor = max(_COMPOSER_MIN_HEIGHT, _composer_min_height(self._input_area))
+        composer_size = min(composer_size, max(floor, total - 80))
         transcript_size = max(40, total - composer_size)
         splitter.setSizes([transcript_size, composer_size])
 
@@ -1202,11 +1258,15 @@ class LucNhanPanelCore(QWidget):
         self._input_area.set_cancel_callback(self._on_cancel)
         self._input_area.set_skill_slugs(self._ctrl.skill_slugs)
         self._ensure_skills_refresh_timer()
-        # GUI contract G2: composer text baseline 44 px, min 38 px.  The editor
-        # stays *stretchable* — the drag-to-grow composer behaviour is
-        # unchanged, so no maximum height is pinned here (the vertical
-        # chat splitter owns the pane the editor lives in).
-        self._input_area.setMinimumHeight(_COMPOSER_MIN_HEIGHT)
+        # GUI contract G2: composer text baseline 44 px.  The *minimum* is
+        # metric-derived by the editor itself (one full text line plus
+        # padding), so a user font override grows the composer instead of
+        # clipping the first line, while the default 13 px role keeps the
+        # 38 px contract floor.  The editor stays *stretchable* — the
+        # drag-to-grow composer behaviour is unchanged, so no maximum
+        # height is pinned here (the vertical chat splitter owns the pane
+        # the editor lives in).
+        self._input_area.setMinimumHeight(_composer_min_height(self._input_area))
         self._input_area.setMaximumHeight(16777215)
         input_layout.addWidget(self._input_area, 1)
 
@@ -1234,14 +1294,16 @@ class LucNhanPanelCore(QWidget):
         self._send_btn.setObjectName("send_button")
         self._send_btn.setToolTip("Send the message (Enter)")
         self._send_btn.setAccessibleName("Send — Send the message (Enter)")
-        self._send_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
+        # Metric-derived floor; ``_apply_composer_metric_minima`` re-fits it
+        # whenever a font override changes the styled label.
+        self._send_btn.setFixedWidth(_action_button_width(self._send_btn))
         self._send_btn.clicked.connect(self._on_send_clicked)
         action_row.addWidget(self._send_btn)
         self._cancel_btn = QPushButton("Stop")
         self._cancel_btn.setObjectName("cancel_button")
         self._cancel_btn.setToolTip("Stop the running agent (Esc)")
         self._cancel_btn.setAccessibleName("Stop — Stop the running agent (Esc)")
-        self._cancel_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
+        self._cancel_btn.setFixedWidth(_action_button_width(self._cancel_btn))
         self._cancel_btn.setVisible(False)
         self._cancel_btn.clicked.connect(self._on_cancel)
         action_row.addWidget(self._cancel_btn)
@@ -1338,7 +1400,7 @@ class LucNhanPanelCore(QWidget):
         # and every existing ``_export_btn`` caller working.
         self._export_btn = QPushButton("Export")
         self._export_btn.setObjectName("export_button")
-        self._export_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
+        self._export_btn.setFixedWidth(_action_button_width(self._export_btn))
         self._export_btn.setVisible(False)
         self._export_btn.clicked.connect(self._on_export_current)
 
@@ -1857,6 +1919,9 @@ class LucNhanPanelCore(QWidget):
         # Re-apply the token-driven QSS with the new values (or clear it
         # when the host theme wins).
         self._apply_action_button_styles()
+        # The button QSS is what carries a font override, so the
+        # metric-derived widths can only be fitted once it is in place.
+        self._apply_composer_metric_minima()
         self._apply_header_styles()
         self._apply_footer_styles()
         context_bar = getattr(self, "_context_bar", None)
@@ -1924,6 +1989,107 @@ class LucNhanPanelCore(QWidget):
 
     # --- Tab management ---
 
+    # --- Per-tab gates ---
+
+    def _gate(self, tab_id: str | None) -> _TabGateState:
+        """Return *tab_id*'s gate record, creating it on first use.
+
+        The record is mutated in place, so every slot that opened or
+        closed a gate for this tab observes the same object.
+        """
+        gates = getattr(self, "_tab_gates", None)
+        if gates is None:  # panels built via ``__new__`` in older fixtures
+            gates = {}
+            self._tab_gates = gates
+        gate = gates.get(tab_id)
+        if gate is None:
+            gate = _TabGateState()
+            gates[tab_id] = gate
+        return gate
+
+    def _gate_for_active_tab(self) -> _TabGateState:
+        """The active tab's gate state (never stored as a panel-wide flag)."""
+        return self._gate(self._ctrl.active_tab_id)
+
+    def _clear_gate(self, tab_id: str | None) -> None:
+        """Release *tab_id*'s gates only; other tabs keep waiting.
+
+        Called from every path that resolves a gate: a decision, a
+        finished run, Stop, a tab close or a new-chat reset.  Clearing is
+        always tab-scoped so cancelling tab B can never unlock tab A.
+        """
+        if tab_id is None:
+            return
+        gates = getattr(self, "_tab_gates", None)
+        if gates is not None:
+            gates.pop(tab_id, None)
+
+    def _active_tab_button_gate(self) -> bool:
+        """True when the ACTIVE tab is behind a button-only approval."""
+        return self._gate_for_active_tab().button_only
+
+    # --- Per-tab composer drafts ---
+
+    def _save_active_tab_draft(self) -> None:
+        """Stash the composer's current text and caret for the active tab.
+
+        Called before anything that re-targets the composer (tab switch,
+        new chat, close, IDB switch, history rebuild) so the draft the
+        user typed is not silently overwritten by the next tab's text.
+        Memory only — a draft never enters the session or the disk schema.
+        """
+        input_area = getattr(self, "_input_area", None)
+        tab_id = getattr(self._ctrl, "active_tab_id", None)
+        if input_area is None or tab_id is None:
+            return
+        drafts = getattr(self, "_tab_drafts", None)
+        if drafts is None:  # panels built via ``__new__`` in older fixtures
+            drafts = {}
+            self._tab_drafts = drafts
+        try:
+            cursor = input_area.textCursor()
+            draft = _TabDraft(
+                text=input_area.toPlainText(),
+                anchor=cursor.anchor(),
+                position=cursor.position(),
+            )
+        except (AttributeError, RuntimeError):  # stubbed / torn-down editor
+            return
+        if draft.text:
+            drafts[tab_id] = draft
+        else:
+            drafts.pop(tab_id, None)
+
+    def _restore_active_tab_draft(self) -> None:
+        """Load the active tab's saved draft (and caret) into the composer.
+
+        Restoring is also what makes a *new* tab start empty: a tab with
+        no saved draft is cleared, so B never inherits A's text.
+        """
+        input_area = getattr(self, "_input_area", None)
+        tab_id = getattr(self._ctrl, "active_tab_id", None)
+        if input_area is None or tab_id is None:
+            return
+        drafts = getattr(self, "_tab_drafts", None) or {}
+        draft = drafts.get(tab_id)
+        if draft is None:
+            if input_area.toPlainText():
+                input_area.clear()
+            return
+        input_area.setPlainText(draft.text)
+        cursor = input_area.textCursor()
+        cursor.setPosition(draft.anchor)
+        # ``KeepAnchor`` extends from the anchor, so a saved selection
+        # (anchor != position) comes back selected in the same direction.
+        cursor.setPosition(draft.position, cursor.MoveMode.KeepAnchor)
+        input_area.setTextCursor(cursor)
+
+    def _drop_tab_draft(self, tab_id: str) -> None:
+        """Release one tab's draft (tab close / new chat / IDB switch)."""
+        drafts = getattr(self, "_tab_drafts", None)
+        if drafts is not None:
+            drafts.pop(tab_id, None)
+
     def _update_tab_bar_visibility(self) -> None:
         """Keep the session strip (and its ``+``) visible.
 
@@ -1938,6 +2104,10 @@ class LucNhanPanelCore(QWidget):
 
     def _create_tab(self, tab_id: str, label: str) -> ChatView:
         """Create a new ChatView and add it as a tab."""
+        # Park the outgoing tab's draft before the pages switch away from
+        # it — the composer is global, so its text is about to belong to
+        # somebody else.
+        self._save_active_tab_draft()
         chat_view = ChatView()
         chat_view.setProperty("tab_id", tab_id)  # O(1) lookup in _tab_id_at_index
         # ChatView exposes Qt signals (not Python callbacks).  Connect them
@@ -1982,6 +2152,11 @@ class LucNhanPanelCore(QWidget):
         # renders it on the deferred restore path.
         messages = list(session.messages) if session and session.messages else []
         self._pending_restore_messages[tab_id] = messages
+        # The tab now shows a loaded session, so an unsent draft typed
+        # into the empty New Chat surface belongs to neither view.
+        self._drop_tab_draft(tab_id)
+        if tab_id == self._ctrl.active_tab_id:
+            self._input_area.clear()
         log_debug(f"HIST-TRACE rebuild: tab={tab_id} msgs={len(messages)}")  # TEMP-DIAG
         # Tear down the old (empty) ChatView if it exists.  ``shutdown``
         # bumps its restore generation so any late restore signal drops.
@@ -2037,13 +2212,12 @@ class LucNhanPanelCore(QWidget):
         runner = self._ctrl.get_runner(tid)
         if runner:
             runner.agent_loop.submit_approval(decision)
-        # Clear the same UI state flags that ``_on_tool_approval``
-        # clears: button-only mode is over, the user is no longer
-        # being asked a queued question.
-        self._pending_answer = False
-        self._pending_answer_tab = None
-        self._awaiting_button_approval = False
-        self._awaiting_approval_tab = None
+        # The gate is over for THIS tab only: another tab waiting on its
+        # own question or approval keeps waiting.  Re-apply the composer
+        # presentation only when the decided tab is the one on screen.
+        self._clear_gate(tid)
+        if tid == self._ctrl.active_tab_id:
+            self._sync_composer_state()
 
     def _on_new_tab(self) -> None:
         """Create a new chat tab, with optional context clearing."""
@@ -2063,11 +2237,20 @@ class LucNhanPanelCore(QWidget):
             if result == "no":
                 return
             if result == "clear":
-                # Clear current tab instead of creating a new one
+                # Clear current tab instead of creating a new one.  A
+                # reset releases the tab's gate and draft state: the
+                # session it belonged to is gone, so neither can be
+                # resurrected from stale UI state.
+                tab_id = self._ctrl.active_tab_id
                 self._ctrl.new_chat()
+                self._clear_gate(tab_id)
+                self._drop_tab_draft(tab_id)
                 chat_view = self._active_chat_view()
                 if chat_view:
                     chat_view.clear_chat()
+                self._input_area.clear()
+                self._sync_composer_state()
+                self._refresh_mutation_pane()
                 self._reset_token_display()
                 self._update_tab_label(self._ctrl.active_tab_id)
                 return
@@ -2112,6 +2295,13 @@ class LucNhanPanelCore(QWidget):
         # panel-level payload must be released too so closing a tab
         # before lazy restore does not retain a full message list.
         self._pending_restore_messages.pop(tab_id, None)
+        # Release the tab's own gate + draft before it leaves: its runner
+        # is cancelled by ``close_tab``, so a surviving gate would lock a
+        # composer that no longer has anything to answer.
+        if tab_id == self._ctrl.active_tab_id:
+            self._save_active_tab_draft()
+        self._clear_gate(tab_id)
+        self._drop_tab_draft(tab_id)
         self._ctrl.close_tab(tab_id)
         chat_view = self._chat_views.pop(tab_id, None)
         self._tab_widget.removeTab(index)
@@ -2119,6 +2309,11 @@ class LucNhanPanelCore(QWidget):
             chat_view.shutdown()
             chat_view.deleteLater()
         self._update_tab_bar_visibility()
+        if tab_id != self._ctrl.active_tab_id:
+            # Closing a *background* tab leaves the active composer alone,
+            # except for the mutation pane whose scope followed the
+            # active session.
+            self._refresh_mutation_pane()
 
     def _on_export_tab(self, index: int) -> None:
         """Export a tab's chat to a Markdown file."""
@@ -2229,14 +2424,28 @@ class LucNhanPanelCore(QWidget):
 
     def _on_tab_changed(self, index: int) -> None:
         """Handle tab switch."""
-        if index < 0 or self._is_shutdown:
+        # ponytail: tab signal can fire while the UI is still being built (composer not yet created).
+        if index < 0 or self._is_shutdown or not hasattr(self, "_input_area"):
             return
         tab_id = self._tab_id_at_index(index)
         if tab_id is None:
             return
+        # Park the outgoing tab's draft *before* ``switch_tab`` moves the
+        # controller's active id, so the composer is saved against the
+        # tab that actually owned the text.
+        self._save_active_tab_draft()
         self._ctrl.switch_tab(tab_id)
         self._restore_messages_if_needed(tab_id)
         self._update_token_display()
+        # The composer, Send / Stop and the status line all describe the
+        # ACTIVE tab: hand it its own draft and this tab's gate, so a tab
+        # that is waiting on an approval shows its locked composer and a
+        # tab that is not, sends normally.
+        self._restore_active_tab_draft()
+        self._sync_composer_state()
+        # The Mutations pane is active-session scoped: switching tabs
+        # swaps the records it lists.
+        self._refresh_mutation_pane()
         # Rebind the Knowledge tab to the switched-to session's binary.
         self._on_knowledge_event_refresh("tab_changed")
 
@@ -2578,11 +2787,18 @@ class LucNhanPanelCore(QWidget):
                 w.deleteLater()
         self._chat_views.clear()
         self._pending_restore_messages.clear()
+        # Every gate and draft belonged to the previous binary's tabs:
+        # release them with the tabs so nothing survives the IDB switch.
+        self._tab_gates.clear()
+        self._tab_drafts.clear()
+        self._input_area.clear()
         # Create default tab and try to restore saved sessions
         # Task 7 (spec §7.2): fresh-by-default after every IDB
         # switch.  No auto-restore — the user opens History
         # explicitly when they want a previous chat.
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
+        self._sync_composer_state()
+        self._refresh_mutation_pane()
         # Fresh-by-default after an IDB switch: the new session's usage is
         # zero, so the bar must be reset rather than deduped against the
         # previous binary's value.
@@ -2590,30 +2806,35 @@ class LucNhanPanelCore(QWidget):
         # Rebind the Knowledge tab to the newly opened binary's store.
         self._on_knowledge_event_refresh("database_changed")
 
-    def _on_submit(self, text: str) -> None:
+    def _on_submit(self, text: str) -> bool:
+        """Submit *text* to the active tab. Returns False when rejected.
+
+        The return value is the composer's contract: a rejected message
+        keeps the draft in the editor (the ``Send`` button and the Enter
+        key both consult it before clearing).
+        """
         if not text or self._is_shutdown:
-            return
+            return False
         chat_view = self._active_chat_view()
         if chat_view is None:
-            return
-        # Block free-text when awaiting button-only approval (plan/save).
-        if self._awaiting_button_approval:
+            return False
+        gate = self._gate_for_active_tab()
+        # Script / plan / save approvals are button-only: free text must
+        # not be able to bypass the gate (GUI contract G4), and the draft
+        # the user typed survives the refusal.
+        if gate.button_only:
             log_debug(f"Ignoring text input while awaiting button approval: {text!r}")
-            return
-        if self._pending_answer:
-            # C2: a question is pending — route the free-text answer to the
-            # tab that ASKED it (``_pending_answer_tab``), not the active tab.
-            pending_tab = self._pending_answer_tab
-            self._pending_answer = False
-            self._pending_answer_tab = None
-            self._awaiting_button_approval = False
-            self._awaiting_approval_tab = None
+            return False
+        if gate.pending_answer:
+            # C2: the ACTIVE tab asked a question — the typed text is its
+            # answer, and it resumes that tab's run.
+            self._clear_gate(self._ctrl.active_tab_id)
             chat_view.add_user_message(text)
-            self._set_running(True)
-            runner = self._ctrl.get_runner(pending_tab)
+            self._sync_composer_state()
+            runner = self._ctrl.get_runner(self._ctrl.active_tab_id)
             if runner:
                 runner.agent_loop.submit_user_answer(text)
-            return
+            return True
         active = self._ctrl.active_tab_id
         # B3: queue only if THIS tab's agent is already running — not when
         # some other tab runs in the background (that's the whole point of
@@ -2621,28 +2842,34 @@ class LucNhanPanelCore(QWidget):
         if self._ctrl.is_tab_running(active):
             self._ctrl.queue_message(text)
             chat_view.add_queued_message(text)
-            return
+            return True
         self._start_agent(text)
+        return True
 
     def _on_send_clicked(self) -> None:
         text = self._input_area.toPlainText().strip()
-        if text:
-            self._input_area.clear()
-            self._on_submit(text)
+        if not text:
+            return
+        # Reject *before* clearing: a refused message (a button-only
+        # approval on this tab) must leave the draft the user typed.
+        if not self._on_submit(text):
+            return
+        self._input_area.clear()
 
     def _on_cancel(self) -> None:
         if self._is_shutdown:
             return
-        self._pending_answer = False
-        self._pending_answer_tab = None
-        self._awaiting_button_approval = False
-        self._awaiting_approval_tab = None
+        active = self._ctrl.active_tab_id
+        # Stop is owned by the active tab: it releases THAT tab's gate and
+        # cancels that tab's run only.  Tab A keeps waiting when the user
+        # presses Stop while looking at tab B.
+        self._clear_gate(active)
         # Cancel the active tab's agent (other tabs keep running).
         self._ctrl.cancel()
         # Stop is also the way out of a pending approval, so the composer
         # has to be re-enabled and Stop hidden again — otherwise the gate
         # clears but the panel stays in its blocked presentation.
-        self._set_running(False)
+        self._sync_composer_state()
         # Remove [queued] widgets from the active chat view
         chat_view = self._active_chat_view()
         if chat_view is not None:
@@ -2714,7 +2941,9 @@ class LucNhanPanelCore(QWidget):
             return
         if add_user_msg:
             chat_view.add_user_message(user_message)
-        self._set_running(True)
+        # Presentation follows the ACTIVE tab only: a run started in a
+        # background tab must not flip the visible composer to Running.
+        self._sync_composer_state()
 
         # Update tab label after first user message
         self._update_tab_label(tab_id)
@@ -2729,8 +2958,11 @@ class LucNhanPanelCore(QWidget):
         error = self._ctrl.start_agent(user_message, tab_id=tab_id)
         if error:
             chat_view.add_error_message(error)
-            self._set_running(False)
+            self._sync_composer_state()
             return
+        # The run is live now — refresh the derived composer state (the
+        # label flips Send -> Queue only for the active tab).
+        self._sync_composer_state()
 
         self._ensure_poll_timer()
         assert self._poll_timer is not None
@@ -2817,13 +3049,15 @@ class LucNhanPanelCore(QWidget):
             TurnEventType.SAVE_APPROVAL_REQUEST,
             TurnEventType.PLAN_GENERATED,
         ):
-            self._pending_answer = True
-            self._pending_answer_tab = tid
+            # The gate belongs to the tab that ASKED, so it is recorded on
+            # that tab only — the composer is global, but its state is
+            # derived from the active tab.
+            gate = self._gate(tid)
+            gate.pending_answer = True
             # Plan approvals, save approvals, and any question with
             # predefined options MUST be answered via buttons only.
             # Disable text input so free-text ("continue", "redo", etc.)
-            # cannot bypass the approval gate. Input is global (C1), so
-            # this blocks panel-wide, but the answer routes to ``tid``.
+            # cannot bypass the approval gate.
             has_options = bool(event.metadata.get("options")) if event.metadata else False
             allow_text = bool(event.metadata.get("allow_text")) if event.metadata else False
             needs_button = event.type in (
@@ -2831,39 +3065,38 @@ class LucNhanPanelCore(QWidget):
                 TurnEventType.SAVE_APPROVAL_REQUEST,
             ) or (has_options and not allow_text)
             if needs_button:
-                self._awaiting_button_approval = True
-                self._awaiting_approval_tab = tid
+                gate.button_only = True
             if tid == self._ctrl.active_tab_id:
-                self._set_running(False)
+                self._sync_composer_state()
         if event.type == TurnEventType.TOOL_APPROVAL_REQUEST:
             # Script approval is button-only (GUI contract G4): the gate
             # lives in the transcript, so free text must not be able to
             # bypass it.  The event never reached the branch above, which
             # only covered questions / plan / save.
-            self._awaiting_button_approval = True
-            self._awaiting_approval_tab = tid
+            self._gate(tid).button_only = True
             if tid == self._ctrl.active_tab_id:
-                # ``_set_running(False)`` keeps Stop visible because the
-                # approval is still pending — see ``_set_running``.
-                self._set_running(False)
+                # The composer presentation keeps Stop visible while the
+                # gate is pending — see ``_sync_composer_state``.
+                self._sync_composer_state()
         if event.type == TurnEventType.MUTATION_RECORDED:
             self._on_mutation_recorded(event)
+        if event.type == TurnEventType.MUTATION_UNDONE:
+            # Successful reversals removed records; a background tab's undo
+            # must not touch the pane the user is looking at.
+            self._refresh_mutation_pane()
 
     def _on_tool_approval(self, tool_call_id: str, decision: str, tab_id: str | None = None) -> None:
         """Forward tool approval to the agent loop of *tab_id*."""
-        tid = tab_id if tab_id is not None else (self._awaiting_approval_tab or self._ctrl.active_tab_id)
+        tid = tab_id if tab_id is not None else self._ctrl.active_tab_id
         runner = self._ctrl.get_runner(tid)
         if runner:
             runner.agent_loop.submit_tool_approval(decision)
-        # Only clear the gate if this approval resolves the blocking tab.
-        if self._awaiting_approval_tab in (None, tid):
-            self._awaiting_button_approval = False
-            self._awaiting_approval_tab = None
-            # Deciding releases the composer immediately (G4: Allow once /
-            # Deny both resume the turn), so re-apply the idle
-            # presentation instead of leaving Send disabled.
-            if tid == self._ctrl.active_tab_id:
-                self._set_running(self._ctrl.is_tab_running(tid))
+        # Deciding releases THIS tab's gate only.  Allow once / Deny both
+        # resume the turn (G4), so re-apply the presentation for the tab
+        # on screen — another tab waiting on its own approval is untouched.
+        self._clear_gate(tid)
+        if tid == self._ctrl.active_tab_id:
+            self._sync_composer_state()
 
     def _on_user_answer_submitted(self, answer: str, tab_id: str | None = None) -> None:
         """Handle a button click from UserQuestionWidget (plan/save/ask_user).
@@ -2871,17 +3104,15 @@ class LucNhanPanelCore(QWidget):
         Routes the answer to *tab_id*'s runner (the tab that asked the
         question), not necessarily the active tab.
         """
-        tid = tab_id if tab_id is not None else self._pending_answer_tab
-        if not self._pending_answer or tid is None:
+        tid = tab_id if tab_id is not None else self._ctrl.active_tab_id
+        if tid is None or not self._gate(tid).pending_answer:
             return
-        self._pending_answer = False
-        self._pending_answer_tab = None
-        self._awaiting_button_approval = False
-        self._awaiting_approval_tab = None
+        self._clear_gate(tid)
         chat_view = self._chat_views.get(tid)
         if chat_view is not None:
             chat_view.add_user_message(answer)
-        self._set_running(True)
+        if tid == self._ctrl.active_tab_id:
+            self._sync_composer_state()
         runner = self._ctrl.get_runner(tid)
         if runner:
             runner.agent_loop.submit_user_answer(answer)
@@ -2895,15 +3126,14 @@ class LucNhanPanelCore(QWidget):
         if not self._ctrl.is_agent_running and self._poll_timer:
             self._poll_timer.stop()
 
-        # Clear approval state IF it belonged to this tab — a crash mid-
-        # approval must restore free-text for that tab, but not clobber a
-        # pending question on a different tab.
-        if self._pending_answer_tab in (None, tid):
-            self._pending_answer = False
-            self._pending_answer_tab = None
-        if self._awaiting_approval_tab in (None, tid):
-            self._awaiting_button_approval = False
-            self._awaiting_approval_tab = None
+        # A run that ends mid-approval must restore free text for THAT
+        # tab (a crash cannot leave the composer locked), and must not
+        # clobber a pending question on a different tab.
+        self._clear_gate(tid)
+        # An undo run removes records from the session stack, and the
+        # ``MUTATION_UNDONE`` event may have been dropped on a saturated
+        # queue — re-read the stack so the pane never shows a stale count.
+        self._refresh_mutation_pane()
 
         chat_view = self._chat_views.get(tid)
         # The controller pops this tab's runner and returns its next queued
@@ -2926,26 +3156,42 @@ class LucNhanPanelCore(QWidget):
         # for this tab and refresh the running state for the active tab.
         if chat_view is not None:
             chat_view.remove_queued_messages()
-        self._set_running(self._ctrl.is_tab_running(self._ctrl.active_tab_id))
+        self._sync_composer_state()
 
     # --- Mutation log integration ---
 
     def _on_mutation_recorded(self, event: TurnEvent) -> None:
-        """Handle a MUTATION_RECORDED event by adding it to the mutation log panel."""
-        if self._mutation_panel is None:
+        """Handle a MUTATION_RECORDED event.
+
+        The pane is re-read from the session's undo stack rather than
+        appended to: ``AgentLoop`` appends the record to the tab's stack
+        *before* it yields this event, and it also emits the event for a
+        successful mutation that turned out not to be reversible (which
+        never reaches the stack).  One source of truth means the pane and
+        what ``/undo`` can reverse can never disagree.
+        """
+        del event  # the stack snapshot carries everything the pane shows
+        self._refresh_mutation_pane()
+
+    def _refresh_mutation_pane(self) -> None:
+        """Rebuild the Mutations pane from the ACTIVE session's undo stack.
+
+        Active-session scoped by construction: it reads
+        ``SessionControllerBase.mutation_records(active_tab)``, so tab B's
+        records never appear while tab A is on screen and vice versa.
+        ``Undo Last`` runs through ``_start_agent``, which targets the
+        active tab — the same session the pane displays.
+        """
+        panel = getattr(self, "_mutation_panel", None)
+        if panel is None:
             return
-        meta = event.metadata
-        record = MutationRecord(
-            tool_name=event.tool_name,
-            arguments={},
-            reverse_tool=meta.get("reverse_tool", ""),
-            reverse_arguments=meta.get("reverse_args", {}),
-            description=event.text,
-            reversible=meta.get("reversible", False),
-        )
-        self._mutation_panel.add_mutation(record)
-        # The context row's ``Changes`` action carries the live count.
-        self._context_bar.set_mutation_count(self._mutation_panel.entry_count())
+        records = self._ctrl.mutation_records(self._ctrl.active_tab_id)
+        panel.clear_all()
+        for record in records:
+            panel.add_mutation(record)
+        context_bar = getattr(self, "_context_bar", None)
+        if context_bar is not None:
+            context_bar.set_mutation_count(panel.entry_count())
 
     def _on_toggle_mutation_log(self) -> None:
         """Toggle visibility of the mutation log panel.
@@ -4739,7 +4985,12 @@ class LucNhanPanelCore(QWidget):
                         )
 
     def _on_undo_requested(self, count: int) -> None:
-        """Handle undo request from the mutation log panel."""
+        """Handle undo request from the mutation log panel.
+
+        ``/undo`` goes through the normal agent path, which targets the
+        ACTIVE tab — the same session the pane displays — so a tab can
+        only ever reverse its own mutations.
+        """
         if self._is_shutdown:
             return
         # Submit /undo command through the normal agent path
@@ -4882,9 +5133,37 @@ class LucNhanPanelCore(QWidget):
             pass
 
     def _set_running(self, running: bool) -> None:
+        """Force the composer presentation (used by prefill and host code)."""
+        self._sync_composer_state(force_running=running)
+
+    def _apply_composer_metric_minima(self) -> None:
+        """Re-derive the composer's font-dependent minima.
+
+        The editor and its buttons learn a user font override through
+        their QSS, which Qt only resolves while the style is being
+        applied — so the minima are refreshed here rather than only at
+        build time.  Both keep their contract floor at the default font.
+        """
+        editor = getattr(self, "_input_area", None)
+        if editor is not None:
+            editor.setMinimumHeight(_composer_min_height(editor))
+        for button in (getattr(self, "_send_btn", None), getattr(self, "_cancel_btn", None)):
+            if button is not None:
+                button.setFixedWidth(_action_button_width(button))
+
+    def _sync_composer_state(self, *, force_running: bool | None = None) -> None:
+        """Apply the ACTIVE tab's composer state to the visible controls.
+
+        Every piece the user sees — input lock, Send/Queue label, Stop
+        visibility, status text — is derived here from the active tab's
+        own gate plus that tab's run state.  Background tabs keep their
+        gates and keep running without touching what is on screen.
+        """
+        running = force_running if force_running is not None else self._ctrl.is_tab_running(self._ctrl.active_tab_id)
+        awaiting = self._active_tab_button_gate()
         # Keep input enabled so users can queue follow-up messages while
-        # running — UNLESS we're waiting for a button-only approval.
-        if self._awaiting_button_approval:
+        # running — UNLESS this tab is waiting for a button-only approval.
+        if awaiting:
             self._input_area.set_enabled(False)
             self._input_area.setPlaceholderText("Use the Approve/Reject buttons above to continue.")
         else:
@@ -4897,18 +5176,20 @@ class LucNhanPanelCore(QWidget):
                 self._input_area.setPlaceholderText("Ask about this binary... (/ for skills, /modify to patch)")
 
         self._send_btn.setVisible(True)
-        self._send_btn.setEnabled(not self._awaiting_button_approval)
+        self._send_btn.setEnabled(not awaiting)
         self._send_btn.setText("Queue" if running else "Send")
         # Keep the accessible name in sync with the dynamic label so a
         # screen reader announces "Queue" while the agent is running.
         self._send_btn.setAccessibleName(
             "Queue — Queue a follow-up message" if running else "Send — Send the message (Enter)"
         )
+        # Measure after changing Send/Queue: QSS hints use the current label.
+        self._apply_composer_metric_minima()
         # Stop stays available while an approval is pending: the agent is still
         # blocked and the user needs a way out that does not depend on the
         # gate's buttons (GUI contract G3/G4).  Tying visibility to
         # ``running`` alone hid it at the exact moment it mattered.
-        self._cancel_btn.setVisible(running or self._awaiting_button_approval)
+        self._cancel_btn.setVisible(running or awaiting)
         # Picker busy follows the existing turn lifecycle — no timer, no
         # polling.  The controller guard still catches a race at commit.
         picker = getattr(self, "_picker", None)
@@ -4926,7 +5207,7 @@ class LucNhanPanelCore(QWidget):
         # bare colour dot — GUI contract G1/G9).
         status = getattr(self, "_status_label", None)
         if status is not None:
-            if self._awaiting_button_approval:
+            if awaiting:
                 text = "Waiting for approval"
             elif running:
                 text = "Running"

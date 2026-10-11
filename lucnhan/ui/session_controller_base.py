@@ -37,6 +37,7 @@ from ..state.history_types import (
 
 if TYPE_CHECKING:
     from ..agent.loop import AgentLoop, BackgroundAgentRunner
+    from ..agent.mutation import MutationRecord
     from ..agent.turn import TurnEvent
     from ..mcp.manager import MCPManager
     from ..memory.service import BinaryMemoryService
@@ -154,6 +155,11 @@ class SessionControllerBase:
         # reproduces the legacy single-agent behavior.
         self._runners: dict[str, BackgroundAgentRunner] = {}
         self._pending_messages: dict[str, list[str]] = {}
+        # Per-tab in-memory undo history survives replacement of normal root loops.
+        # Root loops share this lock; never hold it across reverse tool execution.
+        # ponytail: controller-wide undo lock; split per tab if contention is measured.
+        self._mutation_logs: dict[str, list[MutationRecord]] = {}
+        self._mutation_log_lock = threading.Lock()
         self._max_concurrent_agents = config.parallel_agent_max_concurrent if config.parallel_agent_enabled else 1
         # Per-run WorkspaceStore (sqlite3 connection) for each tab. The
         # store lives only for the duration of one agent run; it is
@@ -277,6 +283,9 @@ class SessionControllerBase:
         forked.metadata = dict(source.metadata)
         forked.metadata["forked_from"] = source.id
         self._sessions[new_tab_id] = forked
+        # The fork gets NO undo stack: the mutations in the source tab's
+        # stack are real database changes owned by that session. Cloning
+        # the records would let two tabs reverse the same change twice.
         log_info(f"Forked session {source.id} → new tab {new_tab_id}")
         return new_tab_id
 
@@ -288,6 +297,9 @@ class SessionControllerBase:
         # Stop the agent that belongs to this tab before tearing it down.
         self.cancel(tab_id)
         self._runners.pop(tab_id, None)
+        # The chat is gone — drop its undo stack with it (in memory only,
+        # so nothing has to be written anywhere).
+        self._drop_mutation_log(tab_id)
         if self.config.checkpoint_auto_save and session.messages:
             try:
                 history = SessionHistory(self.config)
@@ -377,6 +389,32 @@ class SessionControllerBase:
         """True if the given tab's agent is currently running."""
         runner = self._runners.get(tab_id)
         return runner is not None and runner.agent_loop.is_running
+
+    # --- Session-local /undo stack ---
+
+    def _mutation_log_for(self, tab_id: str) -> list[MutationRecord]:
+        """Return (creating on demand) the undo list owned by *tab_id*."""
+        with self._mutation_log_lock:
+            log_list = self._mutation_logs.get(tab_id)
+            if log_list is None:
+                log_list = []
+                self._mutation_logs[tab_id] = log_list
+            return log_list
+
+    def _drop_mutation_log(self, tab_id: str) -> None:
+        """Forget *tab_id*'s undo stack (new chat / close / IDB switch)."""
+        with self._mutation_log_lock:
+            self._mutation_logs.pop(tab_id, None)
+
+    def mutation_records(self, tab_id: str | None = None) -> list[MutationRecord]:
+        """Return a private, ordered snapshot of the active or named tab's history.
+
+        Includes live-runner records; failed reversals remain retryable.
+        Unknown or closed tabs return an empty snapshot.
+        """
+        tid = tab_id if tab_id is not None else self._active_tab_id
+        with self._mutation_log_lock:
+            return list(self._mutation_logs.get(tid, []))
 
     # --- Model / thinking selection (footer picker commit path) ---
 
@@ -729,6 +767,8 @@ class SessionControllerBase:
             session,
             skill_registry=self._skill_registry,
             host_name=self.host_name,
+            mutation_log=self._mutation_log_for(tid),
+            mutation_lock=self._mutation_log_lock,
         )
 
         # Inject central memory service for every agent run.
@@ -920,6 +960,12 @@ class SessionControllerBase:
         tid = tab_id if tab_id is not None else self._active_tab_id
         self._runners.pop(tid, None)
 
+        # Nothing to transfer for /undo: the run appended straight into
+        # this tab's shared stack (see ``_mutation_log_for``), so the
+        # records are already where the next run and
+        # ``mutation_records`` will read them. Repeated calls are
+        # therefore harmless — they cannot duplicate a record.
+
         # Release the per-run sqlite3 connection held by BinaryMemoryService
         # for this tab. The store's close() is idempotent so the next
         # wire-up (which will also close the displaced instance) cannot
@@ -994,6 +1040,9 @@ class SessionControllerBase:
             idb_path=self._idb_path,
             db_instance_id=self._db_instance_id,
         )
+        # New chat starts with nothing to undo — the previous run's stack
+        # described a conversation that no longer exists.
+        self._drop_mutation_log(self._active_tab_id)
         log_info("Started new chat session (active tab)")
 
     # ------------------------------------------------------------------
@@ -1223,6 +1272,10 @@ class SessionControllerBase:
             except (OSError, ValueError) as exc:
                 log_error(f"Failed to enqueue session {tab_id} on file change: {exc}")
         self._sessions.clear()
+        # Every chat belonged to the previous binary — its undo stacks go
+        # with it (a reverse record from another IDB is meaningless here).
+        with self._mutation_log_lock:
+            self._mutation_logs.clear()
         self._idb_path = _normalize_db_path(new_idb_path)
         self._db_instance_id = self._ensure_db_instance_id()
         tab_id = self._create_session()
@@ -1296,6 +1349,9 @@ class SessionControllerBase:
         # Cancel every running agent across all tabs.
         self.cancel_all()
         self._runners.clear()
+        # In-memory undo stacks die with the controller.
+        with self._mutation_log_lock:
+            self._mutation_logs.clear()
         # Final attempt to persist instance ID before the host saves the DB.
         set_database_instance_id(self._db_instance_id)
         for tab_id, session in self._sessions.items():

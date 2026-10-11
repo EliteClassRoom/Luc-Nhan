@@ -607,7 +607,8 @@ def _build_panel(ctrl: IdaSessionController) -> LucNhanPanelCore:
     panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
     panel._is_shutdown = False
     panel._polling = False
-    panel._pending_answer = False
+    panel._tab_gates = {}
+    panel._tab_drafts = {}
     panel._chat_views: dict[str, object] = {}
     panel._pending_restore_messages: dict[str, list] = {}
     panel._context_bar = None
@@ -625,7 +626,6 @@ def _build_panel(ctrl: IdaSessionController) -> LucNhanPanelCore:
     panel._count_label = MagicMock()
     panel._tab_bar = MagicMock()
     panel._ui_hooks = None
-    panel._awaiting_button_approval = False
     # The real controller. Tests that need to read live controller state
     # (``active_session`` / ``tab_count``) do so through this object.
     panel._ctrl = ctrl

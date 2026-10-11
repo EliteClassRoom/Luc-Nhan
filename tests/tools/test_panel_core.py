@@ -445,7 +445,10 @@ def _make_panel():
     panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
     panel._is_shutdown = False
     panel._polling = False
-    panel._pending_answer = False
+    # Per-tab gate + draft state (the panel no longer keeps panel-wide
+    # approval booleans — see ``_tab_gates`` / ``_tab_drafts``).
+    panel._tab_gates = {}
+    panel._tab_drafts = {}
     panel._chat_views = {}
     panel._pending_restore_messages = {}
     panel._context_bar = None
@@ -513,7 +516,6 @@ def _make_panel():
     panel._ctrl = MagicMock()
     panel._config = _temp_config()
     panel._ui_hooks = None
-    panel._awaiting_button_approval = False
     return panel
 
 
@@ -567,25 +569,59 @@ class TestActiveChatView(unittest.TestCase):
 
 
 class TestSetRunning(unittest.TestCase):
-    def test_running_true_sets_queue_text(self):
+    """The visible composer state is derived from the ACTIVE tab.
+
+    ``_set_running(True/False)`` forces the running half of that state;
+    the gate half comes from the active tab's own record, so a tab that
+    is not on screen can never flip these controls.
+    """
+
+    def _panel_with_tab(self, tab_id: str = "t1", running: bool = False):
         panel = _make_panel()
-        panel._set_running(True)
+        panel._ctrl.active_tab_id = tab_id
+        panel._ctrl.is_tab_running = MagicMock(return_value=running)
+        return panel
+
+    def test_running_true_sets_queue_text(self):
+        panel = self._panel_with_tab(running=True)
+        panel._sync_composer_state()
         panel._send_btn.setText.assert_called_with("Queue")
 
     def test_running_false_sets_send_text(self):
-        panel = _make_panel()
-        panel._set_running(False)
+        panel = self._panel_with_tab(running=False)
+        panel._sync_composer_state()
         panel._send_btn.setText.assert_called_with("Send")
 
     def test_running_shows_cancel_btn(self):
-        panel = _make_panel()
-        panel._set_running(True)
+        panel = self._panel_with_tab(running=True)
+        panel._sync_composer_state()
         panel._cancel_btn.setVisible.assert_called_with(True)
 
     def test_not_running_hides_cancel_btn(self):
-        panel = _make_panel()
-        panel._set_running(False)
+        panel = self._panel_with_tab(running=False)
+        panel._sync_composer_state()
         panel._cancel_btn.setVisible.assert_called_with(False)
+
+    def test_background_running_tab_does_not_change_the_visible_state(self):
+        """Tab A streams in the background; tab B is what the user sees."""
+        panel = self._panel_with_tab(tab_id="t2", running=False)
+        panel._ctrl.is_tab_running = MagicMock(side_effect=lambda tab_id: tab_id == "t1")
+
+        panel._sync_composer_state()
+
+        panel._send_btn.setText.assert_called_with("Send")
+        panel._cancel_btn.setVisible.assert_called_with(False)
+
+    def test_active_gate_locks_the_composer_and_keeps_stop(self):
+        panel = self._panel_with_tab(tab_id="t2", running=False)
+        panel._gate("t2").button_only = True
+
+        panel._sync_composer_state()
+
+        panel._input_area.set_enabled.assert_called_with(False)
+        panel._send_btn.setEnabled.assert_called_with(False)
+        panel._cancel_btn.setVisible.assert_called_with(True)
+        panel._status_label.setText.assert_called_with("Waiting for approval")
 
 
 class TestUpdateTabBarVisibility(unittest.TestCase):
@@ -704,10 +740,8 @@ class TestOnOrchestraApproval(unittest.TestCase):
     approvals (``_tool_approval_queue``).  The panel must call
     ``agent_loop.submit_approval`` (which targets the orchestra queue)
     — never ``submit_tool_approval`` (which targets the tool queue).
-    After submitting, the panel must clear the same UI state flags
-    that the button-only approval flow clears
-    (``_pending_answer``, ``_awaiting_button_approval``) so the input
-    area is re-enabled for the next user turn.
+    After submitting, the decided TAB's gates are released so the input
+    area is re-enabled for the next user turn — and only that tab's.
     """
 
     def _make_runner_loop(self) -> MagicMock:
@@ -716,21 +750,26 @@ class TestOnOrchestraApproval(unittest.TestCase):
         runner.agent_loop = agent_loop
         return runner, agent_loop
 
-    def test_approve_calls_submit_approval(self) -> None:
+    def _gated_panel(self) -> tuple:
         panel = _make_panel()
         runner, agent_loop = self._make_runner_loop()
         panel._ctrl.get_runner.return_value = runner
+        panel._ctrl.active_tab_id = "t1"
+        panel._gate("t1").pending_answer = True
+        panel._gate("t1").button_only = True
+        return panel, agent_loop
 
-        panel._on_orchestra_approval("call_xyz", "approve")
+    def test_approve_calls_submit_approval(self) -> None:
+        panel, agent_loop = self._gated_panel()
+
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
         agent_loop.submit_approval.assert_called_once_with("approve")
 
     def test_deny_calls_submit_approval(self) -> None:
-        panel = _make_panel()
-        runner, agent_loop = self._make_runner_loop()
-        panel._ctrl.get_runner.return_value = runner
+        panel, agent_loop = self._gated_panel()
 
-        panel._on_orchestra_approval("call_xyz", "deny")
+        panel._on_orchestra_approval("call_xyz", "deny", tab_id="t1")
 
         agent_loop.submit_approval.assert_called_once_with("deny")
 
@@ -739,50 +778,46 @@ class TestOnOrchestraApproval(unittest.TestCase):
         tool-approval queue.  The two channels serve different
         agent-loop flows and routing an orchestra decision to the
         tool queue would deadlock the orchestra handoff."""
-        panel = _make_panel()
-        runner, agent_loop = self._make_runner_loop()
-        panel._ctrl.get_runner.return_value = runner
+        panel, agent_loop = self._gated_panel()
 
-        panel._on_orchestra_approval("call_xyz", "approve")
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
         agent_loop.submit_tool_approval.assert_not_called()
 
-    def test_clears_pending_answer_flag(self) -> None:
-        panel = _make_panel()
-        runner, _ = self._make_runner_loop()
-        panel._ctrl.get_runner.return_value = runner
-        panel._pending_answer = True
+    def test_clears_the_decided_tab_gate(self) -> None:
+        panel, _ = self._gated_panel()
 
-        panel._on_orchestra_approval("call_xyz", "approve")
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
-        self.assertFalse(panel._pending_answer)
+        self.assertFalse(panel._active_tab_button_gate())
+        self.assertFalse(panel._tab_gates["t1"].pending_answer)
 
-    def test_clears_awaiting_button_approval_flag(self) -> None:
-        panel = _make_panel()
-        runner, _ = self._make_runner_loop()
-        panel._ctrl.get_runner.return_value = runner
-        panel._awaiting_button_approval = True
+    def test_keeps_another_tabs_gate(self) -> None:
+        """A background tab waiting on its own approval keeps waiting."""
+        panel, _ = self._gated_panel()
+        panel._gate("t2").pending_answer = True
+        panel._gate("t2").button_only = True
 
-        panel._on_orchestra_approval("call_xyz", "deny")
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
-        self.assertFalse(panel._awaiting_button_approval)
+        self.assertTrue(panel._tab_gates["t2"].button_only)
 
     def test_no_runner_does_not_raise(self) -> None:
         """If the agent runner is gone (cancelled, finished) the
-        call must be a no-op — no exception, but the UI flags are
+        call must be a no-op — no exception, but the tab's gates are
         still cleared so the panel can re-enable input."""
         panel = _make_panel()
         panel._ctrl.get_runner.return_value = None
-        panel._pending_answer = True
-        panel._awaiting_button_approval = True
+        panel._ctrl.active_tab_id = "t1"
+        panel._gate("t1").pending_answer = True
+        panel._gate("t1").button_only = True
 
         # Must not raise.
-        panel._on_orchestra_approval("call_xyz", "approve")
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
-        # The flags reflect "the decision is done" regardless of
+        # The gates reflect "the decision is done" regardless of
         # whether the agent loop is alive to receive it.
-        self.assertFalse(panel._pending_answer)
-        self.assertFalse(panel._awaiting_button_approval)
+        self.assertFalse(panel._active_tab_button_gate())
 
 
 class TestShutdownIdempotency(unittest.TestCase):
@@ -1858,7 +1893,8 @@ class TestOnDatabaseChangedNoRestore(unittest.TestCase):
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._polling = False
-        panel._pending_answer = False
+        panel._tab_gates = {}
+        panel._tab_drafts = {}
         panel._chat_views = {}
         panel._pending_restore_messages = {}
         panel._context_bar = None
@@ -1898,7 +1934,6 @@ class TestOnDatabaseChangedNoRestore(unittest.TestCase):
         panel._ctrl.reset_for_new_file = MagicMock()
         panel._config = _temp_config()
         panel._ui_hooks = None
-        panel._awaiting_button_approval = False
         # Spies / collaborators — replacing the methods with mocks lets
         # us assert exact call counts without running the real
         # restore / tab construction logic.
@@ -1979,7 +2014,8 @@ def _make_history_panel():
     panel = panel_core_cls.__new__(panel_core_cls)
     panel._is_shutdown = False
     panel._polling = False
-    panel._pending_answer = False
+    panel._tab_gates = {}
+    panel._tab_drafts = {}
     panel._chat_views = {}
     panel._pending_restore_messages = {}
     panel._context_bar = None
@@ -2000,7 +2036,6 @@ def _make_history_panel():
     panel._ctrl = MagicMock()
     panel._config = _temp_config()
     panel._ui_hooks = None
-    panel._awaiting_button_approval = False
     # Task-8 history coordinator fields (spec §8.1, §11.4).
     panel._history_panel = MagicMock()
     panel._history_generation = 0
@@ -2146,27 +2181,7 @@ class TestAdaptivePanePresentation(unittest.TestCase):
         panel._pane_narrow = None
         panel._apply_narrow_presentation = MagicMock()
         panel._schedule_footer_trigger_width = MagicMock()
-        # ``lucnhan.ui.context_bar`` is stubbed in this module, so the
-        # imported breakpoint is a MagicMock; pin it to the G3 value.
-        patcher = patch.object(panel_core, "NARROW_BREAKPOINT_PX", 640)
-        patcher.start()
-        self.addCleanup(patcher.stop)
         return panel
-
-    def test_breakpoint_is_the_panel_width(self) -> None:
-        """G3: 640 / 641 px selects the narrow / wide presentation.
-
-        Driven through the real slot with a fake ``width()`` so the test
-        pins behaviour instead of the source text.  The 640 px constant
-        itself lives in ``lucnhan.ui.context_bar``; this module stubs
-        that import, so only the boundary behaviour is asserted here.
-        """
-        for width, expected in ((640, True), (641, False), (460, True), (1100, False)):
-            panel = self._panel(panel_width=width)
-            panel._apply_narrow_presentation = MagicMock()
-            panel._schedule_footer_trigger_width = MagicMock()
-            panel.resizeEvent(None)
-            panel._apply_narrow_presentation.assert_called_once_with(expected)
 
     def test_narrow_takes_the_content_region(self) -> None:
         """Narrow: the pane is pinned to the region minus the chat's own

@@ -525,6 +525,8 @@ class AgentLoop:
         cancel_event: threading.Event | None = None,
         unattended: bool = False,
         max_turns: int | None = None,
+        mutation_log: list[MutationRecord] | None = None,
+        mutation_lock: threading.Lock | None = None,
     ) -> None:
         self.provider = provider
         self.tools = tool_registry
@@ -601,12 +603,10 @@ class AgentLoop:
         self._memory_authority: MemoryWriteAuthority | None = (
             parent_loop._memory_authority if parent_loop is not None else None
         )
-        # Mutation log for /undo support — typed once (see MutationRecord).
-        # Guarded by _mutation_lock: subagent threads append via
-        # record_mutations while the loop thread appends in
-        # _execute_single_tool (ThreadPoolExecutor parallel runs).
-        self._mutation_log: list[MutationRecord] = []
-        self._mutation_lock = threading.Lock()
+        # Controllers pass session-owned history and its lock across root runs.
+        # Standalone/child loops keep private history for the subagent handoff.
+        self._mutation_lock = threading.Lock() if mutation_lock is None else mutation_lock
+        self._mutation_log: list[MutationRecord] = [] if mutation_log is None else mutation_log
 
         # Exploration mode state (populated when /modify or /explore is used)
         self._exploration_state: ExplorationState | None = None
@@ -643,6 +643,17 @@ class AgentLoop:
             return
         with self._mutation_lock:
             self._mutation_log.extend(records)
+
+    def mutation_records(self) -> list[MutationRecord]:
+        """Ordered snapshot of this loop's /undo stack (does not clear it).
+
+        ``drain_mutations`` is destructive and belongs to the
+        subagent hand-off path; callers that only need to *read* the
+        stack (the session controller, for the UI snapshot) get a
+        non-destructive view under the same lock.
+        """
+        with self._mutation_lock:
+            return list(self._mutation_log)
 
     @property
     def is_running(self) -> bool:

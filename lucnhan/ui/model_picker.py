@@ -14,6 +14,13 @@ Design constraints this file deliberately honours:
 * **Identity is item data.**  Every row stores ``(connection_name,
   model_id)`` under ``UserRole``; nothing ever parses the display text, so
   two connections advertising the same model ID stay independent rows.
+* **Keyboard selection is the same selection.**  Down/Up in the search
+  box or on the list walks the rows the user can actually see — headers
+  and rows the query hid are skipped — and Enter commits exactly one
+  model through :meth:`commit_current`, which stays the single guarded
+  path (busy and no-match commit nothing).  ``eventFilter`` claims
+  Return/Enter, which a matching host shortcut would otherwise consume
+  before the key ever reached the list.
 * **Filtering hides rows, it does not rebuild them.**  The normalized
   search text is computed once per ``set_catalog`` and filtering toggles
   ``setHidden`` on the existing items.
@@ -352,11 +359,55 @@ class ModelPicker(QFrame):
             self._on_identity_selected(identity[0], identity[1])
             self.commit_current()
 
-    def _on_tree_key(self, event) -> bool:
-        """Return/Enter on the tree commits the current row."""
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+    def _move_visible(self, key: object) -> bool:
+        """Walk the *visible* rows: headers and query-hidden rows are skipped.
+
+        ``QTreeWidget``'s own arrow handling steps over sibling tree
+        items, so it walks onto a connection header — a row with no
+        identity at all — and then Enter had nothing to commit.  Both
+        the search box and the tree therefore share this one walk.
+        """
+        visible = self.visible_rows()
+        if not visible:
+            return True
+        current = self._tree.currentItem()
+        identity = current.data(0, _ROLE_IDENTITY) if current is not None else None
+        current_index = next(
+            (
+                position
+                for position, row in enumerate(visible)
+                if identity and row.connection_name == identity[0] and row.model_id == identity[1]
+            ),
+            -1,
+        )
+        step = 1 if key == Qt.Key.Key_Down else -1
+        target = min(max(current_index + step, 0), len(visible) - 1)
+        row = visible[target]
+        self.select_identity(row.connection_name, row.model_id)
+        return True
+
+    def _on_search_key(self, event: object) -> bool:
+        """Navigate visible rows or commit; return True when consumed."""
+        key = getattr(event, "key", lambda: None)()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            # ``commit_current`` is the single guarded commit path, so a
+            # busy picker commits nothing; a query with no visible row
+            # has nothing to commit either.
+            if self.visible_rows():
+                self.commit_current()
+            return True
+        if key not in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+            return False
+        return self._move_visible(key)
+
+    def _on_tree_key(self, event: object) -> bool:
+        """Enter commits the highlighted row; Up/Down walk the same rows."""
+        key = getattr(event, "key", lambda: None)()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._on_tree_clicked(0)
             return True
+        if key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+            return self._move_visible(key)
         return False
 
     def _apply_filter(self, query: str) -> None:
@@ -386,11 +437,14 @@ class ModelPicker(QFrame):
             if header.isHidden() != want_hidden:
                 header.setHidden(want_hidden)
 
-        # The list selection follows the query: with no match for the
-        # configured model the first surviving row becomes current, so
-        # Enter commits what the user can actually see.  Committing is
-        # still an explicit action — nothing is persisted here.
+        # The list selection follows the query: when the current item
+        # died with the query the first surviving *row* becomes current
+        # — a connection header is not a model and must never win that
+        # role — so Enter commits what the user can actually see.
+        # Committing is still an explicit action; nothing is persisted.
         current = self._tree.currentItem()
+        if current is not None and not current.data(0, _ROLE_IDENTITY):
+            current = None
         if current is None or current.isHidden():
             for index, row in enumerate(self._rows):
                 item = self._items[index]
@@ -662,6 +716,15 @@ class ModelPicker(QFrame):
                 self.close_popup()
                 return True
             if watched is self._tree and self._on_tree_key(event):
+                return True
+            if watched is self._search and self._on_search_key(event):
+                return True
+        elif event.type() == QEvent.Type.ShortcutOverride:
+            # Claim handled keys before host shortcuts can intercept them.
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Up, Qt.Key.Key_Down) and (
+                watched is self._search or watched is self._tree
+            ):
+                event.accept()
                 return True
         elif event.type() == QEvent.Type.WindowDeactivate:
             self.close_popup()

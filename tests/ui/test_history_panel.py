@@ -10,8 +10,10 @@ Spec sections exercised:
 The widget is intentionally passive: tests use the Qt stub injection
 from ``tests.qt_stubs`` so no real PySide6 runtime is required. Signal
 emission is asserted via direct call to ``clicked.emit()`` /
-``mouseReleaseEvent(None)`` so the suite stays deterministic — no event
-loop, no flaky pixel measurement.
+``mouseReleaseEvent`` / ``keyPressEvent`` with a one-method event
+stand-in, so the suite stays deterministic — no event loop, no flaky
+pixel measurement. Real Qt dispatch of the same paths lives in
+``tests/ui/test_history_row_activation_real_qt.py``.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from lucnhan.ui.history_panel import (
     HistoryPanel,
     HistoryRowWidget,
 )
-from lucnhan.ui.qt_compat import Qt
+from lucnhan.ui.qt_compat import QEvent, Qt
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,34 @@ def _entry(
         model=model,
         message_count=message_count,
     )
+
+
+class _Release:
+    """A mouse release carrying the button the handler must inspect."""
+
+    def __init__(self, button: object) -> None:
+        self._button = button
+
+    def button(self) -> object:
+        return self._button
+
+
+class _Press:
+    """A key press carrying the key the handler must inspect."""
+
+    def __init__(self, key: object) -> None:
+        self._key = key
+
+    def key(self) -> object:
+        return self._key
+
+
+def _release(button: object) -> _Release:
+    return _Release(button)
+
+
+def _press(key: object) -> _Press:
+    return _Press(key)
 
 
 class TestEmptyStateCopy(unittest.TestCase):
@@ -282,7 +312,7 @@ class TestSignals(unittest.TestCase):
         # ``mouseReleaseEvent`` is a class method, so a synthetic
         # release on the row dispatches the open request.
         row = panel._row_widgets[0]
-        row.mouseReleaseEvent(None)
+        row.mouseReleaseEvent(_release(Qt.MouseButton.LeftButton))
         self.assertEqual(captured, ["session-42"])
 
     def test_mouse_release_event_is_a_class_method(self) -> None:
@@ -311,8 +341,165 @@ class TestSignals(unittest.TestCase):
         panel.session_open_requested.connect(captured.append)
         # Click each row separately.
         for row in panel._row_widgets:
-            row.mouseReleaseEvent(None)
+            row.mouseReleaseEvent(_release(Qt.MouseButton.LeftButton))
         self.assertEqual(captured, ["session-a", "session-b"])
+
+
+class TestRowOpenTriggers(unittest.TestCase):
+    """A row opens from Return/Enter/Space or a *left* release — nothing else.
+
+    Before: ``QFrame`` defaults to ``NoFocus`` so the row was not in the
+    Tab chain at all, and ``mouseReleaseEvent`` opened on every button,
+    which turned a right-click (text selection / context menu) into a
+    silent chat switch.  The native probe recorded
+    ``focus_policy: 0``, ``opened_keyboard: []`` and
+    ``opened_after_right_click: ["synthetic-2"]``.
+    """
+
+    def _row(self) -> HistoryRowWidget:
+        row = HistoryRowWidget(_entry("s1", "Analyze parser"))
+        self.addCleanup(row.shutdown)
+        return row
+
+    def test_row_is_in_the_tab_chain(self) -> None:
+        self.assertEqual(self._row().focusPolicy(), Qt.FocusPolicy.StrongFocus)
+
+    def test_return_enter_and_space_each_open_the_row_once(self) -> None:
+        for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            with self.subTest(key=key):
+                row = self._row()
+                opened: list[str] = []
+                row.session_open_requested.connect(opened.append)
+
+                row.keyPressEvent(_press(key))
+
+                self.assertEqual(opened, ["s1"])
+
+    def test_other_keys_do_not_open_the_row(self) -> None:
+        row = self._row()
+        opened: list[str] = []
+        row.session_open_requested.connect(opened.append)
+
+        row.keyPressEvent(_press(Qt.Key.Key_Escape))
+
+        self.assertEqual(opened, [])
+
+    def test_only_left_release_opens_the_row(self) -> None:
+        for button in (
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.MiddleButton,
+            Qt.MouseButton.BackButton,
+            Qt.MouseButton.ForwardButton,
+        ):
+            with self.subTest(button=button):
+                row = self._row()
+                opened: list[str] = []
+                row.session_open_requested.connect(opened.append)
+
+                row.mouseReleaseEvent(_release(button))
+
+                self.assertEqual(opened, [])
+
+    def test_left_release_still_opens_the_row(self) -> None:
+        row = self._row()
+        opened: list[str] = []
+        row.session_open_requested.connect(opened.append)
+
+        row.mouseReleaseEvent(_release(Qt.MouseButton.LeftButton))
+
+        self.assertEqual(opened, ["s1"])
+
+    def test_pending_operation_blocks_mouse_and_keyboard(self) -> None:
+        """A delete in flight blocks the row on every input path."""
+        panel = HistoryPanel()
+        panel.set_entries([_entry("s1", "Analyze parser")])
+        opened: list[str] = []
+        panel.session_open_requested.connect(opened.append)
+        row = panel._row_widgets[0]
+
+        panel.set_operation_pending("s1")
+        row.mouseReleaseEvent(_release(Qt.MouseButton.LeftButton))
+        row.keyPressEvent(_press(Qt.Key.Key_Return))
+        self.assertEqual(opened, [], "operations disabled ⇒ no open")
+
+        panel.set_operation_pending(None)
+        row.keyPressEvent(_press(Qt.Key.Key_Return))
+        self.assertEqual(opened, ["s1"], "re-enabled ⇒ keyboard open works again")
+
+    def test_delete_button_stays_independent_of_the_row(self) -> None:
+        """The child button is its own focus stop and never opens the row."""
+        panel = HistoryPanel()
+        panel.set_entries([_entry("s1", "Analyze parser")])
+        opened: list[str] = []
+        deleted: list[tuple[str, str]] = []
+        panel.session_open_requested.connect(opened.append)
+        panel.session_delete_requested.connect(lambda session_id, title: deleted.append((session_id, title)))
+        row = panel._row_widgets[0]
+
+        self.assertEqual(row._delete_btn.focusPolicy(), Qt.FocusPolicy.StrongFocus)
+        row._delete_btn.clicked.emit()
+
+        self.assertEqual(deleted, [("s1", "Analyze parser")])
+        self.assertEqual(opened, [])
+
+
+class _ShortcutOverride:
+    """A ``QEvent::ShortcutOverride`` stand-in that records acceptance.
+
+    Qt runs this event *before* the key press: when it stays unaccepted
+    and a matching shortcut exists, the shortcut fires and the key press
+    never reaches the widget. The host's application-wide shortcuts bind
+    Return/Enter and Space, so the row must claim exactly those.
+    """
+
+    def __init__(self, key: object) -> None:
+        self._key = key
+        self.accepted = False
+
+    def type(self) -> object:
+        return QEvent.Type.ShortcutOverride
+
+    def key(self) -> object:
+        return self._key
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+class TestRowShortcutOverride(unittest.TestCase):
+    """The row takes its activation keys back from host shortcuts."""
+
+    def _filter(self, key: object) -> bool:
+        row = HistoryRowWidget(_entry("s1", "Analyze parser"))
+        self.addCleanup(row.shutdown)
+        override = _ShortcutOverride(key)
+        claimed = row.eventFilter(row, override)
+        return claimed and override.accepted
+
+    def test_activation_keys_are_claimed(self) -> None:
+        for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            with self.subTest(key=key):
+                self.assertTrue(self._filter(key), f"{key!r} must be claimed from the host shortcuts")
+
+    def test_every_other_key_is_left_to_the_host(self) -> None:
+        """Nothing else may be swallowed — shortcuts must keep working."""
+        for key in (Qt.Key.Key_Escape, Qt.Key.Key_Tab, Qt.Key.Key_Down, Qt.Key.Key_A):
+            with self.subTest(key=key):
+                self.assertFalse(self._filter(key), f"{key!r} must not be claimed")
+
+    def test_claiming_the_override_still_requires_operations_enabled(self) -> None:
+        """The override only unblocks delivery; ``_open`` keeps the guard."""
+        row = HistoryRowWidget(_entry("s1", "Analyze parser"))
+        self.addCleanup(row.shutdown)
+        override = _ShortcutOverride(Qt.Key.Key_Return)
+        self.assertTrue(row.eventFilter(row, override))
+
+        row.set_operation_enabled(False)
+        opened: list[str] = []
+        row.session_open_requested.connect(opened.append)
+        row.keyPressEvent(_press(Qt.Key.Key_Return))
+
+        self.assertEqual(opened, [])
 
 
 class TestDeleteAffordance(unittest.TestCase):

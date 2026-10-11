@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from ..core.logging import get_logger
 from .qt_compat import (
     QColor,
@@ -36,6 +38,15 @@ BUILTIN_COMMAND_SLUGS: tuple[str, ...] = (
     "undo",
     "verify",
 )
+# Editor geometry floor (G2). The minimum is *derived* from the resolved
+# font metrics — one full text line plus breathing room — so a user font
+# override grows the editor instead of clipping the first line. At the
+# default 13 px role this evaluates to the 38 px contract baseline, so the
+# compact composer is unchanged.
+_COMPOSER_MIN_HEIGHT = 38
+# QSS padding above/below the text, on top of the document margins.
+_COMPOSER_LINE_PADDING = 10
+
 # Maximum number of visible rows in the autocomplete popup. When the
 # filtered list is longer, the popup becomes scrollable so every
 # built-in slash command (including /report) remains reachable.
@@ -71,6 +82,25 @@ def _skill_popup_style() -> str:
         f'QLabel[selected="true"] {{ background: {t.highlight};'
         f" border-radius: 3px; font-weight: bold; }}"
     )
+
+
+def _composer_min_height(editor: QPlainTextEdit) -> int:
+    """Minimum composer height that always shows one full text line.
+
+    Measured from the editor's own font: ``QPlainTextEdit.sizeHint()``
+    scales with the *document* (a drag-growable multi-line composer), not
+    with one line, so it cannot serve as the floor.  ``lineSpacing`` plus
+    the editor's vertical padding is what a single typed line occupies.
+    With the default 13 px role the result is the 38 px contract
+    baseline, so the compact layout is unchanged.
+    """
+    try:
+        metrics = editor.fontMetrics()
+        padding = editor.document().documentMargin()
+        line = max(int(metrics.height()), int(metrics.lineSpacing()))
+        return max(_COMPOSER_MIN_HEIGHT, line + 2 * int(padding) + _COMPOSER_LINE_PADDING)
+    except (AttributeError, RuntimeError, TypeError, ValueError):  # stubbed / torn-down editor
+        return _COMPOSER_MIN_HEIGHT
 
 
 class _SkillPopup(QFrame):
@@ -189,12 +219,15 @@ class InputArea(QPlainTextEdit):
         super().__init__(parent)
         self.setObjectName("input_area")
         self.setPlaceholderText("Ask about this binary... (/ for skills, /modify to patch)")
-        # GUI contract G2: composer text min-height 38 px (the panel pins
-        # the 44 px baseline).  The vertical QSplitter owns the pane the
-        # editor lives in — we deliberately do NOT cap the editor's
-        # maximum height so the user can drag the splitter as tall as
-        # they want and only scrolling constrains a single typing run.
-        self.setMinimumHeight(38)
+        # GUI contract G2: composer text min-height 38 px.  The floor is
+        # derived from the resolved metrics (one full line + padding), so
+        # the default font lands on the 38 px contract baseline and a user
+        # font override grows the editor instead of clipping the first
+        # line.  The vertical QSplitter owns the pane the editor lives in —
+        # we deliberately do NOT cap the editor's maximum height so the
+        # user can drag the splitter as tall as they want and only
+        # scrolling constrains a single typing run.
+        self.setMinimumHeight(_composer_min_height(self))
         # Vertical policy must be ``Expanding`` so the editor fills the
         # chat-splitter bottom pane when the user drags the handle.
         # ``Preferred`` would let the splitter grow the pane but leave
@@ -211,7 +244,7 @@ class InputArea(QPlainTextEdit):
         self._enabled = True
         self._skill_slugs: list[str] = []
         self._popup: _SkillPopup | None = None
-        self._submit_callback = None  # Callable[[str], None]
+        self._submit_callback: Callable[[str], bool] | None = None
         self._cancel_callback = None  # Callable[[], None]
         # Apply the theme-aware QSS at construction and subscribe to
         # subsequent theme changes so the editor and skill popup
@@ -247,6 +280,14 @@ class InputArea(QPlainTextEdit):
             self.setStyleSheet(build_input_area_stylesheet(tokens))
         except Exception as exc:
             logger.debug("InputArea stylesheet apply failed", exc_info=exc)
+        # A user font override changes the resolved metrics, and the
+        # stylesheet above is what carries the new ``font-size``.  Re-derive
+        # the height floor *after* it lands so the editor grows with the
+        # text instead of clipping the first line.
+        try:
+            self.setMinimumHeight(_composer_min_height(self))
+        except Exception as exc:
+            logger.debug("InputArea minimum height sync failed", exc_info=exc)
         if self._popup is not None:
             try:
                 self._popup.apply_theme()
@@ -282,8 +323,8 @@ class InputArea(QPlainTextEdit):
             pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(muted))
         self.setPalette(pal)
 
-    def set_submit_callback(self, callback) -> None:
-        """Set the callback for submit (Enter key). Callback signature: (str) -> None."""
+    def set_submit_callback(self, callback: Callable[[str], bool]) -> None:
+        """Submit on Enter; preserve the draft when the callback returns False."""
         self._submit_callback = callback
 
     def set_cancel_callback(self, callback) -> None:
@@ -339,9 +380,10 @@ class InputArea(QPlainTextEdit):
             else:
                 text = self.toPlainText().strip()
                 if text and self._enabled:
-                    # Plain Python callback — no Shiboken signal dispatch
-                    if self._submit_callback:
-                        self._submit_callback(text)
+                    # Plain Python callback avoids Shiboken signal dispatch.
+                    # Rejected submissions leave the draft intact.
+                    if self._submit_callback and not self._submit_callback(text):
+                        return
                     self.clear()
         elif event.key() == Qt.Key.Key_Escape:
             if self._cancel_callback:
