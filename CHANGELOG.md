@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   colors in every mode, including after theme switches; the editor remains
   borderless inside the single outer frame.
 
+- **Settings Cancel and Save share the same footer button sizing.** Both
+  actions now match the common scoped QSS; Save's primary styling no longer
+  uses an impossible selector requiring two different object names.
+
 - **Follow-up UI/UX fixes, verified in the native IDA 9.4 GUI at 100 % and
   150 % scale.** Approval state and composer drafts (including caret/selection)
   are isolated per chat tab; rejected submissions retain their text, and

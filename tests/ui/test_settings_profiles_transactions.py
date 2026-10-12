@@ -308,6 +308,18 @@ class TestNarrowConnectionRowFits(_SettingsDialogCase):
         self.dialog._apply_responsive_geometry()
         self._drain_events()
 
+    def test_footer_actions_have_matching_geometry(self) -> None:
+        for width in (400, 460, 900):
+            with self.subTest(width=width):
+                self._settle(width)
+                cancel = self.dialog._cancel_btn
+                save = self.dialog._save_btn
+                self.assertEqual(cancel.size(), save.size())
+                self.assertEqual(cancel.geometry().top(), save.geometry().top())
+                for button in (cancel, save):
+                    self.assertTrue(button.isVisible())
+                    self.assertGreaterEqual(button.width(), button.fontMetrics().horizontalAdvance(button.text()))
+
     def test_connection_section_fits_narrow_viewport(self) -> None:
         """Qt's own minimum width must fit — no horizontal body scroll."""
         for width in (400, 460):
