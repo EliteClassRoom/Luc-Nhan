@@ -517,3 +517,175 @@ class TestManagerSpawnHandoff(unittest.TestCase):
                 break
             events.append(ev)
         assert sum(1 for e in events if e.type.value == "subagent_failed") == 1
+
+class TestPrebuiltRunnerSpawn(unittest.TestCase):
+    """``spawn(runner=...)`` runs a caller-built runner as-is."""
+
+    def _manager(self) -> SubagentManager:
+        return SubagentManager(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=LucNhanConfig(),
+            host_name="test",
+        )
+
+    @staticmethod
+    def _drain(mgr: SubagentManager) -> list[TurnEvent]:
+        events = []
+        while True:
+            ev = mgr.poll_event()
+            if ev is None:
+                break
+            events.append(ev)
+        return events
+
+    @staticmethod
+    def _join_subagent_threads() -> None:
+        for thread in [t for t in threading.enumerate() if t.name.startswith("lucnhan-subagent-")]:
+            thread.join(timeout=5.0)
+
+    def test_prebuilt_runner_is_stored_and_executed(self) -> None:
+        """The manager runs the given runner and records it on the info."""
+        mgr = self._manager()
+        ran = []
+
+        class _Runner:
+            last_session = None
+
+            def run_task(self, task, max_turns=20, system_addendum=""):
+                ran.append((task, max_turns, system_addendum))
+                yield TurnEvent.text_done("prebuilt summary")
+                yield TurnEvent.turn_end(1)
+
+        runner = _Runner()
+        agent_id = mgr.spawn(name="pre", task="do it", agent_type="custom", runner=runner)
+        self._join_subagent_threads()
+
+        info = mgr.get(agent_id)
+        assert info.runner is runner
+        assert info.status == SubagentStatus.COMPLETED
+        assert info.summary == "prebuilt summary"
+        # The manager supplies no addendum of its own on the prebuilt path.
+        assert ran == [("do it", 20, "")]
+
+        events = self._drain(mgr)
+        types = [e.type.value for e in events]
+        assert "subagent_spawned" in types
+        assert "subagent_completed" in types
+
+    def test_prebuilt_runner_cancel_event_is_registered(self) -> None:
+        """A caller-supplied cancel event reaches ``cancel(agent_id)``."""
+        mgr = self._manager()
+        cancel = threading.Event()
+
+        class _Runner:
+            last_session = None
+
+            def run_task(self, task, max_turns=20, system_addendum=""):
+                while not cancel.is_set():
+                    time.sleep(0.01)
+                yield TurnEvent.text_done("never")
+
+        agent_id = mgr.spawn(
+            name="c", task="t", agent_type="custom",
+            cancel_event=cancel, runner=_Runner(),
+        )
+        mgr.cancel(agent_id)
+        self._join_subagent_threads()
+        assert cancel.is_set()
+        assert mgr.get(agent_id).status == SubagentStatus.CANCELLED
+
+
+class TestActivityCapture(unittest.TestCase):
+    """The worker appends → / ← lines to the live activity feed."""
+
+    def _manager(self) -> SubagentManager:
+        return SubagentManager(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=LucNhanConfig(),
+            host_name="test",
+        )
+
+    def test_activity_records_tool_call_and_result(self) -> None:
+        mgr = self._manager()
+        agent_id = mgr.register(name="a", task="t")
+
+        class _Runner:
+            last_session = None
+
+            def run_task(self, task, max_turns=20, system_addendum=""):
+                yield TurnEvent.tool_call_done("c1", "read_file", '{"path": "main.c"}')
+                yield TurnEvent.tool_result_event("c1", "read_file", "line1\n  line2")
+                yield TurnEvent.text_done("done")
+
+        mgr._run_agent(agent_id, "t", 20, "", threading.Event(), "", None, "", _Runner())
+        info = mgr.get(agent_id)
+        assert info.activity[0].startswith("→ read_file")
+        assert '"path": "main.c"' in info.activity[0]
+        # Whitespace inside the result is collapsed to one line.
+        assert info.activity[1] == "← read_file: line1 line2"
+
+    def test_activity_trimmed_to_last_100(self) -> None:
+        mgr = self._manager()
+        agent_id = mgr.register(name="a", task="t")
+
+        class _Runner:
+            last_session = None
+
+            def run_task(self, task, max_turns=20, system_addendum=""):
+                for i in range(150):
+                    yield TurnEvent.tool_call_done(f"c{i}", "read_file", f'{{"n": {i}}}')
+                yield TurnEvent.text_done("done")
+
+        mgr._run_agent(agent_id, "t", 20, "", threading.Event(), "", None, "", _Runner())
+        info = mgr.get(agent_id)
+        assert len(info.activity) == 100
+        # 150 events emitted, so the surviving window starts at index 50.
+        assert info.activity[0].startswith('→ read_file {"n": 50}')
+        assert info.activity[-1] == '→ read_file {"n": 149}'
+
+
+class TestConcurrencyQueries(unittest.TestCase):
+    """``active_count`` / ``all_terminal`` gate the fan-out cap."""
+
+    def _manager(self) -> SubagentManager:
+        return SubagentManager(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=LucNhanConfig(),
+            host_name="test",
+        )
+
+    def test_active_count_includes_pending_and_running(self) -> None:
+        mgr = self._manager()
+        pending_id = mgr.register(name="p", task="t")
+        assert mgr.active_count() == 1
+        mgr.get(pending_id).status = SubagentStatus.RUNNING
+        assert mgr.active_count() == 1
+        mgr.get(pending_id).status = SubagentStatus.COMPLETED
+        assert mgr.active_count() == 0
+
+    def test_all_terminal_truth_table(self) -> None:
+        mgr = self._manager()
+        ids = {}
+        for label, status in (
+            ("p", SubagentStatus.PENDING),
+            ("r", SubagentStatus.RUNNING),
+            ("c", SubagentStatus.COMPLETED),
+            ("f", SubagentStatus.FAILED),
+            ("x", SubagentStatus.CANCELLED),
+        ):
+            agent_id = mgr.register(name=label, task="t")
+            ids[label] = agent_id
+            mgr.get(agent_id).status = status
+
+        assert not mgr.all_terminal([ids["p"]])
+        assert not mgr.all_terminal([ids["r"]])
+        assert mgr.all_terminal([ids["c"]])
+        assert mgr.all_terminal([ids["c"], ids["f"], ids["x"]])
+        assert not mgr.all_terminal([ids["c"], ids["r"]])
+        assert not mgr.all_terminal([ids["c"], ids["p"]])
+        # An unknown id counts as terminal so a join cannot hang.
+        assert mgr.all_terminal(["does-not-exist"])
+        assert not mgr.all_terminal([ids["c"], "does-not-exist", ids["r"]])
