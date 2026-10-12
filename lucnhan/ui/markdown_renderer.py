@@ -144,37 +144,17 @@ def _build_theme_styles(source: Any = None) -> dict[str, str]:
     the active palette is owned by :class:`ThemeManager`.
     """
     del source  # unused; kept for API parity
-    from .styles import is_host_theme, role_size
+    from .styles import role_size
     from .theme.manager import ThemeManager, blend_hex
 
-    if is_host_theme():
-        # Minimal host-friendly defaults — Qt picks up the host's
-        # QPalette for body text in most cases, so we just need
-        # enough CSS for code spans and links. Typography still follows
-        # the user's font override, so the code role keeps its 12px
-        # baseline instead of inheriting the body's size.
-        return {
-            "inline_code_style": f"font-family:monospace; font-size:{role_size(12)};",
-            "block_code_style": (
-                f"font-family:monospace; font-size:{role_size(12)}; "
-                "white-space:pre-wrap; padding:6px; border-radius:3px;"
-            ),
-            "link_style": "text-decoration: underline;",
-            "hr_style": "",
-            "heading_style": "font-weight:bold;",
-            "blockquote_style": ("border-left:3px solid #888; padding-left:8px; margin:4px 0; color:#666;"),
-            "table_style": "border-collapse:collapse;",
-            "th_style": ("border:1px solid #888; padding:4px 6px; font-weight:bold; text-align:left;"),
-            "td_style": "border:1px solid #888; padding:4px 6px;",
-            "strikethrough_style": "text-decoration:line-through;",
-        }
-
+    # Host mode inherits the surrounding UI, not unstyled markdown: semantic
+    # tokens already derive readable accents from the host's own palette.
     tokens = ThemeManager.instance().tokens()
-    code_bg = blend_hex(tokens.base, tokens.window, 0.15)
-    inline_fg = blend_hex(tokens.highlight, tokens.text, 0.3)
+    code_bg = blend_hex(tokens.code_bg, tokens.text, 0.035)
+    inline_fg = blend_hex(tokens.warning, tokens.text, 0.1)
     border = blend_hex(tokens.mid, tokens.window, 0.35)
-    heading = blend_hex(tokens.highlight, tokens.text, 0.15)
-    muted_text = blend_hex(tokens.text, tokens.window, 0.45)
+    heading = blend_hex(tokens.accent, tokens.text, 0.1)
+    table_header_bg = blend_hex(tokens.window, tokens.accent, 0.12)
 
     return {
         "inline_code_style": (
@@ -183,20 +163,24 @@ def _build_theme_styles(source: Any = None) -> dict[str, str]:
             f"font-family:monospace; font-size:{role_size(12)};"
         ),
         "block_code_style": (
-            f"background-color:{tokens.base}; color:{tokens.text}; "
+            f"background-color:{code_bg}; color:{tokens.code_text}; "
             f"border:1px solid {border}; border-radius:4px; "
             f"padding:8px; font-family:monospace; font-size:{role_size(12)}; "
             "white-space:pre-wrap; word-break:break-all;"
         ),
-        "link_style": f"color:{tokens.highlight};",
+        "link_style": f"color:{heading}; text-decoration:underline;",
         "hr_style": f"border:1px solid {border};",
         "heading_style": f"color:{heading}; font-weight:bold;",
-        "blockquote_style": (f"border-left:3px solid {border}; padding-left:8px; margin:4px 0; color:{muted_text};"),
+        "blockquote_style": (
+            f"background-color:{code_bg}; color:{tokens.text}; "
+            f"border-left:3px solid {heading}; padding:8px; margin:6px 0 6px 12px;"
+        ),
         "table_style": "border-collapse:collapse;",
         "th_style": (
-            f"border:1px solid {border}; padding:4px 6px; font-weight:bold; text-align:left; color:{heading};"
+            f"background-color:{table_header_bg}; color:{tokens.text}; "
+            f"border:1px solid {border}; padding:6px 8px; font-weight:bold; text-align:left;"
         ),
-        "td_style": f"border:1px solid {border}; padding:4px 6px;",
+        "td_style": f"border:1px solid {border}; padding:6px 8px;",
         "strikethrough_style": "text-decoration:line-through;",
     }
 
@@ -345,7 +329,7 @@ class QtRenderer:
                 size = {1: 18, 2: 16, 3: 14, 4: 13, 5: 12, 6: 11}.get(level, 13)
                 from .styles import role_size
 
-                heading_style = f"{styles['heading_style']}font-size:{role_size(size)};margin:6px 0 2px 0;"
+                heading_style = f"{styles['heading_style']}font-size:{role_size(size)};margin:12px 0 4px 0;"
                 out.append(self._styled("div", heading_style, inner))
                 i += 3
                 continue
@@ -357,8 +341,8 @@ class QtRenderer:
                 # previously added an *extra* blank line between
                 # consecutive paragraphs, which surfaced as visible
                 # double-spacing in the thinking block and assistant
-                # bubble (the ``margin:2px 0`` already sizes the gap).
-                out.append(f'<div style="margin:2px 0;">{inner}</div>')
+                # bubble (the block margin already sizes the gap).
+                out.append(f'<div style="margin:4px 0;">{inner}</div>')
                 i += 3  # paragraph_open, inline, paragraph_close
                 continue
             if ttype == "bullet_list_open":

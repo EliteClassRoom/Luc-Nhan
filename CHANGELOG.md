@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Chat markdown keeps its visual hierarchy in Auto / IDA mode.**
+  Headings and links use the theme accent, inline code uses a contrasting
+  warm tone, and code blocks, quotes, and table headers have distinct
+  theme-derived backgrounds. Section spacing is clearer without changing
+  the surrounding host theme. The fallback renderer shares the same palette.
 - **Native UI/UX redesign: the chat workspace is now a compact technical
   surface, and the footer model picker is a grouped search popup.** The plugin
   UI was rebuilt to the GUI design contract (`docs/superpowers/plans/2026-10-08-gui-design-contract.md`,

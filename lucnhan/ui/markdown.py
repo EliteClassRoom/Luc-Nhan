@@ -26,7 +26,7 @@ from typing import Any
 from ..core.logging import log_debug
 from .profiling import probe as ui_probe
 from .styles import is_host_theme, role_size
-from .theme.manager import ThemeManager, blend_hex
+from .theme.manager import ThemeManager
 
 # ---------------------------------------------------------------------------
 # Emoji stripping (shared with markdown_renderer.py) — used by the
@@ -176,39 +176,22 @@ _MARKDOWN_HINT_RE = _re.compile(
 
 
 def _legacy_theme_styles(source=None) -> dict[str, str]:
-    if is_host_theme():
-        # Host palette: the host owns colour, but typography still follows
-        # the user's font override, so the code roles keep their 12px
-        # baseline rather than inheriting whatever the body resolved to.
-        return {
-            "inline_code_style": f"font-family:monospace; font-size:{role_size(12)};",
-            "block_code_style": f"font-family:monospace; font-size:{role_size(12)}; white-space:pre-wrap;",
-            "link_style": "text-decoration: underline;",
-            "hr_style": "",
-            "heading_style": "font-weight:bold;",
-        }
+    from .markdown_renderer import _build_theme_styles
 
-    tokens = ThemeManager.instance().tokens()
-    code_bg = _CODE_BLOCK_OVERRIDES.get("bg") or blend_hex(tokens.base, tokens.window, 0.15)
-    inline_fg = blend_hex(tokens.highlight, tokens.text, 0.3)
-    border = _CODE_BLOCK_OVERRIDES.get("border") or blend_hex(tokens.mid, tokens.window, 0.35)
-    text_color = _CODE_BLOCK_OVERRIDES.get("text") or tokens.text
-    heading = blend_hex(tokens.highlight, tokens.text, 0.15)
-    return {
-        "inline_code_style": (
-            f"background-color:{code_bg}; color:{inline_fg}; "
-            f"padding:1px 4px; border-radius:3px; font-family:monospace; font-size:{role_size(12)};"
-        ),
-        "block_code_style": (
-            f"background-color:{code_bg}; color:{text_color}; "
-            f"border:1px solid {border}; border-radius:4px; "
-            f"padding:8px; font-family:monospace; font-size:{role_size(12)}; "
-            "white-space:pre-wrap; word-break:break-all;"
-        ),
-        "link_style": f"color:{tokens.highlight};",
-        "hr_style": f"border:1px solid {border};",
-        "heading_style": f"color:{heading}; font-weight:bold;",
-    }
+    styles = _build_theme_styles(source)
+    # Preserve explicit host overrides for the fallback without duplicating
+    # the shared semantic palette.
+    bg = _CODE_BLOCK_OVERRIDES["bg"]
+    border = _CODE_BLOCK_OVERRIDES["border"]
+    text = _CODE_BLOCK_OVERRIDES["text"]
+    if bg:
+        styles["inline_code_style"] += f"background-color:{bg};"
+        styles["block_code_style"] += f"background-color:{bg};"
+    if border:
+        styles["block_code_style"] += f"border:1px solid {border};"
+    if text:
+        styles["block_code_style"] += f"color:{text};"
+    return styles
 
 
 def _has_markdown_syntax(text: str) -> bool:
@@ -274,7 +257,7 @@ def _legacy_md_to_html(text: str, source=None) -> str:
             size = sizes.get(level, 13)
             h_text = _legacy_inline(hm.group(2), theme)
             out_lines.append(
-                f'<div style="{theme["heading_style"]}font-size:{role_size(size)};margin:6px 0 2px 0;">{h_text}</div>'
+                f'<div style="{theme["heading_style"]}font-size:{role_size(size)};margin:12px 0 4px 0;">{h_text}</div>'
             )
             i += 1
             continue
