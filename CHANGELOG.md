@@ -24,6 +24,126 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Kill, alongside a live `→ tool` / `← result` activity feed in the preview pane
   while the child is running. Cancelling the parent mid-join cancels the
   stragglers before aborting the turn.
+- Removed temporary history-restore trace logs; restore behavior is unchanged.
+- **Chat markdown keeps its visual hierarchy in Auto / IDA mode.**
+  Headings and links use the theme accent, inline code uses a contrasting
+  warm tone, and code blocks, quotes, and table headers have distinct
+  theme-derived backgrounds. Section spacing is clearer without changing
+  the surrounding host theme. The fallback renderer shares the same palette.
+- **Native UI/UX redesign: the chat workspace is now a compact technical
+  surface, and the footer model picker is a grouped search popup.** The plugin
+  UI was rebuilt to the GUI design contract (`docs/superpowers/plans/2026-10-08-gui-design-contract.md`,
+  G0-G11): the workspace keeps a strict
+  header -> session strip -> context -> chat -> composer -> footer order with a
+  single narrow breakpoint at 640 logical px (Chat/Tools stay direct, History /
+  Settings / Export move into the header overflow), the composer sends and stops
+  from a compact action row under the editor, tool activity collapsed into
+  single 30 px rows with an on-demand detail surface, and the History /
+  Mutations panes dock beside the chat when wide and cover the content region
+  when narrow. **Settings** and **Tools** lost their `QTabWidget`s in favour of
+  horizontal subnavigation (`Provider | Appearance | Skills | MCP | Profiles`
+  and `Agents | A2A | Knowledge`) over a lazily-built stacked body; the Skills /
+  MCP / Profiles pages are still constructed only on first selection, Cancel /
+  Save stay pinned, and unopened lazy pages are never applied.
+- **The footer model picker supports multiple configured connections.** With
+  more than one connection the flat combo is replaced by a popup with a search
+  box, one group per configured connection, and a per-connection thinking-level
+  control (`Connection / Model | thinking`). Two connections exposing the same
+  model ID stay two independent rows. Selection and thinking are blocked while
+  an agent is running (`Stop the running agent to change model`), the guard is
+  still enforced by the controller at commit time, and a rejected commit snaps
+  the checkmark back to what the config really holds. Search is local — opening
+  or searching the popup never calls a provider API. Model catalogs are cached
+  per connection and populated only by an explicit Settings **Refresh**; an
+  endpoint or credential edit invalidates that connection's entry, a plain
+  view-switch does not.
+
+### Fixed
+
+- **Auto / IDA theme no longer paints unreadable white chat and tool rows
+  on a dark host.** Host-derived secondary backgrounds fall back to the host's
+  Base color when AlternateBase has less than 4.5:1 contrast with Text.
+  Readable native secondary colors and the application palette remain unchanged.
+
+- **The footer model/thinking selector stays readable in Auto / IDA mode.**
+  Its scoped footer and trigger styles now use host-derived tokens on startup
+  and theme changes instead of exposing the platform's white tool-button fill.
+
+- **Auto / IDA theme preserves the divider between the transcript and chat
+  input.** The composer frame now uses the host-derived border and surface
+  colors in every mode, including after theme switches; the editor remains
+  borderless inside the single outer frame.
+
+- **Settings Cancel and Save share the same footer button sizing.** Both
+  actions now match the common scoped QSS; Save's primary styling no longer
+  uses an impossible selector requiring two different object names.
+
+- **Follow-up UI/UX fixes, verified in the native IDA 9.4 GUI at 100 % and
+  150 % scale.** Approval state and composer drafts (including caret/selection)
+  are isolated per chat tab; rejected submissions retain their text, and
+  Send/Queue/Stop follow the active session. Undo history survives successive
+  runs within a session, retains failed reversals, and refreshes the Changes
+  pane without exposing another tab's mutations. Deleting a profile then
+  saving no longer recreates it, and cancelling Settings restores the live
+  theme as well as the saved configuration. Settings pages fit 400/460 logical
+  px without horizontal body scrolling while preserving editable model entry
+  and an accessible Refresh button. The composer and action labels size from
+  the active font. History rows support Return/Enter/Space and left-click only;
+  model search supports Up/Down and single-commit Enter without host shortcuts
+  intercepting those keys. These changes do not alter the host application
+  font/palette or bypass approval gates.
+
+- **Native UI fidelity after the redesign, verified in a real IDA 9.4 GUI at
+  100 % and 150 % scale.** Light/Dark/Auto/IDA themes now repaint every
+  surface from the active tokens (composer text, transcript gutter and scroll
+  frame, tool and approval rows, code and result editors — widget `QPalette`
+  roles now track tokens too, not only QSS). The conversation pages are a
+  `SessionPages` stack instead of a `QTabWidget` that reserved a host-coloured
+  28 px row above the transcript; the tab close button works again (the
+  detached bar's `tabCloseRequested` is wired once, directly). The approval
+  gate keeps its header and both Deny / Allow once buttons on screen on short
+  docks: the code region is capped from Qt's own laid-out geometry, always
+  keeps at least one line, and the hint row yields first (clamped, with the full
+  text in its tooltip). A user font override now scales rendered Markdown (code,
+  headings) and every tool/mutation role, and a configured font family is
+  applied through a rule validated against the installed font families (an
+  unknown or injected name is ignored). Approval requests lock the composer but
+  keep Stop reachable. The host font/palette (`QApplication`) is never
+  modified.
+- **Tool output, composer and footer cleanups.** An expanded tool group no
+  longer paints the host's window colour behind its rows (the IDA application
+  stylesheet fills bare `QWidget` containers; the group body and detail holder
+  are now explicitly transparent). Tool results show the real output instead
+  of the `[The following is a tool execution result ...]` / `<tool_result>`
+  wrapper that exists only for the model, in monospace and as plain text, so
+  `<` in decompiler output is never parsed as HTML; the row meta line and line
+  count come from the clean text. The `/ Commands` composer button is gone
+  (slash commands are offered by the editor's autocomplete). Model and token
+  usage are shown once, in the footer, instead of also in the context row. The
+  footer picker no longer draws a second, oversized arrow before the model
+  name, collapse chevrons use one matched `▸`/`▾` pair, and consecutive
+  assistant segments of one turn (separated by tool calls or reasoning) show
+  the speaker name once.
+- **Scripts can be allowed for the whole chat.** The `execute_python` approval
+  gate now has **Allow for this chat** between Deny and Allow once. It skips
+  the prompt for later scripts of that chat's agent loop only (New chat and
+  other tabs still ask); the AST blocklist and docs review still run on every
+  script. The "always allow" for other tools is now a separate flag, so
+  allowing one kind no longer silently allows the other.
+- **Tool rows and Thinking blocks have a high-contrast outline.** Tool calls,
+  batches and groups are now outlined boxes (border derived from the active
+  palette to reach 3:1 against the transcript, in Dark, Light and host
+  themes), so it is easy to see where a tool ran; rows inside an expanded
+  group stay flat under the group's outline, and the approval gate keeps its
+  warning-coloured border as the one exception. The Thinking block uses the
+  same stronger border. Clicking anywhere on a tool row's header expands it,
+  and the chevron uses the text colour.
+
+### Added
+
+- Development documentation for the native smoke and benchmark procedure and
+  its known limits, in `DEVELOPMENT.md` under **Native GUI smoke &
+  benchmark**.
 
 - **The Luc Nhan rename is now complete end to end.** The display name was
   already Luc Nhan; the code, packaging and on-disk artifacts now follow. The
@@ -44,6 +164,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Pre-redesign navigation code.** The Settings `QTabWidget` and the Tools tab
+  bar are gone, together with their internal `_tabs` compatibility attributes
+  and the dead workspace mode-bar handler and stylesheet.
 - **The project website is gone.** `webpage/` — a hand-maintained landing page,
   getting-started guide, rendered architecture page and their asset copies — is
   deleted, together with every link to `rikugan.reversing.codes` and to the

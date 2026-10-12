@@ -72,6 +72,116 @@ def _qt_class(name: str) -> type:
             except Exception:
                 pass
 
+    def _parent_setter(self, parent=None, *a, **k):
+        # Track the parent only.  Real Qt's setParent reparents, hides and
+        # resets window flags; whether it touches the stored styleSheet
+        # string is settled by the native proof, not by this stub.
+        self._parent = parent
+        return None
+
+    def _parent_getter(self):
+        # ``None`` for an unparented widget — the truthful answer, and
+        # what production branches on (e.g. a viewport with no parent).
+        return getattr(self, "_parent", None)
+
+    def _find_children(self, kind, *a, **k):
+        """Descendants of ``kind`` among the children the stub recorded.
+
+        The stub has no Qt parent/child tree, so this walks what it does
+        record — widgets in a layout installed on a widget, plus children
+        tracked through ``setParent`` — and recurses into them.  The result
+        is ``[]`` when nothing was recorded, which is what real Qt reports
+        for a widget with no matching descendants.
+
+        ``kind`` is a class or a tuple of classes, matched with
+        ``isinstance``; every caller in the suite passes a bare class.
+        """
+        if not isinstance(kind, type):
+            raise TypeError("findChildren expects a class or tuple of classes")
+
+        seen: set = set()
+        found: list = []
+        pending: list = [self]
+        while pending:
+            current = pending.pop()
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            for candidate in _stub_children(current):
+                pending.append(candidate)
+                if isinstance(candidate, kind):
+                    found.append(candidate)
+        return found
+
+    def _palette_getter(self):
+        """Return this widget's palette object (created on first use)."""
+        pal = getattr(self, "_palette", None)
+        if pal is None:
+            pal = _qt_class("QPalette")()
+            pal.setColor = lambda role, color: pal.__dict__.setdefault("colors", {}).__setitem__(role, color)
+            pal.color = lambda role: pal.__dict__.get("colors", {}).get(role)
+            self._palette = pal
+        return pal
+
+    def _set_palette(self, pal) -> None:
+        self._palette = pal
+
+    def _size_policy_getter(self):
+        """Return a per-widget ``QSizePolicy`` stand-in.
+
+        Real Qt returns a live policy object, and callers mutate it
+        (``setVerticalPolicy`` / ``setHeightPolicy``) and set it back, so
+        the stub must not hand out a shared instance.
+        """
+        policy = getattr(self, "_size_policy", None)
+        if policy is None:
+            _size_policy = _qt_class("QSizePolicy")
+            _size_policy.Policy = type(
+                "Policy",
+                (),
+                {
+                    "Fixed": 0,
+                    "Minimum": 1,
+                    "Maximum": 4,
+                    "Preferred": 5,
+                    "MinimumExpanding": 3,
+                    "Expanding": 7,
+                    "Ignored": 13,
+                    "PreferredSize": 0,
+                },
+            )
+            policy = _size_policy()
+            policy._vertical = 5
+            policy._horizontal = 5
+            policy.setVerticalPolicy = lambda v: setattr(policy, "_vertical", v)
+            policy.setHorizontalPolicy = lambda v: setattr(policy, "_horizontal", v)
+            policy.verticalPolicy = lambda: policy._vertical
+            policy.horizontalPolicy = lambda: policy._horizontal
+            self._size_policy = policy
+        return policy
+
+    def _stub_children(widget) -> list:
+        """Widgets the stub recorded as belonging to ``widget``.
+
+        Two truthful sources: the items of a layout installed on it, and
+        the children tracked through ``setParent``.  Nothing is invented —
+        a widget the stub never saw reports no children.
+        """
+        children: list = []
+        layout = getattr(widget, "_layout", None)
+        if layout is not None:
+            for item in getattr(layout, "_items", []) or []:
+                candidate = item
+                getter = getattr(item, "widget", None)
+                if callable(getter):
+                    inner = getter()
+                    if inner is not None:
+                        candidate = inner
+                if candidate is not None and candidate not in children:
+                    children.append(candidate)
+        children.extend(getattr(widget, "_child_widgets", []) or [])
+        return children
+
     def _plain_text_getter(self):
         return getattr(self, "_plain_text", "")
 
@@ -184,6 +294,12 @@ def _qt_class(name: str) -> type:
     def _accessible_name_getter(self) -> str:
         return getattr(self, "_accessible_name", "")
 
+    def _set_accessible_description(self, value: object) -> None:
+        self._accessible_description = "" if value is None else str(value)
+
+    def _accessible_description_getter(self) -> str:
+        return getattr(self, "_accessible_description", "")
+
     def _set_enabled(self, value: object) -> None:
         self._enabled = bool(value)
 
@@ -259,6 +375,33 @@ def _qt_class(name: str) -> type:
     def _layout_setter(self, layout):
         self._layout = layout
 
+    def _form_add_row(self, *a, **k):
+        """Append one form row and keep ``rowCount`` in sync."""
+        rows = getattr(self, "_form_rows", 0)
+        self._form_rows = rows + 1
+        # QVBoxLayout/QHBoxLayout share this attr dict on the stub; the
+        # separate ``_items`` list stays authoritative for them.
+        items = getattr(self, "_items", None)
+        if items is not None:
+            items.extend(a)
+
+    def _form_take_row(self, index=None):
+        """Drop the last form row, mirroring ``QFormLayout.takeRow``.
+
+        The stub form keeps a row counter so ``addRow`` /
+        ``takeRow(index)`` / ``rowCount()`` behave like the real class.
+        """
+        rows = getattr(self, "_form_rows", None)
+        if rows is None:
+            rows = 0
+            self._form_rows = rows
+        if index is None:
+            index = rows - 1
+        if 0 <= index < rows:
+            rows = index
+            self._form_rows = rows
+        return None
+
     def _layout_add_widget(self, w, *a, **k):
         items = getattr(self, "_items", None)
         if items is None:
@@ -298,6 +441,18 @@ def _qt_class(name: str) -> type:
     def _layout_add_stretch(self, *a, **k):
         return None
 
+    def _layout_count(self, *a, **k):
+        """Number of items recorded by addWidget/addLayout/addStretch."""
+        return len(getattr(self, "_items", []))
+
+    def _layout_index_of(self, w):
+        """Position of ``w`` in the recorded items, or -1 like Qt."""
+        items = getattr(self, "_items", [])
+        for index, item in enumerate(items):
+            if item is w:
+                return index
+        return -1
+
     def _layout_item_at(self, index):
         items = getattr(self, "_items", [])
 
@@ -329,11 +484,51 @@ def _qt_class(name: str) -> type:
         def setSectionResizeMode(self, *args, **kwargs) -> None:
             self.resize_mode = args[0] if args else None
 
+    def _layout_contents_margins(self):
+        class _Margins:
+            def top(self):
+                return 0
+
+            def bottom(self):
+                return 0
+
+            def left(self):
+                return 0
+
+            def right(self):
+                return 0
+
+        return _Margins()
+
+    def _style_getter(self):
+        """Return a per-widget ``QStyle`` stand-in.
+
+        Production repolishes property-keyed QSS through
+        ``widget.style().unpolish/polish`` (see ``set_tool_row_nested``);
+        a real ``QWidget`` always has ``style()``, so the stub must too.
+        """
+        style = getattr(self, "_style", None)
+        if style is None:
+            style = _qt_class("QStyle")()
+            style.unpolish = lambda widget: None
+            style.polish = lambda widget: None
+            self._style = style
+        return style
+
     attrs = {
         "__init__": _noop,
         # QWidget common
         "setObjectName": _set_object_name,
         "objectName": _object_name_getter,
+        "setParent": _parent_setter,
+        # Event filters: production installs one to re-measure a gate when
+        # its chrome reflows. The stub has no event delivery, so a truthful
+        # no-op is the whole behaviour.
+        "installEventFilter": _noop,
+        "eventFilter": lambda _self, _watched, _event: False,
+        "removeEventFilter": _noop,
+        "parentWidget": _parent_getter,
+        "findChildren": _find_children,
         "setStyleSheet": _set_stylesheet,
         "styleSheet": _stylesheet_getter,
         "setMinimumWidth": _noop,
@@ -342,6 +537,15 @@ def _qt_class(name: str) -> type:
         "setMinimumSize": _set_minimum_size,
         "minimumSize": _minimum_size,
         "setSizePolicy": _noop,
+        # ``palette()`` must hand back a mutable object the caller sets
+        # colors on and passes back to ``setPalette`` (the transcript and
+        # composer surface appliers do exactly that).
+        "palette": _palette_getter,
+        "setPalette": _set_palette,
+        # ``QWidget.sizePolicy()`` must hand back a policy object the
+        # caller can mutate and set again (label sizing in the tool
+        # widgets does exactly that).
+        "sizePolicy": _size_policy_getter,
         "setFixedSize": _noop,
         "setFixedWidth": _noop,
         "setMaximumWidth": _set_maximum_width,
@@ -359,14 +563,22 @@ def _qt_class(name: str) -> type:
         "hasFocus": _has_focus,
         "setFocusPolicy": _set_focus_policy,
         "focusPolicy": _focus_policy,
+        "keyPressEvent": _noop,
+        "mouseReleaseEvent": _noop,
         "toolTip": _tooltip_getter,
         "setAccessibleName": _set_accessible_name,
         "accessibleName": _accessible_name_getter,
+        "setAccessibleDescription": _set_accessible_description,
+        "accessibleDescription": _accessible_description_getter,
         "setTextFormat": _set_text_format,
         "textFormat": _text_format_getter,
         "setTextInteractionFlags": _noop,
         "setOpenExternalLinks": _noop,
         "setContentsMargins": _noop,
+        # Layouts expose their margins as a value; production reads them to
+        # size the gate's elastic rows. The stub reports zero margins, which
+        # is truthful for a layout that was never given any.
+        "contentsMargins": _layout_contents_margins,
         "setSpacing": _noop,
         "setFixedHeight": _fixed_h_setter,
         "height": _fixed_h_getter,
@@ -384,6 +596,11 @@ def _qt_class(name: str) -> type:
         "addStretch": _layout_add_stretch,
         "addItem": _layout_add_widget,
         "itemAt": _layout_item_at,
+        # Traversal helpers: only what production actually calls to walk a
+        # layout.  They report the items recorded by ``addWidget`` /
+        # ``addLayout``, so an index round-trips honestly.
+        "indexOf": _layout_index_of,
+        "count": _layout_count,
         "layout": _layout_getter,
         "showEvent": _noop,
         "hideEvent": _noop,
@@ -405,7 +622,16 @@ def _qt_class(name: str) -> type:
         "setDecimals": _noop,
         "setValidator": _noop,
         "setHorizontalSpacing": _noop,
+        "setVerticalSpacing": _noop,
         "setFieldGrowthPolicy": _noop,
+        # ``takeRow`` is a NON-destructive detach; ``removeRow`` is NOT —
+        # in real Qt ``removeRow(QWidget*)`` deletes the row's label and
+        # field.  The stub used to make both no-ops, which masked a class
+        # of "responsive reflow deletes the widgets" bugs.  ``takeRow``
+        # now really shrinks the row count and ``removeRow`` delegates to
+        # it, so a production call to ``removeRow`` cannot look harmless.
+        "takeRow": _form_take_row,
+        "removeRow": _form_take_row,
         "setRowWrapPolicy": _noop,
         "setLabelAlignment": _noop,
         "setFormAlignment": _noop,
@@ -517,7 +743,7 @@ def _qt_class(name: str) -> type:
         "setColumnCount": _noop,
         "insertRow": _noop,
         "currentRow": lambda self: 0,
-        "rowCount": lambda self: 0,
+        "rowCount": lambda self: getattr(self, "_form_rows", 0),
         "horizontalHeaderItem": lambda self, *a: None,
         "item": lambda self, *a: None,
         "clear": _noop,
@@ -540,6 +766,7 @@ def _qt_class(name: str) -> type:
         "setTristate": _noop,
         "setNoChange": _noop,
         "setStyle": _noop,
+        "setFont": _noop,
         "setLocale": _noop,
         "setInputMethodHints": _noop,
         "setGraphicsItem": _noop,
@@ -559,9 +786,9 @@ def _qt_class(name: str) -> type:
         "textEdited": _PerInstanceSignal(),
         "editingFinished": _PerInstanceSignal(),
         "returnPressed": _PerInstanceSignal(),
+        "style": _style_getter,
         "setVisible": _visible_setter,
         "isHidden": _hidden_getter,
-        "setParent": _noop,
         "setLayout": _layout_setter,
         "resize": _noop,
         "resizeEvent": _noop,
@@ -570,6 +797,8 @@ def _qt_class(name: str) -> type:
         "setWindowTitle": _noop,
         "setWindowModality": _noop,
         "setSizeGripEnabled": _noop,
+        # QToolButton chrome (session-strip '+', header overflow)
+        "setAutoRaise": _noop,
         # Geometry helpers for _HeightCachedLabel
         "width": lambda self: 0,
         "heightForWidth": lambda self, w: 0,
@@ -583,11 +812,28 @@ def _qt_class(name: str) -> type:
         # Text with tracking
         "text": _text_getter,
         # Layout helpers (used by QVBoxLayout / QHBoxLayout / QFormLayout)
-        "addRow": _noop,
+        "addRow": _form_add_row,
         "insertWidget": _layout_insert_widget,
         "insertLayout": _noop,
     }
     return type(name, (), attrs)
+
+
+def _make_qsize_stub() -> type:
+    """Minimal ``QSize`` stand-in (width/height accessors only)."""
+
+    class _QSize:
+        def __init__(self, w=0, h=0):
+            self._w = w
+            self._h = h
+
+        def width(self):
+            return self._w
+
+        def height(self):
+            return self._h
+
+    return _QSize
 
 
 def _make_qtimer_stub() -> type:
@@ -672,6 +918,39 @@ def _make_qcoreapplication_stub() -> type:
             return None
 
     return _QCoreApplication
+
+
+def _make_qeventloop_stub() -> type:
+    """Build a minimal QEventLoop stub for tests.
+
+    ``qt_compat`` re-exports ``QEventLoop`` so that seam imports resolve
+    identically with and without the stubs.  No stubbed suite needs a real
+    loop: ``exec`` is a no-op that returns immediately, and ``quit`` is
+    accepted so a scheduled ``singleShot(..., loop.quit)`` never trips on a
+    missing attribute.  Behavioural loop tests must run against real Qt
+    (see ``tests.qt_real``).
+    """
+
+    class _QEventLoop:
+        def __init__(self, *a, **kw) -> None:
+            self._running = False
+
+        def exec(self) -> int:
+            self._running = False
+            return 0
+
+        exec_ = exec
+
+        def quit(self) -> None:
+            self._running = False
+
+        def exit(self, code: int = 0) -> None:
+            self._running = False
+
+        def isRunning(self) -> bool:
+            return self._running
+
+    return _QEventLoop
 
 
 def _make_qthread_stub() -> type:
@@ -829,7 +1108,9 @@ _GUI_NAMES = [
     "QColor",
     "QFont",
     "QIntValidator",
+    "QKeyEvent",
     "QKeySequence",
+    "QMouseEvent",
     "QPalette",
     "QShortcut",
     "QSyntaxHighlighter",
@@ -925,6 +1206,25 @@ def ensure_pyside6_stubs() -> None:
         },
     )()
     _sentinel.Orientation = type("_Orientation", (), {"Horizontal": 1, "Vertical": 2})()
+    _sentinel.Key = type(
+        "_Key",
+        (),
+        {
+            "Key_Space": 0x20,
+            "Key_A": 0x41,
+            "Key_Escape": 0x01000000,
+            "Key_Tab": 0x01000001,
+            "Key_Enter": 0x01000004,
+            "Key_Return": 0x01000005,
+            "Key_Up": 0x01000013,
+            "Key_Down": 0x01000015,
+        },
+    )()
+    _sentinel.MouseButton = type(
+        "_MouseButton",
+        (),
+        {"NoButton": 0, "LeftButton": 1, "RightButton": 2, "MiddleButton": 4, "BackButton": 8, "ForwardButton": 0x10},
+    )()
     # Qt.FocusPolicy enum — used by QPushButton.setFocusPolicy so a
     # keyboard user can reach the row's delete button via Tab. The
     # stub only needs the values production code references
@@ -995,15 +1295,28 @@ def ensure_pyside6_stubs() -> None:
         },
     )()
 
+    qevent = _qt_class("QEvent")
+    qevent.Type = type(
+        "_EventType",
+        (),
+        {"KeyPress": 6, "KeyRelease": 7, "ShortcutOverride": 51, "WindowDeactivate": 36},
+    )()
     sys.modules.setdefault("PySide6", _stub_mod("PySide6"))
     sys.modules.setdefault(
         "PySide6.QtCore",
         _stub_mod(
             "PySide6.QtCore",
             Signal=_Signal,
-            QEvent=_qt_class("QEvent"),
+            QEvent=qevent,
+            # ``qt_compat`` re-exports it, so a stubbed session must be
+            # able to import the same symbol set the real seam provides.
+            # ``exec``/``quit`` mirror the real names; nothing here runs a
+            # loop — the stub-based suites settle with processEvents().
+            QEventLoop=_make_qeventloop_stub(),
             Qt=_sentinel,
             QObject=_qt_class("QObject"),
+            QPointF=_qt_class("QPointF"),
+            QSize=_make_qsize_stub(),
             QTimer=_make_qtimer_stub(),
             # Minimal QCoreApplication stub — real tests that need a
             # real event loop should drop these stubs and re-import
@@ -1035,6 +1348,11 @@ def ensure_pyside6_stubs() -> None:
     # QFont needs a nested Weight enum (QFont.Weight.Bold) so the syntax
     # highlighter can mark keywords as bold without hitting AttributeError.
     _qfont = _qt_class("QFont")
+    # The Settings reading sample builds a QFont to preview the font
+    # override (family + point size).
+    _qfont.setPointSize = lambda *a, **k: None
+    _qfont.setFamily = lambda *a, **k: None
+    _qfont.setBold = lambda *a, **k: None
     _qfont.Weight = type(
         "_QFontWeight",
         (),
@@ -1219,6 +1537,18 @@ def ensure_pyside6_stubs() -> None:
         ),
     )
     sys.modules["PySide6.QtGui"].QFont = _qfont
+
+    # Production validates a configured family against the installed ones
+    # before it goes into a stylesheet, so the stub needs a real list: an
+    # injected or unknown name must simply not be found.
+    class _QFontDatabase:
+        _FAMILIES = ("Consolas", "Courier New", "Segoe UI", "Tahoma", "Times New Roman", "Arial")
+
+        @staticmethod
+        def families():
+            return list(_QFontDatabase._FAMILIES)
+
+    sys.modules["PySide6.QtGui"].QFontDatabase = _QFontDatabase
 
     # QPalette lives under QtGui; input_area.apply_palette sets Base/Text/
     # PlaceholderText, theme/watcher reads Window/WindowText and
@@ -1474,6 +1804,18 @@ def ensure_pyside6_stubs() -> None:
                 self.currentChanged = _Signal()
                 self.currentIndexChanged = _Signal()
 
+            def setObjectName(self, name):
+                self._object_name = name
+
+            def objectName(self):
+                return getattr(self, "_object_name", "")
+
+            def removeTab(self, index):
+                if 0 <= index < len(self._tabs):
+                    del self._tabs[index]
+                    return self._tabs[index][1]
+                return None
+
             def addTab(self, widget, label):
                 idx = len(self._tabs)
                 self._tabs.append((label, widget, None))
@@ -1511,7 +1853,7 @@ def ensure_pyside6_stubs() -> None:
         return _QTabWidget
 
     def _make_qcombobox_stub() -> type:
-        class _QComboBox:
+        class _QComboBox(_qt_class("QComboBox")):
             def __init__(self, parent=None):
                 self._items: list = []  # list of (label, data)
                 self._current = -1
@@ -1852,6 +2194,80 @@ def ensure_pyside6_stubs() -> None:
         def setMaximum(self, m: int) -> None:
             self._maximum = int(m)
 
+    def _make_qtabbar_stub() -> type:
+        """Minimal QTabBar: tab labels plus a selection that emits.
+
+        ``SessionPages`` keeps the strip's highlight and the stack in step
+        through this selection, so ``currentIndex`` / ``setCurrentIndex``
+        must really fire ``currentChanged`` rather than be inert.
+        """
+
+        _Base = _qt_class("QTabBarBase")
+
+        class _QTabBar(_Base):
+            def __init__(self, parent=None):
+                super().__init__()
+                self._labels: list[str] = []
+                self._current = -1
+                self.currentChanged = _Signal()
+
+            def addTab(self, label):
+                self._labels.append(label)
+                index = len(self._labels) - 1
+                # Truthful to Qt: the first tab becomes current, later
+                # ones do not steal the selection.
+                if self._current < 0:
+                    self._current = index
+                    self.currentChanged.emit(index)
+                return index
+
+            def insertTab(self, index, label):
+                index = max(0, min(index, len(self._labels)))
+                self._labels.insert(index, label)
+                return index
+
+            def removeTab(self, index):
+                if not (0 <= index < len(self._labels)):
+                    return
+                del self._labels[index]
+                if index < self._current:
+                    self._current -= 1
+                elif self._current >= len(self._labels):
+                    self._current = len(self._labels) - 1
+                if self._labels and self._current < 0:
+                    self._current = 0
+
+            def count(self):
+                return len(self._labels)
+
+            def tabText(self, index):
+                if 0 <= index < len(self._labels):
+                    return self._labels[index]
+                return ""
+
+            def setTabText(self, index, text):
+                if 0 <= index < len(self._labels):
+                    self._labels[index] = text
+                    return True
+                return False
+
+            def currentIndex(self):
+                return self._current
+
+            def setCurrentIndex(self, index):
+                if index == self._current:
+                    return
+                self._current = index
+                self.currentChanged.emit(index)
+
+            def tabButton(self, index, position=None):
+                return None
+
+            def tabRect(self, index):
+                return None
+
+        return _QTabBar
+
     def _make_qscrollarea_stub() -> type:
         """Build a minimal QScrollArea stub with a stateful vertical bar.
 
@@ -1867,6 +2283,23 @@ def ensure_pyside6_stubs() -> None:
             def __init__(self, parent=None):
                 super().__init__()
                 self._vertical = _ScrollBar()
+                # ``viewport()`` is set per INSTANCE, never on the class:
+                # ``tests.qt_real`` uses ``hasattr(QScrollArea, 'viewport')``
+                # as its real-vs-stub sentinel, so a class-level method would
+                # make real-Qt tests run against these stubs.  The instance
+                # attribute is callable so both ``area.viewport()`` and
+                # attribute access behave like the real widget.
+                self.viewport = self._make_viewport()
+
+            @staticmethod
+            def _make_viewport():
+                viewport = _qt_class("QWidget")()
+                viewport.setParent = lambda parent, *a, **k: None
+
+                def _viewport(*a, **k):
+                    return viewport
+
+                return _viewport
 
             def verticalScrollBar(self) -> _ScrollBar:
                 return self._vertical
@@ -1874,12 +2307,18 @@ def ensure_pyside6_stubs() -> None:
             def setWidget(self, widget) -> None:
                 self._widget = widget
 
+            def widget(self):
+                # The getter half of setWidget: production reads it to find
+                # the scrolled page.  ``None`` until one is set, as in Qt.
+                return getattr(self, "_widget", None)
+
             def setWidgetResizable(self, _resizable: bool) -> None:
                 return None
 
         return _QScrollArea
 
     sys.modules["PySide6.QtWidgets"].QScrollArea = _make_qscrollarea_stub()
+    sys.modules["PySide6.QtWidgets"].QTabBar = _make_qtabbar_stub()
 
     # QLayout subclasses (QVBoxLayout/QHBoxLayout) used by stack
     # containers need ``removeWidget`` so the history panel can drop a

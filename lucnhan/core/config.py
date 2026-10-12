@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -360,8 +361,28 @@ class LucNhanConfig:
         else:
             d["encryption"] = {"enabled": False}
 
-        with open(self.config_path, "w") as f:
-            json.dump(d, f, indent=2)
+        # Serialize into a temp file in the same directory and swap it in
+        # with the shared ``atomic_replace`` primitive.  Model/thinking
+        # selection persists on every footer commit, so a partial write
+        # must never destroy the previous config (same convention as
+        # ``state.history`` and ``tools.string_cache``).  A failure
+        # removes the temp file this call created and leaves the previous
+        # config file untouched.
+        from .atomic_io import atomic_replace
+
+        tmp_path = ""
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir=self._config_dir, prefix=".config_tmp_")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(d, f, indent=2)
+            atomic_replace(tmp_path, self.config_path)
+        except Exception:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError as cleanup_err:
+                    log_warning(f"Failed to clean up temp config {tmp_path}: {cleanup_err}")
+            raise
         # Owner-only on POSIX (mirrors codex_provider's 0o600 token write); keeps a
         # pre-existing world-readable config from surviving the rewrite on shared hosts.
         if os.name != "nt":

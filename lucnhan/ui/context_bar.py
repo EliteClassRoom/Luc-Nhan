@@ -1,4 +1,4 @@
-"""Context bar: shows current address, function, model, and token count."""
+"""Context bar: shows the current function / address and the Changes action."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from .qt_compat import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPushButton,
+    QSizePolicy,
     Qt,
     QTimer,
     QWidget,
@@ -40,33 +42,66 @@ def _function_name_at(ea: int) -> str | None:
     return None
 
 
+# GUI contract G3: the single breakpoint for chrome compaction — a panel /
+# dock narrower than this switches to the narrow presentation.
+NARROW_BREAKPOINT_PX = 640
+
+
 class ContextBar(QFrame):
-    """Status bar showing current binary context and session info."""
+    """Context row showing current binary context and session info.
+
+    GUI contract G3: ``CONTEXT`` label -> symbol -> address -> actions.
+    Model and token usage live in the footer only — showing them here too
+    duplicated the same numbers in two places.
+    """
+
+    # GUI contract G2: min-height 27 px, padding 4 / 12, gap 9.
+    _ROW_HEIGHT = 27
+    _ROW_MARGIN_H = 12
+    _ROW_MARGIN_V = 4
+    _ROW_SPACING = 9
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("context_bar")
-        self.setFixedHeight(28)
+        # G2's 27 px is a minimum: a user font override grows the text and
+        # a fixed height would clip the row.
+        self.setMinimumHeight(self._ROW_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 2, 8, 2)
-        layout.setSpacing(16)
+        layout.setContentsMargins(self._ROW_MARGIN_H, self._ROW_MARGIN_V, self._ROW_MARGIN_H, self._ROW_MARGIN_V)
+        layout.setSpacing(self._ROW_SPACING)
 
-        self._address_label = self._make_pair("Addr:", "\u2014")
-        self._function_label = self._make_pair("Func:", "\u2014")
-        self._model_label = self._make_pair("Model:", "\u2014")
-        self._tokens_label = self._make_pair("Tokens:", "0")
+        # Primary context (never hidden): symbol then address, matching
+        # the contract's label -> symbol -> address order.
+        self._context_title = QLabel("CONTEXT")
+        self._context_title.setObjectName("context_title")
+        layout.addWidget(self._context_title)
 
-        for label, value in (
-            self._address_label,
-            self._function_label,
-            self._model_label,
-            self._tokens_label,
-        ):
+        self._function_label = self._make_pair("", "—")
+        self._address_label = self._make_pair("ADDR:", "—")
+
+        for label, value in (self._function_label, self._address_label):
             layout.addWidget(label)
             layout.addWidget(value)
 
         layout.addStretch()
+
+        # G3 context row: label -> symbol -> address -> optional binary
+        # metadata -> ``Changes`` action/count.  Changes opens Mutations; it
+        # is a real action, not a setting, and carries the live record
+        # count.
+        self._changes_btn = QPushButton("Changes")
+        self._changes_btn.setObjectName("context_changes_btn")
+        self._changes_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._changes_btn.setToolTip("Show the mutation log (IDA database edits made by the agent)")
+        self._changes_btn.setAccessibleName("Changes — show the mutation log")
+        # The panel wires ``clicked`` to its own Mutations handler, so the
+        # button's own signal is the whole contract — no re-emit wrapper.
+        layout.addWidget(self._changes_btn)
+        self._mutation_count = 0
+        self._update_changes_label()
 
         self._stopped = False
 
@@ -74,6 +109,16 @@ class ContextBar(QFrame):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_cursor)
         self._timer.start(2000)
+
+    def apply_theme(self) -> None:
+        """Push the token-driven context-row QSS from the live palette."""
+        try:
+            from .styles import maybe_host_stylesheet
+            from .theme.widgets_common import get_context_bar_style
+
+            self.setStyleSheet(maybe_host_stylesheet(get_context_bar_style()))
+        except Exception as e:  # never let theming break the context row
+            log_debug(f"ContextBar.apply_theme failed: {e}")
 
     def _make_pair(self, label_text: str, initial: str):
         label = QLabel(label_text)
@@ -112,18 +157,32 @@ class ContextBar(QFrame):
             value.setText(name[:27] + "...")
             value.setToolTip(name)
 
-    def set_model(self, model: str) -> None:
-        self._model_label[1].setText(model)
+    def changes_button(self) -> QPushButton:
+        """The row's ``Changes`` action — the panel's Mutations entry point.
 
-    def set_tokens(self, count: int, context_window: int = 0) -> None:
-        if count >= 1000:
-            text = f"{count / 1000:.1f}k"
-        else:
-            text = str(count)
-        if context_window > 0:
-            pct = min(int(count * 100 / context_window), 100)
-            text += f" ({pct}%)"
-        self._tokens_label[1].setText(text)
+        Public accessor: ``panel_core`` wires this button's ``clicked`` to
+        the mutation-log handler and must not reach into a private widget.
+        """
+        return self._changes_btn
+
+    def set_mutation_count(self, count: int) -> None:
+        """Show how many reversible mutations this session recorded."""
+        self._mutation_count = max(0, int(count))
+        self._update_changes_label()
+
+    def mutation_count(self) -> int:
+        return self._mutation_count
+
+    def _update_changes_label(self) -> None:
+        count = self._mutation_count
+        text = "Changes" if count <= 0 else f"Changes · {count}"
+        self._changes_btn.setText(text)
+        self._changes_btn.setToolTip(
+            "Show the mutation log (IDA database edits made by the agent)"
+            if count <= 0
+            else f"Show {count} recorded database edit{'s' if count != 1 else ''}"
+        )
+        self._changes_btn.setAccessibleName(f"Changes — show the mutation log ({count} recorded)")
 
     def _update_cursor(self) -> None:
         if self._stopped:

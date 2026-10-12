@@ -151,13 +151,24 @@ class _FakeAgent:
 
 class TestAgentsPane(unittest.TestCase):
     def test_count_label_uses_qt_alignment_flag(self) -> None:
-        """PySide6 QLabel rejects a raw integer alignment value."""
+        """PySide6 QLabel rejects a raw integer alignment value.
+
+        Both the section heading and the right-aligned count label set
+        an alignment, so the assertion targets the count label the pane
+        returns rather than "the only QLabel".
+        """
         from lucnhan.ui import a2a_widget
 
-        label = MagicMock()
+        labels: list[MagicMock] = []
+
+        def _label(*_a, **_k):
+            m = MagicMock()
+            labels.append(m)
+            return m
+
         with (
-            patch.object(a2a_widget, "QLabel", return_value=label),
-            patch.object(a2a_widget, "QGroupBox", return_value=MagicMock()),
+            patch.object(a2a_widget, "QLabel", side_effect=_label),
+            patch.object(a2a_widget, "QFrame", return_value=MagicMock()),
             patch.object(a2a_widget, "QVBoxLayout", return_value=MagicMock()),
             patch.object(a2a_widget, "QListWidget", return_value=MagicMock()),
             patch.object(a2a_widget, "QHBoxLayout", return_value=MagicMock()),
@@ -166,7 +177,15 @@ class TestAgentsPane(unittest.TestCase):
             widget = a2a_widget.A2ABridgeWidget.__new__(a2a_widget.A2ABridgeWidget)
             widget._build_agents_pane()
 
-        label.setAlignment.assert_called_once_with(a2a_widget.Qt.AlignmentFlag.AlignRight)
+        right_aligned = [
+            m
+            for m in labels
+            if any(
+                call.args and call.args[0] == a2a_widget.Qt.AlignmentFlag.AlignRight
+                for call in m.setAlignment.call_args_list
+            )
+        ]
+        self.assertEqual(len(right_aligned), 1)
 
 
 class TestRefreshAgents(unittest.TestCase):

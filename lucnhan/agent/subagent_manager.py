@@ -383,11 +383,7 @@ class SubagentManager:
         cap must not let the count dip between registration and thread
         start-up.
         """
-        return sum(
-            1
-            for a in self._agents.values()
-            if a.status in (SubagentStatus.PENDING, SubagentStatus.RUNNING)
-        )
+        return sum(1 for a in self._agents.values() if a.status in (SubagentStatus.PENDING, SubagentStatus.RUNNING))
 
     def all_terminal(self, agent_ids: list[str]) -> bool:
         """True when every listed agent has reached a terminal status.

@@ -16,6 +16,11 @@ The widget is responsible for:
 
 * Rendering the title + metadata row in plain text (spec §11.3 — never
   interpolate untrusted titles into stylesheets or LLM prompts).
+* Making every row one keyboard-reachable item: the row itself is
+  ``StrongFocus`` and Return/Enter/Space open it, while its child delete
+  button keeps its own focus and its own activation. Only a *left*
+  mouse release opens a row — right-click belongs to text selection and
+  context menus.
 * Case-insensitive title-only search over the cached list (spec §8.4).
   Search runs on the Qt main thread against the last ``set_entries``
   payload only — it never re-queries the persistence layer.
@@ -48,6 +53,7 @@ from .qt_compat import (
     QAccessible,
     QAccessibleAnnouncementEvent,
     QApplication,
+    QEvent,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -82,8 +88,13 @@ if TYPE_CHECKING:
 
 # Maximum panel content width. The panel caps itself + every title/meta
 # label at this width so a long title cannot overflow horizontally on
-# narrow IDA layouts (the spec lists 320 px as the reference width).
+# narrow IDA layouts.  It is a *content* cap only — the GUI contract G2
+# nominal pane width (295 px) is owned by the composition seam, which
+# lifts this cap for the narrow overlay.
 HISTORY_PANEL_CONTENT_MAX_WIDTH = 320
+# ``QWIDGETSIZE_MAX`` — releases the width pin for the narrow overlay.
+# Shared with the composition seam so both presentations agree on one value.
+PANE_WIDTH_UNBOUND = 16777215
 # Panel-level padding (left + right) consumed by the root QVBoxLayout.
 _HISTORY_PANEL_PADDING = 16
 # Row-level horizontal inset (left + right padding inside each row).
@@ -144,6 +155,16 @@ def _format_provider_model(provider: str, model: str) -> str:
     return _HISTORY_META_SEPARATOR.join(parts)
 
 
+def _format_meta_line(entry: SessionHistoryEntry) -> str:
+    """Timestamp · provider/model · message count, empty fields dropped."""
+    meta_bits = [
+        _format_updated_at(entry.updated_at),
+        _format_provider_model(entry.provider, entry.model),
+        _format_message_count(entry.message_count),
+    ]
+    return _HISTORY_META_SEPARATOR.join(part for part in meta_bits if part)
+
+
 class HistoryRowWidget(QFrame):
     """Single metadata row: title + meta line. Plain-text only.
 
@@ -152,6 +173,11 @@ class HistoryRowWidget(QFrame):
     The label is word-wrapped and capped at
     :data:`_HISTORY_LABEL_MAX_WIDTH` so the row never produces a
     horizontal scrollbar at the reference 320 px panel width.
+
+    The row is one keyboard-reachable item: ``StrongFocus`` puts it in
+    the pane's Tab chain, Return/Enter/Space open it, and only a left
+    mouse release opens it. The child delete button keeps its own focus
+    and its own activation — it never opens the row.
     """
 
     session_open_requested = Signal(str)  # emits the row's session_id
@@ -171,6 +197,15 @@ class HistoryRowWidget(QFrame):
         # race a delete-in-flight with an unintended open/delete on the
         # same row.
         self._operations_enabled = True
+        # Keys that "activate" a list row. Return/Enter come as a pair
+        # depending on the host's keypad state, Space is the list-view
+        # convention — one press, one open.
+        self._activate_keys = frozenset((Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space))
+        # A QFrame defaults to NoFocus, which is why the row could not
+        # be reached or opened from the keyboard at all.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(f"Open chat: {entry.title}")
+        self.setAccessibleDescription(_format_meta_line(entry))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 4, 6, 4)
@@ -195,13 +230,7 @@ class HistoryRowWidget(QFrame):
         # build the segments deterministically — empty fields are
         # dropped so a legacy row without provider info still renders
         # the timestamp.
-        meta_bits = [
-            _format_updated_at(entry.updated_at),
-            _format_provider_model(entry.provider, entry.model),
-            _format_message_count(entry.message_count),
-        ]
-        meta_text = _HISTORY_META_SEPARATOR.join(part for part in meta_bits if part)
-        self._meta = QLabel(meta_text)
+        self._meta = QLabel(_format_meta_line(entry))
         self._meta.setTextFormat(Qt.TextFormat.PlainText)
         self._meta.setWordWrap(True)
         self._meta.setMaximumWidth(_HISTORY_LABEL_MAX_WIDTH)
@@ -231,6 +260,28 @@ class HistoryRowWidget(QFrame):
         self._delete_btn.clicked.connect(lambda: self.session_delete_requested.emit(entry.session_id, entry.title))
         layout.addWidget(self._delete_btn)
 
+        # The row has to claim its own activation keys from a matching
+        # host shortcut — see ``eventFilter``.
+        self.installEventFilter(self)
+
+    def eventFilter(self, watched: object, event: object) -> bool:
+        """Keep a host shortcut from swallowing a row press.
+
+        ``QApplication::notify`` runs a ``ShortcutOverride`` for every
+        key press *before* ``keyPressEvent``; when a matching shortcut
+        exists and nobody accepts the override, Qt delivers the
+        shortcut and drops the key event — so a focused row would never
+        receive its own press.
+
+        Accepting the override for exactly the activation keys restores
+        the row's own handling; every other key is left alone so all
+        other shortcuts keep working.
+        """
+        if event.type() == QEvent.Type.ShortcutOverride and event.key() in self._activate_keys:
+            event.accept()
+            return True
+        return super().eventFilter(watched, event)
+
     @property
     def entry(self) -> SessionHistoryEntry:
         return self._entry
@@ -249,25 +300,48 @@ class HistoryRowWidget(QFrame):
         # visually dims and refuses mouse clicks while pending.
         self._delete_btn.setEnabled(self._operations_enabled)
 
+    def _open(self) -> None:
+        """Emit the open request unless an operation is pending."""
+        if not self._operations_enabled:
+            return
+        self.session_open_requested.emit(self._entry.session_id)
+
     def mouseReleaseEvent(self, event: object) -> None:
-        """Forward a row click to ``session_open_requested``.
+        """Forward a *left* row click to ``session_open_requested``.
 
         Implemented as a class method (not via instance attribute
         assignment) so the dispatcher is part of the widget's stable
         API surface and survives ``PySide6``'s Shiboken dispatch path.
-        A click anywhere in the row fires the open request; the
-        forwarded ``session_id`` comes from the row's bound entry
+        The forwarded ``session_id`` comes from the row's bound entry
         so the panel's ``session_open_requested(str)`` carries the
         right value.
+
+        Only ``LeftButton`` opens: right-click selects a text selection
+        and opens a context menu, middle-click pastes on X11 — neither
+        means "open this chat" (review finding 8).
 
         Disabled while an operation is pending so the user cannot race
         a delete-in-flight with an open on the same row. A child
         QPushButton consumes its own mouse release, so this handler is
         only invoked for clicks on the row body / text column.
         """
-        if not self._operations_enabled:
+        super().mouseReleaseEvent(event)
+        if getattr(event, "button", lambda: None)() != Qt.MouseButton.LeftButton:
             return
-        self.session_open_requested.emit(self._entry.session_id)
+        self._open()
+
+    def keyPressEvent(self, event: object) -> None:
+        """Return / Enter / Space open the focused row exactly once.
+
+        QAbstractItemView gets this for free, a plain ``QFrame`` does
+        not — the row was keyboard-inert. Only the press is handled, so
+        the key never also reaches a shortcut that opens the row a
+        second time.
+        """
+        if getattr(event, "key", lambda: None)() in self._activate_keys:
+            self._open()
+            return
+        super().keyPressEvent(event)
 
     def shutdown(self) -> None:
         """Detach the theme subscription (idempotent)."""
@@ -328,6 +402,10 @@ class HistoryPanel(QFrame):
         # more than 320 px even if the parent layout grows. The row
         # labels carry their own matching caps below.
         self.setMaximumWidth(HISTORY_PANEL_CONTENT_MAX_WIDTH)
+        # The pane is a focus scope in the narrow overlay (GUI contract
+        # G5) so Escape reaches the panel's shortcut and the search box
+        # lands on Tab.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.setStyleSheet(get_history_panel_style())
 
@@ -355,19 +433,31 @@ class HistoryPanel(QFrame):
         header_layout.setSpacing(8)
 
         self._title = QLabel()
-        self._title.setText("Chat History")
+        # GUI contract G5: the pane header is the pane's *name*, so the
+        # header nav's ``History`` and the pane agree.  Only the visible
+        # string changed — the scope badge below still carries "Current
+        # IDB" and every state/copy string is untouched.
+        self._title.setText("History")
         self._title.setStyleSheet(get_history_title_style())
         header_layout.addWidget(self._title)
 
         self._scope_label = QLabel()
         self._scope_label.setText("Current IDB")
         self._scope_label.setStyleSheet(get_history_scope_style())
+        # GUI contract G3: secondary metadata may drop out when the pane
+        # gets narrow.  ``Ignored`` width policy collapses the badge
+        # first — the pane name and Close stay readable.
+        self._scope_label.setMinimumWidth(0)
+        self._scope_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         header_layout.addWidget(self._scope_label)
         header_layout.addStretch(1)
 
         self._close_btn = QPushButton()
         self._close_btn.setText("Close")
         self._close_btn.setObjectName("history_close_btn")
+        self._close_btn.setToolTip("Close the History pane")
+        self._close_btn.setAccessibleName("Close the History pane")
+        self._close_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._close_btn.setStyleSheet(get_history_close_btn_style())
         self._close_btn.clicked.connect(lambda: self.close_requested.emit())
         header_layout.addWidget(self._close_btn)
@@ -517,6 +607,23 @@ class HistoryPanel(QFrame):
         bind_theme(self, self._apply_styles)
 
     # === Public API ====================================================
+
+    def set_overlay_presentation(self, overlay: bool) -> None:
+        """Present as a docked column (wide) or a content overlay (narrow).
+
+        GUI contract G5.  The *same* widget is reused in both
+        presentations — only the width cap changes:
+
+        * docked: keep the content cap so a long title cannot push the
+          splitter wider than the nominal pane.
+        * overlay: lift the cap so the pane fills the content region it
+          covers.
+
+        Presentation only: cached rows, search query, scroll position and
+        every state stay exactly as they are, so resizing across the
+        breakpoint loses nothing.
+        """
+        self.setMaximumWidth(PANE_WIDTH_UNBOUND if overlay else HISTORY_PANEL_CONTENT_MAX_WIDTH)
 
     def set_entries(self, entries: list[SessionHistoryEntry]) -> None:
         """Replace the cached entry list and re-render rows.
@@ -870,6 +977,7 @@ class HistoryPanel(QFrame):
 
 __all__ = [
     "HISTORY_PANEL_CONTENT_MAX_WIDTH",
+    "PANE_WIDTH_UNBOUND",
     "HistoryPanel",
     "HistoryRowWidget",
 ]

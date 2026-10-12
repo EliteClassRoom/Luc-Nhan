@@ -20,6 +20,7 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from ..constants import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE
 from ..core.config import LucNhanConfig
 from ..core.host import get_database_instance_id, set_database_instance_id
 from ..core.logging import log_debug, log_error, log_info, log_warning
@@ -36,6 +37,7 @@ from ..state.history_types import (
 
 if TYPE_CHECKING:
     from ..agent.loop import AgentLoop, BackgroundAgentRunner
+    from ..agent.mutation import MutationRecord
     from ..agent.subagent_manager import SubagentManager
     from ..agent.turn import TurnEvent
     from ..mcp.manager import MCPManager
@@ -158,6 +160,11 @@ class SessionControllerBase:
         # reproduces the legacy single-agent behavior.
         self._runners: dict[str, BackgroundAgentRunner] = {}
         self._pending_messages: dict[str, list[str]] = {}
+        # Per-tab in-memory undo history survives replacement of normal root loops.
+        # Root loops share this lock; never hold it across reverse tool execution.
+        # ponytail: controller-wide undo lock; split per tab if contention is measured.
+        self._mutation_logs: dict[str, list[MutationRecord]] = {}
+        self._mutation_log_lock = threading.Lock()
         self._max_concurrent_agents = config.parallel_agent_max_concurrent if config.parallel_agent_enabled else 1
         # Per-run WorkspaceStore (sqlite3 connection) for each tab. The
         # store lives only for the duration of one agent run; it is
@@ -281,6 +288,9 @@ class SessionControllerBase:
         forked.metadata = dict(source.metadata)
         forked.metadata["forked_from"] = source.id
         self._sessions[new_tab_id] = forked
+        # The fork gets NO undo stack: the mutations in the source tab's
+        # stack are real database changes owned by that session. Cloning
+        # the records would let two tabs reverse the same change twice.
         log_info(f"Forked session {source.id} → new tab {new_tab_id}")
         return new_tab_id
 
@@ -292,6 +302,9 @@ class SessionControllerBase:
         # Stop the agent that belongs to this tab before tearing it down.
         self.cancel(tab_id)
         self._runners.pop(tab_id, None)
+        # The chat is gone — drop its undo stack with it (in memory only,
+        # so nothing has to be written anywhere).
+        self._drop_mutation_log(tab_id)
         if self.config.checkpoint_auto_save and session.messages:
             try:
                 history = SessionHistory(self.config)
@@ -381,6 +394,161 @@ class SessionControllerBase:
         """True if the given tab's agent is currently running."""
         runner = self._runners.get(tab_id)
         return runner is not None and runner.agent_loop.is_running
+
+    # --- Session-local /undo stack ---
+
+    def _mutation_log_for(self, tab_id: str) -> list[MutationRecord]:
+        """Return (creating on demand) the undo list owned by *tab_id*."""
+        with self._mutation_log_lock:
+            log_list = self._mutation_logs.get(tab_id)
+            if log_list is None:
+                log_list = []
+                self._mutation_logs[tab_id] = log_list
+            return log_list
+
+    def _drop_mutation_log(self, tab_id: str) -> None:
+        """Forget *tab_id*'s undo stack (new chat / close / IDB switch)."""
+        with self._mutation_log_lock:
+            self._mutation_logs.pop(tab_id, None)
+
+    def mutation_records(self, tab_id: str | None = None) -> list[MutationRecord]:
+        """Return a private, ordered snapshot of the active or named tab's history.
+
+        Includes live-runner records; failed reversals remain retryable.
+        Unknown or closed tabs return an empty snapshot.
+        """
+        tid = tab_id if tab_id is not None else self._active_tab_id
+        with self._mutation_log_lock:
+            return list(self._mutation_logs.get(tid, []))
+
+    # --- Model / thinking selection (footer picker commit path) ---
+
+    def select_model(self, connection_name: str, model_id: str, thinking_level: str) -> None:
+        """Commit a (connection, model, thinking-level) selection.
+
+        This is the *only* commit point for the footer model picker, so
+        every invariant holds here regardless of which UI triggered it:
+
+        * ``ValueError`` — unknown connection, blank model ID, or a
+          thinking level outside the registry list for that model.  A
+          custom/manual model ID is always valid; it does not have to
+          appear in a fetched catalog.
+        * ``RuntimeError`` — an agent is running **in any tab**.  The
+          check runs at commit time, after staging and immediately
+          before the config is written, so an agent that starts while
+          the popup is open still wins the race.
+        * Persistence errors propagate untouched.  The provider and the
+          per-connection snapshot are rolled back to their pre-call
+          values, so the footer/panel keeps showing the previous
+          selection and the previous config file is still on disk.
+
+        The commit lands on the same ``LucNhanConfig`` instance the
+        panel and Settings hold — no object swap, which would leave
+        those owners reading stale values.  No MCP reload, skill
+        reload, tool reset, SDK/provider construction or
+        ``update_settings()`` happens here; the next turn reuses the
+        cached provider through ``ProviderRegistry.get_or_create``,
+        which already invalidates on an ``extra`` change.
+        """
+        from ..core.thinking import get_thinking_levels
+
+        name = (connection_name or "").strip()
+        if not name:
+            raise ValueError("Connection name must not be empty")
+        if name != self.config.provider.name and name not in self.config.providers:
+            raise ValueError(f"Unknown connection: {name!r}")
+        model = (model_id or "").strip()
+        if not model:
+            raise ValueError("Model ID must not be empty")
+        levels = get_thinking_levels(model)
+        level = (thinking_level or "").strip()
+        if level not in levels:
+            raise ValueError(
+                f"Thinking level {thinking_level!r} is not supported by model {model!r} (allowed: {', '.join(levels)})"
+            )
+
+        # Stage on snapshots: ``candidate`` is the provider as it will be
+        # after the commit, ``previous`` is the provider as it is now.
+        # Nothing is written until ``save()`` succeeded, so a failed
+        # write cannot leave the footer showing a selection that was
+        # never stored.
+        previous = copy.deepcopy(self.config.provider)
+        previous_saved = copy.deepcopy(self.config.providers.get(previous.name, {}))
+        target_existed = name in self.config.providers
+        target_saved = copy.deepcopy(self.config.providers.get(name, {}))
+        candidate = copy.deepcopy(self.config.provider)
+        candidate.name = name
+        candidate.model = model
+        if name != previous.name:
+            saved = self.config.providers.get(name, {})
+            candidate.api_key = saved.get("api_key", "")
+            candidate.api_base = saved.get("api_base", "")
+            candidate.temperature = saved.get("temperature", DEFAULT_TEMPERATURE)
+            candidate.max_tokens = saved.get("max_tokens", DEFAULT_MAX_TOKENS)
+            candidate.context_window = saved.get("context_window", DEFAULT_CONTEXT_WINDOW)
+            candidate.extra = copy.deepcopy(saved.get("extra", {}))
+        extra = candidate.extra
+        if not isinstance(extra, dict):
+            extra = {}
+        previous_thinking = extra.get("thinking")
+        preserve = previous_thinking.get("preserve", True) if isinstance(previous_thinking, dict) else True
+        extra["thinking"] = {
+            "enabled": level != "none",
+            "reasoning_effort": level,
+            "preserve": preserve if isinstance(preserve, bool) else True,
+        }
+        candidate.extra = extra
+
+        # Busy guard at commit time — an agent may have started while the
+        # popup was open, in this tab or any other. Checked before the
+        # save so a rejected selection never reaches disk.
+        if self.is_agent_running:
+            raise RuntimeError("Cannot change the model while an agent is running")
+
+        live = self.config.provider
+        self._apply_provider(candidate)
+        try:
+            # ``save()`` snapshots the active provider into
+            # ``config.providers`` and writes the file atomically.
+            self.config.save()
+        except Exception:
+            # Persistence failed — put the provider and both per-connection
+            # snapshots back exactly as they were (G9 "Save pending/failure":
+            # the footer keeps the old selection). The file on disk was
+            # never replaced.
+            self.config.providers[previous.name] = previous_saved
+            if name != previous.name:
+                if target_existed:
+                    self.config.providers[name] = target_saved
+                else:
+                    self.config.providers.pop(name, None)
+            self._apply_provider(previous)
+            raise
+        # Idle sessions follow the existing global semantics of
+        # ``update_settings`` (every session tracks the active
+        # provider/model); a busy tab cannot reach this point — the guard
+        # above rejects any running agent.
+        for session in self._sessions.values():
+            session.provider_name = live.name
+            session.model_name = live.model
+
+    def _apply_provider(self, source: Any) -> None:
+        """Copy every ``ProviderConfig`` field of *source* onto the live provider.
+
+        In-place on purpose: the panel, Settings and this controller all
+        hold a reference to the same ``LucNhanConfig``, so replacing
+        ``config.provider`` would leave those owners reading stale
+        values.
+        """
+        live = self.config.provider
+        live.name = source.name
+        live.model = source.model
+        live.api_key = source.api_key
+        live.api_base = source.api_base
+        live.temperature = source.temperature
+        live.max_tokens = source.max_tokens
+        live.context_window = source.context_window
+        live.extra = source.extra
 
     def get_runner(self, tab_id: str | None = None) -> BackgroundAgentRunner | None:
         """Return the runner for *tab_id* (defaults to the active tab).
@@ -629,6 +797,8 @@ class SessionControllerBase:
             session,
             skill_registry=self._skill_registry,
             host_name=self.host_name,
+            mutation_log=self._mutation_log_for(tid),
+            mutation_lock=self._mutation_log_lock,
             # Share the session-wide manager so spawn_subagent children
             # register with the same queue the Agents tab polls. None when
             # no provider is available — the loop then builds its own.
@@ -824,6 +994,12 @@ class SessionControllerBase:
         tid = tab_id if tab_id is not None else self._active_tab_id
         self._runners.pop(tid, None)
 
+        # Nothing to transfer for /undo: the run appended straight into
+        # this tab's shared stack (see ``_mutation_log_for``), so the
+        # records are already where the next run and
+        # ``mutation_records`` will read them. Repeated calls are
+        # therefore harmless — they cannot duplicate a record.
+
         # Release the per-run sqlite3 connection held by BinaryMemoryService
         # for this tab. The store's close() is idempotent so the next
         # wire-up (which will also close the displaced instance) cannot
@@ -898,6 +1074,9 @@ class SessionControllerBase:
             idb_path=self._idb_path,
             db_instance_id=self._db_instance_id,
         )
+        # New chat starts with nothing to undo — the previous run's stack
+        # described a conversation that no longer exists.
+        self._drop_mutation_log(self._active_tab_id)
         log_info("Started new chat session (active tab)")
 
     # ------------------------------------------------------------------
@@ -1127,6 +1306,10 @@ class SessionControllerBase:
             except (OSError, ValueError) as exc:
                 log_error(f"Failed to enqueue session {tab_id} on file change: {exc}")
         self._sessions.clear()
+        # Every chat belonged to the previous binary — its undo stacks go
+        # with it (a reverse record from another IDB is meaningless here).
+        with self._mutation_log_lock:
+            self._mutation_logs.clear()
         self._idb_path = _normalize_db_path(new_idb_path)
         self._db_instance_id = self._ensure_db_instance_id()
         tab_id = self._create_session()
@@ -1200,6 +1383,9 @@ class SessionControllerBase:
         # Cancel every running agent across all tabs.
         self.cancel_all()
         self._runners.clear()
+        # In-memory undo stacks die with the controller.
+        with self._mutation_log_lock:
+            self._mutation_logs.clear()
         # Final attempt to persist instance ID before the host saves the DB.
         set_database_instance_id(self._db_instance_id)
         for tab_id, session in self._sessions.items():

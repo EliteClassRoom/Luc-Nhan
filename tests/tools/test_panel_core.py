@@ -61,6 +61,7 @@ _STUBBED_MODULES = [
     "lucnhan.ui.theme.palette_dark",
     "lucnhan.ui.theme.palette_light",
     "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.theme.widgets_common",
     "lucnhan.core.config",
     "lucnhan.core.logging",
     "lucnhan.core.types",
@@ -90,6 +91,7 @@ for _mod_name in [
     "lucnhan.ui.theme.palette_dark",
     "lucnhan.ui.theme.palette_light",
     "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.theme.widgets_common",
     "lucnhan.core.config",
     "lucnhan.core.logging",
     "lucnhan.core.types",
@@ -107,7 +109,10 @@ for _mod_name in [
     # deterministic regardless of collection order.
     _stub = _StubModule(_mod_name)
     for _attr in [
-        "build_small_button_stylesheet",
+        "get_cancel_btn_style",
+        "get_composer_frame_style",
+        "get_primary_btn_style",
+        "get_small_btn_style",
         "maybe_host_stylesheet",
         "use_native_host_theme",
         "ChatView",
@@ -192,6 +197,18 @@ class _StubThemeManager:
     def reset(cls) -> None:
         cls._instance = None
 
+    def tokens(self):
+        """The tokens the themed builders read.
+
+        The chrome appliers (header, footer, banner, composers, …) build
+        their QSS from ``ThemeManager.instance().tokens()``, so the stub
+        has to answer that call.  A ``MagicMock`` satisfies the string
+        formatting those builders do without pinning any color.
+        """
+        from unittest.mock import MagicMock
+
+        return MagicMock()
+
 
 _tm_stub = sys.modules.get("lucnhan.ui.theme.manager")
 if _tm_stub is not None:
@@ -215,6 +232,7 @@ sys.modules.pop("lucnhan.ui.panel_core", None)
 # after a panel-core test in the same pytest invocation.
 import pytest
 
+import lucnhan.ui.panel_core as panel_core
 from lucnhan.ui.export_formatting import (
     _TOOL_RESULT_TRUNCATE_CHARS,
     _export_detect_lang,
@@ -222,6 +240,8 @@ from lucnhan.ui.export_formatting import (
     _export_format_tool_result,
 )
 from lucnhan.ui.panel_core import (
+    _PANE_NOMINAL_WIDTH,
+    _PANE_WIDTH_UNBOUND,
     LucNhanPanelCore,
 )
 from tests.qt_real import live_class
@@ -425,7 +445,10 @@ def _make_panel():
     panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
     panel._is_shutdown = False
     panel._polling = False
-    panel._pending_answer = False
+    # Per-tab gate + draft state (the panel no longer keeps panel-wide
+    # approval booleans — see ``_tab_gates`` / ``_tab_drafts``).
+    panel._tab_gates = {}
+    panel._tab_drafts = {}
     panel._chat_views = {}
     panel._pending_restore_messages = {}
     panel._context_bar = None
@@ -449,6 +472,7 @@ def _make_panel():
     # explicitly keeps the fixture deterministic.
     panel._history_panel = None
     panel._history_btn = MagicMock()
+    panel._session_strip = MagicMock()
     panel._history_generation = 0
     panel._history_executor = None
     panel._history_poll_timer = None
@@ -461,10 +485,37 @@ def _make_panel():
     panel._count_label = MagicMock()
     panel._tab_widget = MagicMock()
     panel._tab_bar = MagicMock()
+    # ``_on_theme_changed`` re-applies every chrome region, so the fixture
+    # provides each widget that path touches (header and its labels,
+    # footer, context bar, composer, splitters).  These stand in for the
+    # widgets a real ``__init__`` builds; the production path is
+    # unchanged and no ``hasattr`` guard is added for tests.
+    panel._header = MagicMock()
+    panel._title_label = MagicMock()
+    panel._status_label = MagicMock()
+    panel._overflow_btn = MagicMock()
+    panel._chat_btn = MagicMock()
+    panel._tools_btn = MagicMock()
+    panel._history_btn = MagicMock()
+    panel._settings_btn = MagicMock()
+    panel._footer = MagicMock()
+    panel._footer_trigger = MagicMock()
+    panel._picker = MagicMock()
+    panel._hint_label = MagicMock()
+    panel._token_text = "0"
+    panel._input_container = MagicMock()
+    panel._dependency_banner = MagicMock()
+    panel._main_splitter = MagicMock()
+    panel._chat_splitter = MagicMock()
+    panel._content_area = MagicMock()
+    panel._tools_panel = None
+    panel._agent_tree = None
+    panel._knowledge_panel = None
+    panel._a2a_bridge_widget = None
+    panel._model_catalog = MagicMock()
     panel._ctrl = MagicMock()
     panel._config = _temp_config()
     panel._ui_hooks = None
-    panel._awaiting_button_approval = False
     return panel
 
 
@@ -518,45 +569,85 @@ class TestActiveChatView(unittest.TestCase):
 
 
 class TestSetRunning(unittest.TestCase):
-    def test_running_true_sets_queue_text(self):
+    """The visible composer state is derived from the ACTIVE tab.
+
+    ``_set_running(True/False)`` forces the running half of that state;
+    the gate half comes from the active tab's own record, so a tab that
+    is not on screen can never flip these controls.
+    """
+
+    def _panel_with_tab(self, tab_id: str = "t1", running: bool = False):
         panel = _make_panel()
-        panel._set_running(True)
+        panel._ctrl.active_tab_id = tab_id
+        panel._ctrl.is_tab_running = MagicMock(return_value=running)
+        return panel
+
+    def test_running_true_sets_queue_text(self):
+        panel = self._panel_with_tab(running=True)
+        panel._sync_composer_state()
         panel._send_btn.setText.assert_called_with("Queue")
 
     def test_running_false_sets_send_text(self):
-        panel = _make_panel()
-        panel._set_running(False)
+        panel = self._panel_with_tab(running=False)
+        panel._sync_composer_state()
         panel._send_btn.setText.assert_called_with("Send")
 
     def test_running_shows_cancel_btn(self):
-        panel = _make_panel()
-        panel._set_running(True)
+        panel = self._panel_with_tab(running=True)
+        panel._sync_composer_state()
         panel._cancel_btn.setVisible.assert_called_with(True)
 
     def test_not_running_hides_cancel_btn(self):
-        panel = _make_panel()
-        panel._set_running(False)
+        panel = self._panel_with_tab(running=False)
+        panel._sync_composer_state()
         panel._cancel_btn.setVisible.assert_called_with(False)
+
+    def test_background_running_tab_does_not_change_the_visible_state(self):
+        """Tab A streams in the background; tab B is what the user sees."""
+        panel = self._panel_with_tab(tab_id="t2", running=False)
+        panel._ctrl.is_tab_running = MagicMock(side_effect=lambda tab_id: tab_id == "t1")
+
+        panel._sync_composer_state()
+
+        panel._send_btn.setText.assert_called_with("Send")
+        panel._cancel_btn.setVisible.assert_called_with(False)
+
+    def test_active_gate_locks_the_composer_and_keeps_stop(self):
+        panel = self._panel_with_tab(tab_id="t2", running=False)
+        panel._gate("t2").button_only = True
+
+        panel._sync_composer_state()
+
+        panel._input_area.set_enabled.assert_called_with(False)
+        panel._send_btn.setEnabled.assert_called_with(False)
+        panel._cancel_btn.setVisible.assert_called_with(True)
+        panel._status_label.setText.assert_called_with("Waiting for approval")
 
 
 class TestUpdateTabBarVisibility(unittest.TestCase):
-    def test_single_tab_hides_bar(self):
+    """The session strip stays visible so its ``+`` new-chat control is
+    always reachable with the mouse (GUI contract G3)."""
+
+    def test_single_tab_keeps_strip_visible(self):
         panel = _make_panel()
+        panel._session_strip = MagicMock()
         panel._tab_widget.count.return_value = 1
         panel._update_tab_bar_visibility()
-        panel._tab_bar.setVisible.assert_called_with(False)
+        panel._session_strip.setVisible.assert_called_with(True)
 
-    def test_two_tabs_shows_bar(self):
+    def test_two_tabs_shows_strip(self):
         panel = _make_panel()
+        panel._session_strip = MagicMock()
         panel._tab_widget.count.return_value = 2
         panel._update_tab_bar_visibility()
-        panel._tab_bar.setVisible.assert_called_with(True)
+        panel._session_strip.setVisible.assert_called_with(True)
 
-    def test_zero_tabs_hides_bar(self):
+    def test_zero_tabs_keeps_strip_visible(self):
         panel = _make_panel()
+        panel._session_strip = MagicMock()
         panel._tab_widget.count.return_value = 0
         panel._update_tab_bar_visibility()
-        panel._tab_bar.setVisible.assert_called_with(False)
+        panel._session_strip.setVisible.assert_called_with(True)
 
 
 class TestOnCloseTab(unittest.TestCase):
@@ -593,26 +684,27 @@ class TestOnToggleMutationLog(unittest.TestCase):
         panel._mutation_panel = None
         panel._on_toggle_mutation_log()  # must not raise
 
-    def test_shows_when_hidden(self):
+    def test_shows_when_closed(self):
         panel = _make_panel()
         mock_mp = MagicMock()
-        mock_mp.isVisible.return_value = False
         panel._mutation_panel = mock_mp
+        panel._show_right_panel = MagicMock()
         panel._on_toggle_mutation_log()
-        mock_mp.setVisible.assert_called_with(True)
+        # The coordinator — not ``isVisible`` — owns pane state (G5).
+        panel._show_right_panel.assert_called_once_with("mutation", opener=panel._mutations_btn)
 
-    def test_hides_when_visible(self):
+    def test_hides_when_open(self):
         panel = _make_panel()
         mock_mp = MagicMock()
-        mock_mp.isVisible.return_value = True
         panel._mutation_panel = mock_mp
+        panel._pane_name = "mutation"
+        panel._show_right_panel = MagicMock()
         panel._on_toggle_mutation_log()
-        mock_mp.setVisible.assert_called_with(False)
+        panel._show_right_panel.assert_called_once_with(None, opener=panel._mutations_btn)
 
     def test_updates_checked_state(self):
         panel = _make_panel()
         mock_mp = MagicMock()
-        mock_mp.isVisible.return_value = False
         panel._mutation_panel = mock_mp
         panel._on_toggle_mutation_log()
         panel._mutations_btn.setChecked.assert_called_with(True)
@@ -648,10 +740,8 @@ class TestOnOrchestraApproval(unittest.TestCase):
     approvals (``_tool_approval_queue``).  The panel must call
     ``agent_loop.submit_approval`` (which targets the orchestra queue)
     — never ``submit_tool_approval`` (which targets the tool queue).
-    After submitting, the panel must clear the same UI state flags
-    that the button-only approval flow clears
-    (``_pending_answer``, ``_awaiting_button_approval``) so the input
-    area is re-enabled for the next user turn.
+    After submitting, the decided TAB's gates are released so the input
+    area is re-enabled for the next user turn — and only that tab's.
     """
 
     def _make_runner_loop(self) -> MagicMock:
@@ -660,21 +750,26 @@ class TestOnOrchestraApproval(unittest.TestCase):
         runner.agent_loop = agent_loop
         return runner, agent_loop
 
-    def test_approve_calls_submit_approval(self) -> None:
+    def _gated_panel(self) -> tuple:
         panel = _make_panel()
         runner, agent_loop = self._make_runner_loop()
         panel._ctrl.get_runner.return_value = runner
+        panel._ctrl.active_tab_id = "t1"
+        panel._gate("t1").pending_answer = True
+        panel._gate("t1").button_only = True
+        return panel, agent_loop
 
-        panel._on_orchestra_approval("call_xyz", "approve")
+    def test_approve_calls_submit_approval(self) -> None:
+        panel, agent_loop = self._gated_panel()
+
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
         agent_loop.submit_approval.assert_called_once_with("approve")
 
     def test_deny_calls_submit_approval(self) -> None:
-        panel = _make_panel()
-        runner, agent_loop = self._make_runner_loop()
-        panel._ctrl.get_runner.return_value = runner
+        panel, agent_loop = self._gated_panel()
 
-        panel._on_orchestra_approval("call_xyz", "deny")
+        panel._on_orchestra_approval("call_xyz", "deny", tab_id="t1")
 
         agent_loop.submit_approval.assert_called_once_with("deny")
 
@@ -683,50 +778,46 @@ class TestOnOrchestraApproval(unittest.TestCase):
         tool-approval queue.  The two channels serve different
         agent-loop flows and routing an orchestra decision to the
         tool queue would deadlock the orchestra handoff."""
-        panel = _make_panel()
-        runner, agent_loop = self._make_runner_loop()
-        panel._ctrl.get_runner.return_value = runner
+        panel, agent_loop = self._gated_panel()
 
-        panel._on_orchestra_approval("call_xyz", "approve")
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
         agent_loop.submit_tool_approval.assert_not_called()
 
-    def test_clears_pending_answer_flag(self) -> None:
-        panel = _make_panel()
-        runner, _ = self._make_runner_loop()
-        panel._ctrl.get_runner.return_value = runner
-        panel._pending_answer = True
+    def test_clears_the_decided_tab_gate(self) -> None:
+        panel, _ = self._gated_panel()
 
-        panel._on_orchestra_approval("call_xyz", "approve")
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
-        self.assertFalse(panel._pending_answer)
+        self.assertFalse(panel._active_tab_button_gate())
+        self.assertFalse(panel._tab_gates["t1"].pending_answer)
 
-    def test_clears_awaiting_button_approval_flag(self) -> None:
-        panel = _make_panel()
-        runner, _ = self._make_runner_loop()
-        panel._ctrl.get_runner.return_value = runner
-        panel._awaiting_button_approval = True
+    def test_keeps_another_tabs_gate(self) -> None:
+        """A background tab waiting on its own approval keeps waiting."""
+        panel, _ = self._gated_panel()
+        panel._gate("t2").pending_answer = True
+        panel._gate("t2").button_only = True
 
-        panel._on_orchestra_approval("call_xyz", "deny")
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
-        self.assertFalse(panel._awaiting_button_approval)
+        self.assertTrue(panel._tab_gates["t2"].button_only)
 
     def test_no_runner_does_not_raise(self) -> None:
         """If the agent runner is gone (cancelled, finished) the
-        call must be a no-op — no exception, but the UI flags are
+        call must be a no-op — no exception, but the tab's gates are
         still cleared so the panel can re-enable input."""
         panel = _make_panel()
         panel._ctrl.get_runner.return_value = None
-        panel._pending_answer = True
-        panel._awaiting_button_approval = True
+        panel._ctrl.active_tab_id = "t1"
+        panel._gate("t1").pending_answer = True
+        panel._gate("t1").button_only = True
 
         # Must not raise.
-        panel._on_orchestra_approval("call_xyz", "approve")
+        panel._on_orchestra_approval("call_xyz", "approve", tab_id="t1")
 
-        # The flags reflect "the decision is done" regardless of
+        # The gates reflect "the decision is done" regardless of
         # whether the agent loop is alive to receive it.
-        self.assertFalse(panel._pending_answer)
-        self.assertFalse(panel._awaiting_button_approval)
+        self.assertFalse(panel._active_tab_button_gate())
 
 
 class TestShutdownIdempotency(unittest.TestCase):
@@ -784,59 +875,49 @@ class TestRestoreMessagesIfNeeded(unittest.TestCase):
         self.assertNotIn("t1", panel._pending_restore_messages)
 
 
-class TestUpdateTokenDisplay(unittest.TestCase):
-    def test_noop_when_context_bar_none(self):
-        panel = _make_panel()
-        panel._context_bar = None
-        panel._update_token_display(1000)  # must not raise
+class TestFormatTokenUsage(unittest.TestCase):
+    def test_small_count_is_an_int(self):
+        self.assertEqual(panel_core._format_token_usage(500), "500")
 
-    def test_calls_set_tokens_with_given_count(self):
+    def test_thousands_use_k(self):
+        self.assertEqual(panel_core._format_token_usage(2500), "2.5k")
+        self.assertEqual(panel_core._format_token_usage(1000), "1.0k")
+
+    def test_percentage_of_the_window(self):
+        self.assertEqual(panel_core._format_token_usage(500, 1000), "500 (50%)")
+
+    def test_percentage_is_capped_at_100(self):
+        self.assertTrue(panel_core._format_token_usage(2000, 1000).endswith("(100%)"))
+
+    def test_no_percentage_without_a_window(self):
+        self.assertNotIn("%", panel_core._format_token_usage(100, 0))
+
+
+class TestUpdateTokenDisplay(unittest.TestCase):
+    def test_shows_count_and_window_percentage(self):
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
         panel._update_token_display(5000)
-        # Phase 1.3: token display is debounced — flush before asserting.
+        # Token display is debounced - flush before asserting.
         panel._flush_pending_token_display()
-        mock_cb.set_tokens.assert_called_once_with(5000, 200000)
+        self.assertEqual(panel._token_text, "5.0k (2%)")
 
-    def test_zero_context_window_fallback(self):
+    def test_zero_context_window_has_no_percentage(self):
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 0
         panel._update_token_display(1234)
-        # Phase 1.3: token display is debounced — flush before asserting.
         panel._flush_pending_token_display()
-        mock_cb.set_tokens.assert_called_once_with(1234, 0)
+        self.assertEqual(panel._token_text, "1.2k")
 
     def test_coalesces_repeated_updates_within_window(self):
-        """Multiple updates with different values produce only one set_tokens call."""
+        """Only the latest of several rapid updates is displayed."""
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
         panel._update_token_display(1000)
         panel._update_token_display(2000)
         panel._update_token_display(3000)
-        # Only the latest value is flushed, not all three. We check the
-        # last call's args explicitly because Qt may eagerly fire the
-        # single-shot debounce timer in some test environments, which
-        # would otherwise look like multiple set_tokens invocations.
         panel._flush_pending_token_display()
-        self.assertEqual(mock_cb.set_tokens.call_args, mock_cb.set_tokens.call_args_list[-1])
-        self.assertEqual(mock_cb.set_tokens.call_args.args, (3000, 200000))
-
-    def test_noop_when_value_unchanged(self):
-        """An update with the same value as the last displayed value is a no-op."""
-        panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
-        panel._config.provider.context_window = 200000
-        panel._update_token_display(5000)
-        panel._flush_pending_token_display()
-        panel._update_token_display(5000)  # same value — must not enqueue
-        mock_cb.set_tokens.assert_called_once_with(5000, 200000)
+        self.assertEqual(panel._token_text, "3.0k (1%)")
 
 
 class TestResetTokenDisplay(unittest.TestCase):
@@ -844,23 +925,21 @@ class TestResetTokenDisplay(unittest.TestCase):
 
     Regression: ``_schedule_token_display`` deduped against the last value it
     *displayed*, and ``_update_token_display(0)`` was dropped outright by the
-    ``token_count <= 0`` guard. Starting a new session therefore left the bar
-    showing the old session's context size until a later value happened to
-    differ from it.
+    ``token_count <= 0`` guard. Starting a new session therefore left the
+    readout showing the old session's context size until a later value
+    happened to differ from it.
     """
 
-    def test_reset_clears_bar_after_busy_session(self):
+    def test_reset_clears_readout_after_busy_session(self):
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
 
         panel._update_token_display(95000)
         panel._flush_pending_token_display()
-        self.assertEqual(mock_cb.set_tokens.call_args_list[-1].args, (95000, 200000))
+        self.assertEqual(panel._token_text, "95.0k (47%)")
 
         panel._reset_token_display()
-        self.assertEqual(mock_cb.set_tokens.call_args_list[-1].args, (0, 200000))
+        self.assertEqual(panel._token_text, "0 (0%)")
 
     def test_reset_clears_dedupe_memory(self):
         """After a reset, the same value must be displayable again.
@@ -871,30 +950,23 @@ class TestResetTokenDisplay(unittest.TestCase):
         repaint.
         """
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
 
         panel._update_token_display(95000)
         panel._flush_pending_token_display()
         panel._reset_token_display()
-        mock_cb.reset_mock()
 
         panel._update_token_display(95000)
         panel._flush_pending_token_display()
-        mock_cb.set_tokens.assert_called_once_with(95000, 200000)
+        self.assertEqual(panel._token_text, "95.0k (47%)")
 
     def test_reset_discards_pending_value_from_discarded_session(self):
         """An in-flight debounced value from the old session must not land.
 
-        The timer may still hold a value queued moments before the reset; if it
-        flushed afterwards the bar would jump back to the old session's usage.
         The pending slot is seeded directly because the real ``QTimer`` can
         fire eagerly under stubs, which would flush it before the reset runs.
         """
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
 
         panel._pending_token_display = 80000  # queued, not yet flushed
@@ -903,29 +975,21 @@ class TestResetTokenDisplay(unittest.TestCase):
         self.assertIsNone(panel._pending_token_display)
 
         panel._flush_pending_token_display()
-        # Only the reset's own set_tokens(0, …) is recorded — the stale 80000
-        # must not have been painted.
-        self.assertEqual(mock_cb.set_tokens.call_args_list[-1].args, (0, 200000))
+        self.assertEqual(panel._token_text, "0 (0%)")
 
     def test_zero_is_a_displayable_value(self):
-        """``_update_token_display(0)`` must reach the bar, not be dropped.
+        """``_update_token_display(0)`` must be shown, not dropped.
 
         The ``<= 0`` guard conflated "no value" with the legitimate value
         zero; only negatives are now rejected.
         """
         panel = _make_panel()
-        mock_cb = MagicMock()
-        panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
+        panel._token_text = "stale"
 
         panel._update_token_display(0)
         panel._flush_pending_token_display()
-        mock_cb.set_tokens.assert_called_once_with(0, 200000)
-
-    def test_reset_is_safe_when_context_bar_none(self):
-        panel = _make_panel()
-        panel._context_bar = None
-        panel._reset_token_display()  # must not raise
+        self.assertEqual(panel._token_text, "0 (0%)")
 
 
 # ---------------------------------------------------------------------------
@@ -1183,24 +1247,27 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
             def widget(self, _index: int) -> MagicMock:
                 return MagicMock()
 
-            def removeTab(self, _index: int) -> None:
+            def removeWidget(self, _widget: object) -> None:
                 self._current_index = ToolsPanel.TAB_AGENTS
                 if not self._signals_blocked:
                     self.currentChanged.emit(self._current_index)
 
-            def insertTab(self, _index: int, _widget: object, _label: str) -> None:
+            def insertWidget(self, _index: int, _widget: object) -> None:
                 self._current_index = ToolsPanel.TAB_A2A
                 if not self._signals_blocked:
                     self.currentChanged.emit(self._current_index)
 
         tools_panel = ToolsPanel.__new__(ToolsPanel)
-        tools_panel._tabs = _Tabs()
+        # G8: the page host replaced the QTabWidget; replacing a page must
+        # still not re-enter the lazy activation callback.
+        tools_panel.__dict__["_page_host"] = _Tabs()
 
         tools_panel._replace_tab(ToolsPanel.TAB_AGENTS, MagicMock(), "Agents")
 
-        tools_panel._tabs.currentChanged.emit.assert_not_called()
-        self.assertEqual(tools_panel._tabs.currentIndex(), ToolsPanel.TAB_AGENTS)
-        self.assertFalse(tools_panel._tabs._signals_blocked)
+        host = tools_panel._page_host
+        host.currentChanged.emit.assert_not_called()
+        self.assertEqual(host.currentIndex(), ToolsPanel.TAB_AGENTS)
+        self.assertFalse(host._signals_blocked)
 
     def test_tab_initializer_keys_match_constants(self):
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
@@ -1228,18 +1295,19 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         """Calling ``show_tools_panel`` without arguments opens Knowledge."""
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
-        panel._mode_bar = MagicMock()
+        panel._mode_stack = MagicMock()
+        panel._chat_btn = MagicMock()
         panel._tools_form = None
         panel._tools_btn = MagicMock()
         panel._tools_poll_timer = MagicMock()
         panel._ensure_tools_panel_created = MagicMock()
 
-        # Build a fake ToolsPanel whose ``_tabs`` we can spy on.
+        # Build a fake ToolsPanel whose page host we can spy on.
         from lucnhan.ui.tools_panel import ToolsPanel
 
         fake_panel = MagicMock()
-        fake_panel._tabs.currentIndex.return_value = ToolsPanel.TAB_A2A
-        fake_panel._tabs.count.return_value = ToolsPanel.TAB_COUNT
+        fake_panel._page_host.currentIndex.return_value = ToolsPanel.TAB_A2A
+        fake_panel.current_page.return_value = ToolsPanel.TAB_A2A
         panel._tools_panel = fake_panel
         # ``_ensure_tab_initialized`` should be called with the
         # knowledge tab index.
@@ -1248,7 +1316,7 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         panel.show_tools_panel()
 
         # Default tab is Knowledge (2), not the removed Renamer.
-        fake_panel._tabs.setCurrentIndex.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
+        fake_panel.set_current_page.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
         panel._ensure_tab_initialized.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
 
     def test_show_tools_panel_falls_back_for_unknown_index(self):
@@ -1257,25 +1325,26 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
 
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
-        panel._mode_bar = MagicMock()
+        panel._mode_stack = MagicMock()
+        panel._chat_btn = MagicMock()
         panel._tools_form = None
         panel._tools_btn = MagicMock()
         panel._tools_poll_timer = MagicMock()
         panel._ensure_tools_panel_created = MagicMock()
         panel._tools_panel = MagicMock()
-        panel._tools_panel._tabs.count.return_value = ToolsPanel.TAB_COUNT
+        panel._tools_panel.current_page.return_value = ToolsPanel.TAB_KNOWLEDGE
         panel._ensure_tab_initialized = MagicMock()
 
         panel.show_tools_panel(tab_index=99)
-        panel._tools_panel._tabs.setCurrentIndex.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
+        panel._tools_panel.set_current_page.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
         panel._ensure_tab_initialized.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
 
         # Historical numeric index ``0`` previously meant Renamer.
         # It must now map to the new tab-zero (Agents), not raise.
-        panel._tools_panel._tabs.setCurrentIndex.reset_mock()
+        panel._tools_panel.set_current_page.reset_mock()
         panel._ensure_tab_initialized.reset_mock()
         panel.show_tools_panel(tab_index=0)
-        panel._tools_panel._tabs.setCurrentIndex.assert_called_with(ToolsPanel.TAB_AGENTS)
+        panel._tools_panel.set_current_page.assert_called_with(ToolsPanel.TAB_AGENTS)
         panel._ensure_tab_initialized.assert_called_with(ToolsPanel.TAB_AGENTS)
 
     def test_no_renamer_widget_or_engine_attributes_on_panel(self):
@@ -1292,25 +1361,6 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         self.assertFalse(hasattr(panel, "_on_renamer_cancel"))
         self.assertFalse(hasattr(panel, "_ensure_renamer_tab_initialized"))
         self.assertFalse(hasattr(panel, "show_tools_with_renamer"))
-
-    def test_theme_refresh_iterates_only_active_tabs(self):
-        """The theme refresh loop should no longer touch a renamer widget."""
-        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
-        panel._bulk_renamer = None
-        # Look for any ``_bulk_renamer`` mention in the theme refresh
-        # code path. The active attribute list is the simplest check.
-        from lucnhan.ui import panel_core as pc
-
-        # The expected active attribute list is documented inline at
-        # the loop site; verify no ``_bulk_renamer`` is iterated.
-        src = pc.__file__
-        with open(src, encoding="utf-8") as handle:
-            body = handle.read()
-        # Find the theme refresh loop and check it does not name renamer.
-        loop_idx = body.find("for attr in (")
-        self.assertGreaterEqual(loop_idx, 0, "theme refresh loop not found")
-        snippet = body[loop_idx : loop_idx + 200]
-        self.assertNotIn("_bulk_renamer", snippet)
 
 
 # ---------------------------------------------------------------------------
@@ -1764,10 +1814,32 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
             source,
             msg=("_build_ui() must create a vertical QSplitter so the user has a real resize handle for the input."),
         )
+        # GUI contract G3: the composer owns the chat splitter, so growing
+        # it takes height *from the transcript above* rather than pushing
+        # the footer off-screen.
         self.assertIn(
-            "self._chat_splitter.addWidget(self._main_splitter)",
+            "self._chat_splitter.addWidget(self._content_area)",
             source,
-            msg=("_build_ui() must place the main conversation area in the top pane of the chat splitter."),
+            msg=(
+                "_build_ui() must place the content region in the top pane of the chat splitter. "
+                "GUI contract G5 wraps it in the content-area widget so the pane stack can "
+                "overlay the content region at a narrow width."
+            ),
+        )
+        self.assertIn(
+            "self._chat_splitter.addWidget(input_container)",
+            source,
+            msg=(
+                "_build_ui() must place the input section in the bottom pane of the chat splitter so the user can drag."
+            ),
+        )
+        # The tab widget must stay inside the horizontal splitter — adding
+        # it to the root layout would steal the chat pane and blank the
+        # content region.
+        self.assertNotIn(
+            "layout.addWidget(self._tab_widget",
+            source,
+            msg="_build_ui() must not reparent the tab widget into the root layout.",
         )
         self.assertIn(
             "self._chat_splitter.addWidget(input_container)",
@@ -1806,31 +1878,6 @@ class TestChatSplitterWrapsMainAndInput(unittest.TestCase):
             ),
         )
 
-    def test_input_area_default_height_is_two_to_three_lines(self) -> None:
-        """The two-to-three-line default is on ``InputArea``; the
-        splitter owns the upper bound, so the editor must not pin a
-        maximum height.
-        """
-        import inspect
-
-        from lucnhan.ui.input_area import InputArea
-
-        source = inspect.getsource(InputArea.__init__)
-        self.assertIn(
-            "self.setMinimumHeight(60)",
-            source,
-            msg=("InputArea must default to a 2-3 line minimum height (60px at 18px line-height with 6px padding)."),
-        )
-        # ``setMaximumHeight`` must not be called on the editor — the
-        # vertical QSplitter in the panel owns the upper bound.
-        self.assertNotIn(
-            "setMaximumHeight",
-            source,
-            msg=(
-                "InputArea must not cap its maximum height; the vertical QSplitter in the panel owns the upper bound."
-            ),
-        )
-
 
 class TestOnDatabaseChangedNoRestore(unittest.TestCase):
     """``on_database_changed`` must not restore history (spec §7.2).
@@ -1846,7 +1893,8 @@ class TestOnDatabaseChangedNoRestore(unittest.TestCase):
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._polling = False
-        panel._pending_answer = False
+        panel._tab_gates = {}
+        panel._tab_drafts = {}
         panel._chat_views = {}
         panel._pending_restore_messages = {}
         panel._context_bar = None
@@ -1886,7 +1934,6 @@ class TestOnDatabaseChangedNoRestore(unittest.TestCase):
         panel._ctrl.reset_for_new_file = MagicMock()
         panel._config = _temp_config()
         panel._ui_hooks = None
-        panel._awaiting_button_approval = False
         # Spies / collaborators — replacing the methods with mocks lets
         # us assert exact call counts without running the real
         # restore / tab construction logic.
@@ -1967,7 +2014,8 @@ def _make_history_panel():
     panel = panel_core_cls.__new__(panel_core_cls)
     panel._is_shutdown = False
     panel._polling = False
-    panel._pending_answer = False
+    panel._tab_gates = {}
+    panel._tab_drafts = {}
     panel._chat_views = {}
     panel._pending_restore_messages = {}
     panel._context_bar = None
@@ -1988,7 +2036,6 @@ def _make_history_panel():
     panel._ctrl = MagicMock()
     panel._config = _temp_config()
     panel._ui_hooks = None
-    panel._awaiting_button_approval = False
     # Task-8 history coordinator fields (spec §8.1, §11.4).
     panel._history_panel = MagicMock()
     panel._history_generation = 0
@@ -2042,27 +2089,41 @@ def _patch_session_history():
 class TestShowRightPanelMutuallyExclusive(unittest.TestCase):
     """``_show_right_panel`` is the single right-panel coordinator.
 
-    Spec §6.4: only one right-side auxiliary panel is visible at a time.
-    History and Mutation toggle through one entry point; closing hides
-    both panels and unchecks both buttons.
+    Spec §6.4 / GUI contract G5: only one auxiliary pane is active at a
+    time.  Both panes live in one stack, so the coordinator's page
+    selection *is* the mutual exclusion; the button check states follow
+    the coordinator rather than a separate toggle path.
     """
 
-    def _assert_transition(self, name, history_visible, mutation_visible) -> None:
+    def _assert_transition(self, name, history_checked, mutation_checked) -> None:
         panel = _make_history_panel()
         # Opening history submits the list worker to a REAL
         # single-worker executor; stub the request itself so no
         # background thread builds a real ``SessionHistory``.
         panel._start_history_list_request = MagicMock()
+        # The stack + History's overlay hook live in the composition
+        # seam, which these fixtures bypass; stub them so the
+        # coordinator's own bookkeeping is what gets asserted.
+        panel._content_layout = MagicMock()
+        panel._main_splitter = MagicMock()
+        panel._main_splitter.width.return_value = 1000
+        panel._pane_stack = MagicMock()
+        panel._history_panel.set_overlay_presentation = MagicMock()
+        panel._narrow = False
         panel._show_right_panel(name)
-        panel._history_panel.setVisible.assert_any_call(False)
-        panel._mutation_panel.setVisible.assert_any_call(False)
-        panel._history_btn.setChecked.assert_any_call(False)
-        panel._mutations_btn.setChecked.assert_any_call(False)
-        # The final visible/checked state matches the requested panel.
-        panel._history_panel.setVisible.assert_called_with(history_visible)
-        panel._mutation_panel.setVisible.assert_called_with(mutation_visible)
-        panel._history_btn.setChecked.assert_called_with(history_visible)
-        panel._mutations_btn.setChecked.assert_called_with(mutation_visible)
+
+        if name is None:
+            panel._pane_stack.setVisible.assert_called_with(False)
+            panel._pane_stack.setCurrentWidget.assert_not_called()
+        else:
+            panel._pane_stack.setVisible.assert_called_with(True)
+            panel._pane_stack.setCurrentWidget.assert_called_with(
+                panel._history_panel if name == "history" else panel._mutation_panel
+            )
+        self.assertIs(panel._pane_name, name)
+        panel._history_btn.setChecked.assert_called_with(history_checked)
+        panel._mutations_btn.setChecked.assert_called_with(mutation_checked)
+        self.assertEqual(panel._start_history_list_request.call_count, 1 if name == "history" else 0)
 
     def test_history_open(self) -> None:
         self._assert_transition("history", True, False)
@@ -2093,6 +2154,225 @@ class TestShowRightPanelMutuallyExclusive(unittest.TestCase):
         panel._start_history_list_request = MagicMock()
         panel._show_right_panel(None)
         panel._start_history_list_request.assert_not_called()
+
+
+class TestAdaptivePanePresentation(unittest.TestCase):
+    """GUI contract G5: wide docks the pane, narrow overlays the content.
+
+    The two presentations are driven purely by the panel-width
+    breakpoint — never by the screen, never by a timer — and the open
+    pane survives the transition.
+    """
+
+    def _panel(self, panel_width: int = 460) -> object:
+        panel = _make_history_panel()
+        panel._start_history_list_request = MagicMock()
+        panel._content_layout = MagicMock()
+        panel._main_splitter = MagicMock()
+        panel._main_splitter.width.return_value = panel_width
+        panel._pane_stack = MagicMock()
+        panel._mode_stack = MagicMock()
+        # ``minimumSizeHint().width()`` — a QSize-like object.
+        panel._mode_stack.minimumSizeHint.return_value.width.return_value = 100
+        panel.width = MagicMock(return_value=panel_width)
+        panel._history_panel.set_overlay_presentation = MagicMock()
+        panel._history_btn.isVisible.return_value = True
+        panel._narrow = False
+        panel._pane_narrow = None
+        panel._apply_narrow_presentation = MagicMock()
+        panel._schedule_footer_trigger_width = MagicMock()
+        return panel
+
+    def test_narrow_takes_the_content_region(self) -> None:
+        """Narrow: the pane is pinned to the region minus the chat's own
+        minimum column, and its width cap is released."""
+        panel = self._panel()
+        panel._apply_pane_presentation(True)
+        panel._content_layout.setStretchFactor.assert_any_call(panel._pane_stack, 1)
+        # 460 panel width - 100 chat minimum column.
+        panel._pane_stack.setMinimumWidth.assert_called_with(360)
+        panel._pane_stack.setMaximumWidth.assert_called_with(_PANE_WIDTH_UNBOUND)
+        panel._history_panel.set_overlay_presentation.assert_called_with(True)
+        panel._main_splitter.setSizes.assert_not_called()
+
+    def test_wide_pins_the_nominal_pane_width(self) -> None:
+        panel = self._panel()
+        panel._apply_pane_presentation(False)
+        panel._pane_stack.setMinimumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._pane_stack.setMaximumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._history_panel.set_overlay_presentation.assert_called_with(False)
+
+    def test_wide_open_pane_gets_the_nominal_split(self) -> None:
+        """G2: 295 px nominal pane, the rest to the conversation.
+
+        The pin lives on the pane stack itself (it is not in the splitter),
+        so ``setSizes`` must NOT be called — that call only ever moved a
+        splitter that never owned the stack.
+        """
+        panel = self._panel(panel_width=1000)
+        panel._show_right_panel("history")
+        panel._pane_stack.setMinimumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._pane_stack.setMaximumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._main_splitter.setSizes.assert_not_called()
+
+    def test_wide_closed_pane_does_not_resize_the_splitter(self) -> None:
+        panel = self._panel()
+        panel._apply_pane_presentation(False)
+        panel._main_splitter.setSizes.assert_not_called()
+        # Wide presentation always pins the nominal column; the pin is what
+        # sizes the pane now that it is not a splitter child.
+        panel._pane_stack.setMinimumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+        panel._pane_stack.setMaximumWidth.assert_called_with(_PANE_NOMINAL_WIDTH)
+
+    def test_open_pane_survives_the_breakpoint_transition(self) -> None:
+        """Resizing must not close or recreate the pane (G5)."""
+        panel = self._panel()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        self.assertEqual(panel._pane_name, "history")
+        panel._apply_pane_presentation(True)
+        self.assertEqual(panel._pane_name, "history")
+        self.assertTrue(panel._pane_stack.setVisible.call_args[0][0])
+        panel._apply_pane_presentation(False)
+        self.assertEqual(panel._pane_name, "history")
+        self.assertTrue(panel._pane_stack.setVisible.call_args[0][0])
+        # Presentation only: no transcript/session rebuild, one list
+        # request for the whole open (the resize must not re-list).
+        self.assertEqual(panel._start_history_list_request.call_count, 1)
+
+    def test_close_returns_focus_to_the_opener(self) -> None:
+        panel = self._panel()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._close_right_panel()
+        self.assertIsNone(panel._pane_name)
+        panel._history_btn.setFocus.assert_called_once()
+
+    def test_escape_shortcut_routes_through_the_coordinator(self) -> None:
+        panel = self._panel()
+        # Focus outside the composer, so the pane owns the key.
+        panel._input_area = MagicMock()
+        panel._input_area.hasFocus.return_value = False
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._on_close_pane_shortcut()
+        self.assertIsNone(panel._pane_name)
+
+    def test_escape_is_inert_when_no_pane_is_open(self) -> None:
+        panel = self._panel()
+        panel._show_right_panel = MagicMock()
+        panel._on_close_pane_shortcut()
+        panel._show_right_panel.assert_not_called()
+
+    def test_no_screen_width_lookup(self) -> None:
+        """The breakpoint must never read the desktop screen."""
+        import inspect
+
+        src = inspect.getsource(LucNhanPanelCore._apply_pane_presentation)
+        self.assertNotIn("screenGeometry", src)
+        self.assertNotIn("primaryScreen", src)
+        self.assertNotIn("QTimer", src)
+
+    def test_narrow_overlay_is_recomputed_on_every_resize(self) -> None:
+        """Defect fix 2: shrinking *inside* the narrow band must re-pin.
+
+        Crossing 640 -> narrow is not the only resize that matters; a
+        further shrink (640 -> 460) would otherwise keep the old pin and
+        let the pane overflow the content region, clipping its Close.
+        """
+        panel = self._panel(panel_width=640)
+        panel._apply_pane_presentation(True)
+        first = panel._pane_stack.setMinimumWidth.call_args[0][0]
+        panel.width.return_value = 460
+        panel._apply_pane_presentation(True)
+        second = panel._pane_stack.setMinimumWidth.call_args[0][0]
+        self.assertNotEqual(first, second)
+        self.assertLess(second, first)
+        self.assertEqual(panel._content_layout.invalidate.call_count, 2)
+        # Presentation only — no pane state was invented or destroyed.
+        self.assertNotIn("_pane_name", vars(panel))
+
+    def test_close_falls_back_to_a_visible_target_in_narrow(self) -> None:
+        """Defect fix 3: the opener is hidden at narrow widths."""
+        panel = self._panel()
+        panel._history_btn.isVisible.return_value = False
+        panel._overflow_btn = MagicMock()
+        panel._overflow_btn.isVisible.return_value = True
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._close_right_panel()
+        panel._history_btn.setFocus.assert_not_called()
+        panel._overflow_btn.setFocus.assert_called_once()
+
+    def test_close_falls_back_to_composer_when_no_button_is_visible(self) -> None:
+        panel = self._panel()
+        panel._history_btn.isVisible.return_value = False
+        panel._overflow_btn = MagicMock()
+        panel._overflow_btn.isVisible.return_value = False
+        panel._input_area = MagicMock()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._close_right_panel()
+        panel._input_area.setFocus.assert_called_once()
+
+    def test_close_uses_the_opener_when_it_is_visible(self) -> None:
+        panel = self._panel()
+        panel._history_btn.isVisible.return_value = True
+        panel._overflow_btn = MagicMock()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._close_right_panel()
+        panel._history_btn.setFocus.assert_called_once()
+        panel._overflow_btn.setFocus.assert_not_called()
+
+    def test_escape_defers_to_the_composer(self) -> None:
+        """Defect fix 1: Esc in the composer cancels the agent, not the pane."""
+        panel = self._panel()
+        panel._input_area = MagicMock()
+        panel._input_area.hasFocus.return_value = True
+        panel._close_right_panel = MagicMock()
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._on_close_pane_shortcut()
+        panel._close_right_panel.assert_not_called()
+        self.assertEqual(panel._pane_name, "history")
+
+    def test_escape_closes_pane_when_focus_is_elsewhere(self) -> None:
+        panel = self._panel()
+        panel._input_area = MagicMock()
+        panel._input_area.hasFocus.return_value = False
+        panel._show_right_panel("history", opener=panel._history_btn)
+        panel._on_close_pane_shortcut()
+        self.assertIsNone(panel._pane_name)
+
+    def test_escape_shortcut_is_scoped_to_the_pane_stack(self) -> None:
+        """The shortcut must be parented to the pane stack, not the panel.
+
+        A window-scoped Esc swallows the composer's key entirely, and a
+        ``WidgetWithChildrenShortcut`` parented to the panel root is just
+        as bad — the composer is one of its descendants, so Qt still
+        consumes Escape before ``InputArea.keyPressEvent`` runs.  Only a
+        scope rooted at the pane stack leaves the composer out.  The
+        real-PySide6 counterpart
+        (``test_escape_in_composer_cancels_instead_of_closing_pane``)
+        proves the key really is delivered.
+        """
+        import inspect
+
+        src = inspect.getsource(LucNhanPanelCore._install_shortcuts)
+        self.assertIn("Qt.ShortcutContext.WidgetWithChildrenShortcut", src)
+        self.assertIn("QShortcut(QKeySequence(Qt.Key.Key_Escape), self._pane_stack)", src)
+        self.assertNotIn("QShortcut(QKeySequence(Qt.Key.Key_Escape), self)", src)
+
+    def test_panes_share_one_stack_so_they_cannot_coexist(self) -> None:
+        """G5: History and Mutations live in ONE stack, and that stack is
+        not a splitter child — ``_build_ui`` puts it in the content HBox
+        beside the conversation, where the width pin is the sizing rule."""
+        panel = self._panel(panel_width=1000)
+        panel._show_right_panel("history")
+        # Exactly one pane page is live, so History and Mutations cannot
+        # coexist on screen (G5).  ``_pane_stack`` is a MagicMock here, so
+        # assert the coordinator's own single-name state instead.
+        self.assertEqual(panel._pane_name, "history")
+        # Adding the panes (or the stack) to the splitter would give one
+        # widget two parents' worth of sizing rules.
+        splitter_children = [panel._main_splitter.widget(i) for i in range(panel._main_splitter.count())]
+        self.assertNotIn(panel._pane_stack, splitter_children)
+        self.assertNotIn(panel._history_panel, splitter_children)
+        self.assertNotIn(panel._mutation_panel, splitter_children)
 
 
 class TestHistoryStartListRequest(unittest.TestCase):
@@ -2809,13 +3089,15 @@ class TestHistoryButtonAlwaysVisible(unittest.TestCase):
         """
         import inspect
 
-        src = inspect.getsource(LucNhanPanelCore._build_action_buttons)
-        # ``_history_btn`` must be created and must NOT carry a
-        # ``setVisible(False)`` call (unlike Mutations which hides until
-        # the first mutation lands).
+        src = inspect.getsource(LucNhanPanelCore._build_header)
+        # ``_history_btn`` is created in the header (GUI contract G3) and
+        # must NOT start hidden — unlike Mutations, which hides until the
+        # first mutation lands.  Narrow-dock hiding is presentation-only
+        # and lives in ``_apply_narrow_presentation``.
         self.assertIn("_history_btn", src)
-        # The pattern "self._history_btn.setVisible(False)" must NOT appear.
         self.assertNotIn("self._history_btn.setVisible(False)", src)
+        narrow_src = inspect.getsource(LucNhanPanelCore._apply_narrow_presentation)
+        self.assertIn("self._history_btn", narrow_src)
 
     def test_history_panel_is_added_to_splitter(self) -> None:
         """Source-level guard: ``_build_main_splitter`` adds HistoryPanel as

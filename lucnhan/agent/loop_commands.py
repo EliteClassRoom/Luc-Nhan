@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from ..memory.paths import KnowledgePaths
     from ..memory.raw_store import KnowledgeRawStore
     from .loop import AgentLoop
+    from .mutation import MutationRecord
 
 
 def _truncate_report_preview(body: str, cap: int = 1500) -> str:
@@ -231,6 +232,24 @@ def _handle_goal_command(loop: AgentLoop, raw_goal: str) -> Generator[TurnEvent,
     yield TurnEvent.text_done(f"Active goal set:\n\n{goal}")
 
 
+def _drop_record(loop: AgentLoop, record: MutationRecord) -> None:
+    """Remove exactly *record* from the loop's /undo stack.
+
+    The reverse tool runs OUTSIDE the lock (it may marshal to the main
+    thread), so by the time it returns the stack can have grown — a
+    late append from a winding-down run, or a mutation the reverse tool
+    itself performed. A blind ``pop()`` would then discard a record that
+    was never reversed. Identity-based removal is a no-op if the record
+    is already gone, and touches exactly one entry.
+    """
+    with loop._mutation_lock:
+        log_list = loop._mutation_log
+        for i in range(len(log_list) - 1, -1, -1):
+            if log_list[i] is record:
+                del log_list[i]
+                return
+
+
 def _handle_undo_command(loop: AgentLoop, raw_cmd: str) -> Generator[TurnEvent, None, None]:
     """Undo the last N mutations."""
     # Parse count from "/undo" or "/undo N"
@@ -260,8 +279,7 @@ def _handle_undo_command(loop: AgentLoop, raw_cmd: str) -> Generator[TurnEvent, 
             record = loop._mutation_log[-1]
         if not record.reversible:
             errors.append(f"Cannot undo: {record.description} (not reversible)")
-            with loop._mutation_lock:
-                loop._mutation_log.pop()
+            _drop_record(loop, record)
             continue
         try:
             loop.tools.execute(record.reverse_tool, record.reverse_arguments)
@@ -269,10 +287,14 @@ def _handle_undo_command(loop: AgentLoop, raw_cmd: str) -> Generator[TurnEvent, 
             errors.append(f"Failed to undo {record.description}: {e}")
             log_error(f"Undo failed: {record.description}: {e}")
             continue
-        with loop._mutation_lock:
-            loop._mutation_log.pop()
+        _drop_record(loop, record)
         undone += 1
         log_info(f"Undo: {record.description}")
+    if undone:
+        # Only real reversals are announced. Irreversible records that
+        # were dropped above changed nothing, so counting them would
+        # claim a restoration that never happened.
+        yield TurnEvent.mutation_undone(undone)
     parts_out = []
     if undone:
         parts_out.append(f"Undid {undone} mutation(s).")

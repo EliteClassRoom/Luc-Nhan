@@ -216,6 +216,8 @@ class SubagentRunner:
         self._parent_loop.record_mutations(loop.drain_mutations())
         if loop._always_allow_scripts:
             self._parent_loop._always_allow_scripts = True
+        if loop._always_allow_tools:
+            self._parent_loop._always_allow_tools = True
 
     # Event types that must always be forwarded even in silent mode
     # (approval gates and user questions require UI interaction).

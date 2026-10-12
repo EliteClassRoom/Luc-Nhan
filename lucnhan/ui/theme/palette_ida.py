@@ -1,8 +1,10 @@
-"""Derive ThemeTokens from the current QApplication palette.
+"""Derive ThemeTokens from the effective host widget palette.
 
 Used when ThemeMode is AUTO (in IDA) or IDA_NATIVE. Reads 12 QPalette
-roles and derives 5 semantic tokens (success/warning/error/code_text/code_bg)
-by blending fixed base hues toward the active text luminance.
+roles from the host probe (a host resolves colors per widget, so the
+QApplication default is not the source) and derives 5 semantic tokens
+(success/warning/error/code_text/code_bg).  No color is invented: every
+value comes from a role the host actually reports.
 """
 
 from __future__ import annotations
@@ -65,7 +67,12 @@ def _read_qpalette_colors(source: Any) -> dict[str, str]:
 
 def _derive_semantic_tokens(qp_colors: dict[str, str]) -> dict[str, str]:
     text = qp_colors.get("text", "#000000")
-    alt_base = qp_colors.get("alt_base", "#000000")
+    # The code/detail inset sits on the host's *Base* surface, not on
+    # ``AlternateBase``: a native host resolves Base #282a36 and
+    # AlternateBase #f5f5f5, so deriving ``code_bg`` from the latter
+    # painted white-on-white code (its ``code_text`` is the host's light
+    # ``#f8f8f2``).  ``Base`` is the role every text surface reports.
+    base = qp_colors.get("base", "#000000")
     is_dark = hex_luminance(qp_colors.get("window", "#000000")) < 0.5
     amount = 0.15 if is_dark else 0.35
 
@@ -74,7 +81,7 @@ def _derive_semantic_tokens(qp_colors: dict[str, str]) -> dict[str, str]:
         "warning": blend_hex(_WARNING_BASE, text, amount),
         "error": blend_hex(_ERROR_BASE, text, amount),
         "code_text": text,
-        "code_bg": alt_base,
+        "code_bg": base,
     }
 
 
@@ -108,6 +115,13 @@ def _derive_interaction_tokens(qp_colors: dict[str, str]) -> dict[str, str]:
 def derive_ida_tokens(source: Any) -> ThemeTokens:
     """Build a full ThemeTokens from a QApplication-like `source`."""
     qp = _read_qpalette_colors(source)
+    # IDA can leave AlternateBase at the platform's light default even
+    # when Text and Base are dark-themed. All secondary surfaces share
+    # this token, so fall back to the host's text surface when unreadable.
+    text_lum = hex_luminance(qp["text"])
+    alt_lum = hex_luminance(qp["alt_base"])
+    if (max(text_lum, alt_lum) + 0.05) / (min(text_lum, alt_lum) + 0.05) < 4.5:
+        qp["alt_base"] = qp["base"]
     semantic = _derive_semantic_tokens(qp)
     interaction = _derive_interaction_tokens(qp)
     return ThemeTokens(**qp, **semantic, **interaction)

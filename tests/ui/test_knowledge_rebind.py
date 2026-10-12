@@ -107,11 +107,16 @@ class TestTabChangeRebindsKnowledge(unittest.TestCase):
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._chat_views = {}
+        panel._input_area = MagicMock()
         panel._ctrl = MagicMock()
         with (
             patch.object(panel, "_tab_id_at_index", return_value="t1") as tid,
             patch.object(panel, "_restore_messages_if_needed"),
             patch.object(panel, "_update_token_display"),
+            patch.object(panel, "_save_active_tab_draft"),
+            patch.object(panel, "_restore_active_tab_draft"),
+            patch.object(panel, "_sync_composer_state"),
+            patch.object(panel, "_refresh_mutation_pane"),
             patch.object(panel, "_on_knowledge_event_refresh") as refresh,
         ):
             panel._on_tab_changed(1)
@@ -139,6 +144,14 @@ class TestDatabaseChangeRebindsKnowledge(unittest.TestCase):
         panel._ctrl._idb_path = "OLD"
         panel._chat_views = {}
         panel._pending_restore_messages = {}
+        panel._tab_gates = {}
+        panel._tab_drafts = {}
+        # The composer controls the IDB switch re-syncs; they are not the
+        # subject of this test, so they stand in as mocks.
+        panel._input_area = MagicMock()
+        panel._send_btn = MagicMock()
+        panel._cancel_btn = MagicMock()
+        panel._mutation_panel = None
         panel._tab_widget = MagicMock()
         panel._tab_widget.count.return_value = 0
         # ``_invalidate_history`` (called by on_database_changed) touches

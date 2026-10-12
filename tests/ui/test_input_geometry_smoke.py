@@ -2,17 +2,16 @@
 
 The shared Qt-stub layer cannot model real splitter geometry, so this
 test bypasses the stub and constructs a real vertical ``QSplitter``
-holding a real ``InputArea``.  It proves four user-visible
+holding a real ``InputArea``.  It proves three user-visible
 properties:
 
-  1. The minimum height is the documented 2-3 line default (60px).
-  2. The vertical size policy is ``Expanding`` so the editor fills
+  1. The vertical size policy is ``Expanding`` so the editor fills
      the chat-splitter bottom pane when the user drags the handle
      taller.
-  3. ``lineWrapMode()`` is ``WidgetWidth`` so a long single-line
+  2. ``lineWrapMode()`` is ``WidgetWidth`` so a long single-line
      message wraps within the editor rather than being horizontally
      clipped.
-  4. Growing the bottom pane via ``setSizes`` increases the editor's
+  3. Growing the bottom pane via ``setSizes`` increases the editor's
      height (the actual user-visible drag behavior).
 """
 
@@ -23,6 +22,16 @@ import unittest
 # Headless: must be set before any PySide6 import so Qt picks the
 # offscreen platform plugin.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# A full-suite collection can install ``tests.qt_stubs`` before this
+# module is imported; importing real Qt classes against those stubs
+# raises and takes the collection down. Skip instead.
+from tests.qt_real import real_qt_available, requires_real_qt
+
+if not real_qt_available():
+    raise unittest.SkipTest(
+        "real PySide6 is unavailable: a sibling test installed tests.qt_stubs; run this file on its own to exercise it"
+    )
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -40,7 +49,6 @@ from PySide6.QtWidgets import (
 _app = QApplication.instance() or QApplication(sys.argv)
 
 from lucnhan.ui.input_area import InputArea
-from tests.qt_real import requires_real_qt
 
 
 @requires_real_qt
@@ -77,11 +85,6 @@ class TestInputGeometrySmoke(unittest.TestCase):
         # Pump events so Qt applies the layout / geometry.
         QApplication.processEvents()
         return splitter, editor
-
-    def test_minimum_height_is_two_to_three_lines(self) -> None:
-        """``InputArea`` defaults to a 2-3 line minimum (60px)."""
-        editor = InputArea()
-        self.assertEqual(editor.minimumHeight(), 60)
 
     def test_vertical_size_policy_is_expanding(self) -> None:
         """``InputArea`` vertical policy must be ``Expanding`` so the

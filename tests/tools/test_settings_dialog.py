@@ -49,6 +49,7 @@ for _mod_name in [
     "lucnhan.ui.theme.palette_dark",
     "lucnhan.ui.theme.palette_light",
     "lucnhan.ui.theme.palette_ida",
+    "lucnhan.ui.theme.widgets_common",
     "lucnhan.ui.message_widgets",
     "lucnhan.ui.input_area",
     "lucnhan.ui.context_bar",
@@ -67,7 +68,6 @@ for _mod_name in [
         "resolve_auth_cached",
         "DEFAULT_OLLAMA_URL",
         "ProviderRegistry",
-        "build_small_button_stylesheet",
         "maybe_host_stylesheet",
         "use_native_host_theme",
         "get_err_status_style",
@@ -110,6 +110,7 @@ _STUBBED_BY_THIS_MODULE = frozenset(
         "lucnhan.ui.theme.palette_dark",
         "lucnhan.ui.theme.palette_light",
         "lucnhan.ui.theme.palette_ida",
+        "lucnhan.ui.theme.widgets_common",
         "lucnhan.ui.message_widgets",
         "lucnhan.ui.input_area",
         "lucnhan.ui.context_bar",
@@ -144,7 +145,7 @@ def _resolve_auth_cached_impl(explicit_key=""):
 _ac_stub.resolve_auth_cached = _resolve_auth_cached_impl
 _ac_stub.invalidate_cache = MagicMock()
 
-from lucnhan.ui.settings_dialog import _AddProviderDialog, _ModelFetcher
+from lucnhan.ui.settings_dialog import _SETTINGS_PAGES, _AddProviderDialog, _ModelFetcher
 
 # ---------------------------------------------------------------------------
 # _ModelFetcher
@@ -448,6 +449,65 @@ class TestSettingsDialogOnModelsReady(unittest.TestCase):
         self.assertEqual(dlg._model_restore_hint, "")
 
 
+class TestSettingsDialogCatalogCache(unittest.TestCase):
+    """The panel-owned catalog must only ever see LIVE Refresh results.
+
+    ``_on_models_ready`` is reached by the fetcher result *and* by the
+    static builtin populate (deferred init, provider switch, key edit).
+    Storing from the latter would overwrite a live list and would file a
+    stale in-flight result under the connection now on screen.
+    """
+
+    def _model(self, mid: str):
+        m = MagicMock()
+        m.id = mid
+        m.name = mid
+        m.context_window = 200000
+        m.max_output_tokens = 8192
+        return m
+
+    def _dialog(self, cache, current="openai"):
+        dlg = _make_settings()
+        dlg._model_catalog = cache
+        dlg._provider_combo.currentText.return_value = current
+        return dlg
+
+    def test_live_fetch_result_is_stored_under_the_fetched_connection(self):
+        from lucnhan.ui.model_picker import ModelCatalogCache
+
+        cache = ModelCatalogCache()
+        dlg = self._dialog(cache)
+        dlg._on_models_ready([self._model("m1")], fetched_for="openai")
+        self.assertEqual([m.id for m in cache.get("openai")], ["m1"])
+
+    def test_builtin_populate_does_not_touch_the_cache(self):
+        from lucnhan.ui.model_picker import ModelCatalogCache
+
+        cache = ModelCatalogCache()
+        dlg = self._dialog(cache)
+        dlg._on_models_ready([self._model("builtin")])
+        self.assertIsNone(cache.get("openai"))
+
+    def test_builtin_populate_does_not_overwrite_a_live_list(self):
+        from lucnhan.ui.model_picker import ModelCatalogCache
+
+        cache = ModelCatalogCache()
+        cache.store("openai", [self._model("live-model")])
+        dlg = self._dialog(cache)
+        dlg._on_models_ready([self._model("static-builtin")])
+        self.assertEqual([m.id for m in cache.get("openai")], ["live-model"])
+
+    def test_stale_result_is_not_filed_under_the_current_connection(self):
+        from lucnhan.ui.model_picker import ModelCatalogCache
+
+        cache = ModelCatalogCache()
+        dlg = self._dialog(cache, current="local")
+        dlg._fetcher.poll.return_value = ("models", "openai", [self._model("m1")])
+        dlg._poll_fetcher()
+        self.assertIsNone(cache.get("local"))
+        self.assertIsNone(cache.get("openai"))
+
+
 class TestSettingsDialogOnFetchError(unittest.TestCase):
     def test_enables_fetch_btn(self):
         dlg = _make_settings()
@@ -617,13 +677,15 @@ class TestAppearanceTab(unittest.TestCase):
             config = LucNhanConfig()
         return SettingsDialog(config=config)
 
-    def test_appearance_tab_in_dialog(self):
-        """SettingsDialog should have an 'Appearance' tab at index 1."""
+    def test_appearance_page_in_dialog(self):
+        """SettingsDialog's page host lists 'Appearance' second (G7)."""
         dlg = self._build_dialog()
-        labels = [dlg._tabs.tabText(i) for i in range(dlg._tabs.count())]
+        labels = list(_SETTINGS_PAGES)
         self.assertIn("Appearance", labels)
         appearance_idx = labels.index("Appearance")
         self.assertEqual(appearance_idx, 1)
+        # The subnav is built from the same tuple, in the same order.
+        self.assertEqual(list(dlg._subnav_buttons), labels)
 
     def test_theme_combo_has_four_modes(self):
         dlg = self._build_dialog()

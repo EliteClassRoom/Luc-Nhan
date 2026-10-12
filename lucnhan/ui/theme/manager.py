@@ -22,7 +22,7 @@ from typing import Any
 # PySide6/PyQt5 imports are forbidden in this module — importing Qt6 in a
 # Qt5-based IDA host can crash the process. See ``lucnhan/ui/qt_compat.py``.
 try:
-    from ..qt_compat import QApplication, QObject, QTimer, Signal
+    from ..qt_compat import QApplication, QObject, QTimer, QWidget, Signal
 
     _HAS_QT = True
 except (ImportError, ModuleNotFoundError):  # pragma: no cover — headless fallback
@@ -30,11 +30,12 @@ except (ImportError, ModuleNotFoundError):  # pragma: no cover — headless fall
     QTimer = None  # type: ignore[assignment]
     Signal = None  # type: ignore[assignment]
     QApplication = None  # type: ignore[assignment]
+    QWidget = None  # type: ignore[assignment]
     _HAS_QT = False
 
 from .palette_dark import DARK_TOKENS
 from .palette_light import LIGHT_TOKENS
-from .tokens import (  # noqa: F401 — re-exported
+from .tokens import (
     ThemeMode,
     ThemeTokens,
     hex_luminance,
@@ -106,6 +107,23 @@ def blend_hex(h1: str, h2: str, t: float) -> str:
     c2 = _hex_to_linear_rgb(h2)
     out = tuple(c1[i] * (1 - t) + c2[i] * t for i in range(3))
     return _linear_rgb_to_hex(out)
+
+
+def strong_border(tokens: Any, target: float = 3.0) -> str:
+    """Border colour that reads against ``tokens.window`` (WCAG non-text 3:1).
+
+    ``mid`` is a quiet divider (about 1.3:1) - fine between sections, too
+    faint to outline a control or a block. This walks from the window colour
+    toward the text colour until the contrast target is met, so it holds in
+    Dark, Light and any derived host palette.
+    """
+    lw = hex_luminance(tokens.window)
+    for step in range(1, 21):
+        colour = blend_hex(tokens.window, tokens.text, step / 20)
+        lc = hex_luminance(colour)
+        if (max(lw, lc) + 0.05) / (min(lw, lc) + 0.05) >= target:
+            return colour
+    return tokens.text
 
 
 def asdict_fields() -> list[str]:
@@ -236,6 +254,16 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
         self._mode: ThemeMode = ThemeMode.AUTO
         self._tokens_cache: ThemeTokens | None = None
         self._pending_apply: Any = None
+        # Independent host-palette probe (see :meth:`_app_source`).  Lazily
+        # created for AUTO/IDA only, never recoloured, and owned by the
+        # manager so no panel holds a strong reference to it.
+        self._host_probe: Any = None
+        # Configured body font size in POINTS (0 = inherit the host's).
+        # The typography helpers read it (see ``widgets_common.role_size``);
+        # the manager owns it because it already has the lifetime and the
+        # change signal every styled widget refreshes through.  No global
+        # QApplication font is ever set.
+        self._font_size_override: int = 0
         # Must be initialised BEFORE _compute_tokens(): in AUTO+IDA mode the
         # first compute reaches _log_auto_derive_once, which reads this flag.
         # Setting it after the compute call (the previous order) raised
@@ -254,8 +282,45 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
 
     @classmethod
     def reset(cls) -> None:
-        """Clear the singleton. Test-only helper."""
-        cls._instance = None
+        """Clear the singleton. Test-only helper.
+
+        The host probe is disposed with it: it is a top-level widget, so
+        dropping the singleton without releasing it would leak a window
+        into every later ``instance()``.
+        """
+        instance, cls._instance = cls._instance, None
+        if instance is not None:
+            instance._dispose_host_probe()
+
+    @property
+    def font_size_override(self) -> int:
+        """Configured body font size in points; 0 means inherit."""
+        return self._font_size_override
+
+    def set_font_size_override(self, points: int) -> None:
+        """Set the user's body font size (points; 0 = inherit).
+
+        The typography builders read this through
+        ``widgets_common.role_size``, so applying it means rebuilding the
+        themed QSS — which is exactly what ``themeChanged`` already
+        triggers.  A no-op when unchanged, so repeated Settings saves do
+        not repaint for nothing.
+        """
+        try:
+            points = max(0, int(points or 0))
+        except (TypeError, ValueError):
+            return
+        if points == self._font_size_override:
+            return
+        self._font_size_override = points
+        # Same shape as ``refresh_from_host``: a debounce timer may still be
+        # armed from a mode switch.  Applying immediately without stopping
+        # it left the timer armed with a lost handle (``_apply_now`` clears
+        # ``_pending_apply``), so the switch was delivered a second time.
+        if self._pending_apply is not None:
+            self._pending_apply.stop()
+            self._pending_apply = None
+        self._apply_now()
 
     @property
     def mode(self) -> ThemeMode:
@@ -309,8 +374,67 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
         except Exception as exc:
             logger.debug("AUTO-derive diagnostic log failed", exc_info=exc)
 
+    def _host_probe_widget(self) -> Any:
+        """An independent widget that reports the host's own palette.
+
+        A host (IDA) resolves its colors *per widget*: a plain ``QWidget``
+        carries the host palette while ``QApplication``'s default stays at
+        the platform default (measured: host ``#282a36`` vs application
+        ``#f0f0f0``).  So AUTO/IDA tokens must be derived from a widget,
+        not from the application.
+
+        The probe is created here, parentless and outside every
+        plugin-styled widget tree, and is **never recoloured**: no palette
+        write, no ``autoFillBackground``, no stylesheet.  It therefore
+        always shows what the host resolves, which is the whole point —
+        deriving from a panel would read the panel's own colors back.
+
+        ``ensurePolished()`` is enough: it resolves the widget's style and
+        cascade, and unlike ``show()`` + ``processEvents()`` it neither
+        draws nor re-enters the event loop (a derive must stay free of
+        flicker and of re-entrant ``themeChanged`` emission).  If the
+        probe is destroyed (host teardown) it is dropped, never pinned.
+        """
+        probe = self._host_probe
+        if probe is not None:
+            try:
+                probe.ensurePolished()
+                return probe
+            except RuntimeError:  # pragma: no cover — C++ object is gone
+                probe = None
+        if QWidget is None:  # pragma: no cover — headless fallback
+            return None
+        try:
+            probe = QWidget()
+            probe.ensurePolished()
+        except Exception as exc:  # pragma: no cover — no Qt / no host yet
+            logger.debug("host palette probe unavailable", exc_info=exc)
+            return None
+        self._host_probe = probe
+        return probe
+
+    def _dispose_host_probe(self) -> None:
+        """Drop the probe (host teardown / test isolation)."""
+        probe, self._host_probe = self._host_probe, None
+        if probe is None:
+            return
+        try:
+            probe.deleteLater()
+        except RuntimeError:  # pragma: no cover — already gone
+            pass
+
     def _app_source(self) -> Any:
-        """Return the object to read QPalette from."""
+        """Return the object to read QPalette from.
+
+        In AUTO/IDA the independent host probe wins — it is stable across
+        panels and is never mutated by Luc Nhan.  ``QApplication`` is only
+        the fallback for DARK/LIGHT (bundled constants) and for a session
+        where no Qt widget can exist yet.
+        """
+        if self._mode in (ThemeMode.AUTO, ThemeMode.IDA_NATIVE):
+            probe = self._host_probe_widget()
+            if probe is not None:
+                return probe
         if QApplication is None:
             return None
         return QApplication.instance()

@@ -1,33 +1,36 @@
-"""Hardcoded light theme — VS Code Light+ inspired, neutral with high readability."""
+"""Hardcoded light theme — compact technical workspace (GUI contract G1).
+
+Off-white neutral surfaces with a deep green accent for navigation / focus /
+primary action, mirroring the dark theme's role map so the two modes read
+as the same workspace.  AUTO / IDA modes follow the host ``QPalette``.
+"""
 
 from __future__ import annotations
 
 from .tokens import ThemeTokens
 
 LIGHT_TOKENS = ThemeTokens(
-    # QPalette-aligned (12) — cool-neutral (VS Code Light+)
+    # QPalette-aligned (12) — off-white neutral surface set
     window="#ffffff",
-    window_text="#1e1e1e",
-    base="#ffffff",
-    alt_base="#f3f3f3",
-    text="#1e1e1e",
-    button="#f0f0f0",
-    button_text="#1e1e1e",
-    highlight="#0066cc",
+    window_text="#252e2a",
+    base="#edf1ee",
+    alt_base="#eef1ef",
+    text="#252e2a",
+    button="#eef1ef",
+    button_text="#252e2a",
+    highlight="#326d5b",
     highlight_text="#ffffff",
-    mid="#cccccc",
-    light="#ffffff",
-    dark="#a0a0a0",
-    # Semantic (5) — darker variants for light bg
-    success="#2c8a4a",
-    warning="#a67900",
-    error="#c42b1c",
-    code_text="#1e1e1e",
-    code_bg="#f3f3f3",
-    # Interaction (3) — accent matches highlight for light (nav/focus),
-    # selection unifies list highlight (was ad-hoc #d7ba7d), muted_text is
-    # the secondary tone (was ad-hoc #92898a which failed 2.81:1 on warm bg).
-    accent="#0066cc",
-    selection="#cce4ff",
-    muted_text="#6e6e6e",
+    mid="#d4dcd7",
+    light="#eef1ef",
+    dark="#edf1ee",
+    # Semantic (5) — darker variants so status reads on the light surface
+    success="#356c43",
+    warning="#846020",
+    error="#a23838",
+    code_text="#252e2a",
+    code_bg="#edf1ee",
+    # Interaction (3) — same roles as the dark palette
+    accent="#326d5b",
+    selection="#e0ece5",
+    muted_text="#596a61",
 )

@@ -144,9 +144,9 @@ class TestActionButtonTooltips(unittest.TestCase):
     so it verifies wiring rather than source text."""
 
     _BUTTON_ATTRS = (
+        "_chat_btn",
         "_send_btn",
         "_cancel_btn",
-        "_new_btn",
         "_export_btn",
         "_settings_btn",
         "_mutations_btn",
@@ -162,14 +162,61 @@ class TestActionButtonTooltips(unittest.TestCase):
         from lucnhan.ui.panel_core import LucNhanPanelCore
 
         # Skip the heavyweight __init__ (config load, controller, timers).
-        # We only exercise the two widget-building methods under test.
+        # The action buttons now live in the header / composer builders.
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
-        panel._use_native_host_theme = False
+        panel._skills_refresh_timer = None
+        panel._ctrl = type("_Ctrl", (), {"skill_slugs": []})()
+        panel._build_header()
         panel._build_action_buttons()
+        # G3: Mutations is the context row's ``Changes`` action now.
+        panel._build_context_bar_for_tests()
         return panel
 
+    def _panel_with_composer(self):
+        """Header + composer (Send / Stop live in the composer's row)."""
+        from tests.qt_stubs import ensure_pyside6_stubs
+
+        ensure_pyside6_stubs()
+        _purge_rk_ui_modules()
+        import lucnhan.ui.panel_core as panel_core
+        from lucnhan.ui.panel_core import LucNhanPanelCore
+        from lucnhan.ui.qt_compat import QWidget
+
+        class _StubInputArea(QWidget):
+            def set_submit_callback(self, cb) -> None:
+                pass
+
+            def set_cancel_callback(self, cb) -> None:
+                pass
+
+            def set_skill_slugs(self, slugs) -> None:
+                pass
+
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
+        panel._skills_refresh_timer = None
+        panel._ctrl = type("_Ctrl", (), {"skill_slugs": []})()
+        panel._config = type(
+            "_Cfg",
+            (),
+            {"provider": type("_P", (), {"name": "n", "model": "m"})()},
+        )()
+        original = panel_core.InputArea
+        panel_core.InputArea = _StubInputArea
+        try:
+            panel._build_header()
+            panel._build_input_section()
+            panel._build_action_buttons()
+            # G3: Mutations is the context row's ``Changes`` action now.
+            panel._build_context_bar_for_tests()
+        finally:
+            panel_core.InputArea = original
+        return panel
+
+    def _buttons_with_composer(self):
+        return self._panel_with_composer()
+
     def test_every_button_has_tooltip(self) -> None:
-        panel = self._build_panel_buttons()
+        panel = self._buttons_with_composer()
         for attr in self._BUTTON_ATTRS:
             with self.subTest(button=attr):
                 btn = getattr(panel, attr)
@@ -179,7 +226,7 @@ class TestActionButtonTooltips(unittest.TestCase):
                 )
 
     def test_every_button_has_accessible_name(self) -> None:
-        panel = self._build_panel_buttons()
+        panel = self._buttons_with_composer()
         for attr in self._BUTTON_ATTRS:
             with self.subTest(button=attr):
                 btn = getattr(panel, attr)
@@ -253,7 +300,9 @@ class TestApprovalButtonLabels(unittest.TestCase):
                 self.assertNotIn(padded, self._module_src)
 
     def test_labels_present_without_padding(self) -> None:
-        self.assertIn('"Allow"', self._module_src)
+        # G4 renamed the primary action to "Allow once" so it cannot be
+        # misread as a permanent grant; the label is still unpadded.
+        self.assertIn('"Allow once"', self._module_src)
         self.assertIn('"Always Allow"', self._module_src)
         self.assertIn('"Deny"', self._module_src)
 

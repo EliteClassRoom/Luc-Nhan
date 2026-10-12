@@ -247,7 +247,12 @@ class TestToolCallWidgetUsesCachedLabel(unittest.TestCase):
         from lucnhan.ui.tool_widgets import ToolCallWidget
 
         widget = ToolCallWidget("get_function_info", "tc_1")
-        for attr in ("_preview_label", "_args_label", "_result_label"):
+        # The collapsed row has no preview label any more (the target
+        # column carries the args summary); the word-wrapped labels live
+        # in the detail surface, which is built on first expand.
+        widget.set_arguments('{"address": "0x1400"}')
+        widget._toggle()
+        for attr in ("_args_label", "_result_label"):
             self.assertFalse(
                 getattr(widget, attr).hasHeightForWidth(),
                 f"ToolCallWidget.{attr} must opt out of the heightForWidth "

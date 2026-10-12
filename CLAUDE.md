@@ -173,7 +173,7 @@ Subagents (see `lucnhan/agent/subagent_manager.py` + `lucnhan/agent/agents/`) ru
 ### Approval gates
 
 - **Plan & Save approval**: button-only state — input is disabled, all free-text is ignored. Re-enables when a button is clicked, the agent finishes, the user cancels, or an error occurs
-- **Script execution** (`execute_python` tool): ALWAYS requires the user to click Allow/Deny. Blocklist patterns (`subprocess`, `os.system`, ...) are rejected before reaching the approval step
+- **Script execution** (`execute_python` tool): requires the user to click Allow/Deny for every script, unless the user explicitly clicks **Allow for this chat** in the gate — that sets `AgentLoop._always_allow_scripts` for that chat's loop only (New chat and other tabs still ask; it is separate from the generic `_always_allow_tools`). Blocklist patterns (`subprocess`, `os.system`, ...) and docs review still run on every script, and are rejected before reaching the approval step
 - **Mid-conversation questions** (`USER_QUESTION` with options): also enter button-only state
 
 ### Mutation tracking & undo
@@ -248,7 +248,7 @@ The binary being analyzed contains strings, function names, decompiled code — 
 
 - Use `eval()`/`exec()` outside `script_guard.run_guarded_script()`
 - Concatenate a raw binary string (function name, comment) directly into an f-string destined for the prompt — use `_escape_attr()` for XML attrs, `strip_injection_markers()` for body content
-- Auto-approve script execution, even in "fast"/"batch" mode
+- Auto-approve script execution on your own (any mode, including "fast"/"batch"/headless) — only the user's explicit per-chat click may skip the prompt
 - Store unsanitized binary content in `MEMORY.md` (it persists and gets loaded into every future prompt)
 - Add `os`, `sys`, `subprocess`, `shutil`, or `pathlib` to the `execute_python` namespace
 

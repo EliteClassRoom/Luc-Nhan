@@ -63,61 +63,21 @@ _host_mod._HOST = _host_mod.HOST_STANDALONE
 # Helper: create a ContextBar without calling __init__
 # ---------------------------------------------------------------------------
 
+
 def _make_bar() -> ContextBar:
     bar = object.__new__(ContextBar)
     bar._stopped = False
     # Mock label pairs
     bar._address_label = (MagicMock(), MagicMock())
     bar._function_label = (MagicMock(), MagicMock())
-    bar._model_label = (MagicMock(), MagicMock())
-    bar._tokens_label = (MagicMock(), MagicMock())
     bar._timer = MagicMock()
     return bar
 
 
 # ---------------------------------------------------------------------------
-# set_tokens
-# ---------------------------------------------------------------------------
-
-class TestSetTokens(unittest.TestCase):
-    def test_small_count_shown_as_int(self):
-        bar = _make_bar()
-        bar.set_tokens(500)
-        bar._tokens_label[1].setText.assert_called_once_with("500")
-
-    def test_large_count_shown_in_k(self):
-        bar = _make_bar()
-        bar.set_tokens(2500)
-        bar._tokens_label[1].setText.assert_called_once_with("2.5k")
-
-    def test_exactly_1000_shown_in_k(self):
-        bar = _make_bar()
-        bar.set_tokens(1000)
-        bar._tokens_label[1].setText.assert_called_once_with("1.0k")
-
-    def test_context_window_shows_percentage(self):
-        bar = _make_bar()
-        bar.set_tokens(500, context_window=1000)
-        call_arg = bar._tokens_label[1].setText.call_args[0][0]
-        self.assertIn("500", call_arg)
-        self.assertIn("50%", call_arg)
-
-    def test_context_window_percentage_capped_at_100(self):
-        bar = _make_bar()
-        bar.set_tokens(2000, context_window=1000)
-        call_arg = bar._tokens_label[1].setText.call_args[0][0]
-        self.assertIn("100%", call_arg)
-
-    def test_no_percentage_when_context_window_zero(self):
-        bar = _make_bar()
-        bar.set_tokens(100, context_window=0)
-        call_arg = bar._tokens_label[1].setText.call_args[0][0]
-        self.assertNotIn("%", call_arg)
-
-
-# ---------------------------------------------------------------------------
 # set_function
 # ---------------------------------------------------------------------------
+
 
 class TestSetFunction(unittest.TestCase):
     def test_short_name_passed_through(self):
@@ -148,8 +108,9 @@ class TestSetFunction(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# set_address / set_model
+# set_address
 # ---------------------------------------------------------------------------
+
 
 class TestSetAddress(unittest.TestCase):
     def test_set_address_updates_label(self):
@@ -158,16 +119,10 @@ class TestSetAddress(unittest.TestCase):
         bar._address_label[1].setText.assert_called_once_with("0x1000")
 
 
-class TestSetModel(unittest.TestCase):
-    def test_set_model_updates_label(self):
-        bar = _make_bar()
-        bar.set_model("claude-opus-4")
-        bar._model_label[1].setText.assert_called_once_with("claude-opus-4")
-
-
 # ---------------------------------------------------------------------------
 # _function_name_at — standalone host
 # ---------------------------------------------------------------------------
+
 
 class TestFunctionNameAt(unittest.TestCase):
     def test_returns_none_in_standalone_mode(self):
@@ -179,6 +134,7 @@ class TestFunctionNameAt(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # stop
 # ---------------------------------------------------------------------------
+
 
 class TestContextBarStop(unittest.TestCase):
     def test_stop_sets_stopped_flag(self):

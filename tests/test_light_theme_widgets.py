@@ -162,11 +162,11 @@ class TestBuildInputAreaStylesheetLight(unittest.TestCase):
 
     def test_light_input_qss_uses_light_token_colors(self) -> None:
         """The light-mode QSS must use ``LIGHT_TOKENS`` for the editor
-        background, border, and selection colors so the input
-        widget never falls back to a dark host palette."""
+        surface and selection colors so the input widget never falls back
+        to a dark host palette.  The frame around the editor belongs to
+        the composer wrapper (one radius-4 border around editor + row)."""
         qss = self.build_input_area_stylesheet(self.LIGHT_TOKENS)
         self.assertIn(self.LIGHT_TOKENS.base, qss)
-        self.assertIn(self.LIGHT_TOKENS.mid, qss)
         self.assertIn(self.LIGHT_TOKENS.highlight, qss)
         self.assertIn(self.LIGHT_TOKENS.highlight_text, qss)
 
@@ -236,7 +236,7 @@ class TestHostThemeReturnsEmptyStylesheet(unittest.TestCase):
     def test_input_area_is_object_name_scoped_in_host_mode(self) -> None:
         """Even in host/IDA-native mode, ``build_input_area_stylesheet``
         must emit a non-empty QSS scoped to ``#input_area`` so the
-        editor's border / focus / selection stay token-driven.  The
+        editor's selection colors stay token-driven.  The
         foreground/background/placeholder text are handled by
         ``InputArea.apply_palette`` (QPalette roles), so the host
         palette never bleeds through to render typed text invisible.
