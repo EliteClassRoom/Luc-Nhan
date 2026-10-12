@@ -271,9 +271,7 @@ class ModelPicker(QFrame):
         if current.model_id:
             known = {(name, getattr(m, "id", "")) for name, models in groups.items() for m in models}
             if (current.connection_name, current.model_id) not in known:
-                groups.setdefault(current.connection_name, []).append(
-                    _Row(current.connection_name, current.model_id)
-                )
+                groups.setdefault(current.connection_name, []).append(_Row(current.connection_name, current.model_id))
 
         haystacks: dict[int, str] = {}
         for name, models in groups.items():
@@ -473,7 +471,11 @@ class ModelPicker(QFrame):
         return list(self._rows)
 
     def visible_rows(self) -> list[_Row]:
-        return [row for index, row in enumerate(self._rows) if self._items[index] is not None and not self._items[index].isHidden()]
+        return [
+            row
+            for index, row in enumerate(self._rows)
+            if self._items[index] is not None and not self._items[index].isHidden()
+        ]
 
     def item_for(self, connection_name: str, model_id: str) -> QTreeWidgetItem | None:
         """Row for the (connection, model) pair — via item data, not text."""
@@ -484,7 +486,10 @@ class ModelPicker(QFrame):
 
     def search_haystacks(self) -> dict[str, str]:
         """Exposed for tests: the normalized text cached at set_catalog."""
-        return {f"{row.connection_name}/{row.model_id}": self._haystacks.get(index, "") for index, row in enumerate(self._rows)}
+        return {
+            f"{row.connection_name}/{row.model_id}": self._haystacks.get(index, "")
+            for index, row in enumerate(self._rows)
+        }
 
     # ------------------------------------------------------------------
     # Selection / thinking
@@ -517,10 +522,7 @@ class ModelPicker(QFrame):
             item = self._items[index]
             if item is None:
                 continue
-            active = (
-                row.connection_name == self._selection.connection_name
-                and row.model_id == self._selection.model_id
-            )
+            active = row.connection_name == self._selection.connection_name and row.model_id == self._selection.model_id
             base = self._display_label(row)
             item.setText(0, ("✓  " + base) if active else ("    " + base))
 

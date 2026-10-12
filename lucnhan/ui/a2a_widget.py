@@ -639,9 +639,7 @@ class A2ABridgeWidget(QWidget):
             # Explicit empty state (G9): one sentence + the real action
             # (Refresh is already the toolbar control above).
             status.setText(
-                "No external agents found on PATH or in orchestra.toml. Click Refresh to rescan."
-                if count == 0
-                else ""
+                "No external agents found on PATH or in orchestra.toml. Click Refresh to rescan." if count == 0 else ""
             )
 
     def _on_agent_double_clicked(self, item: QListWidgetItem) -> None:

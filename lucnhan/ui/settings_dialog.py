@@ -1185,9 +1185,7 @@ class SettingsDialog(QDialog):
         )
         advanced_form.addRow("API retry attempts:", self._max_retries_spin)
 
-        self._silent_retry_cb = QCheckBox(
-            "Show loading indicator instead of error messages\nduring retries"
-        )
+        self._silent_retry_cb = QCheckBox("Show loading indicator instead of error messages\nduring retries")
         self._silent_retry_cb.setChecked(self._config.silent_retry_mode)
         self._silent_retry_cb.setToolTip(
             "When enabled, rate-limit retries show a subtle text indicator instead of red error messages."
@@ -1413,8 +1411,7 @@ class SettingsDialog(QDialog):
         appearance_form.addRow(*self._form_row("Theme:", self._theme_combo))
         appearance_group.layout().addLayout(appearance_form)
         self._appearance_hint = QLabel(
-            "Host modes use IDA's palette in the actual plugin. "
-            "Dark and Light use Luc Nhan's bundled palettes."
+            "Host modes use IDA's palette in the actual plugin. Dark and Light use Luc Nhan's bundled palettes."
         )
         self._appearance_hint.setStyleSheet(get_hint_status_style())
         self._appearance_hint.setWordWrap(True)
