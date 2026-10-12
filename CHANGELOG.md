@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Removed temporary history-restore trace logs; restore behavior is unchanged.
 - **Chat markdown keeps its visual hierarchy in Auto / IDA mode.**
   Headings and links use the theme accent, inline code uses a contrasting
   warm tone, and code blocks, quotes, and table headers have distinct
