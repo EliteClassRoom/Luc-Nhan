@@ -500,6 +500,21 @@ def _qt_class(name: str) -> type:
 
         return _Margins()
 
+    def _style_getter(self):
+        """Return a per-widget ``QStyle`` stand-in.
+
+        Production repolishes property-keyed QSS through
+        ``widget.style().unpolish/polish`` (see ``set_tool_row_nested``);
+        a real ``QWidget`` always has ``style()``, so the stub must too.
+        """
+        style = getattr(self, "_style", None)
+        if style is None:
+            style = _qt_class("QStyle")()
+            style.unpolish = lambda widget: None
+            style.polish = lambda widget: None
+            self._style = style
+        return style
+
     attrs = {
         "__init__": _noop,
         # QWidget common
@@ -771,6 +786,7 @@ def _qt_class(name: str) -> type:
         "textEdited": _PerInstanceSignal(),
         "editingFinished": _PerInstanceSignal(),
         "returnPressed": _PerInstanceSignal(),
+        "style": _style_getter,
         "setVisible": _visible_setter,
         "isHidden": _hidden_getter,
         "setLayout": _layout_setter,

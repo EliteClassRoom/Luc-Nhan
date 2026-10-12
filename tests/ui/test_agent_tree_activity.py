@@ -39,6 +39,7 @@ def _build_tree() -> tuple[AgentTreeWidget, MagicMock]:
     tree._running_count = 0
     tree._completed_count = 0
     tree._preview = MagicMock()
+    tree._preview_title = MagicMock()
     return tree, tree._preview
 
 
@@ -83,9 +84,7 @@ class TestPreviewTextSelection(unittest.TestCase):
         self.assertEqual(AgentTreeWidget._preview_text(info), "found 3 functions")
 
     def test_running_agent_without_activity_falls_back_to_placeholder(self) -> None:
-        info = AgentInfo(
-            agent_id="a1", name="child", agent_type="custom", status="RUNNING"
-        )
+        info = AgentInfo(agent_id="a1", name="child", agent_type="custom", status="RUNNING")
         self.assertEqual(AgentTreeWidget._preview_text(info), "(no output yet)")
 
     def test_all_finished_statuses_prefer_summary(self) -> None:
@@ -171,9 +170,7 @@ class TestPreviewPaneUpdates(unittest.TestCase):
             activity="→ read_file a.c\n← read_file: 42 lines",
         )
         AgentTreeWidget.update_agent(tree, updated)
-        preview.setPlainText.assert_called_once_with(
-            "→ read_file a.c\n← read_file: 42 lines"
-        )
+        preview.setPlainText.assert_called_once_with("→ read_file a.c\n← read_file: 42 lines")
 
 
 if __name__ == "__main__":

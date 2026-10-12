@@ -107,6 +107,7 @@ class TestTabChangeRebindsKnowledge(unittest.TestCase):
         panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
         panel._is_shutdown = False
         panel._chat_views = {}
+        panel._input_area = MagicMock()
         panel._ctrl = MagicMock()
         with (
             patch.object(panel, "_tab_id_at_index", return_value="t1") as tid,
