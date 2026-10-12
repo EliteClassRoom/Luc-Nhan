@@ -1,0 +1,56 @@
+{
+  "native_method": "Two fresh IDA GUI runs. 100 samples per warm operation per case per run; cold timings are single samples per case per run. Table uses larger values from the two runs. Working-set deltas are noisy process-level estimates, not allocation/peak measures.",
+  "native": [
+    {
+      "connections": 3,
+      "models": 60,
+      "cold_create_and_show_ms": 32.2585,
+      "warm_open_p95_ms": 36.8878,
+      "search_p95_ms": 1.5054,
+      "ui_selection_p95_ms": 1.4573,
+      "working_set_delta_mib": 1.72265625
+    },
+    {
+      "connections": 10,
+      "models": 1000,
+      "cold_create_and_show_ms": 41.08,
+      "warm_open_p95_ms": 41.1732,
+      "search_p95_ms": 2.3567,
+      "ui_selection_p95_ms": 1.6042,
+      "working_set_delta_mib": 1.44921875
+    },
+    {
+      "connections": 20,
+      "models": 5000,
+      "cold_create_and_show_ms": 90.3574,
+      "warm_open_p95_ms": 32.7583,
+      "search_p95_ms": 3.9402,
+      "ui_selection_p95_ms": 1.4695,
+      "working_set_delta_mib": 6.21484375
+    }
+  ],
+  "paired_idle": [
+    {
+      "state": "closed",
+      "intervals": 3,
+      "total_seconds": 15.011542100008228,
+      "whole_process_one_core_percent": 1.5612986223438798
+    },
+    {
+      "state": "open",
+      "intervals": 3,
+      "total_seconds": 15.023280199995497,
+      "whole_process_one_core_percent": 1.4560734878662889
+    }
+  ],
+  "max_native_warm_open_ms": 202.7211,
+  "browser_settings_max_p95_ms": 7.200000002980232,
+  "browser_5000_thinking_p95_ms": 133.8999999910593,
+  "limits": [
+    "Native prototype only: grouped model list, search, thinking combo, footer label, retained draft. Not integrated production provider/model activation.",
+    "Full native Workspace/Settings redesign, long chat/tool output, provider network and SDK initialization costs were not benchmarked.",
+    "Synchronous UI processing plus event pumping is not input-to-screen compositor latency.",
+    "Native opening varied materially between runs; source of variation not isolated.",
+    "Idle measurements cover whole IDA process, three paired intervals, not isolated popup CPU."
+  ]
+}
