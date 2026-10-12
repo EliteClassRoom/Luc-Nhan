@@ -1247,9 +1247,8 @@ class LucNhanPanelCore(QWidget):
         self._input_container.setObjectName("composer")
         input_layout = QVBoxLayout(self._input_container)
         # G2: composer wrapper padding 7 top / 10 horizontal / 5 bottom.
-        # The border-top that separates the composer from the transcript is
-        # painted by the editor's own QSS, so the wrapper itself adds no
-        # chrome.
+        # The wrapper owns the divider and frame in every theme; the
+        # editor inside it stays borderless.
         input_layout.setContentsMargins(10, 7, 10, 5)
         input_layout.setSpacing(0)
 
@@ -1469,8 +1468,8 @@ class LucNhanPanelCore(QWidget):
         self._footer_tokens.setObjectName("footer_tokens")
         self._footer_tokens.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         footer_layout.addWidget(self._footer_tokens)
-        footer.setStyleSheet(maybe_host_stylesheet(get_footer_style()))
-        self._footer_trigger.setStyleSheet(maybe_host_stylesheet(get_footer_picker_trigger_style()))
+        footer.setStyleSheet(get_footer_style())
+        self._footer_trigger.setStyleSheet(get_footer_picker_trigger_style())
         self._refresh_footer_trigger_width()
         return footer
 
@@ -1780,7 +1779,7 @@ class LucNhanPanelCore(QWidget):
             hint.setStyleSheet(maybe_host_stylesheet(get_hint_status_style()))
 
     def _apply_footer_styles(self) -> None:
-        """Push token-driven footer styles from the current theme."""
+        """Apply host-derived footer tokens even in Auto / IDA mode."""
         from .theme.widgets_common import (
             get_footer_picker_trigger_style,
             get_footer_style,
@@ -1788,10 +1787,10 @@ class LucNhanPanelCore(QWidget):
 
         footer = getattr(self, "_footer", None)
         if footer is not None:
-            footer.setStyleSheet(maybe_host_stylesheet(get_footer_style()))
+            footer.setStyleSheet(get_footer_style())
         trigger = getattr(self, "_footer_trigger", None)
         if trigger is not None:
-            trigger.setStyleSheet(maybe_host_stylesheet(get_footer_picker_trigger_style()))
+            trigger.setStyleSheet(get_footer_picker_trigger_style())
         picker = getattr(self, "_picker", None)
         if picker is not None:
             self._model_catalog.note_theme_changed()
@@ -1890,15 +1889,15 @@ class LucNhanPanelCore(QWidget):
         # is borderless (see ``build_input_area_stylesheet``).
         container = getattr(self, "_input_container", None)
         if container is not None:
-            container.setStyleSheet(maybe_host_stylesheet(get_composer_frame_style()))
+            container.setStyleSheet(get_composer_frame_style())
 
     def _on_theme_changed(self, _tokens) -> None:
         """Refresh themed widgets when the user switches the active theme.
 
-        Every chrome region is re-applied on *every* switch, host mode
-        included: in AUTO/IDA each applier resolves to ``""`` and the
-        previous Luc Nhan stylesheet is cleared, so a Dark → Light → host
-        cycle can never leave the last theme's colors behind (G1).
+        Every chrome region is refreshed on every switch. Host-inheriting
+        widgets clear their bundled styles in AUTO/IDA; the footer,
+        composer and transcript retain styles built from host-derived tokens,
+        so platform-default colors cannot leak into these surfaces.
 
         ``use_native_host_theme()`` is read live (not cached) because the
         user can switch between AUTO/IDA_NATIVE (host styles win) and

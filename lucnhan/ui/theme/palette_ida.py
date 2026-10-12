@@ -115,6 +115,13 @@ def _derive_interaction_tokens(qp_colors: dict[str, str]) -> dict[str, str]:
 def derive_ida_tokens(source: Any) -> ThemeTokens:
     """Build a full ThemeTokens from a QApplication-like `source`."""
     qp = _read_qpalette_colors(source)
+    # IDA can leave AlternateBase at the platform's light default even
+    # when Text and Base are dark-themed. All secondary surfaces share
+    # this token, so fall back to the host's text surface when unreadable.
+    text_lum = hex_luminance(qp["text"])
+    alt_lum = hex_luminance(qp["alt_base"])
+    if (max(text_lum, alt_lum) + 0.05) / (min(text_lum, alt_lum) + 0.05) < 4.5:
+        qp["alt_base"] = qp["base"]
     semantic = _derive_semantic_tokens(qp)
     interaction = _derive_interaction_tokens(qp)
     return ThemeTokens(**qp, **semantic, **interaction)

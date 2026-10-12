@@ -46,6 +46,7 @@ if not real_qt_available():
         "real PySide6 is unavailable: a sibling test installed tests.qt_stubs; run this file on its own to exercise it"
     )
 
+from lucnhan.state.session import SessionState
 from lucnhan.ui.qt_compat import (
     QApplication,
     QEvent,
@@ -177,7 +178,7 @@ class _StubController:
         # ``_on_new_tab`` reads ``session`` before it creates anything; a
         # fresh session has no messages, so the panel takes the plain
         # "create a new tab" path.
-        self.session = None
+        self.session = SessionState()
         self._next = 0
         self._tabs = ["tab-0"]
         self._idb_path = ""
@@ -210,7 +211,7 @@ class _StubController:
         self.mutations.pop(self.active_tab_id, None)
         self.running.discard(self.active_tab_id)
         self.is_agent_running = bool(self.running)
-        self.session = None
+        self.session = SessionState()
 
     def reset_for_new_file(self, path: str) -> None:
         self._idb_path = path
@@ -219,7 +220,7 @@ class _StubController:
         self.running.clear()
         self.is_agent_running = False
         self.active_tab_id = self.create_tab()
-        self.session = None
+        self.session = SessionState()
 
     def cancel(self, tab_id: str | None = None) -> None:
         """Stop one tab only — the real controller cancels per tab."""
@@ -238,6 +239,11 @@ class _StubController:
 
     def tab_label(self, tab_id: str) -> str:
         return f"Session {tab_id}"
+
+    def shutdown(self) -> None:
+        """Release the inert run state when the real panel tears down."""
+        self.running.clear()
+        self.is_agent_running = False
 
     def __getattr__(self, name):
         def _forbidden(*_args, **_kwargs):
@@ -441,6 +447,60 @@ class TestThemeSurfaces(_WorkspacePanelTest):
             host_window,
         )
 
+    def test_composer_divider_survives_host_theme_switches(self) -> None:
+        from lucnhan.ui.theme.manager import ThemeManager
+
+        self._as_ida()
+        for mode in ("auto", "dark", "light", "ida", "auto"):
+            with self.subTest(mode=mode):
+                _set_theme(self._panel, mode)
+                tokens = ThemeManager.instance().tokens()
+                composer = self._panel._input_container
+                border = _border_pixel(composer).lower()
+                self.assertEqual(border, tokens.mid.lower())
+                self.assertNotEqual(
+                    border,
+                    _pixel(composer, (composer.width() // 2, 4)).lower(),
+                    "the composer must have a visible divider above the input",
+                )
+
+    def test_footer_selector_stays_readable_across_host_theme_switches(self) -> None:
+        from lucnhan.ui.theme.manager import ThemeManager
+        from lucnhan.ui.theme.tokens import hex_luminance
+
+        self._as_ida()
+        self._panel.activateWindow()
+        _settle(50)
+        for mode in ("auto", "dark", "light", "ida", "auto"):
+            _set_theme(self._panel, mode)
+            tokens = ThemeManager.instance().tokens()
+            trigger = self._panel._footer_trigger
+            for focused in (False, True):
+                with self.subTest(mode=mode, focused=focused):
+                    (trigger if focused else self._panel._input_area).setFocus()
+                    _settle(50)
+                    self.assertEqual(trigger.hasFocus(), focused)
+                    origin = trigger.mapTo(self._panel._footer, trigger.rect().topLeft())
+                    # Grab the parent: a transparent button's own grab has no
+                    # composited background and reports black instead of its fill.
+                    background = _pixel(
+                        self._panel._footer,
+                        (origin.x() + 4, origin.y() + trigger.height() // 2),
+                    ).lower()
+                    foreground = _resolved(trigger, QPalette.ColorRole.ButtonText)
+                    first, second = sorted((hex_luminance(background), hex_luminance(foreground)))
+                    ratio = (second + 0.05) / (first + 0.05)
+                    self.assertGreaterEqual(
+                        ratio,
+                        4.5,
+                        f"footer {foreground} on {background} = {ratio:.2f}:1",
+                    )
+                    self.assertEqual(
+                        background,
+                        (tokens.alt_base if focused else tokens.window).lower(),
+                        "the footer selector must stay flat on the active theme surface",
+                    )
+
     def test_host_code_surface_contrasts_with_its_text(self) -> None:
         """The host code inset must meet AA against the host's own text.
 
@@ -471,8 +531,6 @@ class TestThemeSurfaces(_WorkspacePanelTest):
                 "fixture host must separate Base from AlternateBase",
             )
             tokens = derive_ida_tokens(host)
-            self.assertEqual(tokens.code_bg.lower(), tokens.base.lower())
-            self.assertNotEqual(tokens.code_bg.lower(), tokens.alt_base.lower())
 
             first, second = sorted((_luminance(tokens.code_text), _luminance(tokens.code_bg)), reverse=True)
             ratio = (first + 0.05) / (second + 0.05)

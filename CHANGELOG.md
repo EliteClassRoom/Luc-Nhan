@@ -44,6 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Auto / IDA theme no longer paints unreadable white chat and tool rows
+  on a dark host.** Host-derived secondary backgrounds fall back to the host's
+  Base color when AlternateBase has less than 4.5:1 contrast with Text.
+  Readable native secondary colors and the application palette remain unchanged.
+
+- **The footer model/thinking selector stays readable in Auto / IDA mode.**
+  Its scoped footer and trigger styles now use host-derived tokens on startup
+  and theme changes instead of exposing the platform's white tool-button fill.
+
+- **Auto / IDA theme preserves the divider between the transcript and chat
+  input.** The composer frame now uses the host-derived border and surface
+  colors in every mode, including after theme switches; the editor remains
+  borderless inside the single outer frame.
+
 - **Follow-up UI/UX fixes, verified in the native IDA 9.4 GUI at 100 % and
   150 % scale.** Approval state and composer drafts (including caret/selection)
   are isolated per chat tab; rejected submissions retain their text, and
