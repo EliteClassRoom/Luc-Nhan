@@ -331,7 +331,7 @@ class LucNhanPanelCore(QWidget):
         # AUTO/IDA and Dark/Light, so it is never cached on the instance.
         # Per-connection model catalog owned by the panel; filled from
         # Settings Refresh results, dropped on connection changes only.
-        self._model_catalog = ModelCatalogCache()
+        self._model_catalog = ModelCatalogCache(persist_path=os.path.join(self._config.cache_dir, "model_catalog.json"))
         self._footer_width_timer: QTimer | None = None
         log_debug(
             f"Config loaded: provider={self._config.provider.name} model={self._config.provider.model}",

@@ -37,15 +37,20 @@ absent from the registry keeps the permissive fallback and says so.
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ..core.atomic_io import atomic_replace
 from ..core.thinking import (
     default_thinking_level,
     get_thinking_levels,
     has_model_thinking_levels,
 )
+from ..core.types import ModelInfo
 from .qt_compat import (
     QApplication,
     QComboBox,
@@ -113,10 +118,69 @@ class ModelCatalogCache:
     selection and theme switches must NOT drop it (the fetched list is
     still valid).  Only ``ModelInfo`` display metadata is stored, never a
     credential.
+
+    When ``persist_path`` is given the cache survives plugin restarts:
+    fetched lists are written as JSON and reloaded on construction.
     """
 
-    def __init__(self) -> None:
+    _SCHEMA = 1
+
+    def __init__(self, persist_path: str | None = None) -> None:
         self._by_connection: dict[str, list[Any]] = {}
+        self._persist_path = persist_path
+        self._load()
+
+    # -- persistence ------------------------------------------------
+
+    def _load(self) -> None:
+        """Best-effort load; unreadable/corrupt files start empty."""
+        if not self._persist_path:
+            return
+        try:
+            with open(self._persist_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return
+        if not isinstance(data, dict) or data.get("schema") != self._SCHEMA:
+            return
+        for name, models in (data.get("connections") or {}).items():
+            if not isinstance(name, str) or not isinstance(models, list):
+                continue
+            parsed = [
+                ModelInfo(id=m["id"], name=m.get("name", ""), provider=m.get("provider", ""))
+                for m in models
+                if isinstance(m, dict) and m.get("id")
+            ]
+            if parsed:
+                self._by_connection[name.strip()] = parsed
+
+    def _save(self) -> None:
+        if not self._persist_path:
+            return
+        payload = {
+            "schema": self._SCHEMA,
+            "connections": {
+                name: [
+                    {
+                        "id": getattr(m, "id", ""),
+                        "name": getattr(m, "name", ""),
+                        "provider": getattr(m, "provider", ""),
+                    }
+                    for m in models
+                    if getattr(m, "id", "")
+                ]
+                for name, models in self._by_connection.items()
+            },
+        }
+        try:
+            parent = os.path.dirname(self._persist_path)
+            os.makedirs(parent, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".model_catalog_tmp_")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            atomic_replace(tmp_path, self._persist_path)
+        except OSError:
+            pass
 
     def store(self, connection_name: str, models: list[Any]) -> None:
         """Cache a Refresh result.  An empty list means "not fetched yet"."""
@@ -127,6 +191,7 @@ class ModelCatalogCache:
             self._by_connection[name] = list(models)
         else:
             self._by_connection.pop(name, None)
+        self._save()
 
     def get(self, connection_name: str) -> list[Any] | None:
         return self._by_connection.get((connection_name or "").strip())
@@ -143,6 +208,7 @@ class ModelCatalogCache:
     def note_connection_changed(self, connection_name: str, **_changed: Any) -> None:
         """Endpoint / credential / connection config changed → drop it."""
         self._by_connection.pop((connection_name or "").strip(), None)
+        self._save()
 
     def note_selection_committed(self, connection_name: str, model_id: str, level: str) -> None:
         """Thinking/model selection does not invalidate the catalog."""
