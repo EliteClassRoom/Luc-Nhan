@@ -90,10 +90,15 @@ class BinaryMemoryService:
     # Prompt sources
     # ------------------------------------------------------------------
 
-    def structured_context(self, query: str = "", *, mode: str = "normal") -> str:
+    def structured_context(self, query: str = "", *, mode: str = "normal", max_chars: int = 0) -> str:
         """Return structured facts from SQLite, filtered by *query*.
 
         Never reads from MEMORY.md. Output contains only current facts.
+
+        *max_chars* caps the returned string (~line boundary).  The per-turn
+        prompt path builds hundreds of KB of formatted facts and then drops
+        all but ``MEMORY_MAX_CHARS`` — stop formatting early instead of
+        building (and sanitizing) the whole corpus.
         """
         facts = self.repository.list_memories()
         if query:
@@ -108,10 +113,13 @@ class BinaryMemoryService:
             return ""
 
         lines = ["## Structured Memory"]
+        total = len(lines[0])
         for fact in sorted(facts, key=lambda f: (f.type, f.title)):
-            safe_title = _sanitize_prompt_text(fact.title)
-            safe_content = _sanitize_prompt_text(fact.content)
-            lines.append(f"- [{fact.type}] {safe_title}: {safe_content}")
+            line = f"- [{fact.type}] {_sanitize_prompt_text(fact.title)}: {_sanitize_prompt_text(fact.content)}"
+            if max_chars and total + len(line) + 1 > max_chars:
+                break
+            lines.append(line)
+            total += len(line) + 1
         return "\n".join(lines)
 
     def manual_notes_context(self) -> str:

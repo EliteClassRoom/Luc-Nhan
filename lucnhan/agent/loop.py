@@ -29,6 +29,7 @@ from ..core.errors import (
 )
 from ..core.logging import log_debug, log_error, log_info, log_warning
 from ..core.sanitize import (
+    MEMORY_MAX_CHARS,
     sanitize_skill_body,
     sanitize_tool_result,
     strip_injection_markers,
@@ -845,7 +846,7 @@ class AgentLoop:
         manual_memory_notes = ""
         if self.memory_service is not None:
             try:
-                structured_memory = self.memory_service.structured_context()
+                structured_memory = self.memory_service.structured_context(max_chars=MEMORY_MAX_CHARS)
                 manual_memory_notes = self.memory_service.manual_notes_context()
             except Exception as e:
                 log_debug(f"central memory context load failed: {e}")
