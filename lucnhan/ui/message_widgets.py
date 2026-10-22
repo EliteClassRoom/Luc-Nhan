@@ -610,6 +610,9 @@ class _ThinkingBlock(QFrame):
         self._source_text = ""
         self._in_progress: bool = False
         self._tokens = None  # set by _apply_styles on each call
+        # Theme re-render deferred until the block is painted (off-screen
+        # messages must not rebuild their HTML on every theme change).
+        self._deferred_pending: bool = False
 
         # Streaming render-gate state (mirrors AssistantMessageWidget).
         self._pending_delta: int = 0
@@ -673,8 +676,13 @@ class _ThinkingBlock(QFrame):
         # The cached HTML embeds inline color/border styles from the
         # *previous* theme. Re-render with the new tokens so code blocks,
         # backticks, tables, and tool calls inside the thinking content
-        # all match the active theme.
+        # all match the active theme.  Off-screen blocks defer and rebuild
+        # on first paint (see paintEvent).
         if self._source_text:
+            region = getattr(self, "visibleRegion", None)
+            if region is not None and region().isEmpty():
+                self._deferred_pending = True
+                return
             self._render_content()
 
     def _on_toggle(self) -> None:
@@ -684,10 +692,25 @@ class _ThinkingBlock(QFrame):
 
     def _render_content(self) -> None:
         """Render ``_source_text`` to HTML and update the label."""
+        self._deferred_pending = False
         self._content.setText(md_to_html(self._source_text, self))
         self._content.pin_height()
         self._pending_delta = 0
         self._last_render_time = _time.monotonic()
+
+    def _flush_pending_render(self) -> None:
+        """Apply a deferred theme re-render (scheduled from paintEvent)."""
+        if self._deferred_pending:
+            self._deferred_pending = False
+            self._render_content()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        # A deferred theme re-render for a block that was off-screen when
+        # the theme changed: rebuild now that it is being painted.  Do it
+        # outside the paint pass (setText invalidates layout).
+        if self._deferred_pending:
+            QTimer.singleShot(0, self._flush_pending_render)
 
     def set_thinking(self, text: str, in_progress: bool = False) -> None:
         """Set the full thinking text and render immediately.
@@ -841,8 +864,15 @@ class AssistantMessageWidget(QFrame):
         # styles from the *previous* theme. Re-render with the new
         # tokens so code blocks, backticks, tables, and tool calls all
         # match the active theme. Skipped when no text has streamed in
-        # yet (avoids a wasted render on plugin startup).
+        # yet (avoids a wasted render on plugin startup).  Off-screen
+        # messages defer and rebuild on first paint (see paintEvent), so
+        # a theme change on a long chat costs only the visible viewport
+        # instead of the whole transcript (measured ~539ms for 30 msgs).
         if self._full_text:
+            region = getattr(self, "visibleRegion", None)
+            if region is not None and region().isEmpty():
+                self._deferred_pending = True
+                return
             self._render()
 
     def set_continuation(self, continuation: bool) -> None:
@@ -880,6 +910,7 @@ class AssistantMessageWidget(QFrame):
         if pin is not None:
             pin()
         self._pending_delta = 0
+        self._deferred_pending = False  # this render used the current theme
         self._last_render_time = _time.monotonic()
 
     def _render_if_pending(self) -> None:
@@ -954,6 +985,14 @@ class AssistantMessageWidget(QFrame):
         """Render deferred text on first visibility."""
         super().showEvent(event)
         self._render_if_pending()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        # A deferred theme re-render for a message that was off-screen when
+        # the theme changed: rebuild now that it is being painted.  Done
+        # outside the paint pass (setText invalidates layout).
+        if self._deferred_pending:
+            QTimer.singleShot(0, self._render_if_pending)
 
     def full_text(self) -> str:
         return self._full_text
