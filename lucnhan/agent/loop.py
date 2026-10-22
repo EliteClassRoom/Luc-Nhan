@@ -592,6 +592,11 @@ class AgentLoop:
             compaction_threshold=0.8,
         )
 
+        # get_binary_info scans every function in the IDB (idautils.Functions)
+        # and is static per binary — cache per idb_path instead of paying a
+        # full-IDB scan on every user message.
+        self._binary_info_cache: tuple[str, str] | None = None
+
         # Central memory service (set by controller when binary identity is
         # resolved). When None, save_memory and /memory report central memory
         # unavailable. Children inherit the parent's wiring so a subagent
@@ -826,7 +831,12 @@ class AgentLoop:
 
         if self.config.auto_context and not profile.hide_binary_metadata:
             try:
-                binary_info = self.tools.execute("get_binary_info", {})
+                idb_key = self.session.idb_path
+                if self._binary_info_cache is not None and self._binary_info_cache[0] == idb_key:
+                    binary_info = self._binary_info_cache[1]
+                else:
+                    binary_info = self.tools.execute("get_binary_info", {})
+                    self._binary_info_cache = (idb_key, binary_info)
             except Exception as e:
                 log_debug(f"get_binary_info failed: {e}")
             try:
