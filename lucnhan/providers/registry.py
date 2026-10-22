@@ -7,7 +7,6 @@ all provider SDKs (anthropic, openai, gemini, ollama, ...) at panel boot.
 
 from __future__ import annotations
 
-import copy
 import importlib
 import os
 from typing import Any
@@ -47,7 +46,10 @@ def _deep_extra_equal(cached_provider: Any, new_extra: Any) -> bool:
     # Normalize: None and {} are equivalent (both mean "no extra").
     cached_norm = cached_raw if cached_raw else {}
     new_norm = new_extra if new_extra else {}
-    return copy.deepcopy(cached_norm) == copy.deepcopy(new_norm)
+    # Both sides are private snapshots / fresh kwargs that neither party
+    # mutates, so plain dict equality (recursive) is safe — the deepcopies
+    # only allocated two throwaway copies per get_or_create.
+    return cached_norm == new_norm
 
 
 class ProviderRegistry:
