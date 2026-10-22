@@ -75,6 +75,10 @@ class BinaryMemoryService:
         self.projector = projector
         self._authority_issuer = authority_issuer
         self._context_validator = context_validator or (lambda c: c == context)
+        # (mtime_ns, size) -> sanitized notes. MEMORY.md is re-read + fully
+        # sanitized on every turn; the file only changes when the agent or
+        # user writes notes, which bumps mtime/size.
+        self._manual_notes_cache: tuple[tuple[int, int], str] | None = None
 
     # ------------------------------------------------------------------
     # Authority
@@ -127,12 +131,21 @@ class BinaryMemoryService:
 
         Never includes the managed region or hidden record markers.
         """
-        if not self.paths.markdown.exists():
+        markdown = self.paths.markdown
+        if not markdown.exists():
             return ""
-        content = self.paths.markdown.read_text(encoding="utf-8")
+        # Stat-only until the signature changes: the file is re-read only
+        # when its mtime/size moves, so a long session pays one read per
+        # write instead of one read per turn.
+        sig = (markdown.stat().st_mtime_ns, markdown.stat().st_size)
+        if self._manual_notes_cache is not None and self._manual_notes_cache[0] == sig:
+            return self._manual_notes_cache[1]
+        content = markdown.read_text(encoding="utf-8")
         unmanaged = extract_unmanaged_markdown(content)
         sanitized = _sanitize_prompt_text(unmanaged)
-        return sanitized.strip()
+        result = sanitized.strip()
+        self._manual_notes_cache = (sig, result)
+        return result
 
     # ------------------------------------------------------------------
     # Writes
