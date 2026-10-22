@@ -261,3 +261,37 @@ class TestKnowledgeContextWidget(unittest.TestCase):
         self.assertIn("gamma", detail)
         # Fourth item is dropped to keep the pill compact.
         self.assertNotIn("delta", detail)
+
+
+class TestStreamFlushPinThrottle(unittest.TestCase):
+    """Alternating streaming flushes skip the height re-pin.
+
+    heightForWidth re-lays out the whole label document after each
+    setText (measured ~180ms for 54k chars on real Qt), so the stream
+    path pins on every second flush; the final TEXT_DONE render always
+    pins via the default.  This test pins the alternation behavior so a
+    regression to pin-every-flush is visible.
+    """
+
+    def test_alternating_flushes_pin(self):
+        from lucnhan.ui.message_widgets import AssistantMessageWidget
+
+        w = AssistantMessageWidget()
+        pins = []
+        w._content.pin_height = lambda: pins.append(1)  # type: ignore[method-assign]
+
+        for _ in range(4):
+            w._stream_flush()
+        self.assertEqual(len(pins), 2)
+
+    def test_explicit_pin_flag(self):
+        from lucnhan.ui.message_widgets import AssistantMessageWidget
+
+        w = AssistantMessageWidget()
+        pins = []
+        w._content.pin_height = lambda: pins.append(1)  # type: ignore[method-assign]
+
+        w._render(pin=True)
+        self.assertEqual(len(pins), 1)
+        w._render(pin=False)
+        self.assertEqual(len(pins), 1)

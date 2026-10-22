@@ -776,6 +776,14 @@ class AssistantMessageWidget(QFrame):
     # ``set_text`` on TEXT_DONE still renders the full content once.
     _RENDER_LONG_THRESHOLD: int = 8_000
     _RENDER_INTERVAL_LONG_S: float = 0.35
+    # Streaming flushes skip the height re-pin on alternating flushes.
+    # Measured on real Qt (IDA 9.4/PySide6 6.8): heightForWidth re-lays out
+    # the WHOLE document after every setText (a 54k message costs ~180ms
+    # per flush, growing quadratically over the stream), so pinning half
+    # as often roughly halves the layout tax; the fixed height stays one
+    # flush stale (bottom line transiently clipped) and self-heals on the
+    # next pin + on the final TEXT_DONE render.
+    _PIN_EVERY_N_FLUSHES: int = 2
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -786,6 +794,7 @@ class AssistantMessageWidget(QFrame):
         self._full_text_value: str = ""
         self._chunks: list[str] = []
         self._text_len: int = 0
+        self._flushes_since_pin: int = 0
         self._full_text = ""
         self._pending_delta = 0
         self._last_render_time: float = 0.0
@@ -880,7 +889,7 @@ class AssistantMessageWidget(QFrame):
         assistant message of the same turn (after tool calls)."""
         self._role_label.setVisible(not continuation)
 
-    def _render(self) -> None:
+    def _render(self, pin: bool = True) -> None:
         text_len = len(self._full_text)
         with ui_probe("ui.render", text_len=text_len):
             thinking, visible = _split_thinking(self._full_text)
@@ -905,10 +914,11 @@ class AssistantMessageWidget(QFrame):
                 self._content.hide()
         # Pin the content height once per render so subsequent layout passes
         # skip the O(text_length) heightForWidth() walk for this widget.
-        # Guarded for plain QLabel (tests / non-cached callers).
-        pin = getattr(self._content, "pin_height", None)
-        if pin is not None:
-            pin()
+        # Guarded for plain QLabel (tests / non-cached callers).  Streaming
+        # flushes pass pin=False on alternating flushes (see _stream_flush).
+        pin_fn = getattr(self._content, "pin_height", None)
+        if pin and pin_fn is not None:
+            pin_fn()
         self._pending_delta = 0
         self._deferred_pending = False  # this render used the current theme
         self._last_render_time = _time.monotonic()
@@ -924,13 +934,28 @@ class AssistantMessageWidget(QFrame):
             self._deferred_pending = False
             self._render()
 
+    def _stream_flush(self) -> None:
+        """Flush the streamed tail to the label (full markdown render).
+
+        The label document is always replaced wholesale: measured on real
+        Qt (IDA 9.4/PySide6 6.8), QTextDocument re-lays out the entire
+        document on every append, so incremental ``insertHtml`` was no
+        faster than ``setText`` — the layout cost scales with message
+        length no matter what.  The height re-pin is therefore throttled
+        (``_PIN_EVERY_N_FLUSHES``); the final ``set_text`` at TEXT_DONE
+        always pins once and renders the full content.
+        """
+        self._flushes_since_pin += 1
+        pin = self._flushes_since_pin % self._PIN_EVERY_N_FLUSHES == 0
+        self._render(pin=pin)
+
     def append_text(self, delta: str) -> None:
         self._chunks.append(delta)
         self._pending_delta += len(delta)
         self._text_len += len(delta)
         # Unconditional flush for very large bursts (prevents queue build-up).
         if self._pending_delta >= self._RENDER_BATCH_MAX:
-            self._render()
+            self._stream_flush()
             return
         # Adaptive time gate: once the message is long enough that a single
         # render costs ~50ms+ (see PROFILE log), slow the intermediate
@@ -941,7 +966,7 @@ class AssistantMessageWidget(QFrame):
             self._RENDER_INTERVAL_LONG_S if self._text_len >= self._RENDER_LONG_THRESHOLD else self._RENDER_INTERVAL_S
         )
         if self._pending_delta >= self._RENDER_BATCH_MIN and _time.monotonic() - self._last_render_time >= interval:
-            self._render()
+            self._stream_flush()
 
     def set_text(self, text: str) -> None:
         self._full_text = text
