@@ -341,6 +341,29 @@ class WorkspaceStore:
         # built-in tolerance so a future custom connection can't reintroduce
         # the leak via a ProgrammingError on double-close.
         self._closed = False
+        # Write-generation counter + memoized list reads. list_facts()/
+        # list_entities()/list_relations() run on every agent turn and
+        # deserialize every row (JSON) even when nothing changed since the
+        # previous turn — the dominant per-turn memory cost on large corpora.
+        # Each write bumps the generation so the memo is never stale; both
+        # the counter and the cache live under ``self._lock``.
+        self._write_generation: int = 0
+        self._list_cache: dict[str, tuple[int, object]] = {}
+
+    # -- Memory read-memo ---------------------------------------------------
+
+    def _note_write(self) -> None:
+        """Invalidate memoized list reads after any committed write."""
+        self._write_generation += 1
+
+    def _cached_list(self, key: str, loader: Any) -> object:
+        """Return *loader()* output, reusing the memo when generation matches."""
+        gen, cached = self._list_cache.get(key, (None, None))
+        if gen == self._write_generation and cached is not None:
+            return cached
+        records = loader()
+        self._list_cache[key] = (self._write_generation, records)
+        return records
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -531,6 +554,7 @@ class WorkspaceStore:
                     (fact_id, revision, content, content_hash, confidence, now),
                 )
                 self._conn.commit()
+                self._note_write()
             except Exception:
                 self._conn.rollback()
                 raise
@@ -587,6 +611,10 @@ class WorkspaceStore:
 
     def list_facts(self) -> list[FactRecord]:
         """List all current facts."""
+        with self._lock:
+            return list(self._cached_list("facts", self._load_facts))
+
+    def _load_facts(self) -> list[FactRecord]:
         with self._lock:
             rows = self._conn.execute(
                 """
@@ -736,11 +764,15 @@ class WorkspaceStore:
                     (
                         observation_id,
                         observation_type,
-                        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                        json.dumps(payload, ensure_ascii=False),
                         time.time(),
                     ),
                 )
                 self._conn.commit()
+                # Only a new fact changes list output; a dedup bump would
+                # invalidate the memo on every save_memory, defeating it.
+                if outcome == "created":
+                    self._note_write()
             except BaseException:
                 self._conn.rollback()
                 raise
@@ -793,6 +825,7 @@ class WorkspaceStore:
                         (entity_type, name, meta_json, tags_json, revision, entity_id),
                     )
                 self._conn.commit()
+                self._note_write()
             except Exception:
                 self._conn.rollback()
                 raise
@@ -826,6 +859,10 @@ class WorkspaceStore:
 
     def list_entities(self) -> list[EntityRecord]:
         """List all current entities."""
+        with self._lock:
+            return list(self._cached_list("entities", self._load_entities))
+
+    def _load_entities(self) -> list[EntityRecord]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM entities ORDER BY created_at").fetchall()
             return [
@@ -902,6 +939,7 @@ class WorkspaceStore:
                         ),
                     )
                 self._conn.commit()
+                self._note_write()
             except Exception:
                 self._conn.rollback()
                 raise
@@ -918,6 +956,10 @@ class WorkspaceStore:
 
     def list_relations(self) -> list[RelationRecord]:
         """List all current relations."""
+        with self._lock:
+            return list(self._cached_list("relations", self._load_relations))
+
+    def _load_relations(self) -> list[RelationRecord]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM relations ORDER BY created_at").fetchall()
             return [

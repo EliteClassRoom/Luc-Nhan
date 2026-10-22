@@ -510,3 +510,80 @@ class TestExactSaveConcurrency:
             assert final.count_observations() == 2
         finally:
             final.close()
+
+
+class TestListReadMemo:
+    """The per-turn list reads are memoized and invalidated only by writes.
+
+    list_facts/list_entities/list_relations run on every agent turn and
+    deserialize every row; re-reading unchanged data is wasted work.  A
+    write must invalidate the memo; a deduplicated save_memory writes an
+    observation but no fact, so it must NOT invalidate (otherwise the cache
+    is useless when the agent saves the same fact repeatedly).
+    """
+
+    @staticmethod
+    def _count_loads(store: WorkspaceStore) -> dict:
+        calls = {"facts": 0, "entities": 0, "relations": 0}
+        originals = {
+            "facts": store._load_facts,
+            "entities": store._load_entities,
+            "relations": store._load_relations,
+        }
+
+        def make(key: str, orig):
+            def wrapped():
+                calls[key] += 1
+                return orig()
+
+            return wrapped
+
+        for key, orig in originals.items():
+            setattr(store, f"_load_{key}", make(key, orig))
+        return calls
+
+    def test_reads_are_reused_until_a_write(self, tmp_path):
+        store, _ = _create_store(tmp_path)
+        calls = self._count_loads(store)
+
+        store.list_facts()
+        store.list_facts()
+        store.list_facts()
+        assert calls["facts"] == 1  # subsequent reads hit the memo
+
+        # Invalidation is lazy: the write bumps the generation but no read
+        # happens until the next list_facts().
+        store.put_fact(new_record_id("fact"), "algorithm", "RC4", "uses RC4", 0.8, expected_revision=0)
+        assert calls["facts"] == 1
+        store.list_facts()
+        assert calls["facts"] == 2  # the write forced a reload
+        store.list_facts()
+        assert calls["facts"] == 2  # stable again
+
+        store.put_entity(new_record_id("entity"), "module", "crypto")
+        assert store.list_entities()
+        assert calls["entities"] == 1  # the write forced a reload
+        store.list_entities()
+        assert calls["entities"] == 1
+
+    def test_deduplicated_save_does_not_invalidate(self, tmp_path):
+        store, _ = _create_store(tmp_path)
+        calls = self._count_loads(store)
+
+        store.list_facts()
+        # First save creates a fact; second identical save dedups (no new
+        # fact) and must not invalidate the memo.
+        for _ in range(2):
+            store.save_fact_if_semantically_absent(
+                fact_id=new_record_id("fact"),
+                fact_type="algorithm",
+                title="RC4",
+                content="uses RC4 for C2",
+                semantic_hash=semantic_fact_hash("algorithm", "uses RC4 for C2"),
+                confidence=0.8,
+                observation_id=new_record_id("observation"),
+                observation_type="decompile",
+                observation_payload='{"ea": "0x401000"}',
+            )
+        assert calls["facts"] == 1
+        assert len(store.list_facts()) == 1
