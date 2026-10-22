@@ -29,11 +29,21 @@ class ContextWindowManager:
         # Use prompt_tokens as primary metric — it reflects how much of the
         # context window the conversation occupies.  Fall back to total_tokens
         # if prompt_tokens is unavailable (e.g. non-Anthropic providers).
+        #
+        # Monotonic: provider-reported usage is authoritative and includes
+        # cache tokens the local char estimate ignores — a later local
+        # estimate must never overwrite it downward (that deferred compaction
+        # past the real window).  reset() after compaction clears the floor so
+        # the compacted context re-establishes it.
         effective = usage.context_tokens or usage.total_tokens
-        # Only update if we get a meaningful value (avoid zeroing out from
-        # partial streaming chunks that report total_tokens=0).
-        if effective > 0:
+        if effective > self._total_tokens:
             self._total_tokens = effective
+
+    def reset(self) -> None:
+        """Clear tracked usage.  Call after context compaction so the
+        compacted history re-establishes the window instead of re-triggering
+        compaction on the stale pre-compaction total."""
+        self._total_tokens = 0
 
     def should_compact(self) -> bool:
         return self.is_near_limit

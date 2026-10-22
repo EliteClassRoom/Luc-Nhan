@@ -1162,6 +1162,10 @@ class AgentLoop:
             # get_messages_for_provider() call.
             compacted = self._context_manager.compact_messages(self.session.messages)
             self.session.replace_messages(compacted)
+            # Reset the tracked usage: update_usage is monotonic, so without
+            # this the stale pre-compaction total would re-trigger compaction
+            # on every following turn and collapse the history.
+            self._context_manager.reset()
 
         ctx_window = self.config.provider.context_window
         provider_messages = minify_messages(
@@ -1805,6 +1809,14 @@ class AgentLoop:
             if m.tool_calls:
                 for tc in m.tool_calls:
                     char_count += len(str(tc.arguments)) if tc.arguments else 0
+            # Tool results carry the conversation's largest payload (decompile
+            # dumps, search hits...) but live exclusively in ``tool_results``,
+            # never in ``m.content``.  Omitting them under-counts the context
+            # by 1.3-1.7x, so compaction triggers late (or never) on
+            # tool-heavy sessions and the provider rejects the request with a
+            # ContextLengthError.  Same accounting as session._estimate_tokens.
+            for tr in m.tool_results:
+                char_count += len(tr.content or "") + len(tr.name or "") + 20
         return ContextWindowManager.estimate_tokens_from_chars(char_count)
 
     @staticmethod

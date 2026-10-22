@@ -15,7 +15,7 @@ from lucnhan.agent.context_window import ContextWindowManager
 from lucnhan.agent.plan_mode import create_plan_from_text, parse_plan
 from lucnhan.agent.turn import TurnEvent, TurnEventType
 from lucnhan.core.config import LucNhanConfig
-from lucnhan.core.types import Message, Role, TokenUsage
+from lucnhan.core.types import Message, Role, TokenUsage, ToolResult
 from lucnhan.state.session import SessionState
 
 
@@ -98,6 +98,55 @@ class TestContextWindow(unittest.TestCase):
         self.assertEqual(compacted[0].role, Role.SYSTEM)
         # Last messages preserved
         self.assertEqual(compacted[-1].content, "A4")
+
+    def test_usage_monotonic_survives_smaller_estimate(self):
+        # Provider-reported usage is authoritative (includes cache tokens);
+        # a later smaller local estimate must not overwrite it downward,
+        # otherwise compaction defers past the real window.
+        cw = ContextWindowManager(max_tokens=1000)
+        cw.update_usage(TokenUsage(total_tokens=900))
+        cw.update_usage(TokenUsage(total_tokens=300))
+        self.assertAlmostEqual(cw.usage_ratio, 0.9)
+        self.assertTrue(cw.should_compact())
+
+    def test_reset_reestablishes_usage_after_compaction(self):
+        # After compaction the manager is reset so the compacted history
+        # re-establishes the window instead of re-triggering compaction on
+        # the stale pre-compaction total every turn.
+        cw = ContextWindowManager(max_tokens=1000)
+        cw.update_usage(TokenUsage(total_tokens=900))
+        cw.reset()
+        self.assertAlmostEqual(cw.usage_ratio, 0.0)
+        cw.update_usage(TokenUsage(total_tokens=100))
+        self.assertAlmostEqual(cw.usage_ratio, 0.1)
+        self.assertFalse(cw.should_compact())
+
+
+class TestPromptTokenEstimate(unittest.TestCase):
+    """AgentLoop._estimate_prompt_tokens drives the compaction decision."""
+
+    @staticmethod
+    def _estimate(messages: list[Message]) -> int:
+        from lucnhan.agent.loop import AgentLoop
+
+        return AgentLoop._estimate_prompt_tokens(messages, "")
+
+    def test_tool_results_are_counted(self):
+        # Regression: tool results (the largest payload in an RE session)
+        # were ignored because they live in ``tool_results``, not
+        # ``content`` — under-counting by ~1.3-1.7x so compaction never
+        # fired on tool-heavy sessions and the provider rejected the
+        # request with ContextLengthError.
+        msgs = [
+            Message(
+                role=Role.TOOL,
+                tool_results=[ToolResult(tool_call_id="t1", name="decompile_function", content="x" * 8000)],
+            )
+        ]
+        self.assertGreater(self._estimate(msgs), 2000)
+
+    def test_plain_content_still_counts(self):
+        self.assertGreater(self._estimate([Message(role=Role.USER, content="hello world")]), 0)
 
 
 class TestSessionState(unittest.TestCase):
