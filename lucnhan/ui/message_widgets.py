@@ -602,7 +602,12 @@ class _ThinkingBlock(QFrame):
         # Re-rendering on theme change is the only way to update those
         # colors, so we keep the text and re-call ``md_to_html`` from
         # ``_apply_styles`` when the theme fires.
-        self._source_text: str = ""
+        # ``_source_text`` is materialized lazily from ``_chunks`` to avoid
+        # O(n^2) ``str +=`` in ``append_reasoning`` (same fix as
+        # ``AssistantMessageWidget``).
+        self._source_text_value: str = ""
+        self._chunks: list[str] = []
+        self._source_text = ""
         self._in_progress: bool = False
         self._tokens = None  # set by _apply_styles on each call
 
@@ -614,6 +619,19 @@ class _ThinkingBlock(QFrame):
         ThemeManager.instance().themeChanged.connect(self._apply_styles)
 
         self.hide()
+
+    @property
+    def _source_text(self) -> str:
+        """Materialized reasoning text, flattening pending chunks on read."""
+        if self._chunks:
+            self._source_text_value += "".join(self._chunks)
+            self._chunks.clear()
+        return self._source_text_value
+
+    @_source_text.setter
+    def _source_text(self, value: str) -> None:
+        self._source_text_value = value
+        self._chunks.clear()
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -699,7 +717,7 @@ class _ThinkingBlock(QFrame):
         ``_RENDER_INTERVAL_S`` has elapsed.  A single delta exceeding
         ``_RENDER_BATCH_MAX`` triggers an immediate flush.
         """
-        self._source_text += delta
+        self._chunks.append(delta)
         self._pending_delta += len(delta)
         if self._pending_delta >= self._RENDER_BATCH_MAX:
             self._render_content()
@@ -739,6 +757,12 @@ class AssistantMessageWidget(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("message_assistant")
+        # ``_full_text`` is materialized lazily from ``_chunks`` (see the
+        # property below): per-delta ``str +=`` was O(n^2) over a long
+        # message (measured ~654ms for 32k appends), stalling the UI thread.
+        self._full_text_value: str = ""
+        self._chunks: list[str] = []
+        self._text_len: int = 0
         self._full_text = ""
         self._pending_delta = 0
         self._last_render_time: float = 0.0
@@ -783,6 +807,25 @@ class AssistantMessageWidget(QFrame):
 
         self._apply_styles()
         ThemeManager.instance().themeChanged.connect(self._apply_styles)
+
+    @property
+    def _full_text(self) -> str:
+        """Accumulated message text, materializing pending chunks lazily.
+
+        Streaming appends push into ``_chunks``; the property flattens them
+        only on read (render/len/export).  This avoids the O(n^2) ``str +=``
+        that previously dominated long-message streaming (see __init__).
+        """
+        if self._chunks:
+            self._full_text_value += "".join(self._chunks)
+            self._chunks.clear()
+        return self._full_text_value
+
+    @_full_text.setter
+    def _full_text(self, value: str) -> None:
+        self._full_text_value = value
+        self._chunks.clear()
+        self._text_len = len(value)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -851,8 +894,9 @@ class AssistantMessageWidget(QFrame):
             self._render()
 
     def append_text(self, delta: str) -> None:
-        self._full_text += delta
+        self._chunks.append(delta)
         self._pending_delta += len(delta)
+        self._text_len += len(delta)
         # Unconditional flush for very large bursts (prevents queue build-up).
         if self._pending_delta >= self._RENDER_BATCH_MAX:
             self._render()
@@ -863,9 +907,7 @@ class AssistantMessageWidget(QFrame):
         # ~1s out of every 10s of streaming.  The final ``set_text`` on
         # TEXT_DONE still renders the full content once.
         interval = (
-            self._RENDER_INTERVAL_LONG_S
-            if len(self._full_text) >= self._RENDER_LONG_THRESHOLD
-            else self._RENDER_INTERVAL_S
+            self._RENDER_INTERVAL_LONG_S if self._text_len >= self._RENDER_LONG_THRESHOLD else self._RENDER_INTERVAL_S
         )
         if self._pending_delta >= self._RENDER_BATCH_MIN and _time.monotonic() - self._last_render_time >= interval:
             self._render()
