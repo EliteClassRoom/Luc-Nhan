@@ -155,6 +155,9 @@ class AnthropicProvider(LLMProvider):
             if self.api_base:
                 kwargs["base_url"] = self.api_base
             kwargs["timeout"] = 120.0  # 2min vs SDK default 10min
+            # max_retries=0: the agent loop owns retry policy; the SDK's own
+            # max_retries=2 stacks 3x2 attempts on every rate limit.
+            kwargs["max_retries"] = 0
             if self._auth_type == "oauth":
                 kwargs["auth_token"] = self.api_key
                 kwargs["default_headers"] = {

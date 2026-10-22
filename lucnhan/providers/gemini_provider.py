@@ -15,7 +15,7 @@ from ..core.errors import (
     ProviderError,
     RateLimitError,
 )
-from ..core.logging import log_debug
+from ..core.logging import log_debug, log_warning
 from ..core.types import (
     LLMRequestContext,
     Message,
@@ -49,7 +49,18 @@ class GeminiProvider(LLMProvider):
                 ) from exc
             if not self.api_key:
                 raise AuthenticationError(provider="gemini")
-            self._client = genai.Client(api_key=self.api_key)
+            kwargs: dict[str, Any] = {"api_key": self.api_key}
+            try:
+                # 120s request timeout; the google-genai SDK defaults to NO
+                # timeout while retrying internally 5x (backoff 1/2/4/8s), so
+                # a hung endpoint parks the turn ~15min before our own retry
+                # loop sees it.  HttpOptions.timeout is milliseconds.
+                kwargs["http_options"] = self._types.HttpOptions(timeout=120_000)
+            except AttributeError:
+                # SDK older than the HttpOptions API — degrade to no
+                # timeout rather than break plugin startup.
+                log_warning("google-genai SDK too old for HttpOptions; Gemini requests have no timeout")
+            self._client = genai.Client(**kwargs)
         return self._client
 
     @property

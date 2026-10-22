@@ -253,9 +253,11 @@ class OpenAIProvider(LLMProvider):
                 ) from exc
             if not self.api_key:
                 raise AuthenticationError(provider="openai")
-            kwargs = {"api_key": self.api_key, "timeout": 120.0}
+            kwargs = {"api_key": self.api_key, "timeout": 120.0, "max_retries": 0}
             if self.api_base:
                 kwargs["base_url"] = self.api_base
+            # max_retries=0: the agent loop owns retry policy; the SDK's own
+            # max_retries=2 stacks 3x2 attempts on every rate limit.
             self._client = openai.OpenAI(**kwargs)
         return self._client
 

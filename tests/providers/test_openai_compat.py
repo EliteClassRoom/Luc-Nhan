@@ -94,7 +94,7 @@ def test_compat_client_uses_placeholder_without_key(monkeypatch):
     fake = _fake_openai_module(monkeypatch)
     p = OpenAICompatProvider(api_key="", api_base="https://api.z.ai/v1")
     p._get_client()
-    fake.OpenAI.assert_called_once_with(api_key="no-key", base_url="https://api.z.ai/v1")
+    fake.OpenAI.assert_called_once_with(api_key="no-key", base_url="https://api.z.ai/v1", timeout=120.0, max_retries=0)
 
 
 def test_glm_client_uses_placeholder_without_key(monkeypatch):
@@ -117,7 +117,9 @@ def test_compat_client_uses_explicit_key(monkeypatch):
     fake = _fake_openai_module(monkeypatch)
     p = OpenAICompatProvider(api_key="sk-explicit", api_base="https://api.z.ai/v1")
     p._get_client()
-    fake.OpenAI.assert_called_once_with(api_key="sk-explicit", base_url="https://api.z.ai/v1")
+    fake.OpenAI.assert_called_once_with(
+        api_key="sk-explicit", base_url="https://api.z.ai/v1", timeout=120.0, max_retries=0
+    )
 
 
 def test_compat_default_constructor_never_leaks_env_key_to_sdk(monkeypatch):

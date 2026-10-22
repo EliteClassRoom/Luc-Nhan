@@ -139,7 +139,7 @@ class GLMProvider(OpenAIProvider):
                     "openai package not installed. Run: pip install openai",
                     provider=self._provider_name,
                 ) from exc
-            client_kwargs: dict[str, Any] = {"timeout": 120.0}
+            client_kwargs: dict[str, Any] = {"timeout": 120.0, "max_retries": 0}
             effective_base = self.api_base or self._glm_config.base_url
             if self.api_key:
                 client_kwargs["api_key"] = self.api_key

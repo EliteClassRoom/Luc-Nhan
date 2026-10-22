@@ -449,6 +449,7 @@ class MiniMaxProvider(AnthropicProvider):
                 api_key=self.api_key,
                 base_url=self.api_base,
                 timeout=120.0,  # 2min vs SDK default 10min
+                max_retries=0,  # agent loop owns retry policy; SDK would stack 3x2 attempts
             )
         return self._client
 

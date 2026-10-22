@@ -75,6 +75,13 @@ class OpenAICompatProvider(OpenAIProvider):
                 kwargs["api_key"] = "no-key"
             if self.api_base:
                 kwargs["base_url"] = self.api_base
+            # Explicit 2min timeout: the openai SDK otherwise inherits httpx
+            # defaults (connect 5s, read/write/pool 600s) — a hung Ollama or
+            # custom-endpoint socket parks the turn for 10 minutes.
+            kwargs["timeout"] = 120.0
+            # The agent loop owns retry policy (backoff + retry-after header);
+            # the SDK's own max_retries=2 would stack 3x2 attempts per turn.
+            kwargs["max_retries"] = 0
             self._client = openai.OpenAI(**kwargs)
         return self._client
 
