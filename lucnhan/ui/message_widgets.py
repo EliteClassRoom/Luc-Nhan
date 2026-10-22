@@ -678,6 +678,12 @@ class _ThinkingBlock(QFrame):
         For streaming deltas, prefer :meth:`append_reasoning` which
         batches renders via a time gate.
         """
+        # Idempotence guard: _finalize_reasoning_block fires on every
+        # TEXT_DELTA after reasoning→text, and AssistantMessageWidget._render
+        # re-feeds the same extracted thinking per flush.  Identical state
+        # must not re-render the whole block (measured ~11.5ms each).
+        if text == self._source_text and in_progress == self._in_progress:
+            return
         self._source_text = text
         self._in_progress = in_progress
         self._render_content()
