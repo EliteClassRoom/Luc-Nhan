@@ -294,7 +294,23 @@ def _migrate_v4(conn: Any) -> None:
         raise RuntimeError("workspace v4 migration failed foreign key check")
 
 
-_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _migrate_v4}
+def _migrate_v5(conn: Any) -> None:
+    """Workspace schema v5: index the per-turn ``ORDER BY created_at`` scans.
+
+    list_facts()/list_entities()/list_relations() run on every agent turn
+    and sort without any index, so SQLite materializes and sorts the whole
+    table each call (``USE TEMP B-TREE FOR ORDER BY``), and list_facts'
+    join is driven by the fact_revisions scan.  These indexes let the
+    planner drive from the facts table in creation order instead.
+    """
+    conn.execute("CREATE INDEX idx_facts_created_at ON facts(created_at)")
+    conn.execute("CREATE INDEX idx_entities_created_at ON entities(created_at)")
+    conn.execute("CREATE INDEX idx_relations_created_at ON relations(created_at)")
+    if conn.execute("PRAGMA foreign_key_check").fetchall():
+        raise RuntimeError("workspace v5 migration failed foreign key check")
+
+
+_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _migrate_v4, 5: _migrate_v5}
 
 
 # ---------------------------------------------------------------------------
