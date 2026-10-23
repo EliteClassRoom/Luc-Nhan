@@ -88,15 +88,24 @@ class TestBuildSystemPrompt(unittest.TestCase):
     def test_base_prompt_contains_discipline_section(self):
         self.assertIn("Discipline", _BASE_PROMPT)
         self.assertIn("Do exactly what was asked", _BASE_PROMPT)
+
     def test_structured_memory_wrapped_in_tags(self):
         prompt = build_system_prompt(structured_memory="- [function_purpose] sub_401000: parses config")
-        self.assertIn("<structured_memory>", prompt, "Untrusted structured facts must be delimiter-wrapped (DATA_INTEGRITY_SECTION promise)")
+        self.assertIn(
+            "<structured_memory>",
+            prompt,
+            "Untrusted structured facts must be delimiter-wrapped (DATA_INTEGRITY_SECTION promise)",
+        )
         self.assertIn("</structured_memory>", prompt)
         self.assertIn("parses config", prompt)
 
     def test_structured_memory_empty_emits_no_tags(self):
         prompt = build_system_prompt()
-        self.assertNotIn("<structured_memory>\n", prompt, "No structured-memory block when input empty (example-list tokens in DATA_INTEGRITY do not match the wrap shape)")
+        self.assertNotIn(
+            "<structured_memory>\n",
+            prompt,
+            "No structured-memory block when input empty (example-list tokens in DATA_INTEGRITY do not match the wrap shape)",
+        )
         self.assertNotIn("## Structured Memory", prompt)
 
     def test_structured_memory_caps_at_memory_max(self):
@@ -228,6 +237,7 @@ def test_data_integrity_examples_match_emitted_tags():
     ):
         assert tag in DATA_INTEGRITY_SECTION, f"{tag} missing from DATA_INTEGRITY examples"
 
+
 def test_module_reference_does_not_duplicate_discipline_content():
     from lucnhan.agent.prompts.base import (
         IDA_API_DISCIPLINE_SECTION,
@@ -241,12 +251,14 @@ def test_module_reference_does_not_duplicate_discipline_content():
     assert "and ~40 others" not in IDA_API_DISCIPLINE_SECTION
     assert "54 common modules" in IDA_API_DISCIPLINE_SECTION
 
+
 def test_module_reference_cross_references_discipline():
     from lucnhan.agent.prompts.base import IDA_API_MODULE_REFERENCE_SECTION
 
     assert "IDAPython Module Quick Reference" in IDA_API_MODULE_REFERENCE_SECTION
     assert "lookup_idapython_doc" in IDA_API_MODULE_REFERENCE_SECTION
     assert "DecompilationFailure" in IDA_API_MODULE_REFERENCE_SECTION  # survives in snippet comment
+
 
 def test_parallel_tool_prompt_requires_structured_calls_without_rehearsal():
     prompt = build_system_prompt()

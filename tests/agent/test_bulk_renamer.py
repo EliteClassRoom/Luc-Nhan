@@ -99,7 +99,7 @@ class TestShouldSkip:
             "sub_g",  # "g" is not hex
             "my_sub_123",  # not anchored at start
             "",
-        ]
+        ],
     )
     def test_human_names_are_not_skipped(self, name: str) -> None:
         """Names that look human-assigned should NOT be processed."""

@@ -42,7 +42,7 @@ import os
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from ..core.atomic_io import atomic_replace
 from ..core.thinking import (
@@ -57,6 +57,7 @@ from .qt_compat import (
     QEvent,
     QFrame,
     QHBoxLayout,
+    QKeyEvent,
     QLabel,
     QLineEdit,
     QObject,
@@ -537,11 +538,12 @@ class ModelPicker(QFrame):
         return list(self._rows)
 
     def visible_rows(self) -> list[_Row]:
-        return [
-            row
-            for index, row in enumerate(self._rows)
-            if self._items[index] is not None and not self._items[index].isHidden()
-        ]
+        rows: list[_Row] = []
+        for index, row in enumerate(self._rows):
+            item = self._items[index]
+            if item is not None and not item.isHidden():
+                rows.append(row)
+        return rows
 
     def item_for(self, connection_name: str, model_id: str) -> QTreeWidgetItem | None:
         """Row for the (connection, model) pair — via item data, not text."""
@@ -780,16 +782,18 @@ class ModelPicker(QFrame):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_Escape:
+            key_event = cast(QKeyEvent, event)
+            if key_event.key() == Qt.Key.Key_Escape:
                 self.close_popup()
                 return True
-            if watched is self._tree and self._on_tree_key(event):
+            if watched is self._tree and self._on_tree_key(key_event):
                 return True
-            if watched is self._search and self._on_search_key(event):
+            if watched is self._search and self._on_search_key(key_event):
                 return True
         elif event.type() == QEvent.Type.ShortcutOverride:
             # Claim handled keys before host shortcuts can intercept them.
-            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Up, Qt.Key.Key_Down) and (
+            key_event = cast(QKeyEvent, event)
+            if key_event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Up, Qt.Key.Key_Down) and (
                 watched is self._search or watched is self._tree
             ):
                 event.accept()
@@ -820,10 +824,11 @@ def _screen_of(widget: QWidget):
     app = QApplication.instance()
     if app is None:
         return None
+    qapp = cast(QApplication, app)
     handle = widget.window().windowHandle()
-    if handle is None or not hasattr(app, "screenAt"):
-        return app.primaryScreen()
-    return app.screenAt(handle.screen().geometry().center()) or app.primaryScreen()
+    if handle is None or not hasattr(qapp, "screenAt"):
+        return qapp.primaryScreen()
+    return qapp.screenAt(handle.screen().geometry().center()) or qapp.primaryScreen()
 
 
 def _dock_width(anchor: QWidget) -> int:

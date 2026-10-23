@@ -274,9 +274,7 @@ class TestUpdateExternal(unittest.TestCase):
 
     def test_update_changes_status_and_records_completion(self) -> None:
         agent_id = self.mgr.register(name="a", task="t")
-        self.mgr.update_external(
-            agent_id, SubagentStatus.COMPLETED, summary="done", turn_count=3
-        )
+        self.mgr.update_external(agent_id, SubagentStatus.COMPLETED, summary="done", turn_count=3)
         info = self.mgr.get(agent_id)
         assert info.status == SubagentStatus.COMPLETED
         assert info.summary == "done"
@@ -404,8 +402,14 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         captured: dict = {}
 
         def fake_run_agent(
-            agent_id, task, max_turns, system_addendum, cancel, mode="",
-            tool_registry=None, model_override="",
+            agent_id,
+            task,
+            max_turns,
+            system_addendum,
+            cancel,
+            mode="",
+            tool_registry=None,
+            model_override="",
         ):
             captured["tools_registry"] = tool_registry
             captured["model"] = model_override
@@ -418,7 +422,10 @@ class TestManagerSpawnHandoff(unittest.TestCase):
             info.completed_at = time.time()
             mgr._event_queue.put(
                 TurnEvent.subagent_completed(
-                    agent_id=agent_id, name=info.name, summary="", turn_count=0,
+                    agent_id=agent_id,
+                    name=info.name,
+                    summary="",
+                    turn_count=0,
                     elapsed=0.0,
                 )
             )
@@ -443,8 +450,14 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         captured: dict = {}
 
         def fake_run_agent(
-            agent_id, task, max_turns, system_addendum, cancel, mode="",
-            tool_registry=None, model_override="",
+            agent_id,
+            task,
+            max_turns,
+            system_addendum,
+            cancel,
+            mode="",
+            tool_registry=None,
+            model_override="",
         ):
             captured["tools_registry"] = tool_registry
             captured["model"] = model_override
@@ -454,7 +467,10 @@ class TestManagerSpawnHandoff(unittest.TestCase):
             info.completed_at = time.time()
             mgr._event_queue.put(
                 TurnEvent.subagent_completed(
-                    agent_id=agent_id, name=info.name, summary="", turn_count=0,
+                    agent_id=agent_id,
+                    name=info.name,
+                    summary="",
+                    turn_count=0,
                     elapsed=0.0,
                 )
             )
@@ -485,9 +501,7 @@ class TestManagerSpawnHandoff(unittest.TestCase):
 
         with patch.object(SubagentRunner, "run_task", fake_run_task):
             agent_id = mgr.spawn(name="n", task="t")
-        for thread in [
-            t for t in threading.enumerate() if t.name.startswith("lucnhan-subagent-")
-        ]:
+        for thread in [t for t in threading.enumerate() if t.name.startswith("lucnhan-subagent-")]:
             thread.join(timeout=1.0)
         info = mgr.get(agent_id)
         assert info.status == SubagentStatus.CANCELLED
@@ -517,6 +531,7 @@ class TestManagerSpawnHandoff(unittest.TestCase):
                 break
             events.append(ev)
         assert sum(1 for e in events if e.type.value == "subagent_failed") == 1
+
 
 class TestPrebuiltRunnerSpawn(unittest.TestCase):
     """``spawn(runner=...)`` runs a caller-built runner as-is."""
@@ -587,8 +602,11 @@ class TestPrebuiltRunnerSpawn(unittest.TestCase):
                 yield TurnEvent.text_done("never")
 
         agent_id = mgr.spawn(
-            name="c", task="t", agent_type="custom",
-            cancel_event=cancel, runner=_Runner(),
+            name="c",
+            task="t",
+            agent_type="custom",
+            cancel_event=cancel,
+            runner=_Runner(),
         )
         mgr.cancel(agent_id)
         self._join_subagent_threads()

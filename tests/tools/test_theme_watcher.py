@@ -150,9 +150,7 @@ class TestTickErrorSwallowing(unittest.TestCase):
 
     def test_tick_swallows_source_none(self) -> None:
         """When _app_source returns None, _tick is a clean no-op."""
-        with patch(
-            "lucnhan.ui.theme.watcher.ThemeManager.instance"
-        ) as mock_inst:
+        with patch("lucnhan.ui.theme.watcher.ThemeManager.instance") as mock_inst:
             mock_inst.return_value._app_source.return_value = None
             # Should not raise
             self.watcher._tick()
@@ -160,9 +158,7 @@ class TestTickErrorSwallowing(unittest.TestCase):
 
     def test_tick_swallows_palette_errors(self) -> None:
         """When source.palette() raises, _tick logs and continues."""
-        with patch(
-            "lucnhan.ui.theme.watcher.ThemeManager.instance"
-        ) as mock_inst:
+        with patch("lucnhan.ui.theme.watcher.ThemeManager.instance") as mock_inst:
             source = MagicMock()
             source.palette.side_effect = RuntimeError("palette access failed")
             mock_inst.return_value._app_source.return_value = source

@@ -617,25 +617,24 @@ class TestReasoningContentPersistence(unittest.TestCase):
 
     def test_normal_turn_persists_reasoning_content(self):
         reasoning_chunks = [
-            StreamChunk(reasoning_delta='I should call read_bytes.'),
-            StreamChunk(reasoning_delta=' Then decompile.'),
-            StreamChunk(text='Let me check.', finish_reason='stop'),
+            StreamChunk(reasoning_delta="I should call read_bytes."),
+            StreamChunk(reasoning_delta=" Then decompile."),
+            StreamChunk(text="Let me check.", finish_reason="stop"),
         ]
 
         provider = ScriptedGLMProvider(responses=[reasoning_chunks])
-        session = SessionState(provider_name='glm', model_name='glm-5.2')
+        session = SessionState(provider_name="glm", model_name="glm-5.2")
         loop = _make_glm_loop(provider, session)
 
-        list(loop.run('hello'))
+        list(loop.run("hello"))
 
         assistant_messages = [m for m in session.messages if m.role == Role.ASSISTANT]
-        self.assertTrue(assistant_messages, 'Expected at least one assistant message')
+        self.assertTrue(assistant_messages, "Expected at least one assistant message")
         self.assertTrue(
             assistant_messages[-1].reasoning_content,
-            'reasoning_content must be persisted on accepted assistant messages',
+            "reasoning_content must be persisted on accepted assistant messages",
         )
-        self.assertIn('read_bytes', assistant_messages[-1].reasoning_content)
-
+        self.assertIn("read_bytes", assistant_messages[-1].reasoning_content)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ persist them.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from .workspace import MemoryRunContext
 
@@ -46,7 +46,7 @@ class MemoryWriteAuthority:
         self._context = context
         self._nonce = nonce
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> tuple[Any, ...]:
         raise TypeError("MemoryWriteAuthority cannot be serialized")
 
 

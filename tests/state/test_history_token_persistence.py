@@ -119,8 +119,7 @@ def test_save_session_persists_last_prompt_tokens(tmp_path: Path) -> None:
     loaded = history.load_session(session.id)
     assert loaded is not None
     assert loaded.last_prompt_tokens == 13000, (
-        "last_prompt_tokens must round-trip through save_session/load_session; "
-        "pre-fix it silently dropped to 0"
+        "last_prompt_tokens must round-trip through save_session/load_session; pre-fix it silently dropped to 0"
     )
 
 
@@ -426,9 +425,7 @@ def test_round_trip_preserves_derived_total_tokens(tmp_path: Path) -> None:
     # path serialized the dataclass before ``__post_init__`` derived
     # the value, the file would store 0 — which is the kind of subtle
     # oversight the regression covers.
-    on_disk = json.loads(
-        (Path(history._dir) / f"{session.id}.json").read_text(encoding="utf-8")
-    )
+    on_disk = json.loads((Path(history._dir) / f"{session.id}.json").read_text(encoding="utf-8"))
     assert on_disk["total_usage"]["total_tokens"] == 20
     assert on_disk["total_usage"]["prompt_tokens"] == 12
     assert on_disk["total_usage"]["completion_tokens"] == 8

@@ -322,7 +322,9 @@ class TestAdaptivePaneGeometry(unittest.TestCase):
         layout.setStretchFactor(self.mode_stack, 1)
         layout.setStretchFactor(self.stack, 1)
         chat_min = self.mode_stack.minimumSizeHint().width()
-        self.stack.setMinimumWidth(max(self.content.width() - chat_min, _NOMINAL_PANE_WIDTH) if narrow else _NOMINAL_PANE_WIDTH)
+        self.stack.setMinimumWidth(
+            max(self.content.width() - chat_min, _NOMINAL_PANE_WIDTH) if narrow else _NOMINAL_PANE_WIDTH
+        )
         self.stack.setMaximumWidth(16777215 if narrow else _NOMINAL_PANE_WIDTH)
         self.history.set_overlay_presentation(narrow)
         layout.invalidate()

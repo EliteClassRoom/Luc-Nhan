@@ -28,21 +28,24 @@ from lucnhan.tools.registry import ToolRegistry
 class TestMCPConfig(unittest.TestCase):
     def test_load_valid_config(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump({
-                "mcpServers": {
-                    "test-server": {
-                        "command": "python",
-                        "args": ["-m", "test_mcp"],
-                        "env": {"FOO": "bar"},
-                        "enabled": True,
-                    },
-                    "disabled-server": {
-                        "command": "node",
-                        "args": ["server.js"],
-                        "enabled": False,
-                    },
-                }
-            }, f)
+            json.dump(
+                {
+                    "mcpServers": {
+                        "test-server": {
+                            "command": "python",
+                            "args": ["-m", "test_mcp"],
+                            "env": {"FOO": "bar"},
+                            "enabled": True,
+                        },
+                        "disabled-server": {
+                            "command": "node",
+                            "args": ["server.js"],
+                            "enabled": False,
+                        },
+                    }
+                },
+                f,
+            )
             path = f.name
 
         try:
@@ -91,11 +94,14 @@ class TestMCPConfig(unittest.TestCase):
 
     def test_skip_missing_command(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump({
-                "mcpServers": {
-                    "no-cmd": {"args": ["x"]},
-                }
-            }, f)
+            json.dump(
+                {
+                    "mcpServers": {
+                        "no-cmd": {"args": ["x"]},
+                    }
+                },
+                f,
+            )
             path = f.name
         try:
             servers = load_mcp_config(path)
@@ -123,11 +129,15 @@ class TestMCPProtocol(unittest.TestCase):
         self.assertIn("error", resp)
 
     def test_tool_schema_dataclass(self):
-        ts = MCPToolSchema(name="test", description="A test tool", input_schema={
-            "type": "object",
-            "properties": {"x": {"type": "integer"}},
-            "required": ["x"],
-        })
+        ts = MCPToolSchema(
+            name="test",
+            description="A test tool",
+            input_schema={
+                "type": "object",
+                "properties": {"x": {"type": "integer"}},
+                "required": ["x"],
+            },
+        )
         self.assertEqual(ts.name, "test")
         self.assertIn("x", ts.input_schema["properties"])
 

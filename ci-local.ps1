@@ -119,13 +119,11 @@ if ($Fix) {
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff lint" } else { Add-Fail "ruff lint" "see above" }
 }
 
-# ── 3. Mypy — core + providers only (config in pyproject.toml) ────────────────
-# NOTE: `[tool.mypy].files` *also* declares `lucnhan/memory` / `lucnhan/ui`,
-# but gating them is deferred — `mypy lucnhan/memory lucnhan/ui` surfaces
-# pre-existing errors in those modules (production) out of scope here. Keep
-# them ungated until those errors are fixed.
-Write-Info "[3/5] Mypy (core + providers)..."
-$mypyOutput = (Invoke-DevTool -Tool "mypy" -ToolArgs @("lucnhan/core", "lucnhan/providers", "--pretty") 2>&1) -join "`n"
+# ── 3. Mypy — core + providers + memory + ui (config in pyproject.toml) ────────
+# `[tool.mypy].files` declares `lucnhan/memory` / `lucnhan/ui`; both are now
+# clean, so the full gate runs locally (matching .github/workflows/ci.yml).
+Write-Info "[3/5] Mypy (core + providers + memory + ui)..."
+$mypyOutput = (Invoke-DevTool -Tool "mypy" -ToolArgs @("lucnhan/core", "lucnhan/providers", "lucnhan/memory", "lucnhan/ui", "--pretty") 2>&1) -join "`n"
 $mypyOk = $LASTEXITCODE -eq 0
 
 if ($mypyOk) {

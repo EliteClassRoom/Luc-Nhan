@@ -9,7 +9,19 @@ import unittest
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# A sibling test module (tests/tools/test_panel_core.py) installs
+# ``_StubModule`` stand-ins for many ``lucnhan.*`` modules at its import
+# time.  pytest collects this file *after* that one, so a module-level
+# ``from lucnhan.headless.runner import ...`` below would pick up the
+# stubbed ``lucnhan.core.types`` / ``lucnhan.agent.turn`` and bind the
+# EXIT_*/TurnEventType constants to MagicMock stand-ins for the whole
+# session (every ``result.exit_code`` assertion then fails with
+# ``0 != N``).  Purging the stand-ins first makes this module hermetic
+# regardless of collection order.
+from tests import purge_lucnhan_stubs
 from tests.mocks.ida_mock import install_ida_mocks
+
+purge_lucnhan_stubs()
 
 install_ida_mocks()
 

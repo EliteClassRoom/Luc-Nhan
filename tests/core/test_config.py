@@ -163,6 +163,7 @@ def test_blob_round_trips_through_load_and_save(tmp_path: Path) -> None:
     assert cfg2.decrypt_stored_keys("hunter2") is True
     assert cfg2.provider.api_key == "sk-secret"
 
+
 # --------------------------------------------------------------------
 # Config hardening: strict boolean guard + numeric coercion
 # --------------------------------------------------------------------
@@ -209,43 +210,43 @@ def test_string_temperature_loads_and_validate_returns_errors_not_raises() -> No
     # _apply_loaded_config must coerce-or-skip so validate() never sees a
     # non-numeric temperature (which would raise TypeError on "<=").
     cfg = LucNhanConfig()
-    cfg._apply_loaded_config({
-        "provider": {
-            "name": "anthropic",
-            "temperature": "0.3",
-            "max_tokens": 4096,
-            "context_window": 100000,
+    cfg._apply_loaded_config(
+        {
+            "provider": {
+                "name": "anthropic",
+                "temperature": "0.3",
+                "max_tokens": 4096,
+                "context_window": 100000,
+            }
         }
-    })
+    )
     # No TypeError — validate() returns a list (possibly with errors).
     errors = cfg.validate()
     assert isinstance(errors, list)
 
+
 def test_garbage_temperature_is_rejected_not_loaded() -> None:
     cfg = LucNhanConfig()
-    cfg._apply_loaded_config({
-        "provider": {"temperature": "not-a-number"}
-    })
+    cfg._apply_loaded_config({"provider": {"temperature": "not-a-number"}})
     # Bad value skipped; default temperature is preserved.
     from lucnhan.constants import DEFAULT_TEMPERATURE
+
     assert cfg.provider.temperature == DEFAULT_TEMPERATURE
 
 
 def test_garbage_max_tokens_is_rejected_not_loaded() -> None:
     cfg = LucNhanConfig()
-    cfg._apply_loaded_config({
-        "provider": {"max_tokens": "lots"}
-    })
+    cfg._apply_loaded_config({"provider": {"max_tokens": "lots"}})
     from lucnhan.constants import DEFAULT_MAX_TOKENS
+
     assert cfg.provider.max_tokens == DEFAULT_MAX_TOKENS
 
 
 def test_garbage_context_window_is_rejected_not_loaded() -> None:
     cfg = LucNhanConfig()
-    cfg._apply_loaded_config({
-        "provider": {"context_window": "huge"}
-    })
+    cfg._apply_loaded_config({"provider": {"context_window": "huge"}})
     from lucnhan.constants import DEFAULT_CONTEXT_WINDOW
+
     assert cfg.provider.context_window == DEFAULT_CONTEXT_WINDOW
 
 

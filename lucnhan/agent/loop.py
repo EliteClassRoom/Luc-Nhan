@@ -1650,8 +1650,7 @@ class AgentLoop:
         # the latest known prompt usage, and mark estimated.
         attempt_usage: AttemptUsage | None = None
         if provider_emitted_usage and last_usage is not None:
-            provenance = "authoritative"
-            attempt_usage = AttemptUsage(usage=last_usage, provenance=provenance)
+            attempt_usage = AttemptUsage(usage=last_usage, provenance="authoritative")
         else:
             # Estimate completion from the content that was generated.
             reasoning_bytes = len(reasoning_content.encode("utf-8"))
@@ -2294,7 +2293,7 @@ class AgentLoop:
                 from ..memory.ingest import ingest_exploration_finding, make_store
 
                 store, paths = make_store(self.session.idb_path)
-                if store is not None:
+                if store is not None and paths is not None:
                     ingest_exploration_finding(
                         store,
                         paths,
@@ -2467,7 +2466,7 @@ class AgentLoop:
             from ..memory.ingest import ingest_research_note, make_store
 
             store, paths = make_store(self.session.idb_path)
-            if store is not None:
+            if store is not None and paths is not None:
                 ingest_research_note(
                     store,
                     paths,

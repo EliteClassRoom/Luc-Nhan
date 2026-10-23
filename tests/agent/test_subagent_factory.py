@@ -1,4 +1,5 @@
 """Tests for SubAgentFactory.spec -> SubagentManager.spawn propagation."""
+
 from __future__ import annotations
 
 import os

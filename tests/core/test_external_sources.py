@@ -182,14 +182,14 @@ class TestMCPDiscoveryTOML(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             toml_path = Path(tmpdir) / "config.toml"
             toml_path.write_text(
-                '[mcp_servers.my_server]\n'
+                "[mcp_servers.my_server]\n"
                 'command = "node"\n'
                 'args = ["server.js", "--port", "3000"]\n'
-                '\n'
-                '[mcp_servers.another]\n'
+                "\n"
+                "[mcp_servers.another]\n"
                 'command = "python"\n'
                 'args = ["-m", "mcp_server"]\n'
-                'startup_timeout_sec = 120\n'
+                "startup_timeout_sec = 120\n"
             )
             servers = _load_codex_mcp_toml(toml_path)
             self.assertEqual(len(servers), 2)
@@ -227,12 +227,7 @@ class TestMCPDiscoveryTOML(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             toml_path = Path(tmpdir) / "config.toml"
             toml_path.write_text(
-                '[mcp_servers.no_cmd]\n'
-                'args = ["x"]\n'
-                '\n'
-                '[mcp_servers.has_cmd]\n'
-                'command = "node"\n'
-                'args = ["y"]\n'
+                '[mcp_servers.no_cmd]\nargs = ["x"]\n\n[mcp_servers.has_cmd]\ncommand = "node"\nargs = ["y"]\n'
             )
             servers = _load_codex_mcp_toml(toml_path)
             self.assertEqual(len(servers), 1)
@@ -243,10 +238,10 @@ class TestMCPDiscoveryTOML(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             toml_path = Path(tmpdir) / "config.toml"
             toml_path.write_text(
-                '[mcp_servers.srv]\n'
+                "[mcp_servers.srv]\n"
                 'command = "node"\n'
                 'args = ["srv.js"]\n'
-                '[mcp_servers.srv.env]\n'
+                "[mcp_servers.srv.env]\n"
                 'PORT = "3000"\n'
                 'DEBUG = "1"\n'
             )
@@ -259,10 +254,7 @@ class TestMCPDiscoveryTOML(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             toml_path = base / "config.toml"
-            toml_path.write_text(
-                '[mcp_servers.toml_srv]\n'
-                'command = "node"\n'
-            )
+            toml_path.write_text('[mcp_servers.toml_srv]\ncommand = "node"\n')
             # Also create a mcp.json to prove it's ignored
             json_path = base / "mcp.json"
             with open(json_path, "w") as f:
@@ -360,22 +352,18 @@ class TestClaudeMCPMerge(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             # Source 1: .mcp.json
-            (base / ".mcp.json").write_text(json.dumps(
-                {"mcpServers": {"s1": {"command": "a"}, "dup": {"command": "first"}}}
-            ))
+            (base / ".mcp.json").write_text(
+                json.dumps({"mcpServers": {"s1": {"command": "a"}, "dup": {"command": "first"}}})
+            )
             # Source 2: mcp.json
-            (base / "mcp.json").write_text(json.dumps(
-                {"mcpServers": {"s2": {"command": "b"}, "dup": {"command": "second"}}}
-            ))
+            (base / "mcp.json").write_text(
+                json.dumps({"mcpServers": {"s2": {"command": "b"}, "dup": {"command": "second"}}})
+            )
             # Source 3: .claude.json
-            (base / ".claude.json").write_text(json.dumps(
-                {"mcpServers": {"s3": {"command": "c"}}}
-            ))
+            (base / ".claude.json").write_text(json.dumps({"mcpServers": {"s3": {"command": "c"}}}))
             # Source 4: managed
             managed_path = base / "managed.json"
-            managed_path.write_text(json.dumps(
-                {"mcpServers": {"s4": {"command": "d"}}}
-            ))
+            managed_path.write_text(json.dumps({"mcpServers": {"s4": {"command": "d"}}}))
 
             with patch("lucnhan.core.external_sources.get_claude_code_base", return_value=base):
                 with patch("lucnhan.core.external_sources.Path.home", return_value=base):

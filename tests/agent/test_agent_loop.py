@@ -2096,6 +2096,7 @@ class TestReasoningRunnerCoalescing(unittest.TestCase):
         types = [e.type for e in collected]
         assert TurnEventType.TEXT_DELTA in types
 
+
 class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
     """BackgroundAgentRunner must never drop lifecycle control events under
     backpressure, and the daemon thread must exit cleanly within a bounded
@@ -2145,11 +2146,7 @@ class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
         while True:
             ev = runner.get_event(timeout=0.1)
             if ev is None:
-                if (
-                    runner._thread is not None
-                    and not runner._thread.is_alive()
-                    and runner.event_queue.empty()
-                ):
+                if runner._thread is not None and not runner._thread.is_alive() and runner.event_queue.empty():
                     break
                 if time.monotonic() > deadline:
                     self.fail("test timed out waiting for runner to finish")
@@ -2235,11 +2232,7 @@ class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
         while True:
             ev = runner.get_event(timeout=0.1)
             if ev is None:
-                if (
-                    runner._thread is not None
-                    and not runner._thread.is_alive()
-                    and runner.event_queue.empty()
-                ):
+                if runner._thread is not None and not runner._thread.is_alive() and runner.event_queue.empty():
                     break
                 if time.monotonic() > deadline:
                     self.fail("test timed out waiting for runner to finish")
@@ -2251,8 +2244,7 @@ class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
         self.assertEqual(
             len(text_done_events),
             1,
-            "TEXT_DONE must arrive exactly once under slow consumer; "
-            "dropping it hides the final assistant message.",
+            "TEXT_DONE must arrive exactly once under slow consumer; dropping it hides the final assistant message.",
         )
         self.assertEqual(text_done_events[0].text, "final reply the user must see")
 
@@ -2275,7 +2267,7 @@ class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
             TurnEvent.tool_approval_request(
                 tool_call_id="call-approval-1",
                 tool_name="execute_python",
-                args="{\"script\": \"rm -rf /\"}",
+                args='{"script": "rm -rf /"}',
                 description="Run dangerous script",
             )
         )
@@ -2292,11 +2284,7 @@ class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
         while True:
             ev = runner.get_event(timeout=0.1)
             if ev is None:
-                if (
-                    runner._thread is not None
-                    and not runner._thread.is_alive()
-                    and runner.event_queue.empty()
-                ):
+                if runner._thread is not None and not runner._thread.is_alive() and runner.event_queue.empty():
                     break
                 if time.monotonic() > deadline:
                     self.fail("test timed out waiting for runner to finish")
@@ -2304,9 +2292,7 @@ class TestBackgroundAgentRunnerControlEvents(unittest.TestCase):
             collected.append(ev)
             time.sleep(2.0)
 
-        approval_events = [
-            e for e in collected if e.type == TurnEventType.TOOL_APPROVAL_REQUEST
-        ]
+        approval_events = [e for e in collected if e.type == TurnEventType.TOOL_APPROVAL_REQUEST]
         self.assertEqual(
             len(approval_events),
             1,

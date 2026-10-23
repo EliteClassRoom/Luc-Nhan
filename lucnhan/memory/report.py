@@ -33,8 +33,10 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from ..core.atomic_io import atomic_replace
 from ..core.sanitize import (
@@ -594,7 +596,7 @@ _CONVERSATION_APPENDIX_MAX_CHARS = 12_000
 
 
 def _build_conversation_appendix(
-    messages: object,
+    messages: Iterable[Any] | None,
     *,
     max_messages: int = _CONVERSATION_APPENDIX_MAX_MESSAGES,
     max_chars: int = _CONVERSATION_APPENDIX_MAX_CHARS,
@@ -751,7 +753,7 @@ def synthesize_report(
     scope: str = "full",
     provider=None,
     config=None,
-    conversation_context: object = None,
+    conversation_context: Iterable[Any] | None = None,
     evidence: list[EvidenceBlock] | None = None,
     binary_info: str | None = None,
 ) -> tuple[ReportContext, str]:

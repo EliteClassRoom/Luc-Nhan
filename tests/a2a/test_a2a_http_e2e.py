@@ -73,11 +73,14 @@ class _A2AServerHandler(BaseHTTPRequestHandler):
             )
             return
         if self.path.endswith("/.well-known/agent.json"):
-            self._respond(200, {
-                "name": "mock-agent",
-                "capabilities": ["code_generation", "research"],
-                "model": "claude-test",
-            })
+            self._respond(
+                200,
+                {
+                    "name": "mock-agent",
+                    "capabilities": ["code_generation", "research"],
+                    "model": "claude-test",
+                },
+            )
         else:
             self._respond(404, {"error": "not found"})
 
@@ -139,9 +142,7 @@ class _MockA2AServer:
         _A2AServerHandler.call_count = 0
         _A2AServerHandler.last_request_body = b""
 
-        self._thread = threading.Thread(
-            target=self._server.serve_forever, daemon=True
-        )
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         return self
 
@@ -174,9 +175,7 @@ class TestDiscover(unittest.TestCase):
     def test_discover_returns_none_on_404(self) -> None:
         with _MockA2AServer() as server:
             # Override behavior to return 404 for the agent card.
-            _A2AServerHandler.behavior = [
-                {"status_code": 404, "body": {"error": "not found"}}
-            ]
+            _A2AServerHandler.behavior = [{"status_code": 404, "body": {"error": "not found"}}]
             client = A2AClient()
             cfg = client.discover(server.url)
         self.assertIsNone(cfg)
@@ -195,12 +194,12 @@ class TestSendTask(unittest.TestCase):
 
     def test_send_task_returns_task(self) -> None:
         with _MockA2AServer() as server:
-            _A2AServerHandler.behavior = [
-                {"status_code": 200, "body": {"result": {"text": "ok"}}}
-            ]
+            _A2AServerHandler.behavior = [{"status_code": 200, "body": {"result": {"text": "ok"}}}]
             client = A2AClient()
             agent = ExternalAgentConfig(
-                name="mock-agent", transport="a2a", endpoint=server.url,
+                name="mock-agent",
+                transport="a2a",
+                endpoint=server.url,
             )
             task = client.send_task(agent, "do something")
         # Task id is set, prompt stored, status is the
@@ -209,21 +208,25 @@ class TestSendTask(unittest.TestCase):
         self.assertEqual(task.agent_name, "mock-agent")
         self.assertEqual(task.prompt, "do something")
         self.assertEqual(len(task.id), 12)
-        self.assertIn(task.status, {
-            A2ATaskStatus.PENDING, A2ATaskStatus.RUNNING,
-        })
+        self.assertIn(
+            task.status,
+            {
+                A2ATaskStatus.PENDING,
+                A2ATaskStatus.RUNNING,
+            },
+        )
         # Cleanup
         client.close()
 
     def test_send_task_includes_jsonrpc_envelope(self) -> None:
         """The request body must follow the JSON-RPC 2.0 contract."""
         with _MockA2AServer() as server:
-            _A2AServerHandler.behavior = [
-                {"status_code": 200, "body": {"result": {"text": "ok"}}}
-            ]
+            _A2AServerHandler.behavior = [{"status_code": 200, "body": {"result": {"text": "ok"}}}]
             client = A2AClient()
             agent = ExternalAgentConfig(
-                name="x", transport="a2a", endpoint=server.url,
+                name="x",
+                transport="a2a",
+                endpoint=server.url,
             )
             task = client.send_task(agent, "my task")
             # Wait for the background thread to make the request.
@@ -268,13 +271,13 @@ class TestSendTask(unittest.TestCase):
             ]
             client = A2AClient(A2AClientConfig(timeout=5, max_retries=1))
             agent = ExternalAgentConfig(
-                name="x", transport="a2a", endpoint=server.url,
+                name="x",
+                transport="a2a",
+                endpoint=server.url,
             )
             task = client.send_task(agent, "test")
             deadline = time.time() + 5.0
-            while task.status not in (
-                A2ATaskStatus.FAILED, A2ATaskStatus.COMPLETED
-            ):
+            while task.status not in (A2ATaskStatus.FAILED, A2ATaskStatus.COMPLETED):
                 if time.time() > deadline:
                     break
                 time.sleep(0.05)
@@ -289,12 +292,12 @@ class TestCleanup(unittest.TestCase):
 
     def test_close_stops_active_sessions(self) -> None:
         with _MockA2AServer() as server:
-            _A2AServerHandler.behavior = [
-                {"status_code": 200, "body": {"result": {"text": "ok"}}}
-            ]
+            _A2AServerHandler.behavior = [{"status_code": 200, "body": {"result": {"text": "ok"}}}]
             client = A2AClient()
             agent = ExternalAgentConfig(
-                name="x", transport="a2a", endpoint=server.url,
+                name="x",
+                transport="a2a",
+                endpoint=server.url,
             )
             client.send_task(agent, "x")
             # close() must not raise even with active sessions.
@@ -316,18 +319,16 @@ class TestRetry(unittest.TestCase):
                 {"status_code": 500, "body": {"error": "boom"}},
                 {"status_code": 200, "body": {"result": {"text": "ok"}}},
             ]
-            client = A2AClient(
-                A2AClientConfig(timeout=5, max_retries=3, retry_backoff=0.01)
-            )
+            client = A2AClient(A2AClientConfig(timeout=5, max_retries=3, retry_backoff=0.01))
             agent = ExternalAgentConfig(
-                name="x", transport="a2a", endpoint=server.url,
+                name="x",
+                transport="a2a",
+                endpoint=server.url,
             )
             task = client.send_task(agent, "test")
             # Wait for the background thread.
             deadline = time.time() + 5.0
-            while task.status not in (
-                A2ATaskStatus.COMPLETED, A2ATaskStatus.FAILED
-            ):
+            while task.status not in (A2ATaskStatus.COMPLETED, A2ATaskStatus.FAILED):
                 if time.time() > deadline:
                     break
                 time.sleep(0.05)
@@ -351,7 +352,9 @@ class TestCancel(unittest.TestCase):
             ]
             client = A2AClient()
             agent = ExternalAgentConfig(
-                name="x", transport="a2a", endpoint=server.url,
+                name="x",
+                transport="a2a",
+                endpoint=server.url,
             )
             cancel = threading.Event()
             task = client.send_task(agent, "test", cancel_event=cancel)
@@ -369,9 +372,13 @@ class TestCancel(unittest.TestCase):
         # COMPLETED. (Race: if the response landed before the
         # cancel check, the status is COMPLETED. We accept
         # either as long as the test doesn't hang.)
-        self.assertIn(task.status, {
-            A2ATaskStatus.CANCELLED, A2ATaskStatus.COMPLETED,
-        })
+        self.assertIn(
+            task.status,
+            {
+                A2ATaskStatus.CANCELLED,
+                A2ATaskStatus.COMPLETED,
+            },
+        )
 
 
 if __name__ == "__main__":

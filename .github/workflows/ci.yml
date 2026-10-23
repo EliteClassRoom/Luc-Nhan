@@ -64,17 +64,14 @@ jobs:
       - name: Install deps
         run: pip install mypy tomli
 
-      - name: Type check (core + providers)
-        run: python -m mypy lucnhan/core lucnhan/providers  # config in pyproject.toml
-
-      # `[tool.mypy].files` also declares `lucnhan/memory` and `lucnhan/ui`,
-      # but gating them is DEFERRED: `mypy lucnhan/memory lucnhan/ui` (even
-      # with --follow-imports=skip) currently surfaces pre-existing errors
-      # in those modules (e.g. `memory/report.py:633` "object has no
-      # attribute __iter__", `memory/repository.py:114` `status` Literal
-      # mismatch, `ui/model_picker.py:783` `QEvent` has no `key`). Those are
-      # production code fixes out of scope for the tests/CI task; enable this
-      # gate once they are resolved.
+      - name: Type check (core + providers + memory + ui)
+        # `[tool.mypy].files` declares `lucnhan/memory` and `lucnhan/ui`;
+        # the explicit path list keeps the CI gate stable regardless of
+        # mypy's follow-imports default. The pre-existing memory/ui errors
+        # that previously forced a deferral (report.py __iter__,
+        # repository.py status Literal, model_picker.py QEvent.key, …)
+        # have been fixed, so the full gate is enabled.
+        run: python -m mypy lucnhan/core lucnhan/providers lucnhan/memory lucnhan/ui
 
   test:
     name: Pytest (${{ matrix.os }}, Python ${{ matrix.python-version }})

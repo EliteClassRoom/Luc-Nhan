@@ -60,13 +60,11 @@ else
     fi
 fi
 
-# ── 3. Mypy — core + providers only (config in pyproject.toml) ─────────────
-# NOTE: `[tool.mypy].files` *also* declares `lucnhan/memory` / `lucnhan/ui`,
-# but gating them is deferred — `mypy lucnhan/memory lucnhan/ui` surfaces
-# pre-existing errors in those modules (production) out of scope here. Keep
-# them ungated until those errors are fixed.
-info "[3/5] Mypy (core + providers)..."
-MYPY_OUT=$(python3 -m mypy lucnhan/core lucnhan/providers --pretty \
+# ── 3. Mypy — core + providers + memory + ui (config in pyproject.toml) ─────
+# `[tool.mypy].files` declares `lucnhan/memory` / `lucnhan/ui`; both are now
+# clean, so the full gate runs locally (matching .github/workflows/ci.yml).
+info "[3/5] Mypy (core + providers + memory + ui)..."
+MYPY_OUT=$(python3 -m mypy lucnhan/core lucnhan/providers lucnhan/memory lucnhan/ui --pretty \
     2>&1) && MYPY_OK=true || MYPY_OK=false
 
 if $MYPY_OK; then

@@ -14,12 +14,15 @@ import re
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar, cast
 
 from ..constants import MEMORY_WORKSPACE_SCHEMA_VERSION
 from .sqlite_backend import begin_immediate_with_retry, open_sqlite
 from .workspace import WorkspacePaths, validate_record_id
+
+T = TypeVar("T")
 
 _SEMANTIC_HASH_RE = re.compile(r"[0-9a-f]{64}")
 
@@ -381,11 +384,11 @@ class WorkspaceStore:
         """Invalidate memoized list reads after any committed write."""
         self._write_generation += 1
 
-    def _cached_list(self, key: str, loader: Any) -> object:
+    def _cached_list(self, key: str, loader: Callable[[], list[T]]) -> list[T]:
         """Return *loader()* output, reusing the memo when generation matches."""
         gen, cached = self._list_cache.get(key, (None, None))
         if gen == self._write_generation and cached is not None:
-            return cached
+            return cast("list[T]", cached)
         records = loader()
         self._list_cache[key] = (self._write_generation, records)
         return records

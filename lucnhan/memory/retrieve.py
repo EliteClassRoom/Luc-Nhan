@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import NamedTuple, TypedDict
 
 from .notes import list_notes
 from .paths import (
@@ -83,6 +83,22 @@ class RetrievalPack:
     @property
     def total(self) -> int:
         return len(self.memories) + len(self.entities) + len(self.relations) + len(self.notes)
+
+
+class SearchAllResult(TypedDict):
+    """Bucketed search results returned by :func:`search_all`.
+
+    ``notes`` carries plain-markdown excerpts (str), matching the shape
+    ``/knowledge`` renders. Keeping a TypedDict (instead of returning a
+    :class:`RetrievalPack`) preserves the existing dict-style callers and
+    gives mypy the exact bucket types.
+    """
+
+    memories: list[KnowledgeMemory]
+    entities: list[KnowledgeEntity]
+    relations: list[KnowledgeRelation]
+    notes: list[str]
+    counts: dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -366,14 +382,14 @@ def search_all(
     query: str,
     *,
     max_results: int = 50,
-) -> dict[str, object]:
+) -> SearchAllResult:
     """Lightweight search used by the ``/knowledge`` command.
 
     Returns a dict with ``memories``, ``entities``, ``relations``,
     ``notes`` lists sorted by relevance.
     """
     if not query.strip():
-        return {"memories": [], "entities": [], "relations": [], "notes": []}
+        return {"memories": [], "entities": [], "relations": [], "notes": [], "counts": {}}
     rq = RetrievalQuery(text=query)
     pack = retrieve(
         store,
@@ -391,7 +407,7 @@ def search_all(
         "entities": pack.entities,
         "relations": pack.relations,
         "notes": pack.notes,
-        "counts": dict(pack.counts),
+        "counts": pack.counts,
     }
 
 

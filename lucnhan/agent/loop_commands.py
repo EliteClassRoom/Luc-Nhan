@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ..core.errors import ToolError
 from ..core.logging import log_debug, log_error, log_info
@@ -347,6 +347,7 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
     if err_event is not None:
         yield err_event
         return
+    assert store is not None and paths is not None, "knowledge store guard returned None without an error event"
 
     scope = (raw_scope or "full").strip().lower() or "full"
     if scope not in SUPPORTED_SCOPES:
@@ -509,6 +510,7 @@ def _handle_knowledge_command(loop: AgentLoop, raw_query: str) -> Generator[Turn
     if err_event is not None:
         yield err_event
         return
+    assert store is not None and paths is not None, "knowledge store guard returned None without an error event"
 
     query = (raw_query or "").strip()
     counts = store.counts()
@@ -563,9 +565,9 @@ def _handle_knowledge_command(loop: AgentLoop, raw_query: str) -> Generator[Turn
                 lines.append(f"  {snippet}")
             lines.extend(_verdict_evidence_lines(m))
         lines.append("### Entities")
-        for e in result["entities"][:10]:
-            addr = f" @ {e.address}" if e.address else ""
-            lines.append(f"- `{e.id}` ({e.type}){addr} — {e.name}")
+        for ent in result["entities"][:10]:
+            addr = f" @ {ent.address}" if ent.address else ""
+            lines.append(f"- `{ent.id}` ({ent.type}){addr} — {ent.name}")
 
     if result["relations"]:
         lines.append("")
@@ -687,7 +689,7 @@ def _handle_verify_command(loop: AgentLoop, raw_id: str) -> Generator[TurnEvent,
     import uuid
 
     from ..memory.ingest import _now_iso
-    from ..memory.schema import KnowledgeMemory, KnowledgeObservation
+    from ..memory.schema import HypothesisStatus, KnowledgeMemory, KnowledgeObservation
     from .hypothesis_verification import verify_hypotheses
 
     store, paths, err_event = _open_knowledge_store(loop)
@@ -756,7 +758,7 @@ def _handle_verify_command(loop: AgentLoop, raw_id: str) -> Generator[TurnEvent,
             confidence=original.confidence,
             importance=original.importance,
             verified=(verdict.status == "verified"),
-            status=verdict.status,
+            status=cast(HypothesisStatus, verdict.status),
             verdict_claim=verdict.claim,
             verification_citations=list(verdict.citations),
         )

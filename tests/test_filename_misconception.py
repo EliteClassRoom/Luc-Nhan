@@ -25,9 +25,7 @@ install_ida_mocks()
 from lucnhan.agent.system_prompt import build_system_prompt
 from lucnhan.ida.tools.database import get_binary_info
 
-FILENAME_RULE = (
-    "Never infer the binary's purpose, family, or behavior from a file name"
-)
+FILENAME_RULE = "Never infer the binary's purpose, family, or behavior from a file name"
 
 
 class TestGetBinaryInfoOmitsFilename(unittest.TestCase):

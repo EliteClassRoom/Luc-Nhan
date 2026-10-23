@@ -14,6 +14,7 @@ from lucnhan.ui.message_widgets import _split_thinking
 # _split_thinking
 # ---------------------------------------------------------------------------
 
+
 class TestSplitThinking(unittest.TestCase):
     def test_no_think_tags_returns_all_visible(self):
         thinking, visible = _split_thinking("Hello world")

@@ -74,6 +74,7 @@ def _build_test_loop(store, paths) -> AgentLoop:
     loop.run = _run  # type: ignore[assignment]
     return loop
 
+
 class TestBackgroundAgentRunnerReportFlow(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp()
@@ -124,17 +125,13 @@ class TestBackgroundAgentRunnerReportFlow(unittest.TestCase):
             second = runner.get_event(timeout=2.0)
             self.assertIsNotNone(second, "USER_QUESTION missing")
             self.assertEqual(second.type, TurnEventType.USER_QUESTION)
-            self.assertEqual(
-                second.metadata["options"], ["Write report", "Cancel"]
-            )
+            self.assertEqual(second.metadata["options"], ["Write report", "Cancel"])
             blocking = runner.get_event(timeout=0.2)
             self.assertIsNone(
                 blocking,
                 f"runner returned event while blocked on answer: {blocking!r}",
             )
-            submitter = threading.Thread(
-                target=loop.submit_user_answer, args=(answer,)
-            )
+            submitter = threading.Thread(target=loop.submit_user_answer, args=(answer,))
             submitter.start()
             terminal = runner.get_event(timeout=2.0)
 

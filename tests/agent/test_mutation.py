@@ -698,6 +698,7 @@ class TestMutationContractConsistency(unittest.TestCase):
         pre = capture_pre_state("rename_function", {"address": "0x1000"}, executor)
         self.assertEqual(pre, {})
 
+
 class TestUndoHandlerRollback(unittest.TestCase):
     """Failing reverse — the mutation record must remain in the log so the
     next ``/undo`` retries it instead of silently losing the entry.
@@ -710,6 +711,7 @@ class TestUndoHandlerRollback(unittest.TestCase):
             def __init__(self, log):
                 self._mutation_log = log
                 import threading
+
                 self._mutation_lock = threading.Lock()
                 self.tools = _FailingTools()
 
@@ -732,6 +734,7 @@ class TestUndoHandlerRollback(unittest.TestCase):
             def __init__(self, log):
                 self._mutation_log = log
                 import threading
+
                 self._mutation_lock = threading.Lock()
                 self.tools = _SucceedAfterFirstFailTools()
 
@@ -754,6 +757,7 @@ class TestUndoHandlerRollback(unittest.TestCase):
 class _FailingTools:
     def execute(self, name, arguments):
         from lucnhan.core.errors import ToolError
+
         raise ToolError("boom")
 
 
@@ -764,6 +768,7 @@ class _SucceedAfterFirstFailTools:
         _SucceedAfterFirstFailTools.calls += 1
         if _SucceedAfterFirstFailTools.calls == 1:
             from lucnhan.core.errors import ToolError
+
             raise ToolError("boom")
         return "ok"
 

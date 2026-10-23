@@ -200,8 +200,7 @@ class TestAskUserOptionsMixedShapes(unittest.TestCase):
         loop = _make_loop()
         event = _collect_event(
             loop,
-            {"question": "Confirm?",
-             "options": ["Yes", {"label": "No"}, {"text": "Maybe"}]},
+            {"question": "Confirm?", "options": ["Yes", {"label": "No"}, {"text": "Maybe"}]},
         )
         self.assertEqual(event.metadata["options"], ["Yes", "No", "Maybe"])
 

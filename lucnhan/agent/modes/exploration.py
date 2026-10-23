@@ -215,6 +215,8 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
     persisted = 0
     raw_errors: list[str] = []
     if raw_store_available:
+        # mypy cannot narrow ``store``/``paths`` through the bool flag.
+        assert store is not None and paths is not None
         # Persist every hypothesis first as unverified. They never
         # pass through the reviewer (the plan keeps them explicitly
         # provisional until a future ``/verify`` promotes them).

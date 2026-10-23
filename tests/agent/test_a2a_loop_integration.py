@@ -64,25 +64,37 @@ class TestSlashToDispatcher(unittest.TestCase):
         from lucnhan.agent.turn import TurnEventType
 
         loop = _build_minimal_loop()
-        agents = [ExternalAgentConfig(
-            name="claude", transport="subprocess", endpoint="claude",
-            capabilities=["code_generation"],
-        )]
+        agents = [
+            ExternalAgentConfig(
+                name="claude",
+                transport="subprocess",
+                endpoint="claude",
+                capabilities=["code_generation"],
+            )
+        ]
 
         def fake_run(*args, **kwargs):
             yield A2AEvent(type="stdout", text="working...\n")
             yield A2AEvent(type="completed", text="all done!", done=True)
 
-        with patch(
-            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
-            return_value=agents,
-        ), patch(
-            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
-            new=fake_run,
+        with (
+            patch(
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
+                return_value=agents,
+            ),
+            patch(
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
+                new=fake_run,
+            ),
         ):
-            events, _ = _drain(run_a2a_mode(
-                loop, "claude do thing", "", [],
-            ))
+            events, _ = _drain(
+                run_a2a_mode(
+                    loop,
+                    "claude do thing",
+                    "",
+                    [],
+                )
+            )
 
         # Stream check: at least one TEXT_DELTA, and a
         # terminal TEXT_DONE with the aggregated result.
@@ -102,12 +114,14 @@ class TestSlashToDispatcher(unittest.TestCase):
         from lucnhan.agent.modes.a2a import run_a2a_mode
 
         loop = _build_minimal_loop()
-        loop.config.a2a_agents = [
-            {"name": "remote", "endpoint": "https://example.com"}
+        loop.config.a2a_agents = [{"name": "remote", "endpoint": "https://example.com"}]
+        agents = [
+            ExternalAgentConfig(
+                name="remote",
+                transport="a2a",
+                endpoint="https://example.com",
+            )
         ]
-        agents = [ExternalAgentConfig(
-            name="remote", transport="a2a", endpoint="https://example.com",
-        )]
 
         # Capture the dispatcher construction args.
         with patch.object(a2a_mode, "A2ADispatcher") as mock_dispatcher_cls:
@@ -145,9 +159,13 @@ class TestCancelFlow(unittest.TestCase):
         cancel.set()  # pre-cancelled
         loop = _build_minimal_loop()
         loop._cancelled = cancel
-        agents = [ExternalAgentConfig(
-            name="claude", transport="subprocess", endpoint="claude",
-        )]
+        agents = [
+            ExternalAgentConfig(
+                name="claude",
+                transport="subprocess",
+                endpoint="claude",
+            )
+        ]
 
         received: dict = {}
 
@@ -160,12 +178,15 @@ class TestCancelFlow(unittest.TestCase):
             yield A2AEvent(type="cancelled", text="cancelled", done=True)
             return ""
 
-        with patch(
-            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
-            return_value=agents,
-        ), patch(
-            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
-            new=fake_run,
+        with (
+            patch(
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
+                return_value=agents,
+            ),
+            patch(
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
+                new=fake_run,
+            ),
         ):
             with self.assertRaises(CancellationError):
                 list(run_a2a_mode(loop, "claude do thing", "", []))
@@ -190,27 +211,38 @@ class TestA2AToolIntegration(unittest.TestCase):
         # (Full loop.run() is exercised by agent-loop tests;
         # this test focuses on the dispatch layer.)
 
-        agents = [ExternalAgentConfig(
-            name="claude", transport="subprocess", endpoint="claude",
-        )]
+        agents = [
+            ExternalAgentConfig(
+                name="claude",
+                transport="subprocess",
+                endpoint="claude",
+            )
+        ]
 
         def fake_run(*args, **kwargs):
             yield A2AEvent(type="stdout", text="answer")
             yield A2AEvent(type="completed", text="42", done=True)
 
-        with patch(
-            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
-            return_value=agents,
-        ), patch(
-            "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
-            new=fake_run,
+        with (
+            patch(
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.discover",
+                return_value=agents,
+            ),
+            patch(
+                "lucnhan.agent.a2a.dispatcher.SubprocessBridge.run_task",
+                new=fake_run,
+            ),
         ):
             from lucnhan.agent.a2a import A2ADispatcher
+
             dispatcher = A2ADispatcher()
             tc_args = {"agent": "claude", "task": "what is 6*7?"}
-            events, result = _drain(dispatcher.run_task(
-                tc_args["agent"], tc_args["task"],
-            ))
+            events, result = _drain(
+                dispatcher.run_task(
+                    tc_args["agent"],
+                    tc_args["task"],
+                )
+            )
 
         # The dispatcher streams the same events the pseudo-tool
         # would observe in the loop.

@@ -16,6 +16,7 @@ from lucnhan.ui.plan_view import PlanStepWidget, PlanView
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_step(index: int = 0, text: str = "step") -> PlanStepWidget:
     step = object.__new__(PlanStepWidget)
     step._index = index
@@ -40,6 +41,7 @@ def _make_view() -> PlanView:
 # ---------------------------------------------------------------------------
 # PlanStepWidget.set_status
 # ---------------------------------------------------------------------------
+
 
 class TestPlanStepSetStatus(unittest.TestCase):
     def test_active_sets_triangle(self):
@@ -114,15 +116,18 @@ class TestPlanStepSetStatus(unittest.TestCase):
 # PlanView.set_plan
 # ---------------------------------------------------------------------------
 
+
 class TestPlanViewSetPlan(unittest.TestCase):
     def _patched_view(self):
         """Return a PlanView with PlanStepWidget patched to a MagicMock."""
         from lucnhan.ui import plan_view as _pv
+
         mock_step_cls = MagicMock(side_effect=lambda i, t, **kw: MagicMock())
         return _make_view(), mock_step_cls, _pv
 
     def test_set_plan_adds_steps(self):
         import lucnhan.ui.plan_view as pv
+
         with unittest.mock.patch.object(pv, "PlanStepWidget", side_effect=lambda i, t: MagicMock()):
             view = _make_view()
             view.set_plan(["step A", "step B", "step C"])
@@ -135,6 +140,7 @@ class TestPlanViewSetPlan(unittest.TestCase):
 
     def test_set_plan_replaces_previous(self):
         import lucnhan.ui.plan_view as pv
+
         with unittest.mock.patch.object(pv, "PlanStepWidget", side_effect=lambda i, t: MagicMock()):
             view = _make_view()
             existing = MagicMock()
@@ -145,6 +151,7 @@ class TestPlanViewSetPlan(unittest.TestCase):
 
     def test_set_plan_adds_widgets_to_container(self):
         import lucnhan.ui.plan_view as pv
+
         with unittest.mock.patch.object(pv, "PlanStepWidget", side_effect=lambda i, t: MagicMock()):
             view = _make_view()
             view.set_plan(["a", "b"])
@@ -154,6 +161,7 @@ class TestPlanViewSetPlan(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # PlanView.set_step_status
 # ---------------------------------------------------------------------------
+
 
 class TestSetStepStatus(unittest.TestCase):
     def test_sets_status_on_valid_index(self):
@@ -186,6 +194,7 @@ class TestSetStepStatus(unittest.TestCase):
 # PlanView.set_buttons_visible
 # ---------------------------------------------------------------------------
 
+
 class TestSetButtonsVisible(unittest.TestCase):
     def test_shows_buttons(self):
         view = _make_view()
@@ -203,6 +212,7 @@ class TestSetButtonsVisible(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Callbacks
 # ---------------------------------------------------------------------------
+
 
 class TestCallbacks(unittest.TestCase):
     def test_fire_approved_calls_callback(self):
@@ -241,6 +251,7 @@ class TestCallbacks(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # PlanView.clear
 # ---------------------------------------------------------------------------
+
 
 class TestPlanViewClear(unittest.TestCase):
     def test_clear_removes_all_steps(self):

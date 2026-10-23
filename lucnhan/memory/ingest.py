@@ -30,7 +30,7 @@ import hashlib
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .notes import extract_inline_addresses, extract_inline_tags, parse_note
 from .paths import (
@@ -46,6 +46,7 @@ from .paths import (
 )
 from .raw_store import KnowledgeRawStore
 from .schema import (
+    HypothesisStatus,
     KnowledgeEntity,
     KnowledgeMemory,
     KnowledgeObservation,
@@ -356,7 +357,7 @@ def _write_exploration_to_jsonl(
         confidence=resolved_confidence,
         importance=importance,
         verified=mem_verified,
-        status=mem_status,
+        status=cast(HypothesisStatus, mem_status),
         verdict_claim=mem_verdict,
         verification_citations=mem_citations,
         created_at=_now_iso(),
