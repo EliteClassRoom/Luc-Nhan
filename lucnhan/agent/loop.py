@@ -106,6 +106,24 @@ _MIN_CONTEXT_WINDOW_TOKENS = 8_000
 # share one source of truth.
 _GOAL_METADATA_KEY = ACTIVE_GOAL_METADATA_KEY
 
+# Default concurrency ceiling for parallel subagents, and an absolute hard
+# ceiling applied regardless of what ``subagent_max_concurrent`` is configured
+# to, so a misconfiguration can never launch an unbounded fan-out.
+_DEFAULT_SUBAGENT_MAX_CONCURRENT = 4
+_HARD_SUBAGENT_MAX_CONCURRENT = 16
+
+# How long the parent loop blocks between cancellation re-checks while waiting
+# for a subagent slot or for spawned children to reach a terminal state. Real
+# blocking wait (not busy spin): workers signal ``SubagentManager._done_event``
+# so pending waits wake promptly on completion.
+_SUBAGENT_WAIT_POLL_SECONDS = 0.5
+
+# Fallback provider retry count when ``config.max_retries`` is unset/zero,
+# and the exponential-backoff ceiling / sleep granularity for retries.
+_DEFAULT_MAX_RETRIES = 3
+_RETRY_BACKOFF_MAX_SECONDS = 10
+_RETRY_POLL_SECONDS = 0.5
+
 # High-confidence mutating tools for which post-state verification runs.
 _VERIFY_MUTATION_TOOLS: frozenset[str] = frozenset(
     {
@@ -408,7 +426,7 @@ def _extract_ask_user_option_label(item: object) -> str | None:
                 text = str(value).strip()
                 if text:
                     return text
-    except Exception:  # See docstring — this must never raise.
+    except (AttributeError, TypeError, ValueError):  # See docstring — this must never raise.
         return None
     return None
 
@@ -491,7 +509,7 @@ def _normalize_ask_user_options(raw: object) -> list[str]:
             # dict, or string). Last-resort probe for a label attribute.
             label = _extract_ask_user_option_label(raw)
             candidates = [label] if label else []
-    except Exception:  # Never let a malformed payload raise.
+    except (AttributeError, TypeError, ValueError):  # Never let a malformed payload raise.
         return []
 
     # De-duplicate case-insensitively while preserving first-occurrence
@@ -821,7 +839,10 @@ class AgentLoop:
             )
             yield TurnEvent.text_done(result)
         except Exception as e:
-            yield TurnEvent.error_event(f"Case command failed: {e}")
+            # Log the full exception for diagnostics but keep the chat message
+            # generic — the raw traceback could leak internal paths or config.
+            log_debug(f"/case command failed: {e!r}")
+            yield TurnEvent.error_event("Case command failed.")
 
     def _build_system_prompt(self) -> str:
         profile = self.config.get_active_profile()
@@ -1063,7 +1084,7 @@ class AgentLoop:
         to the pre-context behaviour.
         """
         if max_retries <= 0:
-            max_retries = self.config.max_retries or 3
+            max_retries = self.config.max_retries or _DEFAULT_MAX_RETRIES
         silent_mode = self.config.silent_retry_mode
 
         last_error: Exception | None = None
@@ -1082,9 +1103,9 @@ class AgentLoop:
                 log_error(f"Retryable error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     if is_rate_limit:
-                        backoff = e.retry_after if e.retry_after > 0 else min(2**attempt, 10)
+                        backoff = e.retry_after if e.retry_after > 0 else min(2**attempt, _RETRY_BACKOFF_MAX_SECONDS)
                     else:
-                        backoff = min(2**attempt, 10)
+                        backoff = min(2**attempt, _RETRY_BACKOFF_MAX_SECONDS)
                     if silent_mode:
                         yield TurnEvent.error_event(
                             f"\u23f3 Retrying in {backoff:.0f}s (attempt {attempt + 2}/{max_retries})..."
@@ -1100,7 +1121,7 @@ class AgentLoop:
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
                             break
-                        time.sleep(min(0.5, remaining))
+                        time.sleep(min(_RETRY_POLL_SECONDS, remaining))
                 continue
 
         # All retries exhausted
@@ -2504,11 +2525,22 @@ class AgentLoop:
         try:
             mgr = self._get_or_create_subagent_manager()
             # Respect the fan-out cap: extra spawn calls in a batch wait for
-            # a free slot instead of all starting at once.
-            cap = max(1, int(getattr(self.config, "subagent_max_concurrent", 4)))
+            # a free slot instead of all starting at once. ``cap`` is bounded
+            # above by ``_HARD_SUBAGENT_MAX_CONCURRENT`` so a mis-configured
+            # ``subagent_max_concurrent`` cannot cause unbounded parallelism.
+            cap = max(
+                1,
+                min(
+                    int(getattr(self.config, "subagent_max_concurrent", _DEFAULT_SUBAGENT_MAX_CONCURRENT)),
+                    _HARD_SUBAGENT_MAX_CONCURRENT,
+                ),
+            )
             while mgr.active_count() >= cap:
                 self._check_cancelled()
-                time.sleep(0.1)
+                mgr._done_event.clear()
+                if mgr.active_count() < cap:
+                    break
+                mgr._done_event.wait(timeout=_SUBAGENT_WAIT_POLL_SECONDS)
 
             cancel = threading.Event()
             runner = SubagentRunner(
@@ -2560,7 +2592,10 @@ class AgentLoop:
         try:
             while not mgr.all_terminal(ids):
                 self._check_cancelled()
-                time.sleep(0.05)
+                mgr._done_event.clear()
+                if mgr.all_terminal(ids):
+                    break
+                mgr._done_event.wait(timeout=_SUBAGENT_WAIT_POLL_SECONDS)
         except CancellationError:
             # Kill-style teardown: stop the stragglers so their provider
             # streams are released before the parent aborts.

@@ -47,20 +47,24 @@ fi
 # ── 2. Ruff — lint (config in pyproject.toml) ────────────────────────────────
 info "[2/5] Ruff lint..."
 if $FIX; then
-    if python3 -m ruff check lucnhan/ --fix 2>&1; then
+    if python3 -m ruff check lucnhan/ tests/ --fix 2>&1; then
         ok "ruff lint (auto-fixed)"
     else
         fail "ruff lint" "see above"
     fi
 else
-    if python3 -m ruff check lucnhan/ 2>&1; then
+    if python3 -m ruff check lucnhan/ tests/ 2>&1; then
         ok "ruff lint"
     else
         fail "ruff lint" "see above"
     fi
 fi
 
-# ── 3. Mypy — core modules only (config in pyproject.toml) ───────────────────
+# ── 3. Mypy — core + providers only (config in pyproject.toml) ─────────────
+# NOTE: `[tool.mypy].files` *also* declares `lucnhan/memory` / `lucnhan/ui`,
+# but gating them is deferred — `mypy lucnhan/memory lucnhan/ui` surfaces
+# pre-existing errors in those modules (production) out of scope here. Keep
+# them ungated until those errors are fixed.
 info "[3/5] Mypy (core + providers)..."
 MYPY_OUT=$(python3 -m mypy lucnhan/core lucnhan/providers --pretty \
     2>&1) && MYPY_OK=true || MYPY_OK=false

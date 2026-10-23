@@ -104,10 +104,6 @@ from lucnhan.state.history_types import (
     SessionHistoryEntry,
 )
 from lucnhan.ui.history_panel import HistoryPanel, HistoryRowWidget
-from lucnhan.ui.message_widgets import (
-    AssistantMessageWidget,
-    UserMessageWidget,
-)
 from tests.qt_real import live_class, requires_real_qt
 
 
@@ -353,7 +349,7 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
         Returns ``(panel, ctrl)`` so the test can arm the fake
         controller's behaviour.
         """
-        from PySide6.QtWidgets import QApplication, QTabWidget, QWidget
+        from PySide6.QtWidgets import QTabWidget, QWidget
 
         from lucnhan.ui.panel_core import LucNhanPanelCore
 
@@ -383,8 +379,8 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
         # ``_build_main_splitter`` does in production (panel_core.py:818).
         panel._history_panel.session_open_requested.connect(panel._on_history_open_requested)
         # History coordinator fields the slot's helper path touches.
-        import threading
         import queue as _queue
+        import threading
 
         panel._history_generation = 0
         panel._history_pending = False
@@ -412,7 +408,6 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
         panel._ctrl = ctrl
         # Seed the panel's draft tab so the click chain has a tab to
         # attach to (mirrors ``_create_tab`` in ``_build_ui``).
-        from lucnhan.ui.chat_view import ChatView
 
         draft = _chat_view_cls()()
         draft.setProperty("tab_id", ctrl.active_tab_id)
@@ -538,9 +533,9 @@ class TestRowClickReachesPanelCoreSlot(unittest.TestCase):
         Same deterministic pump as ``tests/ui/test_restore_paints.py`` —
         bounded ``processEvents`` loop, no ``time.sleep`` waits.
         """
-        from PySide6.QtWidgets import QApplication
-
         import time as _time
+
+        from PySide6.QtWidgets import QApplication
 
         app = QApplication.instance()
         deadline_deadline = _time.monotonic() + timeout_s

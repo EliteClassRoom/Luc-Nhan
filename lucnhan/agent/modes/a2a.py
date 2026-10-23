@@ -24,6 +24,7 @@ from collections.abc import Generator
 from typing import TYPE_CHECKING
 
 from ...core.errors import CancellationError
+from ...core.sanitize import sanitize_tool_result
 from ..a2a import A2ADispatcher
 from ..turn import TurnEvent, TurnEventType
 
@@ -91,8 +92,15 @@ def run_a2a_mode(
             cancel_event=loop._cancelled,
         ):
             if event.type == TurnEventType.TEXT_DELTA:
-                collected_text += event.text or ""
-                yield event
+                # External agent output is untrusted and flows straight into
+                # chat/history — apply the same prompt-injection defense used
+                # for delegated tool results (see ``_handle_delegate_external_task_tool``).
+                safe_text = sanitize_tool_result(event.text or "", "a2a")
+                collected_text += safe_text
+                yield TurnEvent(
+                    type=TurnEventType.TEXT_DELTA,
+                    text=safe_text,
+                )
             elif event.type == TurnEventType.ERROR:
                 # The dispatcher surfaces user cancellation as an
                 # ERROR event with a "cancelled by user" message
@@ -115,6 +123,8 @@ def run_a2a_mode(
 
     # Final aggregated output. The chat view treats this as the
     # end of the assistant's turn, so the next user message
-    # arrives cleanly.
+    # arrives cleanly. Sanitize once more so a marker smuggled
+    # out-of-band (e.g. in an ERROR/cancellation path) is stripped
+    # before it reaches the user or persistent history.
     final = collected_text.strip() or "(no output)"
-    yield TurnEvent.text_done(final)
+    yield TurnEvent.text_done(sanitize_tool_result(final, "a2a"))

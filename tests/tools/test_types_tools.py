@@ -547,5 +547,64 @@ class TestGetFunctionPrototype(unittest.TestCase):
             types_tools.ida_nalt = orig_nalt
 
 
+# ---------------------------------------------------------------------------
+# Argument validation (finding F2) — LLM input must be validated at the tool
+# boundary: non-empty name/comment/type strings and well-formed JSON fields.
+# ---------------------------------------------------------------------------
+
+
+class TestArgumentValidation(unittest.TestCase):
+    def _expect_validation_error(self, callable, *args, **kwargs):
+        with self.assertRaises(ToolError) as ctx:
+            callable(*args, **kwargs)
+        self.assertIsNotNone(str(ctx.exception))
+        return str(ctx.exception)
+
+    def test_create_struct_rejects_empty_name(self):
+        msg = self._expect_validation_error(types_tools.create_struct, "", '[{"name": "x", "type": "int"}]')
+        self.assertIn("name", msg)
+
+    def test_create_struct_rejects_blank_name(self):
+        msg = self._expect_validation_error(types_tools.create_struct, "   ", '[{"name": "x", "type": "int"}]')
+        self.assertIn("name", msg)
+
+    def test_create_struct_rejects_invalid_json_fields(self):
+        msg = self._expect_validation_error(types_tools.create_struct, "Foo", "not-json-array")
+        self.assertIn("JSON", msg)
+
+    def test_create_enum_rejects_empty_name(self):
+        msg = self._expect_validation_error(types_tools.create_enum, "", '[{"name": "A", "value": 0}]')
+        self.assertIn("name", msg)
+
+    def test_create_enum_rejects_invalid_json_members(self):
+        msg = self._expect_validation_error(types_tools.create_enum, "MyEnum", "{bad json")
+        self.assertIn("JSON", msg)
+
+    def test_create_typedef_rejects_empty_name(self):
+        msg = self._expect_validation_error(types_tools.create_typedef, "", "int")
+        self.assertIn("name", msg)
+
+    def test_create_typedef_rejects_empty_base_type(self):
+        msg = self._expect_validation_error(types_tools.create_typedef, "MyType", "")
+        self.assertIn("base_type", msg)
+
+    def test_import_c_header_rejects_empty_code(self):
+        msg = self._expect_validation_error(types_tools.import_c_header, "  ")
+        self.assertIn("c_code", msg)
+
+    def test_valid_create_typedef_still_works(self):
+        # Regression: validation must not break the valid path.
+        orig = types_tools.idc
+        try:
+            mock_idc = MagicMock()
+            mock_idc.parse_decls.return_value = 1
+            types_tools.idc = mock_idc
+            result = types_tools.create_typedef("MyType", "unsigned int")
+            self.assertIn("typedef", result)
+            self.assertIn("MyType", result)
+        finally:
+            types_tools.idc = orig
+
+
 if __name__ == "__main__":
     unittest.main()

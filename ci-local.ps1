@@ -108,17 +108,22 @@ if ($Fix) {
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff format" } else { Add-Fail "ruff format" "run with -Fix to auto-fix" }
 }
 
-# ── 2. Ruff — lint (config in pyproject.toml) ─────────────────────────────────
+# ── 2. Ruff — lint (config in pyproject.toml). Lint tests/ too so the
+#      `extend-include` config actually gates the test suite.
 Write-Info "[2/5] Ruff lint..."
 if ($Fix) {
-    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/", "--fix")
+    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/", "tests/", "--fix")
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff lint (auto-fixed)" } else { Add-Fail "ruff lint" "see above" }
 } else {
-    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/")
+    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/", "tests/")
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff lint" } else { Add-Fail "ruff lint" "see above" }
 }
 
-# ── 3. Mypy — core modules only (config in pyproject.toml) ────────────────────
+# ── 3. Mypy — core + providers only (config in pyproject.toml) ────────────────
+# NOTE: `[tool.mypy].files` *also* declares `lucnhan/memory` / `lucnhan/ui`,
+# but gating them is deferred — `mypy lucnhan/memory lucnhan/ui` surfaces
+# pre-existing errors in those modules (production) out of scope here. Keep
+# them ungated until those errors are fixed.
 Write-Info "[3/5] Mypy (core + providers)..."
 $mypyOutput = (Invoke-DevTool -Tool "mypy" -ToolArgs @("lucnhan/core", "lucnhan/providers", "--pretty") 2>&1) -join "`n"
 $mypyOk = $LASTEXITCODE -eq 0

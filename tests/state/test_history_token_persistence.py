@@ -37,7 +37,6 @@ from lucnhan.core.types import Message, Role, TokenUsage
 from lucnhan.state.history import SessionHistory
 from lucnhan.state.session import SessionState
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------

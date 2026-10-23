@@ -7,7 +7,6 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks

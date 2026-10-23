@@ -87,3 +87,24 @@ def test_v3_not_null_constraints_reject_missing_values(tmp_path: Path) -> None:
             (new_record_id("fact"), "a" * 64),
         )
     store.close()
+
+
+def test_v3_add_column_is_idempotent_across_repeats(tmp_path) -> None:
+    """Finding 4: ``_migrate_v3`` must be idempotent when re-run against an
+    already-partially-migrated database (guarded via ``_ensure_column``), i.e.
+    it must not raise ``duplicate column name``."""
+    owner = new_memory_id()
+    paths = MemoryLocator(tmp_path).binary(owner)
+    _create_v2_database(paths.database, owner)
+    with sqlite3.connect(paths.database) as conn:
+        # First pass applies the columns; a second pass must be a no-op.
+        workspace_store._migrate_v3(conn)
+        workspace_store._migrate_v3(conn)
+        workspace_store._migrate_v4(conn)
+        workspace_store._migrate_v4(conn)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(facts)")}
+        assert {"entity_refs", "tags", "status", "verdict_claim", "verification_citations"}.issubset(columns)
+        entity_cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
+        assert "tags" in entity_cols
+        relation_cols = {row[1] for row in conn.execute("PRAGMA table_info(relations)")}
+        assert "evidence" in relation_cols

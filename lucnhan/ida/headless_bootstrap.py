@@ -297,7 +297,9 @@ def _run_server(controller, dispatcher, config: dict) -> None:
 
     host = config.get("server_host", "127.0.0.1")
     port = int(config.get("server_port", 0))
-    token = config.get("server_token", None)
+    # Prefer the env-passed token (keeps it off the on-disk bootstrap JSON);
+    # fall back to the bootstrap config key for backward compatibility.
+    token = config.get("server_token") or os.environ.get("LUCNHAN_HEADLESS_TOKEN") or None
     ready_file = config.get("ready_file", "")
 
     server = ControlServer(controller, host=host, port=port, token=token)

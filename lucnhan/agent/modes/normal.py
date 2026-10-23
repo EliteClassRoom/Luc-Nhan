@@ -12,6 +12,11 @@ from .turn_helpers import execute_single_turn
 if TYPE_CHECKING:
     from ..loop import AgentLoop
 
+# Hard ceiling for the number of turns in a normal-mode run. Subagents set
+# ``loop._max_turns`` explicitly via ``AgentLoop(max_turns=...)``; this is the
+# fallback used when none is supplied.
+_DEFAULT_MAX_TURNS = 100
+
 
 def run_normal_loop(
     loop: AgentLoop,
@@ -26,7 +31,7 @@ def run_normal_loop(
     # silently promoted to 100; the runner constructor rejects ``max_turns=0``
     # outright so we should never see one here.
     mt = getattr(loop, "_max_turns", None)
-    max_turns: int = 100 if mt is None else int(mt)
+    max_turns: int = _DEFAULT_MAX_TURNS if mt is None else int(mt)
     turn = 0
     while True:
         loop._check_cancelled()

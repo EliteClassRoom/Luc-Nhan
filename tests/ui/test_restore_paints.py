@@ -85,10 +85,6 @@ from lucnhan.ui.chat_view import (
     ChatView,
     MessagePlaceholder,
 )
-from lucnhan.ui.message_widgets import (
-    AssistantMessageWidget,
-    UserMessageWidget,
-)
 from tests.qt_real import live_class, requires_real_qt
 
 

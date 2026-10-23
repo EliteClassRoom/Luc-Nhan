@@ -317,3 +317,48 @@ class TestHeadlessDispatcher(unittest.TestCase):
             )
         finally:
             disp_mod._DEFAULT_JOB_TIMEOUT = old_timeout
+
+    def test_shutdown_wakes_worker_waiting_for_running_job(self):
+        """A worker waiting for an already-claimed (RUNNING) job must be
+        woken by request_shutdown instead of blocking forever on a stalled
+        main thread."""
+        import time
+
+        import lucnhan.ida.dispatch as disp_mod
+        from lucnhan.ida.dispatch import DispatcherShutdownError
+
+        d = disp_mod.IdaHeadlessDispatcher()
+        started = threading.Event()
+
+        @d.wrap
+        def hung_function():
+            started.set()
+            # Never completes on its own — simulates a stalled main thread
+            # executing an IDA API call.
+            threading.Event().wait(10.0)
+
+        errors = []
+
+        def worker():
+            try:
+                hung_function()
+                errors.append("no_error")
+            except DispatcherShutdownError:
+                errors.append("shutdown")
+
+        wt = threading.Thread(target=worker, daemon=True)
+        wt.start()
+
+        # Pump the queue so the job is claimed (RUNNING) and the function runs.
+        pt = threading.Thread(target=d.pump_once, kwargs={"timeout": 2.0}, daemon=True)
+        pt.start()
+
+        # Function started ⇒ the pump claimed the job (state is RUNNING).
+        self.assertTrue(started.wait(timeout=2.0), "hung_function never started")
+        time.sleep(0.2)  # let the worker settle into the RUNNING wait
+
+        d.request_shutdown()
+
+        wt.join(timeout=2.0)
+        self.assertFalse(wt.is_alive(), "Worker still alive after shutdown")
+        self.assertEqual(errors, ["shutdown"])

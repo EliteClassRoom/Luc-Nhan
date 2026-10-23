@@ -45,7 +45,10 @@ jobs:
         run: python -m ruff format --check lucnhan/
 
       - name: Lint
-        run: python -m ruff check lucnhan/  # config in pyproject.toml
+        # Explicity lint the test suite too so `extend-include` in
+        # pyproject.toml actually gates tests/ — `ruff check lucnhan/`
+        # (explicit path) bypasses the default include set.
+        run: python -m ruff check lucnhan/ tests/  # config in pyproject.toml
 
   typecheck:
     name: Mypy
@@ -64,17 +67,30 @@ jobs:
       - name: Type check (core + providers)
         run: python -m mypy lucnhan/core lucnhan/providers  # config in pyproject.toml
 
+      # `[tool.mypy].files` also declares `lucnhan/memory` and `lucnhan/ui`,
+      # but gating them is DEFERRED: `mypy lucnhan/memory lucnhan/ui` (even
+      # with --follow-imports=skip) currently surfaces pre-existing errors
+      # in those modules (e.g. `memory/report.py:633` "object has no
+      # attribute __iter__", `memory/repository.py:114` `status` Literal
+      # mismatch, `ui/model_picker.py:783` `QEvent` has no `key`). Those are
+      # production code fixes out of scope for the tests/CI task; enable this
+      # gate once they are resolved.
+
   test:
-    name: Pytest (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Pytest (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     # pyproject.toml advertises both 3.11 and 3.12 support. Run pytest
-    # on both so a 3.12-specific bug can't slip through. Lint and
-    # typecheck stay on 3.11 (single stable tool version), and
-    # desloppify stays on 3.11 to keep its objective score reproducible
-    # (see AGENTS.md §"Note — Python version and desloppify scores").
+    # on both Python versions and on Ubuntu + Windows. The plugin runs
+    # primarily inside IDA Pro on Windows, so a Windows run is required
+    # to catch path/Qt native issues (e.g. the STATUS_STACK_BUFFER_OVERRUN
+    # fast-fail that only reproduces on Windows). Lint and typecheck stay
+    # on 3.11 (single stable tool version), and desloppify stays on 3.11
+    # to keep its objective score reproducible (see AGENTS.md §"Note —
+    # Python version and desloppify scores").
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v7
@@ -85,7 +101,7 @@ jobs:
           cache: pip
 
       - name: Install dev tools
-        run: pip install pytest tomli
+        run: pip install pytest tomli pytest-timeout
 
       # Tests import lucnhan.ui.* which imports PySide6 at module
       # level (subject to Shiboken UAF on Python 3.13+ — see
@@ -97,11 +113,13 @@ jobs:
           pip install -r requirements.txt
           pip install PySide6
 
-      # PySide6's Qt libraries link libEGL/libGL at import time. Without
-      # them every test module that imports lucnhan.ui.* dies during
-      # collection with "ImportError: libEGL.so.1", which hides the real
-      # test results behind an import failure.
-      - name: Install Qt runtime libs
+        # PySide6's Qt libraries link libEGL/libGL at import time. Without
+        # them every test module that imports lucnhan.ui.* dies during
+        # collection with "ImportError: libEGL.so.1", which hides the real
+        # test results behind an import failure. Ubuntu-only (Windows/Mac
+        # bundle Qt runtime with PySide6 wheels).
+      - name: Install Qt runtime libs (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1
 
       - name: Run tests
@@ -150,18 +168,22 @@ jobs:
 
       - name: Get changed Python files
         id: changed
-        if: github.event_name == 'pull_request'
-        # `github.base_ref` is only populated on pull_request events.
-        # For push events (e.g. direct force-push to master), the diff
-        # against the merge base is undefined, so the security gate is
-        # skipped here and only the objective-score gate above applies.
+        # Run on PRs (diff vs merge base) and on push (diff vs the commit
+        # the push replaced). On push the merge base is undefined, so we
+        # use `github.event.before`; this is the failsafe the old
+        # PR-only guard skipped for direct pushes/force-pushes to master.
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
-          git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.py' > /tmp/changed_files.txt
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.py' > /tmp/changed_files.txt
+          else
+            git diff --name-only ${{ github.event.before }}...HEAD -- '*.py' > /tmp/changed_files.txt
+          fi
           echo "Changed files:"
           cat /tmp/changed_files.txt
 
       - name: Gate on security findings in changed files
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
           python -c "
           import json, subprocess, sys
@@ -175,14 +197,17 @@ jobs:
           for f in changed:
               result = subprocess.run(
                   ['desloppify', 'show', f, '--output', '/tmp/file_findings.json', '--status', 'open'],
-                  capture_output=True
+                  capture_output=True, text=True
               )
+              if result.returncode != 0:
+                  print(f'Warning: desloppify show failed ({result.returncode}) for {f} — skipping file')
+                  continue
               try:
                   data = json.load(open('/tmp/file_findings.json'))
-                  file_findings = data if isinstance(data, list) else data.get('findings', [])
+                  file_findings = data if isinstance(data, list) else (data.get('findings', []) if isinstance(data, dict) else [])
                   findings.extend(file_findings)
               except (json.JSONDecodeError, FileNotFoundError):
-                  pass
+                  print(f'Warning: could not parse desloppify findings for {f} — skipping file')
 
           if not findings:
               print(f'OK — no open findings in {len(changed)} changed file(s)')

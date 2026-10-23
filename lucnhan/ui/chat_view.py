@@ -6,6 +6,7 @@ import json
 import queue
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from .. import constants
 from ..agent.turn import TurnEvent, TurnEventType
@@ -815,6 +816,7 @@ class ChatView(QScrollArea):
             widget = item.widget() if item else None
             if isinstance(widget, QueuedMessageWidget):
                 self._layout.removeWidget(widget)
+                self._shutdown_message_widget(widget)
                 widget.deleteLater()
 
     def pop_first_queued_message(self) -> None:
@@ -824,6 +826,7 @@ class ChatView(QScrollArea):
             widget = item.widget() if item else None
             if isinstance(widget, QueuedMessageWidget):
                 self._layout.removeWidget(widget)
+                self._shutdown_message_widget(widget)
                 widget.deleteLater()
                 return
 
@@ -850,6 +853,7 @@ class ChatView(QScrollArea):
             return
         self._thinking.stop()
         self._layout.removeWidget(self._thinking)
+        self._shutdown_message_widget(self._thinking)
         self._thinking.deleteLater()
         self._thinking = None
 
@@ -2691,6 +2695,24 @@ class ChatView(QScrollArea):
 
         return list(tool_widgets)
 
+    @staticmethod
+    def _shutdown_message_widget(widget: Any) -> None:
+        """Release a message widget's ThemeManager subscription, if any.
+
+        Call before ``deleteLater()`` so the long-lived ThemeManager
+        singleton does not keep a strong reference to the widget's bound
+        ``_apply_styles`` (memory-leak fix, task-11). Message widgets in
+        ``message_widgets`` expose ``shutdown()``; other widgets (spacers,
+        placeholders, theme-agnostic frames) are left untouched.
+        """
+        shutdown = getattr(widget, "shutdown", None)
+        if callable(shutdown):
+            try:
+                shutdown()
+            except (RuntimeError, TypeError):
+                # Widget may already be torn down — ignore.
+                pass
+
     def clear_chat(self) -> None:
         # Cancel any in-flight async restore so its worker stops
         # emitting signals while we tear down the widgets.
@@ -2704,6 +2726,7 @@ class ChatView(QScrollArea):
             item = self._layout.takeAt(0)
             widget = item.widget()
             if widget:
+                self._shutdown_message_widget(widget)
                 widget.deleteLater()
         self._current_assistant = None
         self._message_thinking = None
@@ -2818,3 +2841,11 @@ class ChatView(QScrollArea):
         self._scroll_timer.stop()
         self._thinking_hide_timer.stop()
         self._force_hide_thinking()
+        # Release every message widget's ThemeManager subscription before
+        # the panel is torn down (memory-leak fix, task-11).  This runs on
+        # the main thread during tab close / IDB switch.
+        for i in range(self._layout.count()):
+            item = self._layout.itemAt(i)
+            widget = item.widget() if item else None
+            if widget is not None:
+                self._shutdown_message_widget(widget)

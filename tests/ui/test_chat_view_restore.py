@@ -95,13 +95,13 @@ from lucnhan.ui.chat_view import (
     _is_hidden_system_user_message,
     _RenderedChunk,
 )
-from lucnhan.ui.tool_widgets import (
-    ExecutePythonWidget,
-    ToolCallWidget,
-)
 from lucnhan.ui.message_widgets import (
     AssistantMessageWidget,
     UserMessageWidget,
+)
+from lucnhan.ui.tool_widgets import (
+    ExecutePythonWidget,
+    ToolCallWidget,
 )
 from tests.qt_real import requires_real_qt
 

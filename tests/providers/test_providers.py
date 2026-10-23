@@ -6,6 +6,8 @@ import os
 import sys
 import unittest
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
 
@@ -31,6 +33,7 @@ from lucnhan.core.types import (
     ToolCall,
     ToolResult,
 )
+from lucnhan.providers.base import LLMProvider
 from lucnhan.providers.registry import ProviderRegistry
 
 
@@ -281,6 +284,58 @@ class TestAuthenticationGuidance(unittest.TestCase):
         err = AuthenticationError()
         msg = str(err)
         self.assertEqual(msg, "Invalid or missing API key")
+
+
+class _ReturningErrorProvider(LLMProvider):
+    """Concrete provider whose ``_handle_api_error`` returns instead of raising —
+    violates the NoReturn contract to exercise the ``base.py:chat`` guard."""
+
+    @property
+    def name(self) -> str:
+        return "test-returning-error"
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(streaming=False, tool_use=False, vision=False)
+
+    def _get_client(self) -> object:
+        return object()
+
+    def _fetch_models_live(self) -> list:
+        return []
+
+    @staticmethod
+    def _builtin_models() -> list:
+        return []
+
+    def _format_messages(self, messages):
+        return []
+
+    def _build_request_kwargs(self, messages, tools, temperature, max_tokens, system, *, request_context=None) -> dict:
+        return {}
+
+    def _call_api(self, client, kwargs):
+        raise RuntimeError("boom")
+
+    def _normalize_response(self, raw) -> Message:
+        return Message(role=Role.ASSISTANT, content="")
+
+    def _handle_api_error(self, e) -> None:
+        # Intentionally return (NoReturn violation) so we can assert the
+        # base pipeline guards against an unbound ``raw``.
+        return None
+
+    def _stream_chunks(self, client, kwargs, cancel_event=None):
+        yield from ()
+
+
+def test_chat_raises_when_handle_api_error_returns() -> None:
+    """Finding 3: ``LLMProvider.chat`` must never reach ``_normalize_response``
+    with an unbound ``raw`` when ``_handle_api_error`` violates its NoReturn
+    contract. It must raise rather than crash on a missing local."""
+    provider = _ReturningErrorProvider()
+    with pytest.raises(AssertionError):
+        provider.chat([Message(role=Role.USER, content="hi")])
 
 
 if __name__ == "__main__":

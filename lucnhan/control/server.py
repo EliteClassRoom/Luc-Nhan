@@ -44,6 +44,20 @@ _MAX_REQUEST_BODY = 1_048_576  # 1 MiB — conservative for local-only use
 # (e.g. a stuck generator) — the ring buffer caps retained history anyway.
 _DRAIN_MAX_ITERATIONS = 200
 
+# Socket read timeout (seconds) applied to each connection so a slow or
+# stalled local client cannot hold a request-handler thread indefinitely.
+_REQUEST_READ_TIMEOUT = 30.0
+
+# Upper bound on concurrent in-flight requests. ``ThreadingHTTPServer``
+# spawns one thread per connection; the semaphore caps them so a local
+# client cannot exhaust threads and DoS the control server.
+_MAX_CONCURRENT_REQUESTS = 32
+_REQUEST_SEMAPHORE = threading.BoundedSemaphore(_MAX_CONCURRENT_REQUESTS)
+
+# Delay after ``/shutdown`` before stopping the HTTP server so the shutdown
+# response has a chance to flush.
+_SHUTDOWN_FLUSH_SLEEP = 0.3
+
 
 class RunState:
     """Per-run state, written by EventBroker and read by HTTP handlers.
@@ -303,6 +317,34 @@ class ControlHandler(BaseHTTPRequestHandler):
         self._state = state
         self._controller = controller
         super().__init__(*args, **kwargs)
+
+    def setup(self) -> None:
+        """Apply a read timeout before the request line/headers are read."""
+        super().setup()
+        try:
+            self.connection.settimeout(_REQUEST_READ_TIMEOUT)
+        except (OSError, AttributeError):
+            # Non-socket connections (e.g. unit-test fakes) ignore this.
+            pass
+
+    def handle(self) -> None:
+        """Run one request under the concurrency cap.
+
+        ``ThreadingHTTPServer`` services each connection on its own thread;
+        the semaphore rejects over-capacity so a burst of local connections
+        cannot exhaust the thread pool.
+        """
+        if not _REQUEST_SEMAPHORE.acquire(timeout=_REQUEST_READ_TIMEOUT):
+            # Over capacity — close without handling to shed load.
+            try:
+                self.connection.close()
+            except (OSError, AttributeError):
+                pass
+            return
+        try:
+            super().handle()
+        finally:
+            _REQUEST_SEMAPHORE.release()
 
     # -- helpers -----------------------------------------------------------
 
@@ -879,7 +921,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         # flushed before the HTTP server stops.
         def _do_shutdown() -> None:
             # Give the response a moment to flush.
-            time.sleep(0.3)
+            time.sleep(_SHUTDOWN_FLUSH_SLEEP)
 
             # Stop the event broker if active — OUTSIDE the state lock (P0-1).
             if broker is not None:
@@ -1005,6 +1047,10 @@ class ControlServer:
         """
         handler_cls = _make_handler(self._state, self._controller)
         self._httpd = ThreadingHTTPServer((self._host, self._port), handler_cls)
+        # Service each connection on a daemon thread so per-request threads
+        # never block process shutdown, and the concurrency cap in
+        # ``ControlHandler.handle`` bounds how many can be alive at once.
+        self._httpd.daemon_threads = True
         self._port = self._httpd.server_port
 
         # Wire the shutdown callback so /shutdown can stop the server.

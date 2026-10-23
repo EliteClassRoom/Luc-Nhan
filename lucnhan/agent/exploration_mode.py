@@ -215,6 +215,12 @@ class PatchSummary:
 # ---------------------------------------------------------------------------
 
 
+# Default turn ceilings for the EXPLORE and EXECUTE phases. Kept as module
+# constants so the fallback values are discoverable and not bare literals.
+_DEFAULT_MAX_EXPLORE_TURNS = 100
+_DEFAULT_MAX_EXECUTE_TURNS = 20
+
+
 @dataclass
 class ExplorationState:
     """Full state of the exploration mode across all phases."""
@@ -226,8 +232,8 @@ class ExplorationState:
     explore_turns: int = 0
     execute_turns: int = 0
     total_turns: int = 0  # monotonic counter across all phases (for UI)
-    max_explore_turns: int = 100
-    max_execute_turns: int = 20
+    max_explore_turns: int = _DEFAULT_MAX_EXPLORE_TURNS
+    max_execute_turns: int = _DEFAULT_MAX_EXECUTE_TURNS
     explore_only: bool = False  # /explore mode — no patching
 
     def can_transition_to(self, target: ExplorationPhase) -> tuple[bool, str]:

@@ -229,23 +229,16 @@ ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Per-test timeout was the goal here (see task 7 brief:
-# ``test_height_cached_label`` mock-pollution flake is the canonical
-# case the timeout guards against).  ``--timeout=30`` with the
-# ``thread`` method cooperates with C-level waits via a watchdog
-# thread, matching the suite's threading.Event + queue.Queue patterns.
+# Per-test timeout guards against a stale/mock-polluted test hanging the
+# whole job (``test_height_cached_label`` mock-pollution flake is the
+# canonical case). ``--timeout=30`` with the ``thread`` method cooperates
+# with C-level waits via a watchdog thread, matching the suite's
+# threading.Event + queue.Queue patterns.
 #
-# DEFERRED — the ``pytest-timeout`` plugin is not provisioned in CI.
-# The workflow installs runtime deps via ``pip install -r
-# requirements.txt`` and does not pull the ``dev`` dependency group,
-# so ``addopts = ["--timeout=30", "--timeout-method=thread"]`` would
-# fail every test job with ``unrecognized option: --timeout``.  The
-# intended addopts line is left commented below; re-enable in a
-# follow-up PR after either adding ``pytest-timeout`` to
-# ``requirements.txt`` (runtime side) or installing the ``dev`` group
-# from the CI workflow.
-#
-# addopts = ["--timeout=30", "--timeout-method=thread"]
+# ``pytest-timeout`` is provisioned in CI (see .github/workflows/ci.yml)
+# and in the ``dev`` dependency group below, so the addopts are safe to
+# keep enabled.
+addopts = ["--timeout=30", "--timeout-method=thread"]
 
 [dependency-groups]
 dev = [
@@ -253,6 +246,7 @@ dev = [
   "pyside6>=6.11.2",
   "pytest>=9.1.1",
   "pytest-cov>=5.0",
+  "pytest-timeout>=2.3.1",
   "ruff>=0.16.6",
   "mypy>=2.3.0",
   "pyyaml>=6.0.3",

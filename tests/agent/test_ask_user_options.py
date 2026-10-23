@@ -41,10 +41,8 @@ install_ida_mocks()
 
 from lucnhan.agent.loop import AgentLoop
 from lucnhan.agent.turn import TurnEvent, TurnEventType
-from lucnhan.core.config import LucNhanConfig
 from lucnhan.core.types import ModelInfo, ProviderCapabilities, ToolCall
 from lucnhan.providers.base import LLMProvider
-from lucnhan.state.session import SessionState
 
 
 class _NullProvider(LLMProvider):

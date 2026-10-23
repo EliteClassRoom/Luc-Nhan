@@ -205,7 +205,7 @@ IDA Pro's Qt binding (Shiboken) has a Use-After-Free bug triggered when importin
 
 ### 2. Thread safety
 
-- **Every IDA API call must run on the main thread.** The `@idasync` decorator in `core/thread_safety.py` handles this — it is applied automatically by the `@tool` decorator for IDA tools
+- **Every IDA API call must run on the main thread.** The `@idasync` decorator in `core/thread_safety.py` handles this. Main-thread marshalling is **applied at the registry execution boundary**, not by the `@tool` decorator itself: `ToolRegistry.execute()` / `execute_coerced()` / `execute_current_thread()` wrap a tool's handler with the host's `dispatch_wrapper` (defaulting to `idasync`) whenever the tool's `ToolDefinition.main_thread` is true (see `lucnhan/tools/registry.py` + `lucnhan/ida/tools/registry.py`). The `@tool` decorator records `main_thread`; tools that must NOT be marshalled (e.g. emulation, whose CPU phase runs on a worker) pass `main_thread=False` and dispatch their own IDA sections. A tool handler invoked outside the registry execution paths is not automatically marshalled.
 - **Never** use Qt signals across threads. Use a `queue.Queue` + `QTimer` to poll
 - **Cancellation** uses a `threading.Event` (`_cancelled`) — checked at: the top of every retry loop, every backoff sleep (0.5s), before every tool execution, and inside the streaming chunk loop
 
