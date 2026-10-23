@@ -695,6 +695,7 @@ class TestCompileOptimizerGuard(unittest.TestCase):
 # returns. These tests prove the Layer-A chokepoint (DENY_ATTR_NAMES frozenset
 # + SafeModule.__getattribute__) shuts the chain.
 
+
 class TestSafeModuleDenySet(unittest.TestCase):
     def test_deny_attr_names_is_frozenset(self):
         # Contract: the deny set is a frozenset of bare attribute names. No
@@ -742,13 +743,7 @@ class TestTransitiveLeakClosure(unittest.TestCase):
     def test_blocks_re_sys_modules_chain(self):
         # Phase-1 ledger: re → sys (when present in this Python's re). Even
         # if re.sys is absent naturally, the proxy must never expose it.
-        code = (
-            "import re\n"
-            "try:\n"
-            "    re.sys\n"
-            "except AttributeError as e:\n"
-            "    print('blocked', e)\n"
-        )
+        code = "import re\ntry:\n    re.sys\nexcept AttributeError as e:\n    print('blocked', e)\n"
         result = run_guarded_script(code, _empty_ns)
         self.assertIn("blocked", result)
 
@@ -766,13 +761,7 @@ class TestTransitiveLeakClosure(unittest.TestCase):
 
     def test_blocks_enum_sys(self):
         # Phase-1 ledger: enum exposes sys.
-        code = (
-            "import enum\n"
-            "try:\n"
-            "    enum.sys\n"
-            "except AttributeError as e:\n"
-            "    print('blocked', e)\n"
-        )
+        code = "import enum\ntry:\n    enum.sys\nexcept AttributeError as e:\n    print('blocked', e)\n"
         result = run_guarded_script(code, _empty_ns)
         self.assertIn("blocked", result)
 
@@ -781,49 +770,25 @@ class TestTransitiveLeakClosure(unittest.TestCase):
         # transitively surface subprocess, it must be denied. We check
         # every wrapped module listed in the ledger.
         for modname in ("uuid", "re", "xml.etree.ElementTree", "enum", "base64", "string", "json"):
-            code = (
-                f"import {modname} as m\n"
-                f"try:\n"
-                f"    m.subprocess\n"
-                f"except AttributeError:\n"
-                f"    print('blocked')\n"
-            )
+            code = f"import {modname} as m\ntry:\n    m.subprocess\nexcept AttributeError:\n    print('blocked')\n"
             result = run_guarded_script(code, _empty_ns)
             self.assertIn("blocked", result, msg=f"{modname}.subprocess not blocked; output={result!r}")
 
     def test_blocks_importlib_through_benign_module(self):
         for modname in ("uuid", "xml.etree.ElementTree", "enum"):
-            code = (
-                f"import {modname} as m\n"
-                f"try:\n"
-                f"    m.importlib\n"
-                f"except AttributeError:\n"
-                f"    print('blocked')\n"
-            )
+            code = f"import {modname} as m\ntry:\n    m.importlib\nexcept AttributeError:\n    print('blocked')\n"
             result = run_guarded_script(code, _empty_ns)
             self.assertIn("blocked", result, msg=f"{modname}.importlib not blocked; output={result!r}")
 
     def test_blocks_shutil_through_benign_module(self):
         for modname in ("uuid", "enum"):
-            code = (
-                f"import {modname} as m\n"
-                f"try:\n"
-                f"    m.shutil\n"
-                f"except AttributeError:\n"
-                f"    print('blocked')\n"
-            )
+            code = f"import {modname} as m\ntry:\n    m.shutil\nexcept AttributeError:\n    print('blocked')\n"
             result = run_guarded_script(code, _empty_ns)
             self.assertIn("blocked", result, msg=f"{modname}.shutil not blocked; output={result!r}")
 
     def test_blocks_signal_through_benign_module(self):
         for modname in ("uuid", "enum"):
-            code = (
-                f"import {modname} as m\n"
-                f"try:\n"
-                f"    m.signal\n"
-                f"except AttributeError:\n"
-                f"    print('blocked')\n"
-            )
+            code = f"import {modname} as m\ntry:\n    m.signal\nexcept AttributeError:\n    print('blocked')\n"
             result = run_guarded_script(code, _empty_ns)
             self.assertIn("blocked", result, msg=f"{modname}.signal not blocked; output={result!r}")
 
@@ -831,13 +796,7 @@ class TestTransitiveLeakClosure(unittest.TestCase):
         # `builtins` must be denied even if a wrapped module surfaces it
         # via a transitive import.
         for modname in ("uuid", "enum"):
-            code = (
-                f"import {modname} as m\n"
-                f"try:\n"
-                f"    m.builtins\n"
-                f"except AttributeError:\n"
-                f"    print('blocked')\n"
-            )
+            code = f"import {modname} as m\ntry:\n    m.builtins\nexcept AttributeError:\n    print('blocked')\n"
             result = run_guarded_script(code, _empty_ns)
             self.assertIn("blocked", result, msg=f"{modname}.builtins not blocked; output={result!r}")
 
@@ -845,13 +804,7 @@ class TestTransitiveLeakClosure(unittest.TestCase):
         # uuid, ET, enum are the documented surfaces; the proxy must
         # cover them uniformly.
         for modname in ("uuid", "xml.etree.ElementTree", "enum", "base64", "string"):
-            code = (
-                f"import {modname} as m\n"
-                f"try:\n"
-                f"    m.os\n"
-                f"except AttributeError:\n"
-                f"    print('blocked')\n"
-            )
+            code = f"import {modname} as m\ntry:\n    m.os\nexcept AttributeError:\n    print('blocked')\n"
             result = run_guarded_script(code, _empty_ns)
             self.assertIn("blocked", result, msg=f"{modname}.os not blocked; output={result!r}")
 
@@ -873,23 +826,14 @@ class TestSafeModulePositiveFlows(unittest.TestCase):
         # collections.OrderedDict is a class — `c = collections.OrderedDict`
         # must yield the real type, not a wrapped object that's silently
         # unusable.
-        code = (
-            "import collections\n"
-            "d = collections.OrderedDict()\n"
-            "d['a'] = 1\n"
-            "print(len(d), d['a'])\n"
-        )
+        code = "import collections\nd = collections.OrderedDict()\nd['a'] = 1\nprint(len(d), d['a'])\n"
         result = run_guarded_script(code, _empty_ns)
         self.assertIn("1 1", result)
 
     def test_passes_through_real_submodule(self):
         # collections.abc is a legitimate submodule (non-deny name), must
         # be reachable through the wrapped module surface.
-        code = (
-            "import collections\n"
-            "abc = collections.abc\n"
-            "print(abc.MutableMapping.__name__)\n"
-        )
+        code = "import collections\nabc = collections.abc\nprint(abc.MutableMapping.__name__)\n"
         result = run_guarded_script(code, _empty_ns)
         self.assertIn("MutableMapping", result)
 
@@ -897,10 +841,7 @@ class TestSafeModulePositiveFlows(unittest.TestCase):
         # `from re import search` binds `search` in the namespace to the
         # real function. (`compile` is itself blocked by the AST, not by
         # SafeModule — the FromList path doesn't shadow the AST rule.)
-        code = (
-            "from re import search\n"
-            "print(bool(search('ab+c', 'abc')))\n"
-        )
+        code = "from re import search\nprint(bool(search('ab+c', 'abc')))\n"
         result = run_guarded_script(code, _empty_ns)
         self.assertIn("True", result)
 

@@ -85,10 +85,6 @@ from lucnhan.ui.chat_view import (
     ChatView,
     MessagePlaceholder,
 )
-from lucnhan.ui.message_widgets import (
-    AssistantMessageWidget,
-    UserMessageWidget,
-)
 from tests.qt_real import live_class, requires_real_qt
 
 
@@ -349,8 +345,7 @@ class TestLoadOlderClickGrowsCap(unittest.TestCase):
         self.assertEqual(
             cap_before,
             _RESTORE_DEFAULT_MAX_RENDERED,
-            "The render cap must start at the default for a fresh "
-            "session.",
+            "The render cap must start at the default for a fresh session.",
         )
         # Click it and verify the cap doubled.
         self.view._load_older_btn.click()
@@ -359,16 +354,14 @@ class TestLoadOlderClickGrowsCap(unittest.TestCase):
         self.assertGreater(
             cap_after,
             cap_before,
-            "Clicking 'Load older' must grow the render cap (it is "
-            "a user affordance to page back into older history).",
+            "Clicking 'Load older' must grow the render cap (it is a user affordance to page back into older history).",
         )
         # The cap must have exactly doubled (session is large enough
         # that no clamping kicked in).
         self.assertEqual(
             cap_after,
             cap_before * 2,
-            "_next_cap must double the current cap (the user reaches "
-            "the beginning in log2(N) clicks).",
+            "_next_cap must double the current cap (the user reaches the beginning in log2(N) clicks).",
         )
 
 

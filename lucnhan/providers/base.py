@@ -284,6 +284,12 @@ class LLMProvider(ABC):
             raw = self._call_api(client, kwargs)
         except Exception as e:
             self._handle_api_error(e)
+            # ``_handle_api_error`` is declared NoReturn, so this line is
+            # unreachable unless a subclass violates the contract and returns
+            # instead of raising. Raising here guarantees ``raw`` is always
+            # bound on the ``return`` below and keeps errors from silently
+            # flowing into ``_normalize_response``.
+            raise AssertionError(f"{type(self).__name__}._handle_api_error returned instead of raising") from e
         return self._normalize_response(raw)
 
     def chat_stream(

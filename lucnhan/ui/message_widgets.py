@@ -24,6 +24,7 @@ from .qt_compat import (
     Signal,
 )
 from .styles import host_stylesheet, role_size
+from .theme.applicator import bind_theme, disconnect_theme
 from .theme.manager import ThemeManager, blend_hex
 from .theme.tokens import hex_luminance
 
@@ -323,7 +324,7 @@ class CollapsibleSection(QFrame):
         # host overrides it with a light-on-light style that becomes
         # white text on a white background. Same applies to the title
         # label which inherits from the QFrame default.
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -390,6 +391,10 @@ class CollapsibleSection(QFrame):
     def content_layout(self) -> QVBoxLayout:
         return self._content_layout
 
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
+
 
 # ---------------------------------------------------------------------------
 # User message
@@ -425,7 +430,7 @@ class UserMessageWidget(QFrame):
         # Re-apply on theme change so DARK <-> LIGHT actually updates
         # the bubble colors. ``update()`` is not enough because the
         # per-widget stylesheet was set in __init__ with stale tokens.
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -437,6 +442,10 @@ class UserMessageWidget(QFrame):
         )
         self.setStyleSheet(_user_frame_css(tokens))
         self._content.setStyleSheet(_body_label_css(tokens))
+
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +628,7 @@ class _ThinkingBlock(QFrame):
         self._last_render_time: float = 0.0
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
         self.hide()
 
@@ -684,6 +693,10 @@ class _ThinkingBlock(QFrame):
                 self._deferred_pending = True
                 return
             self._render_content()
+
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
 
     def _on_toggle(self) -> None:
         self._expanded = not self._expanded
@@ -838,7 +851,7 @@ class AssistantMessageWidget(QFrame):
         self._content.hide()  # shown in _render() when visible text arrives
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     @property
     def _full_text(self) -> str:
@@ -883,6 +896,19 @@ class AssistantMessageWidget(QFrame):
                 self._deferred_pending = True
                 return
             self._render()
+
+    def shutdown(self) -> None:
+        """Release ThemeManager subscriptions (memory-leak fix, task-11).
+
+        Disconnects this widget's own theme binding AND the nested
+        ``_thinking_block`` child's binding — the child is owned by this
+        frame (not in the chat layout), so ``ChatView``'s bulk
+        disconnect cannot reach it directly.
+        """
+        disconnect_theme(self)
+        block = getattr(self, "_thinking_block", None)
+        if block is not None:
+            disconnect_theme(block)
 
     def set_continuation(self, continuation: bool) -> None:
         """Hide the speaker name when this segment continues the previous
@@ -1051,7 +1077,7 @@ class ThinkingWidget(QFrame):
         layout.addWidget(self._phrase_label, 1)
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
         self._stopped = False
 
@@ -1100,6 +1126,10 @@ class ThinkingWidget(QFrame):
         except (RuntimeError, TypeError):
             return  # timer already stopped or signal already disconnected — harmless
 
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
+
 
 # ---------------------------------------------------------------------------
 # Other message widgets
@@ -1138,7 +1168,7 @@ class QueuedMessageWidget(QFrame):
         layout.addWidget(self._badge)
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -1160,6 +1190,10 @@ class QueuedMessageWidget(QFrame):
                 f"color: {_muted_text(tokens)}; {_native_text_style(size=10, italic=True)}",
             )
         )
+
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
 
 
 class UserQuestionWidget(QFrame):
@@ -1217,7 +1251,7 @@ class UserQuestionWidget(QFrame):
             self._buttons = []
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -1261,6 +1295,10 @@ class UserQuestionWidget(QFrame):
             )
             for btn in self._buttons:
                 btn.setStyleSheet(host_stylesheet(button_css, button_css))
+
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
 
     def set_option_selected_callback(self, callback) -> None:
         self._option_selected_callback = callback
@@ -1317,7 +1355,7 @@ class ExplorationPhaseWidget(QFrame):
             layout.addWidget(self._reason_label, 1)
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -1344,6 +1382,10 @@ class ExplorationPhaseWidget(QFrame):
                     f"color: {phase_reason}; {_native_text_style(size=11)}",
                 )
             )
+
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
 
 
 class ExplorationFindingWidget(QFrame):
@@ -1399,7 +1441,7 @@ class ExplorationFindingWidget(QFrame):
             self._rel_label = None
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -1432,6 +1474,10 @@ class ExplorationFindingWidget(QFrame):
                     f"color: {tokens.warning}; {_native_text_style(size=12, bold=True)}",
                 )
             )
+
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
 
 
 class ResearchNoteWidget(QFrame):
@@ -1481,7 +1527,7 @@ class ResearchNoteWidget(QFrame):
             self._preview_label = None
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -1514,6 +1560,10 @@ class ResearchNoteWidget(QFrame):
                     f"color: {_subtle_text(tokens)}; {_native_text_style(size=11)}",
                 )
             )
+
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
 
 
 class SubagentEventWidget(QFrame):
@@ -1559,7 +1609,7 @@ class SubagentEventWidget(QFrame):
             self._detail = None
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -1591,6 +1641,10 @@ class SubagentEventWidget(QFrame):
                     f"color: {_subtle_text(tokens)}; {_native_text_style(size=11)}",
                 )
             )
+
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
 
 
 class KnowledgeContextWidget(QFrame):
@@ -1658,7 +1712,7 @@ class KnowledgeContextWidget(QFrame):
             self._detail = None
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -1690,6 +1744,10 @@ class KnowledgeContextWidget(QFrame):
                 )
             )
 
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)
+
 
 class ErrorMessageWidget(QFrame):
     """Displays an error message."""
@@ -1717,7 +1775,7 @@ class ErrorMessageWidget(QFrame):
         layout.addWidget(self._content)
 
         self._apply_styles()
-        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+        bind_theme(self, self._apply_styles)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
@@ -1739,3 +1797,7 @@ class ErrorMessageWidget(QFrame):
                 f"color: {tokens.error}; {_native_text_style(size=12)}",
             )
         )
+
+    def shutdown(self) -> None:
+        """Release the ThemeManager subscription (memory-leak fix, task-11)."""
+        disconnect_theme(self)

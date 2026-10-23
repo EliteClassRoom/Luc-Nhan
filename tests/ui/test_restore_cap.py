@@ -64,7 +64,6 @@ def _run_worker(worker: RestoreWorker) -> _ChunkCollector:
     return collector
 
 
-
 class TestRestoreWorkerCap(unittest.TestCase):
     def test_no_cap_builds_every_spec(self) -> None:
         # Legacy behaviour: max_rendered=None materialises every message.

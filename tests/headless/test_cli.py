@@ -1,4 +1,5 @@
 """Tests for the headless CLI parser and subcommand handlers."""
+
 from __future__ import annotations
 
 import os
@@ -18,6 +19,7 @@ class TestCLIParser(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from lucnhan.cli.headless import build_parser
+
         cls.parser = build_parser()
 
     def test_top_level_help_exits_zero(self):
@@ -110,6 +112,7 @@ class TestCLIParser(unittest.TestCase):
     def test_no_undefined_symbols_at_parser_construction(self):
         """build_parser() must not raise NameError."""
         from lucnhan.cli.headless import build_parser
+
         # Re-build to test from scratch
         p = build_parser()
         self.assertIsNotNone(p)
@@ -135,31 +138,42 @@ class TestCLIParser(unittest.TestCase):
 
     def test_cancel_with_run_id(self):
         """cancel accepts --run-id."""
-        ns = self.parser.parse_args([
-            "cancel", "--server", "http://127.0.0.1:8765",
-            "--token", "t", "--run-id", "abc123"
-        ])
+        ns = self.parser.parse_args(
+            ["cancel", "--server", "http://127.0.0.1:8765", "--token", "t", "--run-id", "abc123"]
+        )
         self.assertEqual(ns.run_id, "abc123")
 
     def test_answer_requires_run_id(self):
         """answer requires --run-id and --answer."""
-        ns = self.parser.parse_args([
-            "answer",
-            "--answer", "my answer",
-            "--server", "http://127.0.0.1:8765",
-            "--token", "t", "--run-id", "abc123"
-        ])
+        ns = self.parser.parse_args(
+            [
+                "answer",
+                "--answer",
+                "my answer",
+                "--server",
+                "http://127.0.0.1:8765",
+                "--token",
+                "t",
+                "--run-id",
+                "abc123",
+            ]
+        )
         self.assertEqual(ns.run_id, "abc123")
         self.assertEqual(ns.answer, "my answer")
 
     def test_prompt_accepts_text(self):
         """prompt accepts --prompt argument."""
-        ns = self.parser.parse_args([
-            "prompt",
-            "--prompt", "test prompt",
-            "--server", "http://127.0.0.1:8765",
-            "--token", "t",
-        ])
+        ns = self.parser.parse_args(
+            [
+                "prompt",
+                "--prompt",
+                "test prompt",
+                "--server",
+                "http://127.0.0.1:8765",
+                "--token",
+                "t",
+            ]
+        )
         self.assertEqual(ns.prompt, "test prompt")
 
 
@@ -169,6 +183,7 @@ class TestCLICommandHandlers(unittest.TestCase):
     def test_cmd_tools_wired_to_correct_handler(self):
         """tools subcommand uses cmd_tools, not cmd_tools_cmd."""
         from lucnhan.cli.headless import build_parser, cmd_tools
+
         p = build_parser()
         action = next(a for a in p._actions if a.dest == "command")
         tools_parser = action.choices.get("tools")
@@ -179,6 +194,7 @@ class TestCLICommandHandlers(unittest.TestCase):
     def test_prompt_subcommand_wired_to_correct_handler(self):
         """prompt subcommand uses cmd_prompt_remote."""
         from lucnhan.cli.headless import build_parser, cmd_prompt_remote
+
         p = build_parser()
         action = next(a for a in p._actions if a.dest == "command")
         prompt_parser = action.choices.get("prompt")
@@ -189,6 +205,7 @@ class TestCLICommandHandlers(unittest.TestCase):
     def test_answer_subcommand_wired_to_correct_handler(self):
         """answer subcommand uses cmd_answer."""
         from lucnhan.cli.headless import build_parser, cmd_answer
+
         p = build_parser()
         action = next(a for a in p._actions if a.dest == "command")
         answer_parser = action.choices.get("answer")
@@ -202,6 +219,7 @@ class TestCLICommandHandlers(unittest.TestCase):
         import inspect
 
         from lucnhan.cli.headless import cmd_shutdown
+
         src = inspect.getsource(cmd_shutdown)
         # The function should NOT contain 'text.splitlines' (the stray fragment).
         self.assertNotIn("text.splitlines", src)
@@ -209,42 +227,62 @@ class TestCLICommandHandlers(unittest.TestCase):
     def test_tool_approval_requires_decision_and_run_id(self):
         """tool-approval requires run-id and decision positional arg."""
         from lucnhan.cli.headless import build_parser
+
         p = build_parser()
-        ns = p.parse_args([
-            "tool-approval", "allow",
-            "--run-id", "abc123",
-            "--server", "http://127.0.0.1:8765",
-            "--token", "t",
-        ])
+        ns = p.parse_args(
+            [
+                "tool-approval",
+                "allow",
+                "--run-id",
+                "abc123",
+                "--server",
+                "http://127.0.0.1:8765",
+                "--token",
+                "t",
+            ]
+        )
         self.assertEqual(ns.decision, "allow")
         self.assertEqual(ns.run_id, "abc123")
 
     def test_tool_approval_rejects_bad_decision(self):
         """tool-approval rejects invalid decision values."""
         from lucnhan.cli.headless import build_parser
+
         p = build_parser()
         with self.assertRaises(SystemExit):
-            p.parse_args([
-                "tool-approval", "bogus",
-                "--run-id", "abc123",
-            ])
+            p.parse_args(
+                [
+                    "tool-approval",
+                    "bogus",
+                    "--run-id",
+                    "abc123",
+                ]
+            )
 
     def test_approval_requires_decision_and_run_id(self):
         """approval requires run-id and decision positional arg."""
         from lucnhan.cli.headless import build_parser
+
         p = build_parser()
-        ns = p.parse_args([
-            "approval", "approve",
-            "--run-id", "abc123",
-            "--server", "http://127.0.0.1:8765",
-            "--token", "t",
-        ])
+        ns = p.parse_args(
+            [
+                "approval",
+                "approve",
+                "--run-id",
+                "abc123",
+                "--server",
+                "http://127.0.0.1:8765",
+                "--token",
+                "t",
+            ]
+        )
         self.assertEqual(ns.decision, "approve")
         self.assertEqual(ns.run_id, "abc123")
 
     def test_serve_ready_timeout_default(self):
         """serve defaults to a positive ready_timeout."""
         from lucnhan.cli.headless import build_parser
+
         p = build_parser()
         ns = p.parse_args(["serve", "test.exe"])
         self.assertEqual(ns.ready_timeout, 120)
@@ -252,6 +290,7 @@ class TestCLICommandHandlers(unittest.TestCase):
     def test_serve_ready_timeout_cli(self):
         """serve --ready-timeout is parsed."""
         from lucnhan.cli.headless import build_parser
+
         p = build_parser()
         ns = p.parse_args(["serve", "test.exe", "--ready-timeout", "60"])
         self.assertEqual(ns.ready_timeout, 60)

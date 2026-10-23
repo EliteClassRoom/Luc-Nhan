@@ -79,9 +79,6 @@ class OrchestraMainAgent:
             config=orchestra_config,
         )
 
-        self._approval_queue: queue.Queue[str] = queue.Queue(maxsize=1)
-        self._user_answer_queue: queue.Queue[str] = queue.Queue(maxsize=1)
-
         self._delegation_count = 0
         self._subtask_history: list[dict[str, Any]] = []
 
@@ -90,7 +87,9 @@ class OrchestraMainAgent:
 
         # Share the approval queue with the parent AgentLoop so the UI can
         # route orchestra approvals through the same channel as tool approvals.
-        self._approval_queue = parent_loop.get_approval_queue() if parent_loop else queue.Queue(maxsize=1)
+        self._approval_queue: queue.Queue[str] = (
+            parent_loop.get_approval_queue() if parent_loop else queue.Queue(maxsize=1)
+        )
 
     def cancel(self) -> None:
         """Cancel the current run."""
@@ -101,6 +100,22 @@ class OrchestraMainAgent:
             from ...core.errors import CancellationError
 
             raise CancellationError("Orchestra run cancelled")
+
+    def _wait_for_approval(self) -> str:
+        """Block until an approval decision arrives, polling for cancellation.
+
+        Never blocks indefinitely without a way out: each 0.5s poll re-checks
+        ``_cancelled`` and raises ``CancellationError`` immediately when the
+        user (or parent loop) cancels, instead of stalling the run for a fixed
+        timeout.
+        """
+
+        while True:
+            self._check_cancelled()
+            try:
+                return self._approval_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue  # poll again — cancel is re-checked at the top
 
     def submit_approval(self, decision: str) -> None:
         """Submit approval decision: 'approve', 'deny'."""
@@ -322,14 +337,10 @@ class OrchestraMainAgent:
             },
         )
 
-        self._check_cancelled()
-
-        try:
-            decision = self._approval_queue.get(timeout=300)
-        except queue.Empty:
-            from ...core.errors import CancellationError
-
-            raise CancellationError("Orchestra approval timeout (user did not respond)") from None
+        # Poll the approval queue, re-checking cancellation each 0.5s so a
+        # user Stop during the approval wait terminates promptly instead of
+        # blocking for the full 300s (mirrors AgentLoop._wait_for_queue).
+        decision = self._wait_for_approval()
 
         self._pending_delegate_id = None
         self._pending_delegate_spec = None

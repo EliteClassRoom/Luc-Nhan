@@ -39,6 +39,7 @@ class TestReadFile(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_reads_relative_utf8(self):
@@ -102,6 +103,8 @@ class TestReadFile(unittest.TestCase):
         body = result.split(":\n", 1)[1]
         self.assertTrue(body.startswith("a\n…(truncated)…"))
         self.assertEqual(len(body.splitlines()[0]), 1)
+
+
 class TestWriteFile(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -112,6 +115,7 @@ class TestWriteFile(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_writes_utf8(self):
@@ -165,17 +169,12 @@ class TestWriteFile(unittest.TestCase):
 
         from lucnhan.ida.tools import file_io as fio
 
-        with _with_root(self.tmp), _patch.object(
-            fio, "atomic_replace", side_effect=OSError("forced failure")
-        ):
+        with _with_root(self.tmp), _patch.object(fio, "atomic_replace", side_effect=OSError("forced failure")):
             result = file_io.write_file("notes/atomic.md", "x")
         self.assertIn("Error", result)
         self.assertIn("forced failure", result)
         leftovers = [
-            root
-            for root, _dirs, files in os.walk(self.tmp)
-            for name in files
-            if name.startswith(".lucnhan-write-")
+            root for root, _dirs, files in os.walk(self.tmp) for name in files if name.startswith(".lucnhan-write-")
         ]
         self.assertEqual(leftovers, [])
 

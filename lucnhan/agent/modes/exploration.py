@@ -35,6 +35,10 @@ from .turn_helpers import execute_single_turn
 if TYPE_CHECKING:
     from ..loop import AgentLoop
 
+# Ceiling for the number of agent turns spent executing a single EXPLORE-phase
+# sub-step inside the mini agent loop.
+_EXECUTE_SUBSTEP_MAX_TURNS = 10
+
 
 def _id_for_pair(finding) -> str:
     from ...memory.ingest import _stable_hash
@@ -211,6 +215,8 @@ def _finalize_explore_memory(loop, state: ExplorationState) -> Generator[TurnEve
     persisted = 0
     raw_errors: list[str] = []
     if raw_store_available:
+        # mypy cannot narrow ``store``/``paths`` through the bool flag.
+        assert store is not None and paths is not None
         # Persist every hypothesis first as unverified. They never
         # pass through the reviewer (the plan keeps them explicitly
         # provisional until a future ``/verify`` promotes them).
@@ -559,7 +565,7 @@ def _run_phase3_execute(
         )
 
         # Mini agent loop for this step
-        for _st in range(10):
+        for _st in range(_EXECUTE_SUBSTEP_MAX_TURNS):
             loop._check_cancelled()
             state.total_turns += 1
             yield TurnEvent.turn_start(state.total_turns)

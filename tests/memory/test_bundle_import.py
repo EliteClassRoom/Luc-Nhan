@@ -287,15 +287,11 @@ class TestBundleImport:
         # longer matches reality.
         with zipfile.ZipFile(bundle, "r") as zf:
             zf.read("manifest.json").decode("utf-8")
-            first_member = next(
-                n for n in zf.namelist() if n.startswith("records/") and n.endswith(".jsonl")
-            )
+            first_member = next(n for n in zf.namelist() if n.startswith("records/") and n.endswith(".jsonl"))
             original_payload = zf.read(first_member)
         tampered = original_payload.replace(b"\n", b"X\n", 1)
         tampered_path = tmp_path / "tampered.zip"
-        with zipfile.ZipFile(bundle, "r") as src, zipfile.ZipFile(
-            tampered_path, "w", zipfile.ZIP_DEFLATED
-        ) as dst:
+        with zipfile.ZipFile(bundle, "r") as src, zipfile.ZipFile(tampered_path, "w", zipfile.ZIP_DEFLATED) as dst:
             for item in src.infolist():
                 data = src.read(item.filename)
                 if item.filename == first_member:
@@ -319,16 +315,12 @@ class TestBundleImport:
         # Lie about the uncompressed_size in the manifest — declare it as 1.
         with zipfile.ZipFile(bundle, "r") as src:
             manifest_data = _json.loads(src.read("manifest.json"))
-            target_entry = next(
-                f for f in manifest_data["files"] if f["name"].startswith("records/")
-            )
+            target_entry = next(f for f in manifest_data["files"] if f["name"].startswith("records/"))
             target_entry["uncompressed_size"] = 1
             src.read("manifest.json")
         # Rebuild zip with the doctored manifest.
         doctored_path = tmp_path / "oversize.zip"
-        with zipfile.ZipFile(bundle, "r") as src, zipfile.ZipFile(
-            doctored_path, "w", zipfile.ZIP_DEFLATED
-        ) as dst:
+        with zipfile.ZipFile(bundle, "r") as src, zipfile.ZipFile(doctored_path, "w", zipfile.ZIP_DEFLATED) as dst:
             for item in src.infolist():
                 if item.filename == "manifest.json":
                     dst.writestr(item, _json.dumps(manifest_data).encode("utf-8"))

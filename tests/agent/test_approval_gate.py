@@ -128,9 +128,7 @@ class TestApprovalGateBehavior(unittest.TestCase):
             ToolDefinition(
                 name="guarded_tool",
                 description="Executes agent-authored code",
-                parameters=[
-                    ParameterSchema(name="code", type="string", description="code", required=True)
-                ],
+                parameters=[ParameterSchema(name="code", type="string", description="code", required=True)],
                 handler=lambda code: (executed.append(code), f"ran {code}")[1],
                 requires_approval=True,
             )
@@ -170,9 +168,7 @@ class TestApprovalGateBehavior(unittest.TestCase):
             ToolDefinition(
                 name="plain_tool",
                 description="No approval needed",
-                parameters=[
-                    ParameterSchema(name="code", type="string", description="c", required=True)
-                ],
+                parameters=[ParameterSchema(name="code", type="string", description="c", required=True)],
                 handler=lambda code: f"ran {code}",
             )
         )

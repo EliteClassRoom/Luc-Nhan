@@ -414,6 +414,85 @@ class TestToolRegistry(unittest.TestCase):
         self.assertEqual(set(registry.list_names()), {"t1", "t2"})
 
 
+class TestRegistryThreadDispatch(unittest.TestCase):
+    """Main-thread marshalling is applied at the registry execution boundary,
+    not inside the ``@tool`` decorator: every ``main_thread=True`` tool's
+    handler must be wrapped by the host ``dispatch_wrapper`` (``idasync``)
+    when executed through any registry path, while ``main_thread=False``
+    tools (emulation) stay unwrapped so they can self-dispatch their IDA
+    sections. This pins the invariant documented in CLAUDE.md §2."""
+
+    @staticmethod
+    def _make_registry(recorded):
+        def dispatch_wrapper(handler):
+            recorded.append(True)
+            return handler
+
+        return ToolRegistry(dispatch_wrapper=dispatch_wrapper)
+
+    def test_main_thread_true_tool_is_wrapped_on_execute(self):
+        recorded = []
+        registry = self._make_registry(recorded)
+
+        @tool(name="mt_true")
+        def mt_true() -> str:
+            """A main-thread tool."""
+            return "ok"
+
+        registry.register_function(mt_true)
+
+        result = registry.execute("mt_true", {})
+        self.assertEqual(result, "ok")
+        self.assertEqual(
+            len(recorded),
+            1,
+            "a main_thread=True default tool must be wrapped by dispatch_wrapper",
+        )
+
+    def test_main_thread_false_tool_not_wrapped(self):
+        recorded = []
+        registry = self._make_registry(recorded)
+
+        @tool(name="mt_false", main_thread=False)
+        def mt_false() -> str:
+            """A self-dispatching tool (like emulation)."""
+            return "ok"
+
+        registry.register_function(mt_false)
+
+        result = registry.execute("mt_false", {})
+        self.assertEqual(result, "ok")
+        self.assertEqual(
+            recorded,
+            [],
+            "a main_thread=False tool must NOT be wrapped (it self-dispatches)",
+        )
+
+    def test_execute_coerced_and_current_thread_wrap_main_thread_tools(self):
+        for method in ("execute_coerced", "execute_current_thread"):
+            with self.subTest(method=method):
+                recorded = []
+                registry = self._make_registry(recorded)
+
+                @tool(name="mt_ctl")
+                def mt_ctl() -> str:
+                    """A main-thread tool."""
+                    return "ok"
+
+                registry.register_function(mt_ctl)
+
+                if method == "execute_coerced":
+                    result = registry.execute_coerced("mt_ctl", {})
+                else:
+                    result = registry.execute_current_thread("mt_ctl", {})
+                self.assertEqual(result, "ok")
+                self.assertEqual(
+                    len(recorded),
+                    1,
+                    f"{method} must wrap a main_thread=True tool",
+                )
+
+
 class TestBuiltinTools(unittest.TestCase):
     """Test that built-in tools are loadable (using mocks)."""
 

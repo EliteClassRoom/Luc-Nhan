@@ -33,7 +33,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from lucnhan.memory.workspace import IdentityRequest
@@ -50,8 +50,6 @@ _COMMON_IDA_PATHS: dict[str, list[str]] = {
         r"C:\Program Files\IDA Pro 9.2\idat.exe",
         r"C:\Program Files\IDA Pro 9\idat.exe",
         r"C:\Program Files\IDA Professional 9.0\idat.exe",
-        r"E:\ida pro 9.2\idat.exe",
-        r"E:\ida pro 9\idat.exe",
     ],
     "linux": [
         "/opt/ida-pro-9.0/idat",
@@ -230,9 +228,9 @@ def _build_ida_env(cfg_path: str) -> dict[str, str]:
 def _launch_ida_ask(
     ida_exe: str,
     binary: str,
-    bootstrap_cfg: dict,
+    bootstrap_cfg: dict[str, Any],
     timeout: float = 600.0,
-) -> dict:
+) -> dict[str, Any]:
     """Launch IDA with ``-A -S<script>`` for ask (one-shot) mode.
 
     Uses ``subprocess.run()`` with ``shell=False`` argument vectors.
@@ -301,20 +299,30 @@ def _launch_ida_ask(
 def _launch_ida_serve(
     ida_exe: str,
     binary: str,
-    bootstrap_cfg: dict,
+    bootstrap_cfg: dict[str, Any],
     ready_file: str | None = None,
     ready_timeout: float = 120.0,
-) -> dict:
+    server_token: str | None = None,
+) -> dict[str, Any]:
     """Launch IDA in serve mode.
 
     Generates a direct ``-S`` bootstrap script, launches IDA with
     ``shell=False`` and stdout/stderr redirected to ``DEVNULL`` (no
     abandoned pipes).  Polls the *ready_file* for the server URL and
     auth token.
+
+    The auth token is passed to the IDA subprocess via the
+    ``LUCNHAN_HEADLESS_TOKEN`` environment variable so it NEVER touches
+    the on-disk bootstrap JSON (which is a world-writable-ish temp file
+    during startup).  The bootstrap still accepts ``server_token`` inside
+    the JSON for backward compatibility with older launchers.
     """
+    # Strip any token from the on-disk bootstrap JSON so it never lands on a
+    # temp file — the token travels via LUCNHAN_HEADLESS_TOKEN env instead.
+    cfg_to_write = {k: v for k, v in bootstrap_cfg.items() if k != "server_token"}
     fd, cfg_path = tempfile.mkstemp(suffix=".json", prefix="lucnhan_bootstrap_")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(bootstrap_cfg, f)
+        json.dump(cfg_to_write, f)
 
     # Create an internal ready file if the user didn't provide one.
     internal_ready_file: str | None = None
@@ -322,18 +330,20 @@ def _launch_ida_serve(
         rfd, internal_ready_file = tempfile.mkstemp(suffix=".json", prefix="lucnhan_ready_")
         os.close(rfd)
         # Re-open cfg to add the ready_file field.
-        bootstrap_cfg["ready_file"] = internal_ready_file
+        cfg_to_write["ready_file"] = internal_ready_file
         with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(bootstrap_cfg, f)
+            json.dump(cfg_to_write, f)
         ready_file = internal_ready_file
 
     s_path = _generate_bootstrap_script()
     env = _build_ida_env(cfg_path)
+    if server_token:
+        env["LUCNHAN_HEADLESS_TOKEN"] = server_token
     args, temp_db = _build_ida_args(ida_exe, binary, s_path)
 
     # For serve, redirect stdout/stderr to DEVNULL â€” never leave pipes
     # attached to a long-lived process.
-    kwargs: dict = dict(
+    kwargs: dict[str, Any] = dict(
         args=args,
         env=env,
         stdout=subprocess.DEVNULL,
@@ -441,7 +451,7 @@ def _extract_last_json_line(text: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _decode_json_response(raw: bytes) -> dict:
+def _decode_json_response(raw: bytes) -> dict[str, Any]:
     """Parse JSON bytes, ensuring the result is a dict.
 
     Returns ``{"error": True, "message": "..."}`` on non-dict JSON or
@@ -456,7 +466,7 @@ def _decode_json_response(raw: bytes) -> dict:
     return parsed
 
 
-def _http_post(url: str, token: str, data: dict | None = None) -> dict:
+def _http_post(url: str, token: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Send an HTTP POST request with Bearer token.
 
     Network errors, non-2xx responses, invalid JSON, and non-object JSON
@@ -483,7 +493,7 @@ def _http_post(url: str, token: str, data: dict | None = None) -> dict:
         return {"error": True, "message": str(e)}
 
 
-def _http_get(url: str, token: str) -> dict:
+def _http_get(url: str, token: str) -> dict[str, Any]:
     """Send an HTTP GET request with Bearer token.
 
     Network errors, non-2xx responses, invalid JSON, and non-object JSON
@@ -534,7 +544,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
         print(f"ERROR: Binary not found: {binary}", file=sys.stderr)
         sys.exit(2)
 
-    bootstrap_cfg: dict = {
+    bootstrap_cfg: dict[str, Any] = {
         "mode": "ask",
         "prompt": args.prompt,
         "wait_for_auto_analysis": not args.no_auto_wait,
@@ -609,8 +619,6 @@ def cmd_serve(args: argparse.Namespace) -> None:
         }
     if ready_file:
         bootstrap_cfg["ready_file"] = ready_file
-    if args.token:
-        bootstrap_cfg["server_token"] = args.token
     if args.provider:
         bootstrap_cfg["provider"] = args.provider
     if args.model:
@@ -618,7 +626,14 @@ def cmd_serve(args: argparse.Namespace) -> None:
     if args.api_base:
         bootstrap_cfg["api_base"] = args.api_base
 
-    ready = _launch_ida_serve(ida_exe, binary, bootstrap_cfg, ready_file=ready_file, ready_timeout=args.ready_timeout)
+    ready = _launch_ida_serve(
+        ida_exe,
+        binary,
+        bootstrap_cfg,
+        ready_file=ready_file,
+        ready_timeout=args.ready_timeout,
+        server_token=args.token,
+    )
 
     if "error" in ready:
         print(f"ERROR: {ready.get('message', 'Failed to start serve mode')}", file=sys.stderr)
@@ -627,7 +642,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
     print(json.dumps(ready))
 
 
-def _die_on_error(result: dict, label: str) -> None:
+def _die_on_error(result: dict[str, Any], label: str) -> None:
     """Exit with code 1 and print error result if result has an error key."""
     if "error" in result:
         print(f"ERROR ({label}): {json.dumps(result)}", file=sys.stderr)

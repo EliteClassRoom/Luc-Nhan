@@ -9,7 +9,7 @@ from ... import constants
 from ...core.errors import ToolError
 from ...core.logging import log_debug
 from ...tools.base import tool
-from ...tools.script_guard import run_guarded_script, safe_builtins
+from ...tools.script_guard import _wrap_module, run_guarded_script, safe_builtins
 from ...tools.tool_substitution import format_suggestions_for_agent, suggest_substitutions
 from ...tools.validate_idapython import validate_idapython
 
@@ -34,7 +34,18 @@ _cached_namespace: dict | None = None
 
 
 def _get_base_namespace() -> dict:
-    """Return a cached namespace with common IDA modules pre-imported."""
+    """Return a per-call namespace with common IDA modules pre-imported.
+
+    The raw modules are imported once and cached, but every call wraps them
+    in a *fresh* :class:`~lucnhan.tools.script_guard.SafeModule` so the
+    global deny-set applies uniformly — a raw module would otherwise expose
+    ``idaapi.os`` / ``idc.sys`` / ``ida_bytes.subprocess`` transitively,
+    bypassing the ``script_guard`` deny list that ``import`` statements go
+    through. Returning fresh wrappers per call also means user code never
+    shares (and cannot mutate) a module accessor with a later execution,
+    and the returned ``result`` dict is a copy so it cannot pollute the
+    cache.
+    """
     global _cached_namespace
     if _cached_namespace is None:
         ns: dict = {}
@@ -44,9 +55,9 @@ def _get_base_namespace() -> dict:
             except ImportError as e:
                 log_debug(f"Optional IDA module {mod_name!r} not available: {e}")
         _cached_namespace = ns
-    # Return a copy so user code can't pollute the cache
     result: dict = {"__builtins__": safe_builtins()}
-    result.update(_cached_namespace)
+    for name, module in _cached_namespace.items():
+        result[name] = _wrap_module(module)
     return result
 
 

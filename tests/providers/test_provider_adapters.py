@@ -17,6 +17,7 @@ class TestBuiltinModels(unittest.TestCase):
 
     def test_anthropic_builtin_models(self):
         from lucnhan.providers.anthropic_provider import AnthropicProvider
+
         p = AnthropicProvider(api_key="test", model="test")
         models = p._builtin_models()
         self.assertTrue(len(models) > 0)
@@ -26,6 +27,7 @@ class TestBuiltinModels(unittest.TestCase):
 
     def test_openai_builtin_models(self):
         from lucnhan.providers.openai_provider import OpenAIProvider
+
         p = OpenAIProvider(api_key="test", model="test")
         models = p._builtin_models()
         self.assertTrue(len(models) > 0)
@@ -34,6 +36,7 @@ class TestBuiltinModels(unittest.TestCase):
 
     def test_gemini_builtin_models(self):
         from lucnhan.providers.gemini_provider import GeminiProvider
+
         models = GeminiProvider._builtin_models()
         self.assertTrue(len(models) > 0)
         for m in models:
@@ -46,6 +49,7 @@ class TestProviderCapabilities(unittest.TestCase):
 
     def test_anthropic_capabilities(self):
         from lucnhan.providers.anthropic_provider import AnthropicProvider
+
         p = AnthropicProvider(api_key="test", model="test")
         caps = p.capabilities
         self.assertTrue(caps.streaming)
@@ -54,6 +58,7 @@ class TestProviderCapabilities(unittest.TestCase):
 
     def test_openai_capabilities(self):
         from lucnhan.providers.openai_provider import OpenAIProvider
+
         p = OpenAIProvider(api_key="test", model="test")
         caps = p.capabilities
         self.assertTrue(caps.streaming)
@@ -61,6 +66,7 @@ class TestProviderCapabilities(unittest.TestCase):
 
     def test_gemini_capabilities(self):
         from lucnhan.providers.gemini_provider import GeminiProvider
+
         p = GeminiProvider(api_key="test", model="test")
         caps = p.capabilities
         self.assertTrue(caps.streaming)

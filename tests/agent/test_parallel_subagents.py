@@ -321,9 +321,7 @@ class TestConcurrencyOverlap(unittest.TestCase):
         loop_mod.SubagentRunner = fake_runner
         started = time.monotonic()
         try:
-            gen = loop._execute_tool_calls(
-                [_spawn_call("slow one", "c1"), _spawn_call("slow two", "c2")]
-            )
+            gen = loop._execute_tool_calls([_spawn_call("slow one", "c1"), _spawn_call("slow two", "c2")])
             try:
                 while True:
                     gen.send(None)
@@ -372,9 +370,7 @@ class TestJoinCancellation(unittest.TestCase):
 
         # Every child was cancelled exactly once, and the loop re-raised.
         assert sorted(cancelled) == sorted([id1, id2])
-        assert all(
-            manager.get(aid).status == SubagentStatus.CANCELLED for aid in (id1, id2)
-        )
+        assert all(manager.get(aid).status == SubagentStatus.CANCELLED for aid in (id1, id2))
         # No results were produced for the cancelled children.
         assert tool_results == [None, None]
 
@@ -413,9 +409,7 @@ class TestJoinCancellation(unittest.TestCase):
         try:
             canceller = threading.Thread(target=cancel_when_both_registered)
             canceller.start()
-            gen = loop._execute_tool_calls(
-                [_spawn_call("hang one", "c1"), _spawn_call("hang two", "c2")]
-            )
+            gen = loop._execute_tool_calls([_spawn_call("hang one", "c1"), _spawn_call("hang two", "c2")])
             with self.assertRaises(CancellationError):
                 while True:
                     gen.send(None)

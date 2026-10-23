@@ -89,8 +89,22 @@ def test_search_strings_not_cacheable() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_returns_none_when_missing(tmp_path: Any) -> None:
-    """No cache key resolution -> short-circuit to None without touching FS."""
+def test_returns_none_when_missing(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No cache key resolution -> short-circuit to None without touching FS.
+
+    The ambient ``resolve_active_cache_key`` consults host DB helpers
+    (``core.host.get_database_path`` / ``get_database_instance_id``) whose
+    value depends on which sibling test modules ran earlier in the suite
+    (a fileless ``_StubModule``/IDA-mock capture can leak a MagicMock into
+    ``string_cache``'s bound host import).  Pinning the key resolution to an
+    empty identity asserts the *intent* of this test — no key -> ``None`` —
+    independently of host/pollution state.
+    """
+
+    def _no_resolution() -> tuple[str, str, str]:
+        return "", "", ""
+
+    monkeypatch.setattr(string_cache, "resolve_active_cache_key", _no_resolution)
     cache_dir = str(tmp_path)
     result = string_cache.get_existing_string_cache(cache_dir)
     assert result is None

@@ -133,6 +133,11 @@ class SessionControllerBase:
         self._db_instance_id = self._ensure_db_instance_id()
         self._runtime_init_done = threading.Event()
         self._runtime_shutdown = threading.Event()
+        # Serializes background MCP reloads. Without it, rapid Settings
+        # saves spawn concurrent ``reload`` daemon threads that race each
+        # other's ``stop``/``start_servers``. Guarded per controller
+        # instance, never held across a blocking reload.
+        self._mcp_reload_lock = threading.Lock()
         # Host-provided callbacks for advanced/deferred tool registration.
         # The base class does not import IDA modules — host subclasses
         # wire the actual registration function in (e.g. IDA Pro passes
@@ -1366,15 +1371,34 @@ class SessionControllerBase:
         """Reload MCP config and restart servers in the background.
 
         Safe to call at any time — stops existing servers first, then
-        re-reads the config and starts newly-enabled servers.
+        re-reads the config and starts newly-enabled servers. Serialized:
+        at most one reload is in flight at a time (a second call while one
+        is running is skipped, so rapid Settings saves cannot race
+        ``stop``/``start_servers``), and reload is refused once the
+        controller has begun shutdown.
         """
-        thread = threading.Thread(
-            target=self._mcp_manager.reload,
-            args=(self.tool_registry,),
-            daemon=True,
+        if self._runtime_shutdown.is_set():
+            return
+        if not self._mcp_reload_lock.acquire(blocking=False):
+            log_debug("MCP reload skipped: a reload is already in progress")
+            return
+        # The daemon worker releases the lock when the reload finishes, so
+        # a later call observes "in progress" for the whole reload.
+        worker = threading.Thread(
+            target=self._mcp_reload_worker,
             name="lucnhan-mcp-reload",
+            daemon=True,
         )
-        thread.start()
+        worker.start()
+
+    def _mcp_reload_worker(self) -> None:
+        """Run one MCP reload on a background thread and release the guard."""
+        try:
+            self._mcp_manager.reload(self.tool_registry)
+        except Exception as exc:  # reload is best-effort — never crash a thread
+            log_error(f"MCP reload failed: {exc}")
+        finally:
+            self._mcp_reload_lock.release()
 
     def shutdown(self) -> None:
         self._runtime_shutdown.set()

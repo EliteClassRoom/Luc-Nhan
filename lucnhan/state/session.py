@@ -51,6 +51,35 @@ def _truncate_tool_result(tr: ToolResult, max_chars: int) -> ToolResult:
     )
 
 
+def _drop_leading_orphan_tool(result: list[Message], total: int) -> int:
+    """Remove a TOOL message that now sits at the front of *result*.
+
+    A TOOL message at the front has no preceding message, which means its
+    ASSISTANT tool_call partner was just trimmed away (or it was orphaned
+    in the input). Left in place it would be rejected by OpenAI/Anthropic,
+    so drop it unconditionally.
+    """
+    while result and result[0].role == Role.TOOL:
+        total -= _estimate_tokens(result.pop(0))
+    return total
+
+
+def _drop_over_budget(result: list[Message], total: int, budget: int) -> int:
+    """Trim *result* (the message tail) in place until it is under *budget*.
+
+    Preserves an integer floor of 3 tail messages and always removes an
+    orphaned TOOL result together with the front message that orphaned it,
+    so no assistant tool_call / tool_result pair is ever split.
+    """
+    while total > budget and len(result) > 3:
+        total -= _estimate_tokens(result.pop(0))
+        total = _drop_leading_orphan_tool(result, total)
+        while result and result[0].role != Role.USER and len(result) > 3:
+            total -= _estimate_tokens(result.pop(0))
+            total = _drop_leading_orphan_tool(result, total)
+    return total
+
+
 @dataclass
 class SessionState:
     """Holds the state of one Luc Nhan conversation session.
@@ -110,12 +139,13 @@ class SessionState:
     def add_message(self, msg: Message) -> None:
         with self._lock:
             self.messages.append(msg)
-            self._token_estimate += _estimate_tokens(msg)
+            # Estimate tokens once and reuse it for both the running total
+            # and the per-message cache (the message is likely to be
+            # re-counted during provider preparation below).
+            est = _estimate_tokens(msg)
+            self._token_estimate += est
             self._revision += 1
-            # Cache the per-message token estimate for the just-added
-            # object — it's likely to be re-counted during provider
-            # preparation below.
-            self._message_token_cache[id(msg)] = _estimate_tokens(msg)
+            self._message_token_cache[id(msg)] = est
             if msg.token_usage:
                 self._record_usage_locked(msg.token_usage)
 
@@ -249,6 +279,10 @@ class SessionState:
             sanitized = self._truncate_results(sanitized)
             if context_window > 0:
                 sanitized = self._trim_to_budget(sanitized, context_window)
+                # Trimming may remove the partner of a tool_use/tool_result
+                # pair; re-patch any resulting orphaned tool results so the
+                # provider does not reject the payload with 400.
+                sanitized = self._sanitize(sanitized)
 
         with self._lock:
             # Re-check after re-acquiring the lock — another thread may
@@ -352,7 +386,17 @@ class SessionState:
 
     @staticmethod
     def _trim_to_budget(messages: list[Message], context_window: int) -> list[Message]:
-        """Drop oldest messages if estimated tokens exceed context budget."""
+        """Drop oldest messages if estimated tokens exceed context budget.
+
+        Always preserves ``messages[0]`` (the system prompt / first user
+        message), and drops whole message *pairs* from the front of the
+        tail so an assistant tool_call and its TOOL result stay together
+        (avoids orphaned tool results that OpenAI/Anthropic reject with
+        400). At least 4 messages are always kept, matching the previous
+        minimum.
+        """
+        if context_window <= 0:
+            return messages
         # Reserve 25% for system prompt + new completion
         budget = int(context_window * 0.75)
         total = sum(_estimate_tokens(m) for m in messages)
@@ -360,18 +404,15 @@ class SessionState:
         if total <= budget:
             return messages
 
-        # Drop messages from the front, keeping at least the last 4
-        result = list(messages)
-        while total > budget and len(result) > 4:
-            removed = result.pop(0)
-            total -= _estimate_tokens(removed)
-            # If we removed a USER msg, also drop the following assistant+tool
-            # to keep message pairs coherent
-            while result and result[0].role != Role.USER and len(result) > 4:
-                removed = result.pop(0)
-                total -= _estimate_tokens(removed)
+        # Keep the head message unconditionally (mirrors prune_messages).
+        head = messages[:1]
+        result = list(messages[1:])
+        total -= _estimate_tokens(messages[0]) if messages else 0
 
-        return result
+        # Drop messages from the front of the tail, keeping ≥ 3 tail
+        # messages (≥ 4 in total once the preserved head is prepended).
+        total = _drop_over_budget(result, total, budget)
+        return head + result
 
     def message_count(self) -> int:
         with self._lock:

@@ -98,7 +98,7 @@ jobs:
           python -m ruff check lucnhan/
 
           echo "── mypy ──"
-          python -m mypy lucnhan/core lucnhan/providers
+          python -m mypy lucnhan/core lucnhan/providers lucnhan/memory lucnhan/ui
 
           echo "── pytest ──"
           python -m pytest --tb=short -q

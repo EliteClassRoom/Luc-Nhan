@@ -41,10 +41,8 @@ install_ida_mocks()
 
 from lucnhan.agent.loop import AgentLoop
 from lucnhan.agent.turn import TurnEvent, TurnEventType
-from lucnhan.core.config import LucNhanConfig
 from lucnhan.core.types import ModelInfo, ProviderCapabilities, ToolCall
 from lucnhan.providers.base import LLMProvider
-from lucnhan.state.session import SessionState
 
 
 class _NullProvider(LLMProvider):
@@ -202,8 +200,7 @@ class TestAskUserOptionsMixedShapes(unittest.TestCase):
         loop = _make_loop()
         event = _collect_event(
             loop,
-            {"question": "Confirm?",
-             "options": ["Yes", {"label": "No"}, {"text": "Maybe"}]},
+            {"question": "Confirm?", "options": ["Yes", {"label": "No"}, {"text": "Maybe"}]},
         )
         self.assertEqual(event.metadata["options"], ["Yes", "No", "Maybe"])
 

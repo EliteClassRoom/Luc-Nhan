@@ -63,9 +63,7 @@ class TestDiscovery(unittest.TestCase):
 
     def test_discover_caches_result(self) -> None:
         d = A2ADispatcher()
-        with patch.object(
-            SubprocessBridge, "discover", return_value=[_make_agent()]
-        ) as mock_disc:
+        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]) as mock_disc:
             d.discover()
             d.discover()  # second call must use the cache
         self.assertEqual(mock_disc.call_count, 1)
@@ -109,14 +107,18 @@ class TestSubprocessRunTask(unittest.TestCase):
             yield A2AEvent(type="stdout", text="hello from claude")
             yield A2AEvent(type="completed", text="final result", done=True)
 
-        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]), \
-             patch.object(SubprocessBridge, "run_task", new=fake_run), \
-             patch.object(dispatcher_module, "SubprocessBridge", return_value=bridge):
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]),
+            patch.object(SubprocessBridge, "run_task", new=fake_run),
+            patch.object(dispatcher_module, "SubprocessBridge", return_value=bridge),
+        ):
             # We patch the *class* but the dispatcher captured a fresh
             # instance already; re-instantiate for the patched class.
             d2 = A2ADispatcher()
-            with patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]), \
-                 patch.object(SubprocessBridge, "run_task", new=fake_run):
+            with (
+                patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]),
+                patch.object(SubprocessBridge, "run_task", new=fake_run),
+            ):
                 events, result = _drain_to_return(d2.run_task("claude", "summarize"))
 
         # The dispatcher yields TEXT_DELTA for the stdout line, then
@@ -135,14 +137,13 @@ class TestSubprocessRunTask(unittest.TestCase):
             # args[2] is the task. Use kwargs first, fall back to args.
             task = kwargs.get("task") or (args[2] if len(args) > 2 else "")
             if task.startswith("-"):
-                raise ValueError(
-                    f"SubprocessBridge task starts with '-': "
-                    f"{task[:80]!r}"
-                )
+                raise ValueError(f"SubprocessBridge task starts with '-': {task[:80]!r}")
             yield A2AEvent(type="completed", text="never reached", done=True)
 
-        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]), \
-             patch.object(SubprocessBridge, "run_task", new=fake_run):
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]),
+            patch.object(SubprocessBridge, "run_task", new=fake_run),
+        ):
             events, result = _drain_to_return(d.run_task("claude", "--malicious"))
 
         # The dispatcher must convert the ValueError into an error
@@ -164,8 +165,10 @@ class TestCancellation(unittest.TestCase):
             received["cancel"] = kwargs.get("cancel_event")
             yield A2AEvent(type="completed", text="ok", done=True)
 
-        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]), \
-             patch.object(SubprocessBridge, "run_task", new=fake_run):
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]),
+            patch.object(SubprocessBridge, "run_task", new=fake_run),
+        ):
             _drain_to_return(d.run_task("claude", "x", cancel_event=cancel))
 
         self.assertIs(received["cancel"], cancel)
@@ -179,8 +182,10 @@ class TestTruncation(unittest.TestCase):
         def fake_run(*args, **kwargs):
             yield A2AEvent(type="completed", text=long_text, done=True)
 
-        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]), \
-             patch.object(SubprocessBridge, "run_task", new=fake_run):
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]),
+            patch.object(SubprocessBridge, "run_task", new=fake_run),
+        ):
             _, result = _drain_to_return(d.run_task("claude", "x"))
 
         # 8000 chars + marker
@@ -193,8 +198,10 @@ class TestTruncation(unittest.TestCase):
         def fake_run(*args, **kwargs):
             yield A2AEvent(type="completed", text="short", done=True)
 
-        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]), \
-             patch.object(SubprocessBridge, "run_task", new=fake_run):
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]),
+            patch.object(SubprocessBridge, "run_task", new=fake_run),
+        ):
             _, result = _drain_to_return(d.run_task("claude", "x"))
 
         self.assertEqual(result, "short")
@@ -222,8 +229,10 @@ class TestCancelDuringSubprocess(unittest.TestCase):
             assert kwargs["cancel_event"].is_set()
             yield A2AEvent(type="cancelled", text="cancelled", done=True)
 
-        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]), \
-             patch.object(SubprocessBridge, "run_task", new=fake_run):
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]),
+            patch.object(SubprocessBridge, "run_task", new=fake_run),
+        ):
             _drain_to_return(d.run_task("claude", "x", cancel_event=cancel))
 
         # The dispatcher must not have touched the event — it should
@@ -241,9 +250,11 @@ class TestLazyA2AClient(unittest.TestCase):
         def fake_run(*args, **kwargs):
             yield A2AEvent(type="completed", text="ok", done=True)
 
-        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]), \
-             patch.object(SubprocessBridge, "run_task", new=fake_run), \
-             patch.object(A2AClient, "__init__", return_value=None) as mock_init:
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]),
+            patch.object(SubprocessBridge, "run_task", new=fake_run),
+            patch.object(A2AClient, "__init__", return_value=None) as mock_init,
+        ):
             d.discover()
             d.run_task("claude", "x")
         # A2AClient.__init__ must NEVER be called for a subprocess-only path
@@ -255,12 +266,14 @@ class TestConfigA2AAgents(unittest.TestCase):
 
     def test_config_a2a_agents_passed_to_registry(self) -> None:
         d = A2ADispatcher(a2a_agents=[{"name": "custom", "endpoint": "https://x"}])
-        with patch.object(SubprocessBridge, "discover", return_value=[]), \
-             patch.object(
-                 dispatcher_module.ExternalAgentRegistry,
-                 "discover",
-                 return_value=[_make_agent("custom", "a2a")],
-             ) as mock_discover:
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[]),
+            patch.object(
+                dispatcher_module.ExternalAgentRegistry,
+                "discover",
+                return_value=[_make_agent("custom", "a2a")],
+            ) as mock_discover,
+        ):
             d.discover()
         # The first arg to registry.discover is the config_a2a_agents list
         args, kwargs = mock_discover.call_args
@@ -292,8 +305,10 @@ class TestA2APath(unittest.TestCase):
         fake_client.cancel_task.return_value = True
 
         agent = _make_agent("remote", "a2a")
-        with patch.object(SubprocessBridge, "discover", return_value=[agent]), \
-             patch.object(A2ADispatcher, "_get_a2a_client", return_value=fake_client):
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[agent]),
+            patch.object(A2ADispatcher, "_get_a2a_client", return_value=fake_client),
+        ):
             events, result = _drain_to_return(d.run_task("remote", "do thing"))
 
         # Should yield at least one TEXT_DELTA (the result) and the
@@ -313,8 +328,10 @@ class TestA2APath(unittest.TestCase):
         fake_client = MagicMock()
         fake_client.send_task.return_value = failed_task
 
-        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent("remote", "a2a")]), \
-             patch.object(A2ADispatcher, "_get_a2a_client", return_value=fake_client):
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent("remote", "a2a")]),
+            patch.object(A2ADispatcher, "_get_a2a_client", return_value=fake_client),
+        ):
             events, result = _drain_to_return(d.run_task("remote", "x"))
 
         error_events = [e for e in events if e.type == TurnEventType.ERROR]
@@ -337,19 +354,20 @@ class TestA2APath(unittest.TestCase):
         fake_client.send_task.return_value = running_task
         fake_client.cancel_task.return_value = True
 
-        with patch.object(SubprocessBridge, "discover", return_value=[_make_agent("remote", "a2a")]), \
-             patch.object(A2ADispatcher, "_get_a2a_client", return_value=fake_client), \
-             patch("threading.Event.wait", side_effect=[False, True]):
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent("remote", "a2a")]),
+            patch.object(A2ADispatcher, "_get_a2a_client", return_value=fake_client),
+            patch("threading.Event.wait", side_effect=[False, True]),
+        ):
             # Schedule the cancel to fire during the second wait.
             def fire_cancel():
                 cancel.set()
+
             # First call returns False (timeout), second returns True
             # (event set). We use side_effect=call to fire the cancel
             # mid-test.
             cancel.set()  # set before run so first is_set() check exits
-            events, result = _drain_to_return(
-                d.run_task("remote", "x", cancel_event=cancel)
-            )
+            events, result = _drain_to_return(d.run_task("remote", "x", cancel_event=cancel))
 
         error_events = [e for e in events if e.type == TurnEventType.ERROR]
         self.assertEqual(len(error_events), 1)

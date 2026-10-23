@@ -38,37 +38,53 @@ class TestKnowledgeBase(unittest.TestCase):
 
     def test_one_hypothesis_no_function_not_ready(self):
         kb = KnowledgeBase()
-        kb.add_finding(Finding(
-            category="hypothesis", address=None,
-            summary="Change constant", relevance="high",
-        ))
+        kb.add_finding(
+            Finding(
+                category="hypothesis",
+                address=None,
+                summary="Change constant",
+                relevance="high",
+            )
+        )
         self.assertFalse(kb.has_minimum_for_planning)
 
     def test_low_relevance_hypothesis_not_sufficient(self):
         """Require at least one high-relevance hypothesis."""
         kb = KnowledgeBase()
         kb.add_function(FunctionInfo(address=0x401000, name="main", summary="entry"))
-        kb.add_finding(Finding(
-            category="hypothesis", address=None,
-            summary="Maybe something", relevance="low",
-        ))
+        kb.add_finding(
+            Finding(
+                category="hypothesis",
+                address=None,
+                summary="Maybe something",
+                relevance="low",
+            )
+        )
         self.assertFalse(kb.has_minimum_for_planning)
 
     def test_high_relevance_hypothesis_sufficient(self):
         kb = KnowledgeBase()
         kb.add_function(FunctionInfo(address=0x401000, name="main", summary="entry"))
-        kb.add_finding(Finding(
-            category="hypothesis", address=None,
-            summary="Change constant at 0x401248 from 3 to 6", relevance="high",
-        ))
+        kb.add_finding(
+            Finding(
+                category="hypothesis",
+                address=None,
+                summary="Change constant at 0x401248 from 3 to 6",
+                relevance="high",
+            )
+        )
         self.assertTrue(kb.has_minimum_for_planning)
 
     def test_add_finding_auto_extracts_hypothesis(self):
         kb = KnowledgeBase()
-        kb.add_finding(Finding(
-            category="hypothesis", address=None,
-            summary="Double the score", relevance="high",
-        ))
+        kb.add_finding(
+            Finding(
+                category="hypothesis",
+                address=None,
+                summary="Double the score",
+                relevance="high",
+            )
+        )
         self.assertEqual(len(kb.hypotheses), 1)
         self.assertEqual(kb.hypotheses[0], "Double the score")
 
@@ -88,24 +104,35 @@ class TestKnowledgeBase(unittest.TestCase):
         gap = kb.planning_gap_description
         self.assertIn("0 hypotheses", gap)
 
-        kb.add_finding(Finding(
-            category="hypothesis", address=None,
-            summary="low one", relevance="low",
-        ))
+        kb.add_finding(
+            Finding(
+                category="hypothesis",
+                address=None,
+                summary="low one",
+                relevance="low",
+            )
+        )
         gap = kb.planning_gap_description
         self.assertIn("high-relevance", gap)
 
     def test_to_summary_includes_all_sections(self):
         kb = KnowledgeBase(user_goal="Double the score")
-        kb.add_function(FunctionInfo(
-            address=0x401000, name="score_handler",
-            summary="Handles score updates", relevance="high",
-        ))
-        kb.add_finding(Finding(
-            category="hypothesis", address=0x401248,
-            summary="Change add [score], 10 to add [score], 20",
-            relevance="high",
-        ))
+        kb.add_function(
+            FunctionInfo(
+                address=0x401000,
+                name="score_handler",
+                summary="Handles score updates",
+                relevance="high",
+            )
+        )
+        kb.add_finding(
+            Finding(
+                category="hypothesis",
+                address=0x401248,
+                summary="Change add [score], 10 to add [score], 20",
+                relevance="high",
+            )
+        )
         summary = kb.to_summary()
         self.assertIn("Double the score", summary)
         self.assertIn("0x401000", summary)
@@ -124,13 +151,15 @@ class TestExplorationStateTransitions(unittest.TestCase):
 
     def test_explore_to_plan_allowed_with_findings(self):
         state = ExplorationState()
-        state.knowledge_base.add_function(
-            FunctionInfo(address=0x401000, name="main", summary="entry")
+        state.knowledge_base.add_function(FunctionInfo(address=0x401000, name="main", summary="entry"))
+        state.knowledge_base.add_finding(
+            Finding(
+                category="hypothesis",
+                address=None,
+                summary="Test",
+                relevance="high",
+            )
         )
-        state.knowledge_base.add_finding(Finding(
-            category="hypothesis", address=None,
-            summary="Test", relevance="high",
-        ))
         allowed, _reason = state.can_transition_to(ExplorationPhase.PLAN)
         self.assertTrue(allowed)
 
@@ -153,9 +182,15 @@ class TestExplorationStateTransitions(unittest.TestCase):
         state = ExplorationState()
         state.phase = ExplorationPhase.PLAN
         state.modification_plan = ModificationPlan(
-            changes=[PlannedChange(index=0, target_address=0x401000,
-                                   current_behavior="jz", proposed_behavior="jnz",
-                                   patch_strategy="change opcode")]
+            changes=[
+                PlannedChange(
+                    index=0,
+                    target_address=0x401000,
+                    current_behavior="jz",
+                    proposed_behavior="jnz",
+                    patch_strategy="change opcode",
+                )
+            ]
         )
         allowed, _ = state.can_transition_to(ExplorationPhase.EXECUTE)
         self.assertTrue(allowed)
@@ -170,10 +205,14 @@ class TestExplorationStateTransitions(unittest.TestCase):
     def test_execute_to_save_allowed_with_patches(self):
         state = ExplorationState()
         state.phase = ExplorationPhase.EXECUTE
-        state.patches_applied.append(PatchRecord(
-            address=0x401000, original_bytes=b"\x74", new_bytes=b"\x75",
-            description="JZ -> JNZ",
-        ))
+        state.patches_applied.append(
+            PatchRecord(
+                address=0x401000,
+                original_bytes=b"\x74",
+                new_bytes=b"\x75",
+                description="JZ -> JNZ",
+            )
+        )
         allowed, _ = state.can_transition_to(ExplorationPhase.SAVE)
         self.assertTrue(allowed)
 
@@ -204,23 +243,23 @@ class TestPatchSummary(unittest.TestCase):
         self.assertFalse(ps.all_verified)
 
     def test_computes_totals(self):
-        ps = PatchSummary(patches=[
-            PatchRecord(address=0x1000, original_bytes=b"\x74", new_bytes=b"\x75",
-                        verified=True),
-            PatchRecord(address=0x2000, original_bytes=b"\x00\x00", new_bytes=b"\x01\x02",
-                        verified=True),
-        ])
+        ps = PatchSummary(
+            patches=[
+                PatchRecord(address=0x1000, original_bytes=b"\x74", new_bytes=b"\x75", verified=True),
+                PatchRecord(address=0x2000, original_bytes=b"\x00\x00", new_bytes=b"\x01\x02", verified=True),
+            ]
+        )
         ps.compute()
         self.assertEqual(ps.total_bytes_modified, 3)  # 1 + 2
         self.assertTrue(ps.all_verified)
 
     def test_not_all_verified(self):
-        ps = PatchSummary(patches=[
-            PatchRecord(address=0x1000, original_bytes=b"\x74", new_bytes=b"\x75",
-                        verified=True),
-            PatchRecord(address=0x2000, original_bytes=b"\x00", new_bytes=b"\x01",
-                        verified=False),
-        ])
+        ps = PatchSummary(
+            patches=[
+                PatchRecord(address=0x1000, original_bytes=b"\x74", new_bytes=b"\x75", verified=True),
+                PatchRecord(address=0x2000, original_bytes=b"\x00", new_bytes=b"\x01", verified=False),
+            ]
+        )
         ps.compute()
         self.assertFalse(ps.all_verified)
 

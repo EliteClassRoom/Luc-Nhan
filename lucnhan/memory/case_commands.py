@@ -52,10 +52,10 @@ def parse_case_command(text: str) -> ParsedCaseCommand | None:
 
     if len(parts) > _MAX_ARGS:
         parts = parts[:_MAX_ARGS]
-    parts = tuple(p[:_MAX_ARG_LEN] for p in parts)
+    parts_tuple = tuple(p[:_MAX_ARG_LEN] for p in parts)
 
-    action = parts[0]
-    args = parts[1:]
+    action = parts_tuple[0]
+    args = parts_tuple[1:]
     return ParsedCaseCommand(action=action, args=args)
 
 

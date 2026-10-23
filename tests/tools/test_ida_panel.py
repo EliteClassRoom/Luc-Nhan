@@ -38,6 +38,7 @@ from lucnhan.ida.ui.panel import LucNhanPanel
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def _make_panel() -> LucNhanPanel:
     """Create LucNhanPanel bypassing __init__, injecting mock _core."""
     panel = object.__new__(LucNhanPanel)
@@ -50,6 +51,7 @@ def _make_panel() -> LucNhanPanel:
 # ---------------------------------------------------------------------------
 # shutdown
 # ---------------------------------------------------------------------------
+
 
 class TestLucNhanIdaPanelShutdown(unittest.TestCase):
     def test_shutdown_calls_core_shutdown(self):
@@ -75,6 +77,7 @@ class TestLucNhanIdaPanelShutdown(unittest.TestCase):
 # prefill_input
 # ---------------------------------------------------------------------------
 
+
 class TestLucNhanIdaPanelPrefillInput(unittest.TestCase):
     def test_prefill_delegates_when_core_available(self):
         panel = _make_panel()
@@ -97,6 +100,7 @@ class TestLucNhanIdaPanelPrefillInput(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # __getattr__
 # ---------------------------------------------------------------------------
+
 
 class TestLucNhanIdaPanelGetattr(unittest.TestCase):
     def test_getattr_delegates_to_core(self):
@@ -122,6 +126,7 @@ class TestLucNhanIdaPanelGetattr(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # OnClose
 # ---------------------------------------------------------------------------
+
 
 class TestLucNhanIdaPanelOnClose(unittest.TestCase):
     def test_on_close_calls_shutdown(self):

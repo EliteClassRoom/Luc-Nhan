@@ -164,7 +164,6 @@ class TestSubprocessBridgeTaskValidation(unittest.TestCase):
         self.assertIsNotNone(cmd)
 
 
-
 class TestCurateSubprocessEnv(unittest.TestCase):
     """The subprocess bridge must not leak the parent's full os.environ
     (which typically contains API keys and Luc Nhan-internal state) to
@@ -173,6 +172,7 @@ class TestCurateSubprocessEnv(unittest.TestCase):
 
     def setUp(self):
         from lucnhan.agent.a2a.subprocess_bridge import _curate_subprocess_env
+
         self._curate = _curate_subprocess_env
 
     def test_excludes_secret_api_keys(self):
@@ -225,6 +225,7 @@ class TestCurateSubprocessEnv(unittest.TestCase):
             curated = self._curate({"MY_VAR": "hello"})
             # Only MY_VAR should be in curated (all passthrough keys absent).
             assert curated == {"MY_VAR": "hello"}
+
 
 if __name__ == "__main__":
     unittest.main()

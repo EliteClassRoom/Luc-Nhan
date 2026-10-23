@@ -23,8 +23,6 @@ import tests as _tests
 
 _tests.purge_lucnhan_stubs()
 
-from tests.qt_real import requires_real_qt
-
 from lucnhan.agent.loop_commands import _handle_report_command
 from lucnhan.agent.turn import TurnEvent, TurnEventType
 from lucnhan.core.config import LucNhanConfig
@@ -32,6 +30,7 @@ from lucnhan.memory.report import ReportSaveResult, build_report_context
 from lucnhan.memory.schema import KnowledgeMemory
 from lucnhan.state.session import SessionState
 from tests.knowledge._helpers import fresh_store
+from tests.qt_real import requires_real_qt
 
 
 class _FakeLoop:

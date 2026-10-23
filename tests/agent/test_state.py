@@ -19,6 +19,77 @@ from lucnhan.state.history import SessionHistory
 from lucnhan.state.session import SessionState
 
 
+class TestTrimToBudget(unittest.TestCase):
+    """_trim_to_budget must preserve the head message and never orphan tools."""
+
+    def test_trim_preserves_head_direct(self):
+        msgs = [
+            Message(role=Role.SYSTEM, content="system"),
+            Message(role=Role.USER, content="u1"),
+            Message(role=Role.USER, content="u2"),
+            Message(role=Role.USER, content="u3"),
+        ]
+        # A tiny budget forces trimming down to the floor.
+        trimmed = SessionState._trim_to_budget(msgs, context_window=1)
+        self.assertTrue(trimmed)
+        self.assertEqual(trimmed[0].role, Role.SYSTEM)
+        # Floor: head + at least 3 tail messages.
+        self.assertGreaterEqual(len(trimmed), 4)
+
+    def test_trim_keeps_tool_pair_coherent(self):
+        tc = ToolCall(id="c1", name="dec", arguments={})
+        msgs = [
+            Message(role=Role.SYSTEM, content="system"),
+            Message(role=Role.ASSISTANT, content="", tool_calls=[tc]),
+            Message(
+                role=Role.TOOL,
+                content="",
+                tool_results=[ToolResult(tool_call_id="c1", name="dec", content="ok")],
+            ),
+            Message(role=Role.USER, content="z"),
+        ]
+        trimmed = SessionState._trim_to_budget(msgs, context_window=1)
+        self.assertEqual(trimmed[0].role, Role.SYSTEM)
+        # A surviving TOOL message must still have its ASSISTANT partner.
+        for i, m in enumerate(trimmed):
+            if m.role == Role.TOOL:
+                prev = trimmed[i - 1]
+                self.assertEqual(prev.role, Role.ASSISTANT)
+                ids = {t.id for t in prev.tool_calls}
+                for tr in m.tool_results:
+                    self.assertIn(tr.tool_call_id, ids)
+
+    def test_get_messages_for_provider_no_orphan_after_trim(self):
+        """Aggressive trimming via get_messages_for_provider must never leave an
+        orphaned TOOL result (re-sanitize runs after trim)."""
+        tc = ToolCall(id="call_1", name="decompile_function", arguments={})
+        s = SessionState()
+        for m in [
+            Message(role=Role.SYSTEM, content="system"),
+            Message(role=Role.USER, content="u1"),
+            Message(role=Role.USER, content="u2"),
+            Message(role=Role.USER, content="u3"),
+            Message(role=Role.ASSISTANT, content="", tool_calls=[tc]),
+            Message(
+                role=Role.TOOL,
+                content="",
+                tool_results=[ToolResult(tool_call_id="call_1", name="decompile_function", content="ok")],
+            ),
+            Message(role=Role.USER, content="u4"),
+            Message(role=Role.USER, content="u5"),
+        ]:
+            s.add_message(m)
+        result = s.get_messages_for_provider(context_window=1)
+        self.assertEqual(result[0].role, Role.SYSTEM)
+        for i, m in enumerate(result):
+            if m.role == Role.TOOL:
+                prev = result[i - 1]
+                self.assertEqual(prev.role, Role.ASSISTANT)
+                ids = {t.id for t in prev.tool_calls}
+                for tr in m.tool_results:
+                    self.assertIn(tr.tool_call_id, ids)
+
+
 class TestSessionState(unittest.TestCase):
     def test_default_session(self):
         s = SessionState(provider_name="anthropic", model_name="claude")
@@ -219,11 +290,7 @@ class TestProviderMessageCache(unittest.TestCase):
             Message(
                 role=Role.TOOL,
                 content="",
-                tool_results=[
-                    ToolResult(
-                        tool_call_id="call_1", name="decompile_function", content="ok"
-                    )
-                ],
+                tool_results=[ToolResult(tool_call_id="call_1", name="decompile_function", content="ok")],
             ),
             Message(role=Role.USER, content="u4"),
             Message(role=Role.USER, content="u5"),

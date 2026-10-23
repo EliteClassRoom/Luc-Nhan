@@ -27,6 +27,11 @@ from ...core.logging import log_error
 from ..qt_compat import QObject, QPalette, QTimer
 from .manager import ThemeManager
 
+# Default polling cadence for the IDA theme watcher (ms). Kept as a named
+# module constant so the inline magic number is documented and overridable
+# at the single call site (see ``LucNhanPanel._maybe_start_theme_watcher``).
+_DEFAULT_POLL_INTERVAL_MS = 500
+
 
 def _palette_signature(pal: QPalette) -> tuple[str, str]:
     """Two-color signature ``(Window, WindowText)`` used for change detection.
@@ -54,7 +59,7 @@ class IDAThemeWatcher(QObject):
     is the single source of truth for "should I reschedule?".
     """
 
-    def __init__(self, interval_ms: int = 500) -> None:
+    def __init__(self, interval_ms: int = _DEFAULT_POLL_INTERVAL_MS) -> None:
         super().__init__()
         self._interval_ms = interval_ms
         self._last_sig: tuple[str, str] | None = None

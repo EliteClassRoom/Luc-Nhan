@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from ..core.config import LucNhanConfig
 from .case_repository import CaseRepository
-from .identity import IdentityResolution, MemoryIdentityResolver
+from .identity import IdentityChoice, IdentityResolution, MemoryIdentityResolver
 from .registry import MemoryRegistry
 from .workspace import (
     IdentityRequest,
@@ -49,7 +49,7 @@ class MemoryWorkspaceManager:
     def bind(
         self,
         request: IdentityRequest,
-        choice: object | None = None,
+        choice: IdentityChoice | None = None,
     ) -> IdentityResolution:
         """Bind identity evidence to a workspace and return the resolution."""
         resolution = self._resolver.resolve(request, choice)

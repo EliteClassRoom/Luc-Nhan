@@ -16,6 +16,9 @@ from .turn_helpers import execute_single_turn
 if TYPE_CHECKING:
     from ..loop import AgentLoop
 
+# Ceiling for the number of agent turns spent executing a single plan step.
+_MAX_STEP_TURNS = 20
+
 _PLAN_GENERATION_PROMPT = (
     "You are in PLAN MODE. Analyze the user's request and create a numbered "
     "step-by-step plan. Output ONLY the plan as a numbered list, one step per "
@@ -83,7 +86,7 @@ def _execute_step(
     )
     step_msg = Message(role=Role.USER, content=step_prompt)
     loop.session.add_message(step_msg)
-    max_step_turns = 20
+    max_step_turns = _MAX_STEP_TURNS
     status = "completed"
     try:
         for _st in range(max_step_turns):

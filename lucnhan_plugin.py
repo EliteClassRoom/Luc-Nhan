@@ -39,7 +39,14 @@ except Exception as _el_exc:  # pragma: no cover — defensive
     _sys.stderr.write(f"[Lục nhãn] early_log import failed: {_el_exc}\n")
     _el = None  # type: ignore[assignment]
 
-import idaapi
+# Import idaapi via importlib (Shiboken UAF mitigation, CLAUDE.md §1) —
+# never a bare module-level ``import idaapi``, so the import is recoverable
+# and traceable. idaapi always exists when running inside IDA; fail loudly
+# (not silently bind ``None``) if it is somehow absent.
+try:
+    idaapi = importlib.import_module("idaapi")
+except ImportError:
+    raise ImportError("Luc Nhan requires the IDA 'idaapi' module; this plugin only loads inside IDA Pro.") from None
 
 # ---------------------------------------------------------------------------
 # Shiboken __import__ hook re-entrancy guard
@@ -84,10 +91,15 @@ def _ensure_import_guard() -> None:
     whenever the surrounding code observes a Shiboken restart.
 
     The bypass target (``_shiboken_import``) is pinned ONCE at module
-    load to the unmodified CPython ``__import__``. We never reassign it
-    inside this function — if we did, a Shiboken restart would overwrite
-    the bypass target with the very hook we are trying to bypass, and
-    the guard would silently become a no-op.
+    load to whatever ``builtins.__import__`` was at that moment (which, if
+    Shiboken6 has already patched it — common inside IDA — is the Shiboken
+    hook itself, NOT raw CPython). That pin is still correct because the
+    re-entrant (nested) path does NOT use ``_shiboken_import``: it calls
+    ``importlib.__import__`` directly, which is always the safe CPython
+    implementation. We never reassign ``_shiboken_import`` inside this
+    function — if we did, a Shiboken restart would overwrite the first-level
+    target with the very hook we are trying to bypass, and the guard would
+    silently become a no-op.
     """
     if _el is not None:
         _el._early_log("guard:pre_install")

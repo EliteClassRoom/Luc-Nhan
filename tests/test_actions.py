@@ -118,9 +118,16 @@ class TestActionHandlers(unittest.TestCase):
 
     def test_fallback_function_name(self):
         """When func_name is None, handlers should use sub_<ea> format."""
-        for name in ["_handle_explain", "_handle_rename", "_handle_deobfuscate",
-                      "_handle_vuln_audit", "_handle_suggest_types", "_handle_annotate",
-                      "_handle_clean_mcode", "_handle_xref_analysis"]:
+        for name in [
+            "_handle_explain",
+            "_handle_rename",
+            "_handle_deobfuscate",
+            "_handle_vuln_audit",
+            "_handle_suggest_types",
+            "_handle_annotate",
+            "_handle_clean_mcode",
+            "_handle_xref_analysis",
+        ]:
             handler = getattr(actions_mod, name, None)
             if handler is None:
                 continue

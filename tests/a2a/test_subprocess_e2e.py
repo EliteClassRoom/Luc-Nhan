@@ -90,6 +90,7 @@ class TestSubprocessE2E(unittest.TestCase):
         # Re-use the real validator so the test exercises the
         # same security guard as production.
         from lucnhan.agent.a2a.subprocess_bridge import _validate_task
+
         _validate_task(task)
         return [_PYTHON, "-c", task]
 
@@ -97,11 +98,7 @@ class TestSubprocessE2E(unittest.TestCase):
 
     def test_subprocess_emits_stdout_chunks(self) -> None:
         """A printing Python script yields one stdout event per print() line."""
-        task = _python_task(
-            "import sys\n"
-            "for i in range(3):\n"
-            "    print(f'line {i}', flush=True)\n"
-        )
+        task = _python_task("import sys\nfor i in range(3):\n    print(f'line {i}', flush=True)\n")
         events = list(self.bridge.run_task(_python_agent(), task, timeout=10))
         # Filter to stdout events
         stdout_events = [e for e in events if e.type == "stdout"]
@@ -120,10 +117,7 @@ class TestSubprocessE2E(unittest.TestCase):
         completed text. Non-JSON falls back to the raw text.
         """
         task = _python_task(
-            "print('log line 1')\n"
-            "print('log line 2')\n"
-            "import json\n"
-            "print(json.dumps({'content': 'final answer'}))\n"
+            "print('log line 1')\nprint('log line 2')\nimport json\nprint(json.dumps({'content': 'final answer'}))\n"
         )
         events = list(self.bridge.run_task(_python_agent(), task, timeout=10))
         completed = next(e for e in events if e.type == "completed")
@@ -164,11 +158,7 @@ class TestSubprocessE2E(unittest.TestCase):
         timer = threading.Timer(0.2, cancel.set)
         timer.start()
         start = time.time()
-        events = list(
-            self.bridge.run_task(
-                _python_agent(), task, timeout=30, cancel_event=cancel
-            )
-        )
+        events = list(self.bridge.run_task(_python_agent(), task, timeout=30, cancel_event=cancel))
         elapsed = time.time() - start
         timer.cancel()
         # Should bail out within ~1s of cancellation, not 10s.
@@ -183,11 +173,7 @@ class TestSubprocessE2E(unittest.TestCase):
         task = _python_task("import time; time.sleep(5)")
         cancel = threading.Event()
         cancel.set()  # pre-cancelled
-        events = list(
-            self.bridge.run_task(
-                _python_agent(), task, timeout=10, cancel_event=cancel
-            )
-        )
+        events = list(self.bridge.run_task(_python_agent(), task, timeout=10, cancel_event=cancel))
         cancelled = next((e for e in events if e.type == "cancelled"), None)
         self.assertIsNotNone(cancelled)
         # Should return quickly — we don't even spawn a process.
@@ -215,11 +201,7 @@ class TestSubprocessE2E(unittest.TestCase):
         timer = threading.Timer(0.2, cancel.set)
         timer.start()
         start = time.time()
-        events = list(
-            self.bridge.run_task(
-                _python_agent(), task, timeout=30, cancel_event=cancel
-            )
-        )
+        events = list(self.bridge.run_task(_python_agent(), task, timeout=30, cancel_event=cancel))
         elapsed = time.time() - start
         timer.cancel()
         # Cancel must terminate the subprocess within ~2s.

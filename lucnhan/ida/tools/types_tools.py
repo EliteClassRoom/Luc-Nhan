@@ -6,7 +6,7 @@ import importlib
 import json
 from typing import Annotated, Any
 
-from ...core.errors import ToolError
+from ...core.errors import ToolError, ToolValidationError
 from ...core.host import HAS_HEXRAYS as _HAS_HEXRAYS
 from ...core.logging import log_debug
 from ...tools.base import parse_addr, tool
@@ -34,6 +34,52 @@ for _mod_name, _target in (
         globals()[_target] = importlib.import_module(_mod_name)
     except ImportError as _e:
         log_debug(f"IDA module not available: {_mod_name}: {_e}")
+
+#: Maximum number of struct/enum entries rendered by the listing tools before
+#: a ``... (truncated)`` marker is appended. Keeps LLM output bounded.
+_LIST_LIMIT = 200
+
+
+def _require_nonempty(value: object, label: str) -> str:
+    """Return *value* as a stripped, non-empty string.
+
+    LLM-supplied names/comment/type strings must not be empty or blank; an
+    empty string passed to ``ida_name.set_name`` / ``idc.SetType`` would fail
+    silently or create a garbage symbol. Raises ``ToolValidationError`` so the
+    agent gets an actionable message instead of a cryptic failure.
+    """
+    if not isinstance(value, str):
+        value = str(value)
+    stripped = value.strip()
+    if not stripped:
+        raise ToolValidationError(
+            f"Parameter '{label}' must be a non-empty string.",
+            tool_name="types",
+        )
+    return stripped
+
+
+def _require_json(value: object, label: str) -> list:
+    """Parse *value* as a JSON array, raising ``ToolValidationError`` on bad input."""
+    if not isinstance(value, str):
+        raise ToolValidationError(
+            f"Parameter '{label}' must be a JSON array string.",
+            tool_name="types",
+        )
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise ToolValidationError(
+            f"Parameter '{label}' is not valid JSON: {e}",
+            tool_name="types",
+        ) from e
+    if not isinstance(parsed, list):
+        raise ToolValidationError(
+            f"Parameter '{label}' must decode to a JSON array, got {type(parsed).__name__}.",
+            tool_name="types",
+        )
+    return parsed
+
 
 if _HAS_HEXRAYS:
 
@@ -335,7 +381,7 @@ def _list_structs_ida9(name_filter: str) -> str:
         size = tif.get_size()
         lines.append(f"  {sname:40s} size={size}  ({kind})")
         count += 1
-        if count >= 200:
+        if count >= _LIST_LIMIT:
             lines.append("  ... (truncated)")
             break
 
@@ -382,7 +428,8 @@ def create_struct(
     """Create a new struct with typed fields."""
     if ida_typeinf is None:
         return "ida_typeinf not available"
-    return _create_struct_ida9(name, json.loads(fields))
+    struct_name = _require_nonempty(name, "name")
+    return _create_struct_ida9(struct_name, _require_json(fields, "fields"))
 
 
 @tool(category="types", mutating=True)
@@ -402,7 +449,8 @@ def modify_struct(
     """Modify an existing struct: add/remove/rename/retype fields."""
     if ida_typeinf is None:
         return "ida_typeinf not available"
-    return _modify_struct_ida9(name, action, field_name, new_name, field_type, offset, comment, new_size)
+    struct_name = _require_nonempty(name, "name")
+    return _modify_struct_ida9(struct_name, action, field_name, new_name, field_type, offset, comment, new_size)
 
 
 @tool(category="types")
@@ -443,18 +491,19 @@ def create_enum(
 ) -> str:
     """Create a new enum with name/value pairs."""
     _require_ida_enum()
-    member_list = json.loads(members)
+    enum_name = _require_nonempty(name, "name")
+    member_list = _require_json(members, "members")
 
     # IDA 9.x: idc still has enum wrappers even without ida_enum
     _enum_mod = ida_enum or idc
 
-    eid = _enum_mod.get_enum(name)
+    eid = _enum_mod.get_enum(enum_name)
     if eid != idc.BADADDR:
-        return f"Enum '{name}' already exists"
+        return f"Enum '{enum_name}' already exists"
 
-    eid = _enum_mod.add_enum(idc.BADADDR, name, 0)
+    eid = _enum_mod.add_enum(idc.BADADDR, enum_name, 0)
     if eid == idc.BADADDR:
-        return f"Failed to create enum '{name}'"
+        return f"Failed to create enum '{enum_name}'"
 
     if bitfield and ida_enum is not None:
         ida_enum.set_enum_bf(eid, True)
@@ -465,7 +514,7 @@ def create_enum(
         bmask = mval if bitfield else -1
         _enum_mod.add_enum_member(eid, mname, mval, bmask)
 
-    return f"Created enum '{name}' with {len(member_list)} members"
+    return f"Created enum '{enum_name}' with {len(member_list)} members"
 
 
 @tool(category="types", mutating=True)
@@ -478,11 +527,12 @@ def modify_enum(
 ) -> str:
     """Modify an existing enum."""
     _require_ida_enum()
+    enum_name = _require_nonempty(name, "name")
     _enum_mod = ida_enum or idc
 
-    eid = _enum_mod.get_enum(name)
+    eid = _enum_mod.get_enum(enum_name)
     if eid == idc.BADADDR:
-        return f"Enum '{name}' not found"
+        return f"Enum '{enum_name}' not found"
 
     if action == "add_member":
         err = _enum_mod.add_enum_member(eid, member_name, value, -1)
@@ -524,7 +574,7 @@ def _get_enum_info_ida9(name: str) -> str:
             mname = edm.name
             mval = edm.value
             lines.append(f"  {mname:40s} = 0x{mval:x} ({mval})")
-    except (AttributeError, Exception) as e:
+    except AttributeError as e:
         lines.append(f"  (iteration not supported: {e})")
 
     return "\n".join(lines)
@@ -583,7 +633,7 @@ def _list_enums_ida9(name_filter: str) -> str:
             continue
         lines.append(f"  {ename:40s}")
         found += 1
-        if found >= 200:
+        if found >= _LIST_LIMIT:
             lines.append("  ... (truncated)")
             break
 
@@ -610,7 +660,7 @@ def list_enums(
                 nmembs = ida_enum.get_enum_size(eid)
                 lines.append(f"  {ename:40s} ({nmembs} members)")
                 found += 1
-            if found >= 200:
+            if found >= _LIST_LIMIT:
                 lines.append("  ... (truncated)")
                 break
 
@@ -633,7 +683,9 @@ def create_typedef(
     """Create a type alias (typedef)."""
     if idc is None:
         return "idc module not available"
-    decl = f"typedef {base_type} {name};"
+    alias_name = _require_nonempty(name, "name")
+    alias_base = _require_nonempty(base_type, "base_type")
+    decl = f"typedef {alias_base} {alias_name};"
     result = idc.parse_decls(decl, 0)
     if result is not None and result >= 0:
         return f"Created typedef: {decl}"
@@ -648,7 +700,8 @@ def apply_struct_to_address(
     """Apply a struct type at a data address."""
     if ida_typeinf is None:
         return "ida_typeinf not available"
-    return _apply_struct_to_address_ida9(struct_name, parse_addr(address))
+    clean_name = _require_nonempty(struct_name, "struct_name")
+    return _apply_struct_to_address_ida9(clean_name, parse_addr(address))
 
 
 @tool(category="types", mutating=True)
@@ -663,18 +716,20 @@ def apply_type_to_variable(
     if ida_typeinf is None:
         return "ida_typeinf not available"
 
+    clean_var = _require_nonempty(var_name, "var_name")
+    clean_type = _require_nonempty(type_str, "type_str")
     ea = parse_addr(func_address)
     try:
         cfunc = ida_hexrays.decompile(ea)
     except Exception as e:
         return f"Decompilation failed: {e}"
 
-    tif = _parse_type(type_str)
+    tif = _parse_type(clean_type)
     if tif is None:
         return f"Failed to parse type: {type_str}"
 
     for lv in cfunc.get_lvars():
-        if lv.name == var_name:
+        if lv.name == clean_var:
             # Approach 1 (IDA 9.x preferred): modify_user_lvar_info with MLI_TYPE
             # This persists the type change to the database.
             modify_fn = getattr(ida_hexrays, "modify_user_lvar_info", None)
@@ -732,11 +787,12 @@ def set_function_prototype(
     if idc is None:
         return "idc module not available"
 
+    clean_proto = _require_nonempty(prototype, "prototype")
     ea = parse_addr(address)
-    ok = idc.SetType(ea, prototype)
+    ok = idc.SetType(ea, clean_proto)
     if ok:
-        return f"Set prototype at 0x{ea:x}: {prototype}"
-    return f"Failed to set prototype. Check syntax: {prototype}"
+        return f"Set prototype at 0x{ea:x}: {clean_proto}"
+    return f"Failed to set prototype. Check syntax: {clean_proto}"
 
 
 @tool(category="types", mutating=True)
@@ -747,7 +803,8 @@ def import_c_header(
     if idc is None:
         return "idc module not available"
 
-    result = idc.parse_decls(c_code, 0)
+    clean_code = _require_nonempty(c_code, "c_code")
+    result = idc.parse_decls(clean_code, 0)
     if result is not None and result >= 0:
         return f"Successfully parsed C declarations ({result} type(s) defined)"
     return "Failed to parse C declarations. Check syntax."
@@ -818,6 +875,7 @@ def propagate_type(
     """Re-run type propagation after struct changes to update xrefs and decompilation."""
     if ida_typeinf is None:
         return "ida_typeinf not available"
+    struct_name = _require_nonempty(struct_name, "struct_name")
     return _propagate_type_ida9(struct_name)
 
 
@@ -859,25 +917,28 @@ def import_type_from_library(
 ) -> str:
     """Import a specific type from a loaded TIL."""
 
+    clean_til = _require_nonempty(til_name, "til_name")
+    clean_type = _require_nonempty(type_name, "type_name")
+
     tif = ida_typeinf.tinfo_t()
-    if tif.get_named_type(None, type_name):
-        return f"Type '{type_name}' already exists locally"
+    if tif.get_named_type(None, clean_type):
+        return f"Type '{clean_type}' already exists locally"
 
     # Try to find in the specified TIL
-    til = ida_typeinf.load_til(til_name, None)
+    til = ida_typeinf.load_til(clean_til, None)
     if til is None:
-        return f"Type library '{til_name}' not found"
+        return f"Type library '{clean_til}' not found"
 
-    if tif.get_named_type(til, type_name):
+    if tif.get_named_type(til, clean_type):
         # Import to local types
         if idc is None:
             return "idc module not available"
         decl = str(tif)
-        result = idc.parse_decls(f"typedef {decl} {type_name};", 0)
+        result = idc.parse_decls(f"typedef {decl} {clean_type};", 0)
         if result is not None and result >= 0:
-            return f"Imported '{type_name}' from '{til_name}'"
+            return f"Imported '{clean_type}' from '{clean_til}'"
 
-    return f"Type '{type_name}' not found in '{til_name}'"
+    return f"Type '{clean_type}' not found in '{clean_til}'"
 
 
 @tool(category="types")

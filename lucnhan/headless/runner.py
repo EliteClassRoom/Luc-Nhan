@@ -28,6 +28,10 @@ EXIT_CANCELLED = 6
 EXIT_APPROVAL_REQUIRED = 7
 EXIT_SERVER_AUTH_FAILED = 8
 
+# How long (seconds) to block on each ``get_event`` poll while waiting for
+# the next agent event.
+_EVENT_POLL_TIMEOUT = 0.5
+
 
 # Approval event types that cannot be auto-resolved in one-shot mode.
 _APPROVAL_EVENT_TYPES: frozenset[TurnEventType] = frozenset(
@@ -131,7 +135,7 @@ def run_prompt(
     # which error path we take.
     try:
         while True:
-            event = runner.get_event(timeout=0.5)
+            event = runner.get_event(timeout=_EVENT_POLL_TIMEOUT)
             if event is None:
                 if not controller.is_agent_running:
                     break

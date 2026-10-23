@@ -14,6 +14,7 @@ ensure_pyside6_stubs()
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_record(reversible: bool = True, description: str = "desc", tool_name: str = "tool") -> MagicMock:
     rec = MagicMock()
     rec.reversible = reversible
@@ -26,6 +27,7 @@ def _make_record(reversible: bool = True, description: str = "desc", tool_name: 
 def _make_panel():
     """Build a MutationLogPanel with all Qt calls mocked out."""
     from lucnhan.ui.mutation_log_view import MutationLogPanel
+
     # Use ``MutationLogPanel.__new__`` rather than ``object.__new__``
     # — ``MutationLogPanel`` inherits from ``QFrame`` (a C-level Qt
     # class) which rejects ``object.__new__`` with ``TypeError``.
@@ -43,6 +45,7 @@ def _make_panel():
 # ---------------------------------------------------------------------------
 # _update_count — label text and button state
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateCount(unittest.TestCase):
     def setUp(self):
@@ -95,6 +98,7 @@ class TestUpdateCount(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # remove_last
 # ---------------------------------------------------------------------------
+
 
 class TestRemoveLast(unittest.TestCase):
     def _panel_with_n(self, n: int, reversible: bool = True):
@@ -152,6 +156,7 @@ class TestRemoveLast(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # clear_all
 # ---------------------------------------------------------------------------
+
 
 class TestClearAll(unittest.TestCase):
     def _panel_with_n(self, n: int):

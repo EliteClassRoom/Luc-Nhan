@@ -403,8 +403,6 @@ class TestBuiltinTriggerMatching(unittest.TestCase):
                         f"naming-convention stole a general query: {query}",
                     )
 
-
-
     def test_malware_analysis_requires_hypothesis_logging_and_verification(self):
         """The built-in malware-analysis skill must instruct the agent to:
 
@@ -419,7 +417,7 @@ class TestBuiltinTriggerMatching(unittest.TestCase):
         body = skill.body
         # Hypothesis logging contract.
         self.assertIn("exploration_report", body)
-        self.assertIn("category=\"hypothesis\"", body)
+        self.assertIn('category="hypothesis"', body)
         self.assertIn("summary=", body)
         self.assertIn("evidence=", body)
         self.assertIn("relevance=", body)

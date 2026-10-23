@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import Annotated
 
+from ...core.errors import ToolValidationError
 from ...core.host import HAS_HEXRAYS as _HAS_HEXRAYS
 from ...core.logging import log_debug
 from ...tools.base import parse_addr, tool
@@ -19,6 +20,24 @@ except ImportError:
     log_debug("IDA annotation modules not available — annotation tools will use guard checks")
 
 
+def _require_nonempty(value: object, label: str) -> str:
+    """Return *value* as a stripped, non-empty string.
+
+    LLM-supplied names/comment/type strings must not be blank — passing an
+    empty string to ``ida_name.set_name`` / ``idc.set_cmt`` fails silently or
+    creates garbage. Raises ``ToolValidationError`` with an actionable message.
+    """
+    if not isinstance(value, str):
+        value = str(value)
+    stripped = value.strip()
+    if not stripped:
+        raise ToolValidationError(
+            f"Parameter '{label}' must be a non-empty string.",
+            tool_name="annotations",
+        )
+    return stripped
+
+
 @tool(category="annotations", mutating=True)
 def rename_function(
     address: Annotated[str, "Function address (hex string)"],
@@ -26,15 +45,16 @@ def rename_function(
 ) -> str:
     """Rename a function."""
 
+    clean_name = _require_nonempty(new_name, "new_name")
     ea = parse_addr(address)
     func = ida_funcs.get_func(ea)
     if func is None:
         return f"No function at 0x{ea:x}"
 
     old_name = ida_name.get_name(func.start_ea)
-    ok = ida_name.set_name(func.start_ea, new_name, ida_name.SN_NOWARN | ida_name.SN_NOCHECK)
+    ok = ida_name.set_name(func.start_ea, clean_name, ida_name.SN_NOWARN | ida_name.SN_NOCHECK)
     if ok:
-        return f"Renamed 0x{func.start_ea:x}: {old_name} \u2192 {new_name}"
+        return f"Renamed 0x{func.start_ea:x}: {old_name} \u2192 {clean_name}"
     return f"Failed to rename function at 0x{func.start_ea:x}"
 
 
@@ -45,6 +65,8 @@ def rename_variable(
     new_name: Annotated[str, "New variable name"],
 ) -> str:
     """Rename a local variable in a decompiled function."""
+    clean_old = _require_nonempty(old_name, "old_name")
+    clean_new = _require_nonempty(new_name, "new_name")
     if not _HAS_HEXRAYS:
         return "Hex-Rays decompiler not available"
 
@@ -59,13 +81,13 @@ def rename_variable(
 
     lvars = cfunc.get_lvars()
     for lv in lvars:
-        if lv.name == old_name:
-            ok = ida_hexrays.rename_lvar(cfunc.entry_ea, lv.name, new_name)
+        if lv.name == clean_old:
+            ok = ida_hexrays.rename_lvar(cfunc.entry_ea, lv.name, clean_new)
             if ok:
-                return f"Renamed variable: {old_name} \u2192 {new_name}"
-            return f"Failed to rename variable {old_name}"
+                return f"Renamed variable: {clean_old} \u2192 {clean_new}"
+            return f"Failed to rename variable {clean_old}"
 
-    return f"Variable '{old_name}' not found in function at 0x{ea:x}"
+    return f"Variable '{clean_old}' not found in function at 0x{ea:x}"
 
 
 @tool(category="annotations", mutating=True)
@@ -76,11 +98,12 @@ def set_comment(
 ) -> str:
     """Set a comment at the given address."""
 
+    clean_comment = _require_nonempty(comment, "comment")
     ea = parse_addr(address)
-    ok = idc.set_cmt(ea, comment, repeatable)
+    ok = idc.set_cmt(ea, clean_comment, repeatable)
     if ok:
         kind = "repeatable " if repeatable else ""
-        return f"Set {kind}comment at 0x{ea:x}: {comment}"
+        return f"Set {kind}comment at 0x{ea:x}: {clean_comment}"
     return f"Failed to set comment at 0x{ea:x}"
 
 
@@ -92,12 +115,13 @@ def set_function_comment(
 ) -> str:
     """Set a function-level comment."""
 
+    clean_comment = _require_nonempty(comment, "comment")
     ea = parse_addr(address)
     func = ida_funcs.get_func(ea)
     if func is None:
         return f"No function at 0x{ea:x}"
 
-    ok = ida_funcs.set_func_cmt(func, comment, repeatable)
+    ok = ida_funcs.set_func_cmt(func, clean_comment, repeatable)
     if ok:
         return f"Set function comment at 0x{func.start_ea:x}"
     return f"Failed to set function comment at 0x{func.start_ea:x}"
@@ -110,11 +134,12 @@ def rename_address(
 ) -> str:
     """Set or change the name/label at an address."""
 
+    clean_name = _require_nonempty(new_name, "new_name")
     ea = parse_addr(address)
     old = ida_name.get_name(ea)
-    ok = ida_name.set_name(ea, new_name, ida_name.SN_NOWARN | ida_name.SN_NOCHECK)
+    ok = ida_name.set_name(ea, clean_name, ida_name.SN_NOWARN | ida_name.SN_NOCHECK)
     if ok:
-        return f"Named 0x{ea:x}: {old or '(unnamed)'} \u2192 {new_name}"
+        return f"Named 0x{ea:x}: {old or '(unnamed)'} \u2192 {clean_name}"
     return f"Failed to set name at 0x{ea:x}"
 
 
@@ -125,11 +150,12 @@ def set_type(
 ) -> str:
     """Set the type of a function or data item."""
 
+    clean_type = _require_nonempty(type_string, "type_string")
     ea = parse_addr(address)
-    ok = idc.SetType(ea, type_string)
+    ok = idc.SetType(ea, clean_type)
     if ok:
-        return f"Set type at 0x{ea:x}: {type_string}"
-    return f"Failed to set type at 0x{ea:x}. Check syntax: {type_string}"
+        return f"Set type at 0x{ea:x}: {clean_type}"
+    return f"Failed to set type at 0x{ea:x}. Check syntax: {clean_type}"
 
 
 @tool(category="annotations")

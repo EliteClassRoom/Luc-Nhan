@@ -39,6 +39,10 @@ _MFF_WRITE: int = 0x01  # default if ida_kernwin is unavailable
 # to pump a queued IDA API call before raising DispatcherTimeoutError.
 _DEFAULT_JOB_TIMEOUT = 30.0
 
+# Poll interval (seconds) while a worker waits for an already-claimed
+# (RUNNING) job to finish, so a stall is bounded and shutdown can wake it.
+_SHUTDOWN_POLL_INTERVAL = 0.5
+
 
 class _JobState(enum.Enum):
     """Lifecycle states for a dispatched job."""
@@ -198,11 +202,17 @@ class IdaHeadlessDispatcher:
                     job.event.set()
                 else:
                     # The pump has already claimed this job (state is
-                    # RUNNING or COMPLETED).  Wait for the pump to
-                    # finish executing the function and set the result.
-                    # We must NOT set job.event here — only the pump
-                    # signals completion.
-                    job.event.wait()
+                    # RUNNING or COMPLETED).  Wait for the pump to finish
+                    # executing the function and set the result — a
+                    # genuinely-running job must return its real result
+                    # (not a timeout), even if it exceeds the first
+                    # timeout. We must NOT set job.event here; only the
+                    # pump signals completion. Poll so that a shutdown
+                    # requested mid-wait does not leave us blocked on a
+                    # stalled main thread forever.
+                    while not job.event.wait(timeout=_SHUTDOWN_POLL_INTERVAL):
+                        if self._shutdown.is_set():
+                            raise DispatcherShutdownError("Dispatcher shut down while IDA job was running")
                     finished = True
 
             if finished:

@@ -340,7 +340,10 @@ class _InProcessLock:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool | None:
-        return self._lock.__exit__(exc_type, exc, tb)
+        self._lock.__exit__(exc_type, exc, tb)
+        # ``threading.RLock.__exit__`` never returns a value; mirror that
+        # contract explicitly so context managers propagate exceptions.
+        return None
 
 
 @dataclass

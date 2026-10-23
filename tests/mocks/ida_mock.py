@@ -135,6 +135,17 @@ def install_ida_mocks() -> None:
         "ida_auto",
         "ida_ida",
         "ida_range",
+        # ``ida_domain`` is a *real* installed PyPI package (``ida-domain``),
+        # not an ``ida_*`` kernel module. Its ``__init__`` runs
+        # ``_load_dependencies()`` which, on a host with IDA Python present,
+        # ``import idapro``/loads the real IDA kernel + Qt — constructing a
+        # QWidget without a QApplication and tripping a Windows native
+        # fast-fail (0xC0000409 / STATUS_STACK_BUFFER_OVERRUN) inside a test
+        # subprocess. Shadowing it here keeps ``_get_base_namespace()`` (in
+        # ``lucnhan/ida/tools/scripting.py``) from ever importing the real
+        # package, which also fixes the P1 interpreter crash in
+        # ``tests/tools/test_tools.py::TestBuiltinTools`` on Windows.
+        "ida_domain",
     ):
         sys.modules[mod_name] = MagicMock()
 

@@ -164,11 +164,7 @@ class TestSectionTitlesAreNotClamped(unittest.TestCase):
         _ensure_qapplication()
         dlg = _dialog()
         try:
-            titles = [
-                w
-                for w in dlg.findChildren(QLabel)
-                if w.objectName() == "settings_section_title"
-            ]
+            titles = [w for w in dlg.findChildren(QLabel) if w.objectName() == "settings_section_title"]
             self.assertTrue(titles, "no section titles found")
             for label in titles:
                 self.assertLess(label.minimumWidth(), _SETTINGS_LABEL_WIDTH_PX)
@@ -184,11 +180,7 @@ class TestSectionTitlesAreNotClamped(unittest.TestCase):
         _ensure_qapplication()
         dlg = _dialog()
         try:
-            titles = {
-                w.text(): w
-                for w in dlg.findChildren(QLabel)
-                if w.objectName() == "settings_section_title"
-            }
+            titles = {w.text(): w for w in dlg.findChildren(QLabel) if w.objectName() == "settings_section_title"}
             self.assertIn("GLM reasoning resilience", titles)
             label = titles["GLM reasoning resilience"]
             dlg.resize(900, 700)
@@ -215,20 +207,14 @@ class TestFormLabelsStillClamped(unittest.TestCase):
         _ensure_qapplication()
         dlg = _dialog()
         try:
-            labels = [
-                w
-                for w in dlg.findChildren(QLabel)
-                if w.objectName() == "settings_form_label" and w.text()
-            ]
+            labels = [w for w in dlg.findChildren(QLabel) if w.objectName() == "settings_form_label" and w.text()]
             self.assertTrue(labels)
             dlg.resize(900, 700)
             dlg._apply_responsive_geometry()
             self.assertTrue(all(label.maximumWidth() == _SETTINGS_LABEL_WIDTH_PX for label in labels))
             dlg.resize(460, 700)
             dlg._apply_responsive_geometry()
-            self.assertTrue(
-                all(label.maximumWidth() == _SETTINGS_LABEL_WIDTH_NARROW_PX for label in labels)
-            )
+            self.assertTrue(all(label.maximumWidth() == _SETTINGS_LABEL_WIDTH_NARROW_PX for label in labels))
         finally:
             dlg.done(0)
 

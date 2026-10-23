@@ -99,10 +99,6 @@ from lucnhan.state.history_types import (
     HistoryScope,
     SessionHistoryEntry,
 )
-from lucnhan.ui.message_widgets import (
-    AssistantMessageWidget,
-    UserMessageWidget,
-)
 from tests.qt_real import live_class, requires_real_qt
 
 
@@ -208,9 +204,8 @@ class TestStartupOutcome(unittest.TestCase):
         Returns ``(panel, draft_chat_view)`` so the test can drive
         the apply path and inspect the draft + new tabs.
         """
-        from PySide6.QtWidgets import QApplication, QTabWidget, QWidget
+        from PySide6.QtWidgets import QTabWidget, QWidget
 
-        from lucnhan.ui.chat_view import ChatView
         from lucnhan.ui.history_panel import HistoryPanel
         from lucnhan.ui.panel_core import LucNhanPanelCore
 
@@ -382,9 +377,9 @@ class TestStartupOutcome(unittest.TestCase):
         ``processEvents`` loop with a deadline, never ``time.sleep``
         as the primary wait primitive.
         """
-        from PySide6.QtWidgets import QApplication
-
         import time as _time
+
+        from PySide6.QtWidgets import QApplication
 
         app = QApplication.instance()
         deadline = _time.monotonic() + timeout_s

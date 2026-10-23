@@ -76,6 +76,7 @@ class TestMaturityLabel(unittest.TestCase):
 class TestRequireHexrays(unittest.TestCase):
     def test_raises_when_no_hexrays(self):
         import lucnhan.ida.tools.microcode_format as mod
+
         orig = mod._HAS_HEXRAYS
         try:
             mod._HAS_HEXRAYS = False

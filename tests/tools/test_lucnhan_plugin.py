@@ -35,6 +35,7 @@ import lucnhan_plugin as rp
 # _guarded_import — re-entrancy guard
 # ---------------------------------------------------------------------------
 
+
 class TestGuardedImport(unittest.TestCase):
     def setUp(self):
         """Ensure the import guard is installed before each test.
@@ -47,6 +48,7 @@ class TestGuardedImport(unittest.TestCase):
         test in this class a clean baseline.
         """
         import builtins
+
         current = builtins.__import__
         if not getattr(current, "_lucnhan_guarded", False):
             builtins.__import__ = rp._guarded_import
@@ -134,6 +136,7 @@ class TestGuardedImport(unittest.TestCase):
 # LucNhanPlugmod.term
 # ---------------------------------------------------------------------------
 
+
 def _make_plugmod():
     """Create a LucNhanPlugmod without calling __init__."""
     pm = object.__new__(rp.LucNhanPlugmod)
@@ -186,6 +189,7 @@ class TestLucNhanPlugmodRun(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # PLUGIN_ENTRY
 # ---------------------------------------------------------------------------
+
 
 class TestPluginEntry(unittest.TestCase):
     def test_returns_lucnhan_plugin(self):

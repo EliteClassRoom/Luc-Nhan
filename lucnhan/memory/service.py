@@ -8,11 +8,12 @@ a valid :class:`MemoryWriteAuthority` from the controller-owned issuer.
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from ..core.sanitize import strip_injection_markers
+from ..core.sanitize import strip_injection_markers, strip_lone_surrogates
 from .authority import MemoryAuthorityIssuer, MemoryWriteAuthority
 from .markdown import MemoryProjector, extract_unmanaged_markdown
 from .repository import SQLiteKnowledgeRepository
@@ -79,6 +80,10 @@ class BinaryMemoryService:
         # sanitized on every turn; the file only changes when the agent or
         # user writes notes, which bumps mtime/size.
         self._manual_notes_cache: tuple[tuple[int, int], str] | None = None
+        # Serializes reads/writes of ``_manual_notes_cache`` so the service
+        # can be called concurrently (agent background thread + UI thread)
+        # without racing on the cache tuple.
+        self._manual_notes_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Authority
@@ -130,6 +135,15 @@ class BinaryMemoryService:
         """Return sanitized unmanaged Markdown notes from MEMORY.md.
 
         Never includes the managed region or hidden record markers.
+
+        The unmanaged body is run through :func:`strip_lone_surrogates` +
+        :func:`strip_injection_markers` (the same core sanitization as
+        :func:`lucnhan.core.sanitize.sanitize_memory`) *before* returning, so
+        prompt-injection markers never survive even when a caller embeds the
+        text directly (e.g. the ``/show memory`` command) rather than through
+        the system-prompt layer. We deliberately do NOT re-apply the
+        ``<persistent_memory>`` wrapper + preamble here — that is done once by
+        :func:`lucnhan.agent.system_prompt.build_system_prompt`.
         """
         markdown = self.paths.markdown
         if not markdown.exists():
@@ -138,13 +152,15 @@ class BinaryMemoryService:
         # when its mtime/size moves, so a long session pays one read per
         # write instead of one read per turn.
         sig = (markdown.stat().st_mtime_ns, markdown.stat().st_size)
-        if self._manual_notes_cache is not None and self._manual_notes_cache[0] == sig:
-            return self._manual_notes_cache[1]
+        with self._manual_notes_lock:
+            if self._manual_notes_cache is not None and self._manual_notes_cache[0] == sig:
+                return self._manual_notes_cache[1]
         content = markdown.read_text(encoding="utf-8")
         unmanaged = extract_unmanaged_markdown(content)
-        sanitized = _sanitize_prompt_text(unmanaged)
+        sanitized = _sanitize_manual_notes(unmanaged)
         result = sanitized.strip()
-        self._manual_notes_cache = (sig, result)
+        with self._manual_notes_lock:
+            self._manual_notes_cache = (sig, result)
         return result
 
     # ------------------------------------------------------------------
@@ -256,17 +272,34 @@ class BinaryMemoryService:
         if not normalized_content:
             raise ValueError("content must not be empty after sanitization")
 
+        # A finding's metadata (title, entity/tag refs, hypothesis verdict) is
+        # persisted verbatim into SQLite and projected into MEMORY.md, which is
+        # loaded into every later prompt. The title defaults to the first line
+        # of the (binary/MCP-derived) summary, so it can carry injection
+        # markers just like the body. Run every user/agent-authored field
+        # through ``strip_injection_markers`` — mirroring ``save_fact`` —
+        # before it reaches storage.
+        normalized_title = _sanitize_short_text(title)
+        normalized_entity_refs = [_sanitize_short_text(r) for r in entity_refs]
+        normalized_tags = [_sanitize_short_text(t) for t in tags]
+        normalized_verdict = _sanitize_fact(verdict_claim) if normalized_category == "hypothesis" else ""
+        normalized_citations = (
+            [_sanitize_short_text(c) for c in (verification_citations or [])]
+            if normalized_category == "hypothesis"
+            else None
+        )
+
         saved = self.repository.save_exploration_finding(
             normalized_category,
             normalized_content,
             source,
-            entity_refs=list(entity_refs),
-            tags=list(tags),
-            title=title,
+            entity_refs=normalized_entity_refs,
+            tags=normalized_tags,
+            title=normalized_title,
             confidence=confidence,
             status=status if normalized_category == "hypothesis" else "unverified",
-            verdict_claim=verdict_claim if normalized_category == "hypothesis" else "",
-            verification_citations=list(verification_citations or []) if normalized_category == "hypothesis" else None,
+            verdict_claim=normalized_verdict,
+            verification_citations=normalized_citations,
         )
         record = saved.record
         # ``projection_dirty`` mirrors the store's view; the projector
@@ -311,6 +344,29 @@ def _sanitize_fact(value: str) -> str:
     cleaned = strip_injection_markers(value)
     cleaned = _PROMPT_INJECTION_RE.sub("", cleaned)
     return cleaned.strip()[:8000]
+
+
+def _sanitize_manual_notes(value: str) -> str:
+    """Sanitize unmanaged MEMORY.md notes for prompt/display.
+
+    Applies the same core sanitization as
+    :func:`lucnhan.core.sanitize.sanitize_memory` (lone-surrogate + injection
+    marker stripping + explicit ``_PROMPT_INJECTION_RE``) but returns the
+    *bare* sanitized body — the ``<persistent_memory>`` wrapper + preamble is
+    added once by the system-prompt layer. See
+    :meth:`BinaryMemoryService.manual_notes_context`.
+    """
+    cleaned = strip_lone_surrogates(value)
+    cleaned = strip_injection_markers(cleaned)
+    cleaned = _PROMPT_INJECTION_RE.sub("", cleaned)
+    return cleaned.strip()
+
+
+def _sanitize_short_text(value: str) -> str:
+    """Sanitize a short metadata string (title, tags, refs, citations)."""
+    cleaned = strip_injection_markers(value)
+    cleaned = _PROMPT_INJECTION_RE.sub("", cleaned)
+    return cleaned.strip()[:500]
 
 
 def _sanitize_prompt_text(value: str) -> str:

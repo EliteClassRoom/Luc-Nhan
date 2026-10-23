@@ -55,6 +55,7 @@ class TestBootstrapMainErrorPaths(unittest.TestCase):
 
     def _write_config(self, config: dict) -> str:
         import tempfile
+
         fd, path = tempfile.mkstemp(suffix=".json", prefix="bstrap_")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(config, f)
@@ -65,6 +66,7 @@ class TestBootstrapMainErrorPaths(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(SystemExit) as ctx:
                 from lucnhan.ida.headless_bootstrap import main
+
                 main()
             self.assertEqual(ctx.exception.code, 2)
 
@@ -80,6 +82,7 @@ class TestBootstrapMainErrorPaths(unittest.TestCase):
         with patch.dict(os.environ, {"LUCNHAN_HEADLESS_BOOTSTRAP": cfg_path}):
             with self.assertRaises(SystemExit) as ctx:
                 from lucnhan.ida.headless_bootstrap import main
+
                 main()
             self.assertEqual(ctx.exception.code, 2)
 
@@ -96,6 +99,7 @@ class TestBootstrapMainErrorPaths(unittest.TestCase):
         with patch.dict(os.environ, {"LUCNHAN_HEADLESS_BOOTSTRAP": cfg_path}):
             with self.assertRaises(SystemExit) as ctx:
                 from lucnhan.ida.headless_bootstrap import main
+
                 main()
             self.assertEqual(ctx.exception.code, 2)
 

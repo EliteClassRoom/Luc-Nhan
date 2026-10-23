@@ -47,13 +47,10 @@ def assert_no_orphaned_tool_results(compacted: list[Message]) -> None:
             continue
         prev = compacted[i - 1]
         partner_ids = {tc.id for tc in prev.tool_calls}
-        assert prev.role == Role.ASSISTANT and partner_ids, (
-            f"orphaned TOOL at compacted index {i}"
-        )
+        assert prev.role == Role.ASSISTANT and partner_ids, f"orphaned TOOL at compacted index {i}"
         for tr in msg.tool_results:
             assert tr.tool_call_id in partner_ids, (
-                f"TOOL at compacted index {i} references missing tool_call "
-                f"{tr.tool_call_id}"
+                f"TOOL at compacted index {i} references missing tool_call {tr.tool_call_id}"
             )
 
 
@@ -130,9 +127,7 @@ class TestCompactionToolResultBoundary:
         assert_no_orphaned_tool_results(compacted)
         # The recent tool pair stays in the tail; only the older one is
         # summarized.
-        tail_tool_names = [
-            tr.name for m in compacted if m.role == Role.TOOL for tr in m.tool_results
-        ]
+        tail_tool_names = [tr.name for m in compacted if m.role == Role.TOOL for tr in m.tool_results]
         assert tail_tool_names == ["rename_function"]
 
     def test_boundary_walk_iterates_past_consecutive_tool_results(self):

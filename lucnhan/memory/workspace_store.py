@@ -14,12 +14,15 @@ import re
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar, cast
 
 from ..constants import MEMORY_WORKSPACE_SCHEMA_VERSION
 from .sqlite_backend import begin_immediate_with_retry, open_sqlite
 from .workspace import WorkspacePaths, validate_record_id
+
+T = TypeVar("T")
 
 _SEMANTIC_HASH_RE = re.compile(r"[0-9a-f]{64}")
 
@@ -28,6 +31,21 @@ FactSaveOutcome = Literal["created", "deduplicated"]
 
 class StaleRevisionError(RuntimeError):
     """Raised when expected_revision does not match the current revision."""
+
+
+def _ensure_column(conn: Any, table: str, column: str, ddl: str) -> None:
+    """Add *column* to *table* only if it does not already exist.
+
+    SQLite has no ``ADD COLUMN IF NOT EXISTS``, so an ``ALTER TABLE`` that
+    runs twice (e.g. after a migration failed part-way, leaving the database
+    at an intermediate version that gets migrated again on the next open)
+    would raise ``duplicate column name``. Guarding on ``PRAGMA table_info``
+    makes every ``ADD COLUMN`` migration idempotent.
+    """
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column in cols:
+        return
+    conn.execute(ddl)
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +241,11 @@ def _migrate_v2(conn: Any) -> None:
     """Workspace schema v2: add semantic_hash column and hash guards."""
     from .fact_identity import semantic_fact_hash
 
-    conn.execute(
-        "ALTER TABLE facts ADD COLUMN semantic_hash TEXT CHECK(semantic_hash IS NULL OR length(semantic_hash) = 64)"
+    _ensure_column(
+        conn,
+        "facts",
+        "semantic_hash",
+        "ALTER TABLE facts ADD COLUMN semantic_hash TEXT CHECK(semantic_hash IS NULL OR length(semantic_hash) = 64)",
     )
     rows = conn.execute(
         """
@@ -277,19 +298,26 @@ def _migrate_v2(conn: Any) -> None:
 
 def _migrate_v3(conn: Any) -> None:
     """Workspace schema v3: add graph metadata columns."""
-    conn.execute("ALTER TABLE facts ADD COLUMN entity_refs TEXT NOT NULL DEFAULT '[]'")
-    conn.execute("ALTER TABLE facts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
-    conn.execute("ALTER TABLE entities ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
-    conn.execute("ALTER TABLE relations ADD COLUMN evidence TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "facts", "entity_refs", "ALTER TABLE facts ADD COLUMN entity_refs TEXT NOT NULL DEFAULT '[]'")
+    _ensure_column(conn, "facts", "tags", "ALTER TABLE facts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+    _ensure_column(conn, "entities", "tags", "ALTER TABLE entities ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+    _ensure_column(conn, "relations", "evidence", "ALTER TABLE relations ADD COLUMN evidence TEXT NOT NULL DEFAULT ''")
     if conn.execute("PRAGMA foreign_key_check").fetchall():
         raise RuntimeError("workspace v3 migration failed foreign key check")
 
 
 def _migrate_v4(conn: Any) -> None:
     """Workspace schema v4: persist hypothesis verification metadata."""
-    conn.execute("ALTER TABLE facts ADD COLUMN status TEXT NOT NULL DEFAULT 'unverified'")
-    conn.execute("ALTER TABLE facts ADD COLUMN verdict_claim TEXT NOT NULL DEFAULT ''")
-    conn.execute("ALTER TABLE facts ADD COLUMN verification_citations TEXT NOT NULL DEFAULT '[]'")
+    _ensure_column(conn, "facts", "status", "ALTER TABLE facts ADD COLUMN status TEXT NOT NULL DEFAULT 'unverified'")
+    _ensure_column(
+        conn, "facts", "verdict_claim", "ALTER TABLE facts ADD COLUMN verdict_claim TEXT NOT NULL DEFAULT ''"
+    )
+    _ensure_column(
+        conn,
+        "facts",
+        "verification_citations",
+        "ALTER TABLE facts ADD COLUMN verification_citations TEXT NOT NULL DEFAULT '[]'",
+    )
     if conn.execute("PRAGMA foreign_key_check").fetchall():
         raise RuntimeError("workspace v4 migration failed foreign key check")
 
@@ -356,11 +384,11 @@ class WorkspaceStore:
         """Invalidate memoized list reads after any committed write."""
         self._write_generation += 1
 
-    def _cached_list(self, key: str, loader: Any) -> object:
+    def _cached_list(self, key: str, loader: Callable[[], list[T]]) -> list[T]:
         """Return *loader()* output, reusing the memo when generation matches."""
         gen, cached = self._list_cache.get(key, (None, None))
         if gen == self._write_generation and cached is not None:
-            return cached
+            return cast("list[T]", cached)
         records = loader()
         self._list_cache[key] = (self._write_generation, records)
         return records

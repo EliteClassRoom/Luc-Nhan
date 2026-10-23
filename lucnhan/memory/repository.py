@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from .fact_identity import canonicalize_fact_content, canonicalize_fact_type, semantic_fact_hash
 from .schema import (
+    HypothesisStatus,
     KnowledgeEntity,
     KnowledgeMemory,
     KnowledgeObservation,
@@ -111,7 +112,7 @@ class SQLiteKnowledgeRepository:
                 entity_refs=list(f.entity_refs),
                 tags=list(f.tags),
                 confidence=f.confidence,
-                status=f.status,
+                status=cast(HypothesisStatus, f.status),
                 verdict_claim=f.verdict_claim,
                 verification_citations=list(f.verification_citations),
             )
@@ -255,7 +256,7 @@ class SQLiteKnowledgeRepository:
                 title=record.title,
                 content=record.content,
                 confidence=record.confidence,
-                status=record.status,
+                status=cast(HypothesisStatus, record.status),
                 verdict_claim=record.verdict_claim,
                 verification_citations=list(record.verification_citations),
             ),
@@ -324,7 +325,7 @@ class SQLiteKnowledgeRepository:
                 title=record.title,
                 content=record.content,
                 confidence=record.confidence,
-                status=record.status,
+                status=cast(HypothesisStatus, record.status),
                 verdict_claim=record.verdict_claim,
                 verification_citations=list(record.verification_citations),
             ),

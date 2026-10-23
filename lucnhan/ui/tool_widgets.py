@@ -1142,20 +1142,24 @@ def _format_tool_summary(tool_name: str, args_text: str) -> str:
 # Shared spinner timer
 # ---------------------------------------------------------------------------
 
+# Cadence for the shared tool-spinner poll timer (ms). Named constant so
+# the inline magic number is documented and the shared cadence is obvious.
+_SPINNER_POLL_INTERVAL_MS = 100
+
 
 class _SharedSpinnerTimer:
     """Single QTimer shared across all ToolCallWidget instances.
 
-    Instead of N timers (one per widget), one 100ms timer ticks all
-    active spinners.  Starts automatically when the first widget
-    registers and stops when the last one unregisters.
+    Instead of N timers (one per widget), one ``_SPINNER_POLL_INTERVAL_MS``
+    timer ticks all active spinners.  Starts automatically when the first
+    widget registers and stops when the last one unregisters.
     """
 
     _instance: _SharedSpinnerTimer | None = None
 
     def __init__(self) -> None:
         self._timer = QTimer()
-        self._timer.setInterval(100)
+        self._timer.setInterval(_SPINNER_POLL_INTERVAL_MS)
         self._timer.timeout.connect(self._tick)
         self._widgets: set[ToolCallWidget] = set()
 

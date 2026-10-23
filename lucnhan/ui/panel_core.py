@@ -98,6 +98,15 @@ _HISTORY_RESULT_QUEUE_MAXSIZE = 2
 # Distinct prefix for the history worker pool (spec §6.1, §11.4).
 _HISTORY_EXECUTOR_PREFIX = "lucnhan-history"
 
+# Main-thread QTimer cadences (ms). Named module constants so the inline
+# magic numbers are documented and one name is reused across
+# ``_poll_events`` / ``_poll_tools_events`` / skill & knowledge refresh.
+_EVENT_POLL_INTERVAL_MS = 50
+_TOOLS_EVENT_POLL_INTERVAL_MS = 100
+_SKILLS_REFRESH_INTERVAL_MS = 300
+_KNOWLEDGE_REFRESH_INTERVAL_MS = 50
+_TOKEN_DISPLAY_DEBOUNCE_MS = 100
+
 # Baseline width for the fixed-width action buttons (Send, Stop, New,
 # Export, Settings, Mutations, Tools). Square-ish so icon + short label
 # fit without the row growing when one button gets a longer label — but
@@ -471,6 +480,13 @@ class LucNhanPanelCore(QWidget):
         _early_log("panel_core:oauth_consent:done")
 
         def _warm_oauth() -> None:
+            # Reviewer note (finding F3, task-11): this thread is verified
+            # Qt-safe. ``resolve_auth_cached`` → ``anthropic_provider
+            # .resolve_anthropic_auth`` performs a pure subprocess keychain
+            # scan and never constructs Qt widgets / QDialogs, so running it
+            # on a non-main thread cannot trigger the Shiboken UAF described
+            # in AGENTS.md §1. If the auth resolver ever starts showing a
+            # consent dialog, move the dialog to the main thread first.
             _early_log("panel_core:oauth_warm_thread:entry")
             try:
                 resolve_auth_cached()
@@ -597,7 +613,7 @@ class LucNhanPanelCore(QWidget):
         if self._skills_refresh_timer is not None:
             return
         self._skills_refresh_timer = QTimer(self)
-        self._skills_refresh_timer.setInterval(300)
+        self._skills_refresh_timer.setInterval(_SKILLS_REFRESH_INTERVAL_MS)
         self._skills_refresh_timer.timeout.connect(self._refresh_skill_slugs)
         self._skills_refresh_timer.start()
 
@@ -2543,7 +2559,7 @@ class LucNhanPanelCore(QWidget):
         if timer is None:
             timer = QTimer(self)
             timer.setSingleShot(True)
-            timer.setInterval(100)
+            timer.setInterval(_TOKEN_DISPLAY_DEBOUNCE_MS)
             timer.timeout.connect(self._flush_pending_token_display)
             self._token_display_timer = timer
         timer.start()
@@ -2966,7 +2982,7 @@ class LucNhanPanelCore(QWidget):
 
         self._ensure_poll_timer()
         assert self._poll_timer is not None
-        self._poll_timer.start(50)
+        self._poll_timer.start(_EVENT_POLL_INTERVAL_MS)
 
     def _ensure_poll_timer(self) -> None:
         if self._poll_timer is not None:
@@ -4726,7 +4742,7 @@ class LucNhanPanelCore(QWidget):
             # only used by SubagentManager events now that the Renamer
             # tab is hidden.
             self._tools_poll_timer = QTimer(self)
-            self._tools_poll_timer.setInterval(100)
+            self._tools_poll_timer.setInterval(_TOOLS_EVENT_POLL_INTERVAL_MS)
             self._tools_poll_timer.timeout.connect(self._poll_tools_events)
             self._tools_poll_timer.start()
         except Exception as e:
@@ -4847,7 +4863,7 @@ class LucNhanPanelCore(QWidget):
         # last event lands.
         self._knowledge_refresh_timer = QTimer(self)
         self._knowledge_refresh_timer.setSingleShot(True)
-        self._knowledge_refresh_timer.setInterval(50)
+        self._knowledge_refresh_timer.setInterval(_KNOWLEDGE_REFRESH_INTERVAL_MS)
         self._knowledge_refresh_timer.timeout.connect(self._refresh_knowledge_panel)
         # Refresh on first activation.  Subsequent refreshes go through
         # the event-driven debounce path in :meth:`_on_knowledge_event_refresh`.

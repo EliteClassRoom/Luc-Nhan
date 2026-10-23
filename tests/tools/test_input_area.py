@@ -27,6 +27,7 @@ from lucnhan.ui.input_area import InputArea, _SkillPopup
 # _SkillPopup — pure list logic
 # ---------------------------------------------------------------------------
 
+
 def _make_popup() -> _SkillPopup:
     popup = object.__new__(_SkillPopup)
     popup._slugs = []
@@ -98,6 +99,7 @@ class TestSkillPopupMoveSelection(unittest.TestCase):
 # InputArea — pure logic methods
 # ---------------------------------------------------------------------------
 
+
 def _make_input() -> InputArea:
     area = object.__new__(InputArea)
     area._enabled = True
@@ -134,6 +136,7 @@ class TestInputAreaSetSkillSlugs(unittest.TestCase):
         self.assertIn("modify", area._skill_slugs)
         self.assertIn("explore", area._skill_slugs)
         self.assertIn("report", area._skill_slugs)
+
     def test_merges_custom_slugs(self):
         area = _make_input()
         area.set_skill_slugs(["decompile", "rename"])
@@ -176,6 +179,7 @@ class TestInputAreaCheckAutocomplete(unittest.TestCase):
         area.toPlainText = MagicMock(return_value="/pl")
         area._check_autocomplete()
         area._show_popup.assert_called_once_with(["plan"])
+
     def test_slash_after_setting_slugs_shows_suggestions(self):
         """Typing ``/`` after normal setup must open the full command list."""
         area = _make_input()

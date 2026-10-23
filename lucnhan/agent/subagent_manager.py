@@ -27,6 +27,10 @@ class SubagentStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+#: Max entries kept in each subagent's rolling live-activity feed.
+_ACTIVITY_MAX_LEN = 100
+
+
 @dataclass
 class SubagentInfo:
     """Metadata and state for a single subagent instance."""
@@ -76,6 +80,18 @@ class SubagentManager:
         self._agents: dict[str, SubagentInfo] = {}
         self._event_queue: queue.Queue[TurnEvent] = queue.Queue()
         self._cancel_events: dict[str, threading.Event] = {}
+        # Guards mutations of shared ``SubagentInfo`` state (activity feed,
+        # status/summary/turn_count) written by worker threads and read on the
+        # Qt thread. The GIL makes individual attribute assignment atomic, but
+        # composite updates (e.g. activity append + slice-trim, or the
+        # completed_at/summary trio) need a lock so readers never observe a
+        # half-applied state.
+        self._lock = threading.Lock()
+        # Set whenever any subagent reaches a terminal state. Consumed by the
+        # parent loop's spawn/join waits so it can block efficiently instead of
+        # busy-polling with ``time.sleep``; the waiter clears it before each
+        # predicate re-check to avoid spinning or missing a signal.
+        self._done_event = threading.Event()
 
     def spawn(
         self,
@@ -240,6 +256,7 @@ class SubagentManager:
             return
         info.status = SubagentStatus.CANCELLED
         info.completed_at = time.time()
+        self._done_event.set()
         self._event_queue.put(
             TurnEvent.subagent_failed(
                 agent_id=info.id,
@@ -303,13 +320,14 @@ class SubagentManager:
         if info is None:
             return
 
-        info.status = status
-        info.summary = summary
-        info.turn_count = turn_count
-
-        if status in (SubagentStatus.COMPLETED, SubagentStatus.FAILED, SubagentStatus.CANCELLED):
-            info.completed_at = time.time()
-            elapsed = info.completed_at - info.created_at
+        with self._lock:
+            info.status = status
+            info.summary = summary
+            info.turn_count = turn_count
+            terminal = status in (SubagentStatus.COMPLETED, SubagentStatus.FAILED, SubagentStatus.CANCELLED)
+            if terminal:
+                info.completed_at = time.time()
+            elapsed = info.completed_at - info.created_at if info.completed_at else 0.0
             if status == SubagentStatus.COMPLETED:
                 self._event_queue.put(
                     TurnEvent.subagent_completed(
@@ -328,6 +346,8 @@ class SubagentManager:
                         error=summary,
                     )
                 )
+        if terminal:
+            self._done_event.set()
 
     def cancel(self, agent_id: str) -> None:
         """Cancel a running or pending subagent."""
@@ -474,10 +494,16 @@ class SubagentManager:
             )
 
         def _record_activity(line: str) -> None:
-            """Append to the rolling live feed, trimmed to the last 100 entries."""
-            info.activity.append(line)
-            if len(info.activity) > 100:
-                del info.activity[: len(info.activity) - 100]
+            """Append to the rolling live feed, trimmed to ``_ACTIVITY_MAX_LEN``.
+
+            The append + slice-trim run as a single lock-protected unit so a
+            UI thread iterating ``info.activity`` on the Qt thread never
+            observes a torn slice-delete.
+            """
+            with self._lock:
+                info.activity.append(line)
+                if len(info.activity) > _ACTIVITY_MAX_LEN:
+                    del info.activity[: len(info.activity) - _ACTIVITY_MAX_LEN]
 
         try:
             turn_count = 0
@@ -508,7 +534,8 @@ class SubagentManager:
 
                 if event.type.value == "turn_end":
                     turn_count += 1
-                    info.turn_count = turn_count
+                    with self._lock:
+                        info.turn_count = turn_count
                     self._event_queue.put(
                         TurnEvent.subagent_progress(
                             agent_id=agent_id,
@@ -526,7 +553,8 @@ class SubagentManager:
                     _record_activity(f"← {event.tool_name}: {' '.join((event.tool_result or '').split())[:120]}")
 
                 if event.usage:
-                    info.token_usage = event.usage
+                    with self._lock:
+                        info.token_usage = event.usage
 
             # If a cancellation raced the worker to completion, the manager
             # may already have transitioned this record to CANCELLED. Keep
@@ -537,9 +565,11 @@ class SubagentManager:
                 self._finalize_cancellation(info)
                 return
 
-            info.summary = final_text
-            info.status = SubagentStatus.COMPLETED
-            info.completed_at = time.time()
+            with self._lock:
+                info.summary = final_text
+                info.status = SubagentStatus.COMPLETED
+                info.completed_at = time.time()
+            self._done_event.set()
             elapsed = info.completed_at - info.created_at
 
             self._event_queue.put(
@@ -560,9 +590,11 @@ class SubagentManager:
             if cancel.is_set():
                 self._finalize_cancellation(info)
                 return
-            info.status = SubagentStatus.FAILED
-            info.completed_at = time.time()
-            info.summary = f"Error: {e}"
+            with self._lock:
+                info.status = SubagentStatus.FAILED
+                info.completed_at = time.time()
+                info.summary = f"Error: {e}"
+            self._done_event.set()
             self._event_queue.put(
                 TurnEvent.subagent_failed(
                     agent_id=agent_id,

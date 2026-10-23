@@ -14,24 +14,28 @@ from unittest.mock import MagicMock, patch
 # Host detection flags (lucnhan.core.host)
 # ---------------------------------------------------------------------------
 
+
 class TestHostDetectionFlags(unittest.TestCase):
     """Verify module-level host flags are consistent with detection functions."""
 
     def test_flags_are_bool(self):
         """Host flags should be bool, regardless of host stubs."""
         from lucnhan.core.host import HAS_HEXRAYS, IDA_AVAILABLE
+
         self.assertIsInstance(IDA_AVAILABLE, bool)
         self.assertIsInstance(HAS_HEXRAYS, bool)
 
     def test_hexrays_requires_ida(self):
         """HAS_HEXRAYS should only be True if IDA_AVAILABLE is True."""
         from lucnhan.core.host import HAS_HEXRAYS, IDA_AVAILABLE
+
         if HAS_HEXRAYS:
             self.assertTrue(IDA_AVAILABLE)
 
     def test_mutual_exclusion(self):
         """host_kind returns a single valid value."""
         from lucnhan.core.host import HOST_IDA, HOST_STANDALONE, host_kind
+
         result = host_kind()
         self.assertIn(result, (HOST_IDA, HOST_STANDALONE))
 
@@ -40,19 +44,23 @@ class TestHostDetectionFlags(unittest.TestCase):
 # dispatch_wrapper in ToolRegistry
 # ---------------------------------------------------------------------------
 
+
 class TestRegistryDispatchWrapper(unittest.TestCase):
     """Verify dispatch_wrapper is applied at execution time."""
 
     def _make_registry(self, wrapper=None):
         from lucnhan.tools.registry import ToolRegistry
+
         return ToolRegistry(dispatch_wrapper=wrapper)
 
     def _register_echo(self, registry):
         from lucnhan.tools.base import tool
+
         @tool(name="echo_test", description="Echo for testing")
         def echo_test(text: str) -> str:
             """Echo."""
             return f"echo:{text}"
+
         registry.register(echo_test._tool_definition)
         return echo_test
 
@@ -71,6 +79,7 @@ class TestRegistryDispatchWrapper(unittest.TestCase):
             def wrapped(*args, **kwargs):
                 call_log.append(("wrapped", handler.__name__))
                 return handler(*args, **kwargs)
+
             return wrapped
 
         reg = self._make_registry(wrapper=tracking_wrapper)
@@ -82,14 +91,17 @@ class TestRegistryDispatchWrapper(unittest.TestCase):
 
     def test_wrapper_exception_propagates(self):
         """Exceptions from wrapped handler propagate correctly."""
+
         def error_wrapper(handler):
             def wrapped(*args, **kwargs):
                 raise RuntimeError("dispatch error")
+
             return wrapped
 
         reg = self._make_registry(wrapper=error_wrapper)
         self._register_echo(reg)
         from lucnhan.core.errors import ToolError
+
         with self.assertRaises(ToolError):
             reg.execute("echo_test", {"text": "fail"})
 
@@ -99,9 +111,11 @@ class TestRegistryDispatchWrapper(unittest.TestCase):
 
         def mock_idasync(handler):
             """Simulated idasync: records call instead of using execute_sync."""
+
             def wrapped(*args, **kwargs):
                 main_thread_calls.append(handler.__name__)
                 return handler(*args, **kwargs)
+
             return wrapped
 
         reg = self._make_registry(wrapper=mock_idasync)
@@ -114,6 +128,7 @@ class TestRegistryDispatchWrapper(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # idasync behavior under different host conditions
 # ---------------------------------------------------------------------------
+
 
 class TestIdasyncStandalone(unittest.TestCase):
     """Verify idasync in standalone mode (no host) is a direct call."""
@@ -176,10 +191,10 @@ class TestIdasyncWithMockedHosts(unittest.TestCase):
                 ts.ida_kernwin = original_kw
 
 
-
 # ---------------------------------------------------------------------------
 # @tool decorator is host-agnostic
 # ---------------------------------------------------------------------------
+
 
 class TestToolDecoratorHostAgnostic(unittest.TestCase):
     """Verify @tool creates definitions without any host-specific behavior."""
@@ -212,6 +227,7 @@ class TestToolDecoratorHostAgnostic(unittest.TestCase):
             return original_idasync(func)
 
         with patch.object(ts, "idasync", spy_idasync):
+
             @tool(name="test_no_dispatch", description="No dispatch test")
             def test_no_dispatch() -> str:
                 """Test."""

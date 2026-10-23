@@ -115,9 +115,7 @@ class TestFunctionIndexFindContaining(unittest.TestCase):
 class TestFunctionIndexList(unittest.TestCase):
     def setUp(self):
         invalidate_function_index()
-        _seed_index(
-            [FunctionEntry(0x1000 + i * 0x10, 0x1008 + i * 0x10, f"f{i}", False, 8) for i in range(20)]
-        )
+        _seed_index([FunctionEntry(0x1000 + i * 0x10, 0x1008 + i * 0x10, f"f{i}", False, 8) for i in range(20)])
 
     def test_list_paginated(self):
         entries, total = list_function_entries(5, 10)

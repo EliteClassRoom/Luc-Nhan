@@ -108,19 +108,22 @@ if ($Fix) {
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff format" } else { Add-Fail "ruff format" "run with -Fix to auto-fix" }
 }
 
-# ── 2. Ruff — lint (config in pyproject.toml) ─────────────────────────────────
+# ── 2. Ruff — lint (config in pyproject.toml). Lint tests/ too so the
+#      `extend-include` config actually gates the test suite.
 Write-Info "[2/5] Ruff lint..."
 if ($Fix) {
-    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/", "--fix")
+    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/", "tests/", "--fix")
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff lint (auto-fixed)" } else { Add-Fail "ruff lint" "see above" }
 } else {
-    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/")
+    Invoke-DevTool -Tool "ruff" -ToolArgs @("check", "lucnhan/", "tests/")
     if ($LASTEXITCODE -eq 0) { Add-Ok "ruff lint" } else { Add-Fail "ruff lint" "see above" }
 }
 
-# ── 3. Mypy — core modules only (config in pyproject.toml) ────────────────────
-Write-Info "[3/5] Mypy (core + providers)..."
-$mypyOutput = (Invoke-DevTool -Tool "mypy" -ToolArgs @("lucnhan/core", "lucnhan/providers", "--pretty") 2>&1) -join "`n"
+# ── 3. Mypy — core + providers + memory + ui (config in pyproject.toml) ────────
+# `[tool.mypy].files` declares `lucnhan/memory` / `lucnhan/ui`; both are now
+# clean, so the full gate runs locally (matching .github/workflows/ci.yml).
+Write-Info "[3/5] Mypy (core + providers + memory + ui)..."
+$mypyOutput = (Invoke-DevTool -Tool "mypy" -ToolArgs @("lucnhan/core", "lucnhan/providers", "lucnhan/memory", "lucnhan/ui", "--pretty") 2>&1) -join "`n"
 $mypyOk = $LASTEXITCODE -eq 0
 
 if ($mypyOk) {
