@@ -326,12 +326,67 @@ def _load_body(md_path: str) -> str:
     return body
 
 
+_REFERENCE_INDEX_NAME = "INDEX.md"
+
+# First ``*.md`` token on an INDEX.md line — tolerates bullets, numbered lists,
+# backticks and a trailing rationale.
+_REFERENCE_ENTRY_RE = re.compile(r"`?([A-Za-z0-9._%+-]+\.md)`?")
+
+
+def _read_reference_order(directory: str) -> list[str]:
+    """Read an explicit reference load order from ``<directory>/INDEX.md``.
+
+    One entry per line: bullets (``-`` / ``*``), numbered lists (``1.``) and
+    backticked names are all accepted, and anything after an inline ``#`` is a
+    comment.  The first ``*.md`` token on the line is the entry, so lines may
+    carry a short rationale after the name.  Unknown entries are dropped by
+    :func:`_ordered_reference_names`, and a missing/empty index keeps the
+    historical alphabetical order.
+
+    Why this exists: the whole skill body (SKILL.md + every reference) is
+    concatenated and then hard-capped by
+    :func:`lucnhan.core.sanitize.sanitize_skill_body` (``SKILL_MAX_CHARS``), so a
+    large skill silently loses whatever sorts last.  An index lets a skill state
+    which references must survive the cap.
+    """
+    path = os.path.join(directory, _REFERENCE_INDEX_NAME)
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            raw = f.read()
+    except OSError:
+        return []
+
+    order: list[str] = []
+    for line in raw.splitlines():
+        match = _REFERENCE_ENTRY_RE.search(line.split("#", 1)[0])
+        if match is None:
+            continue
+        entry = os.path.basename(match.group(1))
+        if entry == _REFERENCE_INDEX_NAME:
+            continue
+        if entry not in order:
+            order.append(entry)
+    return order
+
+
+def _ordered_reference_names(directory: str) -> list[str]:
+    """Reference file names in load order: INDEX.md first, then alphabetical."""
+    names = sorted(fname for fname in os.listdir(directory) if fname.endswith(".md") and fname != _REFERENCE_INDEX_NAME)
+    order = _read_reference_order(directory)
+    if not order:
+        return names
+    ranked = [name for name in order if name in names]
+    ranked.extend(name for name in names if name not in ranked)
+    return ranked
+
+
 def _load_references(skill_dir: str) -> str:
     """Load .md files from <skill>/references/ and concatenate them.
 
     Also loads host-specific references from <skill>/references/ida/ depending on the active host, so generic
     skills can ship separate reference docs per tool without injecting
-    both into the context.
+    both into the context.  ``INDEX.md`` in a reference directory sets the load
+    order (and is itself never injected).
     """
     from ..core.host import HOST_IDA, host_kind
 
@@ -344,9 +399,7 @@ def _load_references(skill_dir: str) -> str:
     parts: list[str] = []
 
     def _load_dir(directory: str) -> None:
-        for fname in sorted(os.listdir(directory)):
-            if not fname.endswith(".md"):
-                continue
+        for fname in _ordered_reference_names(directory):
             fpath = os.path.join(directory, fname)
             try:
                 with open(fpath, encoding="utf-8-sig") as f:

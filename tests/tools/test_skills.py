@@ -6,12 +6,14 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
+from lucnhan.core.sanitize import SKILL_MAX_CHARS, sanitize_skill_body
 from lucnhan.skills.loader import (
     _parse_frontmatter,
     _split_frontmatter,
@@ -451,6 +453,159 @@ class TestBuiltinTriggerMatching(unittest.TestCase):
         self.assertIn("Variables: snake_case", body)
         self.assertIn("Enums", body)
         self.assertIn("/naming-convention", body)
+
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEOBFUSCATION_REFS_IDA = os.path.join(REPO_ROOT, "lucnhan", "skills", "builtins", "deobfuscation", "references", "ida")
+
+
+class TestReferenceIndexOrder(unittest.TestCase):
+    """``references/<host>/INDEX.md`` sets the injection order and is never injected.
+
+    Rationale: the whole skill body (SKILL.md + every reference) is concatenated
+    and then hard-capped by ``sanitize_skill_body`` (``SKILL_MAX_CHARS``), so the
+    load order decides which references actually reach the model.
+    """
+
+    def _write_skill(self, root: str, refs: dict[str, str], index: str | None = None) -> None:
+        skill_dir = os.path.join(root, "demo")
+        ref_dir = os.path.join(skill_dir, "references", "ida")
+        os.makedirs(ref_dir)
+        with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: Demo\ndescription: demo\n---\n# Demo body\n")
+        for fname, content in refs.items():
+            with open(os.path.join(ref_dir, fname), "w", encoding="utf-8") as f:
+                f.write(content)
+        if index is not None:
+            with open(os.path.join(ref_dir, "INDEX.md"), "w", encoding="utf-8") as f:
+                f.write(index)
+
+    def _body(self, root: str) -> str:
+        with mock.patch("lucnhan.core.host.host_kind", return_value="ida"):
+            skills = discover_skills(root)
+            self.assertEqual(len(skills), 1)
+            return skills[0].body
+
+    def test_index_sets_load_order(self):
+        refs = {"a-alpha.md": "ALPHA", "b-beta.md": "BETA", "c-gamma.md": "GAMMA"}
+        # Bulleted / numbered entries with a trailing rationale are both accepted.
+        index = "# Order\n1. `c-gamma.md` — first\n2. a-alpha.md  # second\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_skill(tmp, refs, index)
+            body = self._body(tmp)
+        self.assertLess(
+            body.index("## Reference: c-gamma.md"),
+            body.index("## Reference: a-alpha.md"),
+        )
+        self.assertLess(
+            body.index("## Reference: a-alpha.md"),
+            body.index("## Reference: b-beta.md"),
+        )
+
+    def test_index_unknown_entries_are_ignored(self):
+        refs = {"a-alpha.md": "ALPHA", "b-beta.md": "BETA", "c-gamma.md": "GAMMA"}
+        index = "- missing.md\n- b-beta.md\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_skill(tmp, refs, index)
+            body = self._body(tmp)
+        self.assertLess(
+            body.index("## Reference: b-beta.md"),
+            body.index("## Reference: a-alpha.md"),
+        )
+        self.assertNotIn("missing.md", body)
+
+    def test_without_index_order_stays_alphabetical(self):
+        refs = {"a-alpha.md": "ALPHA", "b-beta.md": "BETA", "c-gamma.md": "GAMMA"}
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_skill(tmp, refs)
+            body = self._body(tmp)
+        self.assertLess(body.index("## Reference: a-alpha.md"), body.index("## Reference: b-beta.md"))
+        self.assertLess(body.index("## Reference: b-beta.md"), body.index("## Reference: c-gamma.md"))
+
+    def test_index_file_is_not_injected(self):
+        refs = {"a-alpha.md": "ALPHA"}
+        index = "# ORDER-MARKER-42\n- a-alpha.md\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_skill(tmp, refs, index)
+            body = self._body(tmp)
+        self.assertNotIn("## Reference: INDEX.md", body)
+        self.assertNotIn("ORDER-MARKER-42", body)
+
+
+class TestDeobfuscationPayloadBudget(unittest.TestCase):
+    """Regression for the P0 audit finding.
+
+    The deobfuscation playbook is far larger than ``SKILL_MAX_CHARS``, so the
+    injected prompt is truncated.  ``references/ida/INDEX.md`` must keep the
+    microcode crash guards and the tool catalogue inside the budget; if a future
+    edit reorders or grows those files past the cap this test fails.
+    """
+
+    PRIORITY = ("tools.md", "guide.md", "microcode-guide.md", "algorithm-reference.md")
+
+    @classmethod
+    def setUpClass(cls):
+        with mock.patch("lucnhan.core.host.host_kind", return_value="ida"):
+            skills = {
+                skill.slug: skill for skill in discover_skills(os.path.join(REPO_ROOT, "lucnhan", "skills", "builtins"))
+            }
+            cls.skill = skills["deobfuscation"]
+            cls.body = cls.skill.body
+        cls.injected = sanitize_skill_body(cls.body, cls.skill.slug)
+
+    def test_payload_exceeds_the_cap(self):
+        # Documents *why* ordering matters: truncation is expected here, not a bug
+        # (lazy per-reference loading is the follow-up fix).
+        self.assertGreater(len(self.body), SKILL_MAX_CHARS * 2)
+
+    def test_priority_references_survive_intact(self):
+        # Compare the *whole* file so a future edit that grows any priority
+        # reference past the remaining budget fails here instead of silently
+        # dropping the tail (truncation) or tripping the marker stripper.
+        for fname in self.PRIORITY:
+            self.assertIn(f"## Reference: {fname}", self.injected)
+            with open(os.path.join(DEOBFUSCATION_REFS_IDA, fname), encoding="utf-8-sig") as f:
+                content = f.read().strip()
+            self.assertIn(
+                content,
+                self.injected,
+                f"{fname} is no longer injected intact (truncated by SKILL_MAX_CHARS "
+                f"or altered by sanitize_skill_body)",
+            )
+
+    def test_microcode_write_guards_reach_the_model(self):
+        for rule in ("mba.maturity >= 6", "EQ_IGNSIZE", "mark_lists_dirty", "mark_chains_dirty"):
+            self.assertIn(rule, self.injected)
+
+
+class TestIdaScriptingPayloadBudget(unittest.TestCase):
+    """Same defect class as :class:`TestDeobfuscationPayloadBudget`.
+
+    ``ida-scripting`` is ~110 k chars assembled, so ``api-reference.md`` must stay
+    in front of the 84 k porting guide (``references/INDEX.md``) and the porting
+    guide itself must be read on demand via ``read_skill_reference``.
+    """
+
+    def setUp(self):
+        with mock.patch("lucnhan.core.host.host_kind", return_value="ida"):
+            skills = {
+                skill.slug: skill for skill in discover_skills(os.path.join(REPO_ROOT, "lucnhan", "skills", "builtins"))
+            }
+            self.skill = skills["ida-scripting"]
+        self.injected = sanitize_skill_body(self.skill.body, self.skill.slug)
+
+    def test_api_reference_survives_intact(self):
+        ref = os.path.join(
+            REPO_ROOT, "lucnhan", "skills", "builtins", "ida-scripting", "references", "api-reference.md"
+        )
+        with open(ref, encoding="utf-8-sig") as f:
+            content = f.read().strip()
+        self.assertIn("## Reference: api-reference.md", self.injected)
+        self.assertIn(content, self.injected, "api-reference.md must stay inside SKILL_MAX_CHARS")
+
+    def test_payload_exceeds_the_cap(self):
+        # The porting guide (84 k) cannot fit; read_skill_reference covers it.
+        self.assertGreater(len(self.skill.body), SKILL_MAX_CHARS)
 
 
 if __name__ == "__main__":

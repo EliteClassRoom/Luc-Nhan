@@ -58,6 +58,7 @@ _ADVANCED_MODULE_NAMES = (
     "lucnhan.tools.web",
     "lucnhan.tools.web_fetch",
     "lucnhan.tools.idapython_docs",
+    "lucnhan.tools.skill_reference",
 )
 
 # ---------------------------------------------------------------------------

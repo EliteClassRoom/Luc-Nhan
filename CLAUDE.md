@@ -324,6 +324,16 @@ Task: <instruction for the agent>
 
 A `references/` directory (optional) holds `.md` files that are auto-appended to the prompt.
 
+The assembled body (`SKILL.md` + **every** reference) is hard-capped at `SKILL_MAX_CHARS` (50 000) by
+`sanitize_skill_body()` — a large skill silently loses whatever sorts last. Two rules for big skills:
+
+- Put `INDEX.md` in the reference directory to set the injection order, one `*.md` name per line, first =
+  highest priority (`lucnhan/skills/builtins/deobfuscation/references/ida/INDEX.md` is the reference
+  example). `INDEX.md` itself is never injected; a directory without one keeps alphabetical order.
+- Anything past the cap is still reachable at runtime: say so in `SKILL.md` and point at
+  `read_skill_reference(skill="<slug>", file="<path under references/>", offset=N)`
+  (`lucnhan/tools/skill_reference.py`, windows of ≤ 7 000 chars).
+
 ### New LLM provider
 
 Subclass the `LLMProvider` ABC in `lucnhan/providers/base.py`, register in `lucnhan/providers/registry.py`. OpenAI-compatible providers (MiniMax, custom endpoints) can subclass `OpenAICompatProvider` for convenience.

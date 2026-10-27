@@ -332,7 +332,21 @@ cfunc = db.decompile(ea)
 ## When to fetch more
 
 The deep static reference below (`## Reference: api-reference.md`) covers ctree,
-microcode, types, xrefs, hooks, and netnodes exhaustively. For per-module
+microcode, types, xrefs, hooks, and netnodes exhaustively.
+
+> **Deep references are size-capped.** `SKILL.md` + `references/` are concatenated and truncated
+> at `SKILL_MAX_CHARS` (50 000 chars) before they reach you, so the 84 KB
+> `idapython-porting-guide-ida-9.md` is **not** in your prompt. Read any reference on demand
+> instead of guessing:
+>
+> ```
+> read_skill_reference(skill="ida-scripting", file="api-reference.md")
+> read_skill_reference(skill="ida-scripting", file="idapython-porting-guide-ida-9.md", offset=6000)
+> ```
+>
+> Empty `file` lists what the skill ships; long files come back in windows with a `next offset`.
+
+For per-module
 references, **always try the offline docs tool first**:
 
 ```

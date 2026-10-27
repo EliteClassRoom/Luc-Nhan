@@ -71,6 +71,19 @@ Host-specific tools, API details, and full algorithm implementations are in the 
 
 **Read the host-specific tools reference first** to know what primitives are available.
 
+> **Not every reference is in your prompt.** `SKILL.md` + `references/` are truncated at
+> `SKILL_MAX_CHARS` (50 000 chars) before they reach you, so the tail of this set
+> (`string-decryption.md`, `self-restoring-binary.md`, most of `api-hashing.md`, part of
+> `cff-recovery.md`) is missing. Read any of them on demand instead of guessing:
+>
+> ```
+> read_skill_reference(skill="deobfuscation", file="ida/string-decryption.md")
+> read_skill_reference(skill="deobfuscation", file="ida/api-hashing.md", offset=6000)
+> ```
+>
+> Empty `file` lists the skill's reference files; long files come back in windows with a
+> `next offset`.
+
 ## Order of Operations
 
 ### 1. String Decryption (always first — unlocks context)
@@ -259,4 +272,17 @@ Not reversible with IL-level tools.
 - **Iterative approach:** complex obfuscation needs multiple passes — install optimizer/transform, redecompile, check, refine.
 - **If IL-level approach fails, fall back to byte-level patching.**
 - **Never draw conclusions from obfuscated code.**
-- **Check the host-specific reference files** for tool-specific rules (maturity guards, operand comparison, dirty marking).
+
+### Microcode write guards (apply to every optimizer, hook, and NOP)
+
+- **Never modify microcode at maturity ≥ 6 (`MMAT_LVARS`).** Guard every write with
+  `if blk.mba.maturity >= 6: return 0`; editing at `MMAT_LVARS` or later causes Hex-Rays
+  internal errors. Read at any maturity, write only below 6.
+- **Operand equality:** always `a.equal_mops(b, EQ_IGNSIZE)` — never bare `.equal_mops(b)`.
+- **Mutate in place:** overwrite opcodes / erase operands on existing `minsn_t`; never
+  instantiate a new `minsn_t`.
+- **Mark dirty:** `blk.mark_lists_dirty()` after each edited block, `mba.mark_chains_dirty()`
+  after a pass, then redecompile.
+
+- **Check the host-specific reference files** for the full tool catalogue and per-technique
+  recipes (`references/ida/tools.md`, `guide.md`).
