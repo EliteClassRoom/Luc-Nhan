@@ -35,19 +35,28 @@ _STALE_DUPLICATE = "[Duplicate of a later result]"
 #: most recent results verbatim.
 _STALE_KEEP_TAIL = 4
 
-#: Tool-call argument keys that identify *what* was read.  The first one
-#: present in the arguments identifies the target.
+#: A call is treated as a read of a target only when it carries one of
+#: these argument keys; tools without any (``execute_python``, subagent
+#: spawns, ...) are never elided by identity.
 _STALE_TARGET_KEYS = ("address", "function", "name", "path", "file", "offset", "pattern")
 
 
 def _stale_key(tc: ToolCall | None) -> tuple[str, str] | None:
-    """Return the identity of the target a tool call read, if any."""
+    """Return the identity of the read a tool call performed, if any.
+
+    The identity is the tool plus *all* of its arguments: a later read
+    supersedes an earlier one only when it is the same read.  Sharing a
+    single argument is not enough — a paged read (``offset``), a filtered
+    search (``pattern``) or a windowed file read (``file`` + ``offset``)
+    returns different content for each argument set, and blanking the
+    older one would silently lose it.
+    """
     if tc is None:
         return None
     for key in _STALE_TARGET_KEYS:
         value = tc.arguments.get(key)
         if isinstance(value, (str, int)) and str(value):
-            return (tc.name, f"{key}={value}")
+            return (tc.name, json.dumps(tc.arguments, sort_keys=True, default=str, separators=(",", ":")))
     return None
 
 
