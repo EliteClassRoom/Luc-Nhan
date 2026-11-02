@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from lucnhan.core.config import LucNhanConfig
 from lucnhan.memory.context import (
@@ -266,6 +266,18 @@ class TestRetrieveNotesFailure(unittest.TestCase):
             pack = retrieve(self.store, self.paths, q)
         self.assertGreater(pack.counts.get("memories", 0), 0)
         self.assertTrue(log_debug_mock.called, "note-read failure must be logged")
+
+
+class TestBuildRetrievedContextFailure(unittest.TestCase):
+    def test_retrieve_failure_is_logged_and_returns_empty(self):
+        with (
+            patch("lucnhan.memory.context.retrieve", side_effect=ValueError("bad pack")),
+            patch("lucnhan.memory.context.log_warning") as log_warning_mock,
+        ):
+            section, pack = build_retrieved_context_with_pack(MagicMock(), MagicMock(), query=RetrievalQuery())
+
+        self.assertEqual((section, pack), ("", None))
+        self.assertTrue(log_warning_mock.called, "retrieval failure must be logged")
 
 
 if __name__ == "__main__":

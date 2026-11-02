@@ -39,6 +39,7 @@ from datetime import datetime
 from typing import Any
 
 from ..core.atomic_io import atomic_replace
+from ..core.logging import log_debug
 from ..core.sanitize import (
     _neutralize_closing_tag,
     strip_injection_markers,
@@ -437,8 +438,8 @@ def build_report_context(
                 f"### {_safe_text(title, _REPORT_FIELD_TITLE_LIMIT)}\n"
                 f"{_safe_text(excerpt, _REPORT_NOTE_EXCERPT_LIMIT)}\n"
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        log_debug(f"report notes section skipped: {exc!r}")
 
     return ReportContext(
         scope=scope_norm,
