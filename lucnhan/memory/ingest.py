@@ -28,10 +28,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import traceback
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from ..core.logging import log_error
 from .notes import extract_inline_addresses, extract_inline_tags, parse_note
 from .paths import (
     KnowledgePaths,
@@ -101,7 +103,8 @@ def make_store(idb_path: str, db_instance_id: str = "") -> tuple[KnowledgeRawSto
 
         paths = knowledge_paths(idb_path, db_instance_id)
         return (KnowledgeRawStore(paths), paths)
-    except Exception:
+    except (OSError, ValueError) as e:  # UnicodeError is a ValueError subclass
+        log_error(f"make_store: failed to derive knowledge paths for {idb_path!r}: {e!r}\n{traceback.format_exc()}")
         return (None, None)
 
 
@@ -165,9 +168,9 @@ def ingest_save_memory(
                 },
             )
         )
-    except Exception:
+    except Exception as exc:
         # Memory subsystem is best-effort — never fail the agent on it.
-        pass
+        log_error(f"ingest_save_memory: JSONL write failed: {exc!r}")
 
 
 def _memory_title(fact: str, limit: int = 80) -> str:
@@ -335,8 +338,8 @@ def _write_exploration_to_jsonl(
     )
     try:
         store.upsert_entity(ent)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_error(f"exploration JSONL: entity write failed for {eid}: {exc!r}")
     entity_refs.append(eid)
 
     # Hypothesis findings carry their own verdict metadata; everything
@@ -379,8 +382,8 @@ def _write_exploration_to_jsonl(
                 },
             )
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log_error(f"exploration JSONL: memory/observation write failed for {mem_id}: {exc!r}")
 
 
 def ingest_exploration_finding(
@@ -554,8 +557,8 @@ def _write_research_to_jsonl(
                 source_refs=[f"note:{note_path}"],
             )
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log_error(f"research JSONL: note entity write failed for {note_eid}: {exc!r}")
 
     # Mentioned function entities + relations
     addresses = (parsed.addresses if parsed else []) or extract_inline_addresses(content or "")
@@ -581,8 +584,8 @@ def _write_research_to_jsonl(
                 confidence=0.7 if review_passed else 0.5,
                 source_refs=[f"note:{note_path}"],
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_error(f"research JSONL: function entity/relation write failed for {eid}: {exc!r}")
 
     # Memory summarising the note
     mem_id = f"mem:note:{genre or (parsed.genre if parsed else 'general')}:{slug}"
@@ -610,8 +613,8 @@ def _write_research_to_jsonl(
     )
     try:
         store.upsert_memory(memory)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_error(f"research JSONL: memory write failed for {mem_id}: {exc!r}")
 
     # Related notes → mentioned_in_note relations. Also create
     # placeholder entities for related slugs that haven't been indexed
@@ -637,8 +640,8 @@ def _write_research_to_jsonl(
                 confidence=0.6,
                 source_refs=[f"note:{note_path}"],
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_error(f"research JSONL: related-note write failed for {rel_eid}: {exc!r}")
 
     # Observation (timeline entry)
     try:
@@ -659,8 +662,8 @@ def _write_research_to_jsonl(
                 },
             )
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log_error(f"research JSONL: observation write failed for {mem_id}: {exc!r}")
 
 
 def ingest_research_note(

@@ -251,5 +251,22 @@ class TestSearchAll(unittest.TestCase):
         self.assertEqual(result["entities"], [])
 
 
+class TestRetrieveNotesFailure(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.store, self.paths = fresh_store(self.tmp)
+        ingest_save_memory(self.store, self.paths, fact="RC4 decrypts payload at 0x401000", category="crypto")
+
+    def test_notes_failure_is_logged_and_other_results_survive(self):
+        q = RetrievalQuery(text="rc4", address="0x401000")
+        with (
+            patch("lucnhan.memory.retrieve.list_notes", side_effect=OSError("notes boom")),
+            patch("lucnhan.memory.retrieve.log_debug") as log_debug_mock,
+        ):
+            pack = retrieve(self.store, self.paths, q)
+        self.assertGreater(pack.counts.get("memories", 0), 0)
+        self.assertTrue(log_debug_mock.called, "note-read failure must be logged")
+
+
 if __name__ == "__main__":
     unittest.main()
