@@ -88,7 +88,10 @@ def _iter_references(root: Path) -> list[Path]:
 def _resolve_reference(root: Path, file_name: str) -> Path:
     """Resolve ``file_name`` inside the skill's references directory, or fail."""
     refs_dir = (root / "references").resolve()
-    candidate = (refs_dir / file_name).resolve()
+    # Treat "\" as a separator on every platform: on POSIX it is an ordinary
+    # filename character, so ``..\..\x`` would otherwise pass as a plain name
+    # instead of being rejected as the traversal it is on Windows.
+    candidate = (refs_dir / file_name.replace("\\", "/")).resolve()
     try:
         candidate.relative_to(refs_dir)
     except ValueError:
