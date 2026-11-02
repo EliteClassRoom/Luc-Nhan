@@ -1173,7 +1173,7 @@ class TestAddButtonTabBarTheme(unittest.TestCase):
             ThemeManager.instance().set_mode(ThemeMode.LIGHT)
             bar = _AddButtonTabBar()
             try:
-                bar.refresh_inline_styles()
+                bar._apply_styles()
                 light_tokens = ThemeManager.instance().tokens()
                 self.assertIn(
                     light_tokens.text,
@@ -1186,7 +1186,7 @@ class TestAddButtonTabBarTheme(unittest.TestCase):
                 ThemeManager.instance().set_mode(ThemeMode.DARK)
                 bar2 = _AddButtonTabBar()
             try:
-                bar2.refresh_inline_styles()
+                bar2._apply_styles()
                 dark_tokens = ThemeManager.instance().tokens()
                 self.assertIn(
                     dark_tokens.text,
@@ -2035,6 +2035,96 @@ class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
 # ----------------------------------------------------------------------------
 # J. Anthropic-compatible raw content block preservation
 # ----------------------------------------------------------------------------
+
+
+@requires_real_qt
+class TestMaxOutputTokensUnknownModelLimit(unittest.TestCase):
+    """A model with no published output limit must not cap the spin box.
+
+    OpenAI-compatible endpoints and Ollama publish no per-model output
+    limit, so their ``ModelInfo`` carries the unknown-limit marker
+    (``max_output_tokens == 0``).  The dialog used to read the 4096
+    placeholder as the model's real limit: the spin box could not go
+    above 4096 and a larger saved value was silently truncated the next
+    time the user saved Settings.
+    """
+
+    def _make_dialog(self):
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
+
+        _ensure_qapplication()
+        config = LucNhanConfig()
+        config.provider.name = "openai_compat"
+        config.provider.model = "my-model"
+        config.provider.max_tokens = 32768
+        dlg = SettingsDialog(config)
+        return dlg, config
+
+    def _select_model_without_published_limit(self, dlg) -> None:
+        from lucnhan.core.types import ModelInfo
+
+        dlg._fetched_models = [
+            ModelInfo(
+                id="my-model",
+                name="My Model",
+                provider="openai_compat",
+                context_window=200000,
+            )
+        ]
+        dlg._model_combo.addItem("My Model  (my-model)", "my-model")
+        dlg._model_combo.setCurrentIndex(0)
+
+    def test_unknown_limit_keeps_a_generous_upper_bound(self) -> None:
+        dlg, _cfg = self._make_dialog()
+        try:
+            self._select_model_without_published_limit(dlg)
+            self.assertGreaterEqual(dlg._max_tokens_spin.maximum(), 1_000_000)
+            self.assertNotEqual(dlg._max_tokens_spin.maximum(), 4096)
+        finally:
+            dlg.done(0)
+
+    def test_saved_value_above_the_placeholder_is_preserved(self) -> None:
+        """The saved 32768 must survive the model refresh — no silent clamp."""
+        dlg, cfg = self._make_dialog()
+        try:
+            self._select_model_without_published_limit(dlg)
+            self.assertEqual(dlg._max_tokens_spin.value(), 32768)
+            dlg._sync_config_from_ui()
+            self.assertEqual(cfg.provider.max_tokens, 32768)
+        finally:
+            dlg.done(0)
+
+
+class TestOpenAICompatModelsHaveNoFakeOutputLimit(unittest.TestCase):
+    """An OpenAI-compatible listing must not publish a fake output limit.
+
+    The endpoint's ``/v1/models`` response carries no output-token limit,
+    so its model entries must report the unknown-limit marker instead of
+    the 4096 placeholder — otherwise the settings dialog pins the user's
+    Max Output Tokens to 4096.
+    """
+
+    def test_listed_models_report_an_unknown_output_limit(self) -> None:
+        from lucnhan.providers.openai_compat import OpenAICompatProvider
+
+        provider = OpenAICompatProvider(
+            api_key="test-key",
+            api_base="https://example.invalid/v1",
+            model="my-model",
+        )
+        # The endpoint does not answer in tests: ``list_models`` falls
+        # back to the configured model.  The provider logs the failure, so
+        # keep the test off the user's debug log.
+        with (
+            patch.object(provider, "_get_client", side_effect=RuntimeError("offline")),
+            patch("lucnhan.providers.openai_compat.log_debug"),
+        ):
+            models = provider.list_models()
+
+        self.assertTrue(models)
+        for info in models:
+            self.assertEqual(info.max_output_tokens, 0)
 
 
 class TestAnthropicRawPartsPreservation(unittest.TestCase):

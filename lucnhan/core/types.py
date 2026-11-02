@@ -335,7 +335,13 @@ class ModelInfo:
     name: str
     provider: str
     context_window: int = 128000
-    max_output_tokens: int = 4096
+    #: The model's output-token limit.  ``0`` means UNKNOWN: the provider
+    #: publishes no per-model output limit, so the value is a placeholder
+    #: and must never be treated as a hard ceiling.  The settings dialog
+    #: reads it as the spin box's upper bound and would otherwise pin the
+    #: user to the placeholder — every model of an OpenAI-compatible
+    #: endpoint used to be capped at 4096.
+    max_output_tokens: int = 0
     supports_tools: bool = True
     supports_vision: bool = False
 
