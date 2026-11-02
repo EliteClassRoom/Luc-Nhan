@@ -704,12 +704,23 @@ selects the active detectors:
 | `trigram_jaccard` | >= 80 % of adjacent segments in a 16-segment window are near-duplicates |
 | `progress_stall` | 8 consecutive segments add no new trigrams and name no concrete anchor |
 | `header_runaway` | 24 or more titled lines with no tool call |
+| `visible_verbatim_tail` | the last 180 characters of the visible tail occur >= 3 times inside it |
+| `visible_trigram_jaccard` | >= 90 % of adjacent lines in the last 16 visible lines are near-duplicates (Jaccard >= 0.9) |
+| `visible_ceiling` | estimated visible tokens >= visible ceiling (default 32 768) |
 
 `resolve_loop_guard_profile(provider, model, setting)` picks the profile:
 `auto` maps GLM models to the GLM parity set, Gemini/DeepSeek/Grok/Qwen/
 Kimi/MiniMax to the full set, and everything else to a generic subset.
-`full`, `glm` and `off` force a set. A visible answer (>= 256 non-whitespace
-characters) or a tool-call start suppresses every detector except the ceiling.
+`full`, `glm` and `off` force a set. The guard is armed for every turn,
+including text-only turns where no tools are exposed. A visible answer
+(>= 256 non-whitespace characters) suppresses only the meta-intent
+detector; the generic detectors and both ceilings keep running. A tool-call
+start suppresses every detector.
+
+Provider text arrives through `StreamLoopGuard.on_text_delta()`: a literal
+`<think>...</think>` span is routed to the reasoning channel, everything else
+to the visible channel. `flush()` runs at the end of the stream so a trailing
+partial tag is not lost.
 
 ### Turn layer — tool-call repeat ladder
 

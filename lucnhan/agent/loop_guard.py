@@ -31,21 +31,33 @@ inert.
    elaborating without moving.
 6. **Header runaway** — 24 or more titled lines (``## heading`` or
    ``**bold heading**``) with no tool call.
+7. **Visible verbatim tail** — the last 180 characters of the *visible*
+   tail occur at least three times inside the 4,096-character visible
+   window: the answer channel itself is looping.
+8. **Visible trigram similarity** — the last 16 visible lines are
+   near-duplicates (Jaccard similarity of their trigram sets >= 0.9)
+   for at least 90 % of the adjacent pairs.
+9. **Visible ceiling** — estimated visible tokens >= the configured
+   visible ceiling (default 32,768 tokens).
 
-A visible answer (>= ``VISIBLE_DISABLE_THRESHOLD`` non-whitespace chars)
-or a tool call start suppresses every detector except the hard ceiling:
+Text that arrives on the provider's *text* channel is routed with
+:meth:`StreamLoopGuard.on_text_delta`: a literal ``<think>...</think>``
+span counts as reasoning, everything else counts as visible answer
+text.  A tool call start suppresses every detector.
 
-* Once visible text has crossed the threshold, repetition is no longer
-  a degeneration signal — the model is now answering, not stuck
-  reasoning.
-* Once a tool call starts, the model has committed; further reasoning
-  is irrelevant and the guard must not interfere.
+A visible answer (>= ``VISIBLE_DISABLE_THRESHOLD`` non-whitespace
+chars) suppresses only the meta-intent path: once visible text has
+crossed the threshold the model is answering, so the "narrating a tool
+call" degeneration no longer applies.  The generic repetition
+detectors and both ceilings keep running — a model can loop in the
+answer channel just as easily as in the reasoning channel.
 
 All state is bounded: the partial-line buffer is flushed in
 :data:`MAX_SEGMENT_CHARS` chunks even without a newline so the buffer
 never exceeds that size, plus at most 128 normalized segments are
-retained, plus a 4,096-character verbatim tail.  This guarantees O(1)
-memory regardless of how long the reasoning stream runs.
+retained, plus a 4,096-character verbatim tail, plus a 4,096-character
+visible tail.  This guarantees O(1) memory regardless of how long the
+reasoning stream runs.
 """
 
 from __future__ import annotations
@@ -114,6 +126,18 @@ TRIGGER_STALL: str = "progress_stall"
 #: titled lines without committing to a tool call.
 TRIGGER_HEADER: str = "header_runaway"
 
+#: Trigger name returned when the *visible* (answer) tail repeats
+#: verbatim.  Catches a model that loops in the channel the user reads.
+TRIGGER_VISIBLE_VERBATIM: str = "visible_verbatim_tail"
+
+#: Trigger name returned when consecutive visible lines are
+#: near-duplicates.
+TRIGGER_VISIBLE_TRIGRAM: str = "visible_trigram_jaccard"
+
+#: Trigger name returned when the visible channel blows through its own
+#: token ceiling.
+TRIGGER_VISIBLE_CEILING: str = "visible_ceiling"
+
 #: Character window of the reasoning tail inspected by the verbatim
 #: detector.
 EXACT_TAIL_WINDOW: int = 4096
@@ -144,6 +168,33 @@ STALL_NOVELTY: float = 0.2
 #: Number of titled lines after which the header-runaway detector
 #: fires.
 HEADER_RUNAWAY_THRESHOLD: int = 24
+
+#: Hard ceiling on estimated *visible* tokens per turn.  A backstop for
+#: runs where the visible channel never settles into a recognisable
+#: repeat pattern (e.g. a slowly drifting paraphrase loop).
+DEFAULT_VISIBLE_CEILING_TOKENS: int = 32_768
+
+#: Minimum number of occurrences of the repeated visible block that
+#: makes the visible verbatim detector fire.
+VISIBLE_EXACT_MIN_OCCURRENCES: int = 3
+
+#: Number of trailing visible lines inspected by the visible trigram
+#: detector.
+VISIBLE_TRIGRAM_WINDOW: int = 16
+
+#: Minimum Jaccard similarity of the trigram sets of two adjacent visible
+#: lines for the pair to count as a near-duplicate.  Deliberately strict:
+#: legitimate verbose output (enumerated steps that share a template)
+#: must not be mistaken for a loop.
+VISIBLE_TRIGRAM_JACCARD: float = 0.9
+
+#: Minimum fraction of adjacent visible pairs that must be near-duplicates
+#: for the visible trigram detector to fire.
+VISIBLE_TRIGRAM_PAIR_RATIO: float = 0.9
+
+#: Minimum number of new visible characters before the visible trigram
+#: detector re-evaluates.  Keeps the detector O(1) per character.
+VISIBLE_TRIGRAM_MIN_GROWTH: int = 256
 
 #: Action verbs that, combined with a tool term, indicate the model is
 #: *narrating* an upcoming tool call (the degeneration pattern we want
@@ -189,6 +240,29 @@ _HEADER_LINE_RE: re.Pattern[str] = re.compile(r"^\s*(?:#{1,6}\s+\S|\*\*[^*]{1,80
 #: specific, i.e. it is making progress even if the prose repeats.
 _ANCHOR_RE: re.Pattern[str] = re.compile(r"0x[0-9a-fA-F]+|\b\w+\s*\(|[\w./\\-]+\.(?:c|cc|cpp|h|hpp|py|rs|go|js|ts)\b")
 
+#: Tag routing: a literal ``<think>`` span inside provider *text* is
+#: reasoning, not user-visible answer text.  Matching is
+#: case-insensitive; the emitted text keeps its original case.  A regex
+#: is used (instead of ``casefold().find()``) because ``casefold`` can
+#: change the string length for non-ASCII input, which would misalign
+#: the index into the pending buffer.
+_THINK_OPEN_RE: re.Pattern[str] = re.compile(r"<think>", re.IGNORECASE)
+_THINK_CLOSE_RE: re.Pattern[str] = re.compile(r"</think>", re.IGNORECASE)
+
+
+def _partial_tag_suffix(text: str, tag: str) -> str:
+    """Return the trailing fragment of *text* that may start *tag*.
+
+    A streamed ``<think>`` can arrive split across deltas ("<thi" then
+    "nk>").  The fragment is held back until the rest of the tag shows
+    up, so a literal tag is never leaked into the visible channel.
+    """
+    limit = min(len(text), len(tag) - 1)
+    for n in range(limit, 0, -1):
+        if text[-n:].casefold() == tag[:n].casefold():
+            return text[-n:]
+    return ""
+
 
 # ---------------------------------------------------------------------------
 # Profiles
@@ -214,6 +288,12 @@ class LoopGuardProfile:
         No-new-information detector.
     header_runaway:
         Runaway titled-line detector.
+    visible_verbatim:
+        Verbatim repeated-tail detector for the visible channel.
+    visible_trigram:
+        Near-duplicate line detector for the visible channel.
+    visible_ceiling:
+        Hard ceiling on estimated visible tokens.
     """
 
     ceiling: bool = True
@@ -222,6 +302,9 @@ class LoopGuardProfile:
     trigram_jaccard: bool = False
     progress_stall: bool = False
     header_runaway: bool = False
+    visible_verbatim: bool = False
+    visible_trigram: bool = False
+    visible_ceiling: bool = False
 
     @property
     def enabled(self) -> bool:
@@ -234,6 +317,9 @@ class LoopGuardProfile:
                 self.trigram_jaccard,
                 self.progress_stall,
                 self.header_runaway,
+                self.visible_verbatim,
+                self.visible_trigram,
+                self.visible_ceiling,
             )
         )
 
@@ -241,16 +327,27 @@ class LoopGuardProfile:
 #: Every detector disabled.
 _PROFILE_OFF = LoopGuardProfile(False, False)
 
-#: GLM parity: ceiling + the meta-intent repetition detector.
-_PROFILE_GLM = LoopGuardProfile(ceiling=True, meta_intent=True)
+#: GLM parity: ceiling + the meta-intent repetition detector + the
+#: generic visible-channel detectors.
+_PROFILE_GLM = LoopGuardProfile(
+    ceiling=True,
+    meta_intent=True,
+    verbatim_tail=True,
+    visible_verbatim=True,
+    visible_trigram=True,
+    visible_ceiling=True,
+)
 
-#: Default for unlisted model families: ceiling + the two generic
-#: detectors that need no model-specific tuning.
+#: Default for unlisted model families: ceiling + the generic detectors
+#: that need no model-specific tuning.
 _PROFILE_DEFAULT = LoopGuardProfile(
     ceiling=True,
     meta_intent=False,
     verbatim_tail=True,
     progress_stall=True,
+    visible_verbatim=True,
+    visible_trigram=True,
+    visible_ceiling=True,
 )
 
 #: Every detector.
@@ -261,6 +358,9 @@ _PROFILE_FULL = LoopGuardProfile(
     trigram_jaccard=True,
     progress_stall=True,
     header_runaway=True,
+    visible_verbatim=True,
+    visible_trigram=True,
+    visible_ceiling=True,
 )
 
 #: Model families known to need the full detector set.
@@ -334,6 +434,18 @@ class LoopGuardSnapshot:
         information.
     header_lines:
         Number of titled lines observed in the reasoning stream.
+    estimated_visible_tokens:
+        Token estimate of the visible channel using ``(bytes + 2) // 3``.
+    visible_utf8_bytes:
+        Cumulative UTF-8 byte count of all visible deltas.
+    visible_tail_chars:
+        Number of characters retained in the bounded visible tail window.
+    visible_verbatim_repeats:
+        Number of times the visible verbatim detector observed a repeated
+        block.
+    visible_trigram_pairs:
+        Number of adjacent visible line pairs in the trigram window that
+        are near-duplicates.
     """
 
     estimated_reasoning_tokens: int
@@ -348,6 +460,11 @@ class LoopGuardSnapshot:
     trigram_pairs_matched: int = 0
     stall_segments: int = 0
     header_lines: int = 0
+    estimated_visible_tokens: int = 0
+    visible_utf8_bytes: int = 0
+    visible_tail_chars: int = 0
+    visible_verbatim_repeats: int = 0
+    visible_trigram_pairs: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -359,9 +476,16 @@ class StreamLoopGuard:
     """Pure, isolated detector for streaming reasoning degeneration.
 
     The detector is intentionally host-agnostic: it consumes raw delta
-    strings (``on_reasoning_delta`` / ``on_visible_delta``) plus a
-    single tool-call-start notification (``on_tool_call_start``) and
-    answers ``should_abort()``.  No I/O, no globals, no threads.
+    strings (``on_reasoning_delta`` / ``on_visible_delta`` /
+    ``on_text_delta``) plus a single tool-call-start notification
+    (``on_tool_call_start``) and answers ``should_abort()``.  No I/O,
+    no globals, no threads.
+
+    ``on_text_delta`` is the entry point for providers that deliver the
+    answer as *text*: it routes literal ``<think>...</think>`` spans to
+    the reasoning channel and everything else to the visible channel.
+    ``flush()`` must be called at the end of the stream so a trailing
+    partial tag is not lost.
 
     Parameters
     ----------
@@ -379,6 +503,10 @@ class StreamLoopGuard:
         Detector profile.  Defaults to the GLM parity profile so a
         bare ``StreamLoopGuard(...)`` keeps the historical GLM
         behaviour.
+    visible_ceiling_tokens:
+        Hard ceiling on **estimated visible tokens**
+        (``(bytes + 2) // 3``).  Defaults to
+        :data:`DEFAULT_VISIBLE_CEILING_TOKENS` (32,768).
     """
 
     __slots__ = (
@@ -391,18 +519,27 @@ class StreamLoopGuard:
         "_last_repeated",
         "_last_stall_segments",
         "_last_trigram_pairs",
+        "_last_visible_trigram_pairs",
         "_last_window_size",
         "_max_segment_chars",
         "_profile",
         "_segments",
         "_tail",
         "_tail_growth",
+        "_think_mode",
+        "_think_pending",
         "_tool_names_cf",
         "_tool_started",
         "_total_segments",
         "_trigger",
         "_verbatim_repeats",
+        "_visible_bytes",
+        "_visible_ceiling_tokens",
         "_visible_nw",
+        "_visible_tail",
+        "_visible_tail_growth",
+        "_visible_trigram_growth",
+        "_visible_verbatim_repeats",
     )
 
     def __init__(
@@ -410,10 +547,14 @@ class StreamLoopGuard:
         exposed_tool_names: Iterable[str],
         ceiling_tokens: int = DEFAULT_CEILING_TOKENS,
         profile: LoopGuardProfile | None = None,
+        visible_ceiling_tokens: int = DEFAULT_VISIBLE_CEILING_TOKENS,
     ) -> None:
         if ceiling_tokens <= 0:
             raise ValueError(f"ceiling_tokens must be positive, got {ceiling_tokens}")
+        if visible_ceiling_tokens <= 0:
+            raise ValueError(f"visible_ceiling_tokens must be positive, got {visible_ceiling_tokens}")
         self._ceiling_tokens: int = ceiling_tokens
+        self._visible_ceiling_tokens: int = visible_ceiling_tokens
         self._profile: LoopGuardProfile = profile or _PROFILE_GLM
         # Case-fold tool names once so we can do cheap substring lookups
         # against the already-normalized segment text.
@@ -422,6 +563,7 @@ class StreamLoopGuard:
         # Streaming state.
         self._bytes: int = 0
         self._visible_nw: int = 0
+        self._visible_bytes: int = 0
         self._tool_started: bool = False
         self._buffer: str = ""
         self._segments: deque[str] = deque(maxlen=SEGMENT_BUFFER_CAPACITY)
@@ -445,6 +587,17 @@ class StreamLoopGuard:
         self._header_lines: int = 0
         self._last_trigram_pairs: int = 0
         self._last_stall_segments: int = 0
+
+        # Visible-channel detector state.
+        self._visible_tail: str = ""
+        self._visible_tail_growth: int = 0
+        self._visible_trigram_growth: int = 0
+        self._visible_verbatim_repeats: int = 0
+        self._last_visible_trigram_pairs: int = 0
+
+        # Inline-``<think>`` routing state.
+        self._think_mode: bool = False
+        self._think_pending: str = ""
 
     # ------------------------------------------------------------------
     # Public properties (read-only diagnostics)
@@ -488,6 +641,15 @@ class StreamLoopGuard:
         """
         return len(self._buffer)
 
+    @property
+    def visible_tail_chars(self) -> int:
+        """Number of characters retained in the bounded visible tail.
+
+        Always ``<= EXACT_TAIL_WINDOW``.  Exposed for the bounded-state
+        test.
+        """
+        return len(self._visible_tail)
+
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
@@ -527,20 +689,89 @@ class StreamLoopGuard:
     def on_visible_delta(self, text: str) -> None:
         """Ingest a chunk of *visible* (assistant content) text.
 
-        Increments the non-whitespace visible character counter.  Once
-        the counter reaches :data:`VISIBLE_DISABLE_THRESHOLD`, the
-        repetition path is suppressed (the model is no longer stuck —
-        it is answering).  Does not affect the hard ceiling, which
-        remains a hard backstop.
+        Counts the non-whitespace characters and the UTF-8 bytes, and
+        keeps a bounded tail window so the visible-channel detectors
+        (verbatim repeat, near-duplicate lines, visible ceiling) can
+        spot a loop in the channel the user actually reads.
+
+        Reaching :data:`VISIBLE_DISABLE_THRESHOLD` non-whitespace
+        characters only suppresses the *meta-intent* path (the
+        "narrating a tool call" degeneration).  The generic visible
+        detectors and the visible ceiling keep running regardless.
         """
         if not text:
             return
         self._visible_nw += sum(1 for ch in text if not ch.isspace())
-        # A visible delta may also flip the trigger latching: if the
-        # ceiling was already crossed but V has just become False, the
-        # ceiling path is unaffected; if R is the current pending path
-        # it now cannot fire.
+        self._visible_bytes += len(text.encode("utf-8"))
+        if self._profile.visible_verbatim or self._profile.visible_trigram:
+            # Bounded window: the tail never exceeds EXACT_TAIL_WINDOW.
+            self._visible_tail = (self._visible_tail + text)[-EXACT_TAIL_WINDOW:]
+            self._visible_tail_growth += len(text)
+            self._visible_trigram_growth += len(text)
         self._maybe_latch_trigger()
+
+    def on_text_delta(self, text: str) -> None:
+        """Ingest a chunk of provider *text* (assistant content).
+
+        Providers that do not own a reasoning channel inline their
+        thinking trace into the text channel as ``<think>...</think>``.
+        This method routes such spans to the reasoning channel so the
+        loop detectors see the reasoning where they belong, and the
+        visible channel only carries the actual answer.
+        """
+        if not text:
+            return
+        self._think_pending += text
+        self._drain_think_pending(final=False)
+
+    def flush(self) -> None:
+        """Flush the pending text buffer at the end of the stream.
+
+        A trailing partial ``<think>`` / ``</think>`` tag (or any text
+        held back while a tag might still be completed) is routed to the
+        channel it belongs to instead of being dropped.
+        """
+        self._drain_think_pending(final=True)
+
+    def _drain_think_pending(self, *, final: bool) -> None:
+        """Route buffered text to the reasoning / visible channel.
+
+        While ``_think_mode`` is False the buffer is scanned for an
+        opening ``<think>`` tag; while it is True the buffer is scanned
+        for the closing ``</think>`` tag.  Tag text itself is never
+        emitted to either channel.  A trailing fragment that could still
+        become a tag is held back until the next delta (or until
+        :meth:`flush` at the end of the stream).
+        """
+        while self._think_pending:
+            tag_re = _THINK_CLOSE_RE if self._think_mode else _THINK_OPEN_RE
+            match = tag_re.search(self._think_pending)
+            if match is not None:
+                before = self._think_pending[: match.start()]
+                if before:
+                    self._emit_channel(before)
+                self._think_pending = self._think_pending[match.end() :]
+                self._think_mode = not self._think_mode
+                continue
+            if final:
+                self._emit_channel(self._think_pending)
+                self._think_pending = ""
+                return
+            hold = _partial_tag_suffix(self._think_pending, "</think>" if self._think_mode else "<think>")
+            emit_len = len(self._think_pending) - len(hold)
+            if emit_len:
+                self._emit_channel(self._think_pending[:emit_len])
+            self._think_pending = hold
+            return
+
+    def _emit_channel(self, text: str) -> None:
+        """Send *text* to the reasoning or the visible channel."""
+        if not text:
+            return
+        if self._think_mode:
+            self.on_reasoning_delta(text)
+        else:
+            self.on_visible_delta(text)
 
     def on_tool_call_start(self) -> None:
         """Notify the guard that the model has started a tool call.
@@ -583,6 +814,11 @@ class StreamLoopGuard:
             trigram_pairs_matched=self._last_trigram_pairs,
             stall_segments=self._last_stall_segments,
             header_lines=self._header_lines,
+            estimated_visible_tokens=(self._visible_bytes + 2) // 3,
+            visible_utf8_bytes=self._visible_bytes,
+            visible_tail_chars=len(self._visible_tail),
+            visible_verbatim_repeats=self._visible_verbatim_repeats,
+            visible_trigram_pairs=self._last_visible_trigram_pairs,
         )
 
     # ------------------------------------------------------------------
@@ -666,17 +902,31 @@ class StreamLoopGuard:
             self._trigger = TRIGGER_CEILING
             return
 
+        # Visible ceiling: the answer channel blew through its own
+        # budget.  Independent of the reasoning ceiling.
+        visible_tokens = (self._visible_bytes + 2) // 3
+        if self._profile.visible_ceiling and visible_tokens >= self._visible_ceiling_tokens:
+            self._trigger = TRIGGER_VISIBLE_CEILING
+            return
+
         # Header runaway: the model emits a stream of titled sections
         # without ever committing to a tool call.
         if self._profile.header_runaway and self._header_lines >= HEADER_RUNAWAY_THRESHOLD:
             self._trigger = TRIGGER_HEADER
             return
 
-        # V = visible answer has NOT yet crossed the disable threshold.
-        if self._visible_nw >= VISIBLE_DISABLE_THRESHOLD:
-            return  # the model is answering, not stuck reasoning
+        # Visible verbatim repeat: the answer channel itself loops.
+        if self._profile.visible_verbatim and self._visible_repeated():
+            self._trigger = TRIGGER_VISIBLE_VERBATIM
+            return
 
-        # Verbatim repeated tail.
+        # Visible near-duplicate lines: the answer channel drifts into a
+        # template it never leaves.
+        if self._profile.visible_trigram and self._visible_trigram_similar():
+            self._trigger = TRIGGER_VISIBLE_TRIGRAM
+            return
+
+        # Verbatim repeated tail (reasoning channel).
         if self._profile.verbatim_tail and self._verbatim_repeated():
             self._trigger = TRIGGER_VERBATIM
             return
@@ -690,9 +940,16 @@ class StreamLoopGuard:
             self._trigger = TRIGGER_STALL
             return
 
-        # Near-duplicate segments.
+        # Near-duplicate segments (reasoning channel).
         if self._profile.trigram_jaccard and self._trigram_similar():
             self._trigger = TRIGGER_TRIGRAM
+            return
+
+        # V = visible answer has NOT yet crossed the disable threshold.
+        # Only the meta-intent path ("narrating a tool call") is
+        # silenced by a visible answer; the generic detectors above run
+        # regardless.
+        if self._visible_nw >= VISIBLE_DISABLE_THRESHOLD:
             return
 
         if not self._profile.meta_intent:
@@ -786,6 +1043,48 @@ class StreamLoopGuard:
         matched = sum(1 for a, b in pairwise(sets) if self._jaccard(a, b) >= TRIGRAM_JACCARD)
         self._last_trigram_pairs = matched
         return matched >= math.ceil(TRIGRAM_PAIR_RATIO * (len(sets) - 1))
+
+    def _visible_repeated(self) -> bool:
+        """True when the visible tail repeats a block verbatim.
+
+        Same shape as :meth:`_verbatim_repeated`, but on the visible
+        channel: the last ``EXACT_REPEAT_CHARS`` characters of the
+        visible tail must occur at least
+        :data:`VISIBLE_EXACT_MIN_OCCURRENCES` times inside the tail
+        window.
+        """
+        if len(self._visible_tail) < EXACT_TAIL_WINDOW:
+            return False
+        if self._visible_tail_growth < EXACT_REPEAT_CHARS:
+            return False
+        self._visible_tail_growth = 0
+        block = self._visible_tail[-EXACT_REPEAT_CHARS:]
+        if self._visible_tail.count(block) >= VISIBLE_EXACT_MIN_OCCURRENCES:
+            self._visible_verbatim_repeats += 1
+            return True
+        return False
+
+    def _visible_trigram_similar(self) -> bool:
+        """True when the trailing visible lines are near-duplicates.
+
+        The visible channel is line-oriented: the detector compares the
+        trigram sets of the last :data:`VISIBLE_TRIGRAM_WINDOW`
+        non-empty lines and fires when at least
+        :data:`VISIBLE_TRIGRAM_PAIR_RATIO` of the adjacent pairs are
+        near-duplicates.
+        """
+        if self._visible_trigram_growth < VISIBLE_TRIGRAM_MIN_GROWTH:
+            return False
+        self._visible_trigram_growth = 0
+        lines = [ln for ln in self._visible_tail.splitlines() if ln.strip()]
+        window = [self._normalize(ln) for ln in lines[-VISIBLE_TRIGRAM_WINDOW:]]
+        window = [seg for seg in window if seg]
+        if len(window) < VISIBLE_TRIGRAM_WINDOW:
+            return False
+        sets = [self._trigrams(seg) for seg in window]
+        matched = sum(1 for a, b in pairwise(sets) if self._jaccard(a, b) >= VISIBLE_TRIGRAM_JACCARD)
+        self._last_visible_trigram_pairs = matched
+        return matched >= math.ceil(VISIBLE_TRIGRAM_PAIR_RATIO * (len(sets) - 1))
 
     def _progress_stalled(self) -> bool:
         """True when the trailing window stopped producing new information.

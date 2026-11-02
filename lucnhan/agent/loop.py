@@ -1473,9 +1473,10 @@ class AgentLoop:
         # Determine if the stream loop guard should be active for this turn.
         # The guard fires only when:
         #   1. The loop guard is enabled in the config
-        #   2. Tools are exposed (guarding reasoning that degenerates before tool calls)
-        #   3. The resolved profile has at least one active detector
+        #   2. The resolved profile has at least one active detector
         #      (and, for GLM, the guard is enabled in the parsed GLM config)
+        # The guard is active with or without exposed tools: a text-only
+        # turn can degenerate in the visible channel just as badly.
         guard: StreamLoopGuard | None = self._create_stream_guard(tools_schema)
 
         # Determine whether this provider uses GLM strict partial-tool-call
@@ -1532,7 +1533,11 @@ class AgentLoop:
                     assistant_text_parts.append(chunk.text)
                     yield TurnEvent.text_delta(chunk.text)
                     if guard is not None:
-                        guard.on_visible_delta(chunk.text)
+                        # ``on_text_delta`` routes a literal
+                        # ``<think>...</think>`` span to the reasoning
+                        # channel so the detectors see the thinking trace
+                        # where it belongs.
+                        guard.on_text_delta(chunk.text)
 
                 if chunk.reasoning_delta:
                     reasoning_parts.append(chunk.reasoning_delta)
@@ -1672,6 +1677,14 @@ class AgentLoop:
                 f"{self._format_provider_error_for_user(e)} "
                 "The response above is incomplete — it was cut off mid-stream."
             )
+        # Flush the guard's pending text buffer: a trailing partial
+        # ``<think>`` tag (or any text held back while a tag could still
+        # be completed) must reach its channel, and the trigger it may
+        # produce must be seen before the outcome is classified.
+        if guard is not None:
+            guard.flush()
+            if guard.should_abort():
+                guard_triggered = True
         last_usage, need_usage_update = self._finalize_stream_usage(
             last_usage, estimated_usage, estimated_prompt_tokens
         )
@@ -1863,11 +1876,16 @@ class AgentLoop:
 
         Returns ``None`` when the guard should not be active:
         - ``loop_guard_enabled`` is off in the config
-        - No tools are exposed
         - The resolved profile has every detector disabled
         - (GLM only) the guard is disabled in the parsed GLM config
+
+        The guard is active even when no tools are exposed: a text-only
+        turn can degenerate just as badly as a tool turn (the model
+        loops in the answer channel instead of the reasoning channel).
+        ``exposed_tool_names`` may then be empty, which only means the
+        meta-intent detector cannot fire.
         """
-        if not self.config.loop_guard_enabled or not tools_schema:
+        if not self.config.loop_guard_enabled:
             return None
 
         is_glm = self.config.provider.extra.get("dialect") == "glm" or self.provider.name == "glm"
@@ -1901,7 +1919,7 @@ class AgentLoop:
 
         # Extract exposed tool names from the schema for meta-intent detection.
         exposed_tool_names: list[str] = []
-        for entry in tools_schema:
+        for entry in tools_schema or []:
             if isinstance(entry, dict):
                 func = entry.get("function", {})
                 name = func.get("name", "")

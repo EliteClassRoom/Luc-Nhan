@@ -1204,8 +1204,8 @@ class SettingsDialog(QDialog):
         self._loop_guard_cb = QCheckBox("Detect and break reasoning loops")
         self._loop_guard_cb.setChecked(bool(self._config.loop_guard_enabled))
         self._loop_guard_cb.setToolTip(
-            "Watches streamed reasoning for repetition and progress stalls. On a trigger the\n"
-            "turn is discarded and retried once without extended thinking."
+            "Watches streamed reasoning and answer text for repetition and progress stalls.\n"
+            "On a trigger the turn is discarded and retried once without extended thinking."
         )
         advanced_form.addRow(self._loop_guard_cb)
 

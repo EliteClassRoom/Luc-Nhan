@@ -91,12 +91,17 @@ class OpenAICompatProvider(OpenAIProvider):
 
     @property
     def capabilities(self) -> ProviderCapabilities:
+        # ``reasoning_content=True``: OpenAI-compatible endpoints surface
+        # the model's thinking trace in ``delta.reasoning_content``.  The
+        # stream parser routes it to the dedicated reasoning channel so it
+        # is never mixed into the user-visible answer.
         return ProviderCapabilities(
             streaming=True,
             tool_use=True,
             vision=False,
             max_context_window=128000,
             max_output_tokens=4096,
+            reasoning_content=True,
         )
 
     def list_models(self) -> list[ModelInfo]:
