@@ -721,7 +721,7 @@ def apply_type_to_variable(
     ea = parse_addr(func_address)
     try:
         cfunc = ida_hexrays.decompile(ea)
-    except Exception as e:
+    except (ida_hexrays.DecompilationFailure, RuntimeError) as e:
         return f"Decompilation failed: {e}"
 
     tif = _parse_type(clean_type)
@@ -977,7 +977,8 @@ def get_variable_type(
     ea = parse_addr(func_address)
     try:
         cfunc = ida_hexrays.decompile(ea)
-    except Exception:
+    except (ida_hexrays.DecompilationFailure, RuntimeError) as e:
+        log_debug(f"get_variable_type: decompile failed at 0x{ea:x}: {e}")
         return ""
 
     for lv in cfunc.get_lvars():

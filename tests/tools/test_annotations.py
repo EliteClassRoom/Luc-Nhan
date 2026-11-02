@@ -57,5 +57,43 @@ class TestAnnotationValidation(unittest.TestCase):
         self.assertIn("new_name", msg)
 
 
+class _FakeDecompFailure(Exception):
+    """Stand-in for ida_hexrays.DecompilationFailure in tests."""
+
+
+class _FakeHexrays:
+    DecompilationFailure = _FakeDecompFailure
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def decompile(self, _ea):
+        raise self._exc
+
+
+class TestRenameVariableDecompileFailure(unittest.TestCase):
+    def _run_with(self, exc: BaseException) -> str:
+        orig_hr = ann._HAS_HEXRAYS
+        orig_hexrays = ann.ida_hexrays
+        try:
+            ann._HAS_HEXRAYS = True
+            ann.ida_hexrays = _FakeHexrays(exc)
+            return ann.rename_variable("0x1000", "old", "new")
+        finally:
+            ann._HAS_HEXRAYS = orig_hr
+            ann.ida_hexrays = orig_hexrays
+
+    def test_expected_decompile_failure_returns_message(self):
+        result = self._run_with(_FakeDecompFailure("no decompile"))
+        self.assertIn("Decompilation failed", result)
+
+    def test_unexpected_decompile_error_propagates_as_tool_error(self):
+        from lucnhan.core.errors import ToolError
+
+        with self.assertRaises(ToolError) as ctx:
+            self._run_with(AttributeError("bad ida api"))
+        self.assertIsInstance(ctx.exception.__cause__, AttributeError)
+
+
 if __name__ == "__main__":
     unittest.main()

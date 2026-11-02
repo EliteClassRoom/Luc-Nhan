@@ -606,5 +606,75 @@ class TestArgumentValidation(unittest.TestCase):
             types_tools.idc = orig
 
 
+class _FakeDecompFailure(Exception):
+    """Stand-in for ida_hexrays.DecompilationFailure in tests."""
+
+
+class _FakeHexrays:
+    """Minimal ida_hexrays stub with a real exception class.
+
+    ``tests/mocks/ida_mock.py`` installs ``ida_hexrays`` as a MagicMock;
+    using that directly in an ``except`` clause raises
+    ``TypeError: catching classes that do not inherit from BaseException``.
+    """
+
+    DecompilationFailure = _FakeDecompFailure
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def decompile(self, _ea):
+        raise self._exc
+
+
+class TestGetVariableTypeDecompileFailure(unittest.TestCase):
+    def _run_with(self, exc: BaseException) -> str:
+        orig_hr = types_tools._HAS_HEXRAYS
+        orig_hexrays = types_tools.ida_hexrays
+        orig_ti = types_tools.ida_typeinf
+        try:
+            types_tools._HAS_HEXRAYS = True
+            types_tools.ida_typeinf = MagicMock()
+            types_tools.ida_hexrays = _FakeHexrays(exc)
+            return types_tools.get_variable_type("0x1000", "v1")
+        finally:
+            types_tools._HAS_HEXRAYS = orig_hr
+            types_tools.ida_hexrays = orig_hexrays
+            types_tools.ida_typeinf = orig_ti
+
+    def test_expected_decompile_failure_returns_empty(self):
+        self.assertEqual(self._run_with(_FakeDecompFailure("no decompile")), "")
+
+    def test_unexpected_decompile_error_propagates_as_tool_error(self):
+        with self.assertRaises(ToolError) as ctx:
+            self._run_with(AttributeError("bad ida api"))
+        self.assertIsInstance(ctx.exception.__cause__, AttributeError)
+
+
+class TestApplyTypeToVariableDecompileFailure(unittest.TestCase):
+    def _run_with(self, exc: BaseException) -> str:
+        orig_hr = types_tools._HAS_HEXRAYS
+        orig_hexrays = types_tools.ida_hexrays
+        orig_ti = types_tools.ida_typeinf
+        try:
+            types_tools._HAS_HEXRAYS = True
+            types_tools.ida_typeinf = MagicMock()
+            types_tools.ida_hexrays = _FakeHexrays(exc)
+            return types_tools.apply_type_to_variable("0x1000", "v1", "int")
+        finally:
+            types_tools._HAS_HEXRAYS = orig_hr
+            types_tools.ida_hexrays = orig_hexrays
+            types_tools.ida_typeinf = orig_ti
+
+    def test_expected_decompile_failure_returns_message(self):
+        result = self._run_with(_FakeDecompFailure("no decompile"))
+        self.assertIn("Decompilation failed", result)
+
+    def test_unexpected_decompile_error_propagates_as_tool_error(self):
+        with self.assertRaises(ToolError) as ctx:
+            self._run_with(AttributeError("bad ida api"))
+        self.assertIsInstance(ctx.exception.__cause__, AttributeError)
+
+
 if __name__ == "__main__":
     unittest.main()

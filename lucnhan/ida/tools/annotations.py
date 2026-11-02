@@ -73,7 +73,7 @@ def rename_variable(
     ea = parse_addr(func_address)
     try:
         cfunc = ida_hexrays.decompile(ea)
-    except Exception as e:
+    except (ida_hexrays.DecompilationFailure, RuntimeError) as e:
         return f"Decompilation failed: {e}"
 
     if cfunc is None:
