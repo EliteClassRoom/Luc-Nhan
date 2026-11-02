@@ -41,8 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     more turn.
   - *Retry hardening* (`retry_base_delay_ms`, `retry_max_delay_ms`) — the
     provider backoff is exponential, capped and jittered, and an empty
-  provider response is retried with a request-local suffix before the turn
-  fails with a visible reason.
+    provider response is retried with a request-local suffix before the turn
+    fails with a visible reason.
 
 ### Changed
 
