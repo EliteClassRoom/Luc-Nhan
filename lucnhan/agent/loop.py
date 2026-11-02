@@ -1541,7 +1541,7 @@ class AgentLoop:
                             guard.on_reasoning_delta(chunk.text)
                         else:
                             # ``on_text_delta`` routes a literal
-                            # `` thinking...</think>`` span to the reasoning
+                            # ``<think>...</think>`` span to the reasoning
                             # channel so the detectors see the thinking trace
                             # where it belongs.
                             guard.on_text_delta(chunk.text)

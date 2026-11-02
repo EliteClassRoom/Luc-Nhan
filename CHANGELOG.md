@@ -119,7 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   watches the visible channel itself: a repeated visible block, a run of
   near-identical visible lines and a runaway visible answer are detected
   too. Text-only turns are guarded as well — previously the guard was
-  only armed when tools were exposed. A literal ` thinking…</think>` span
+  only armed when tools were exposed. A literal `<think>…</think>` span
   in provider text is routed to the reasoning channel (including tags
   split across chunks, case-insensitively), and the one-shot recovery
   attempt no longer asks the endpoint for maximum reasoning effort. A
