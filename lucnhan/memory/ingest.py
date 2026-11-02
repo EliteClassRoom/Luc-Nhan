@@ -103,7 +103,7 @@ def make_store(idb_path: str, db_instance_id: str = "") -> tuple[KnowledgeRawSto
 
         paths = knowledge_paths(idb_path, db_instance_id)
         return (KnowledgeRawStore(paths), paths)
-    except (OSError, ValueError) as e:  # UnicodeError is a ValueError subclass
+    except Exception as e:  # contract: never raises; callers (some unguarded) treat (None, None) as unavailable
         log_error(f"make_store: failed to derive knowledge paths for {idb_path!r}: {e!r}\n{traceback.format_exc()}")
         return (None, None)
 

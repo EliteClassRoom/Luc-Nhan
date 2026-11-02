@@ -164,6 +164,16 @@ def test_make_store_logs_path_build_failure(tmp_path: Path) -> None:
     assert log_error_mock.called
 
 
+def test_make_store_never_raises_on_unexpected_error(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    with (
+        patch("lucnhan.memory.paths.knowledge_paths", side_effect=KeyError("odd")),
+        patch("lucnhan.memory.ingest.log_error"),
+    ):
+        assert ingest.make_store(str(tmp_path / "x.i64")) == (None, None)
+
+
 def test_ingest_save_memory_logs_jsonl_failure(tmp_path: Path, monkeypatch) -> None:
     from unittest.mock import patch
 

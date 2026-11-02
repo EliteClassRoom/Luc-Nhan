@@ -567,7 +567,7 @@ def run_guarded_script(code: str, namespace_factory: Callable[[], dict[str, Any]
     with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
         try:
             exec(code, namespace)
-        except BaseException as e:  # sandbox sink: SystemExit must not escape agent-authored code
+        except (Exception, SystemExit) as e:  # SystemExit must not escape agent code; Ctrl+C must
             stderr_buf.write(f"{type(e).__name__}: {e}\n")
 
     stdout = stdout_buf.getvalue()
