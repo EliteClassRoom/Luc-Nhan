@@ -2457,12 +2457,16 @@ class SettingsDialog(QDialog):
 
         Behavior:
 
-        * The Max Output Tokens spin box upper bound is always updated to
-          the selected model's ``max_output_tokens`` (or a generous
-          ``_MANUAL_MAX_TOKENS`` fallback for unknown / custom models).
+        * The Max Output Tokens spin box upper bound is driven by the
+          selected model's ``max_output_tokens``.  A model whose limit is
+          unknown (``max_output_tokens == 0`` — OpenAI-compatible
+          endpoints and Ollama publish no per-model output limit) keeps
+          the generous ``_MANUAL_MAX_TOKENS`` ceiling instead of a
+          placeholder, so the user is never pinned to 4096.
         * If the user picked a *different* model from the combo, Max
-          Output Tokens is set to that model's ``max_output_tokens`` and
-          Context Window is set to ``model.context_window``.
+          Output Tokens is set to that model's ``max_output_tokens`` (when
+          known) and Context Window is set to ``model.context_window``.
+          An unknown limit keeps the user's current value.
         * If the model matches the saved config, the user's custom
           ``max_tokens`` value is preserved — we only clamp it down if it
           exceeds the newly discovered model limit (e.g. the user typed
@@ -2482,18 +2486,28 @@ class SettingsDialog(QDialog):
             self._max_tokens_spin.setMaximum(_MANUAL_MAX_TOKENS)
             return
 
-        self._max_tokens_spin.setMaximum(info.max_output_tokens)
+        # ``0`` means the provider publishes no output limit for this
+        # model.  The value is then a placeholder, not a ceiling: using
+        # it as the spin box's upper bound capped every model of an
+        # OpenAI-compatible endpoint at 4096 and silently truncated a
+        # larger saved value on the next save.
+        model_limit = info.max_output_tokens
+        if model_limit > 0:
+            self._max_tokens_spin.setMaximum(model_limit)
+        else:
+            self._max_tokens_spin.setMaximum(_MANUAL_MAX_TOKENS)
 
         if model_id != self._config.provider.model:
             # User picked a different model — auto-fill from metadata.
             self._context_spin.setValue(info.context_window)
-            self._max_tokens_spin.setValue(info.max_output_tokens)
+            if model_limit > 0:
+                self._max_tokens_spin.setValue(model_limit)
             return
 
         # Same model as the saved config: only clamp if the saved value
         # exceeds the model's advertised limit.
-        if self._max_tokens_spin.value() > info.max_output_tokens:
-            self._max_tokens_spin.setValue(info.max_output_tokens)
+        if model_limit > 0 and self._max_tokens_spin.value() > model_limit:
+            self._max_tokens_spin.setValue(model_limit)
 
     def _find_model_info(self, model_id: str) -> ModelInfo | None:
         """Return ``ModelInfo`` for *model_id* in the current fetched list."""

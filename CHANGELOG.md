@@ -106,6 +106,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Max Output Tokens is no longer stuck at 4096.** OpenAI-compatible
+  endpoints and Ollama publish no per-model output limit, so their model
+  entries carried the 4096 placeholder as if it were the model's real
+  limit — the Settings spin box refused anything above 4096 and a larger
+  saved value was silently truncated on the next save. An unknown limit
+  is now explicit (`ModelInfo.max_output_tokens == 0`) and keeps the
+  generous ceiling; a published limit (e.g. MiniMax-M3's 524 288) still
+  drives the range.
+
 - **The panel no longer fails with `cannot import name ... from
   'lucnhan.constants'` after an edit made while IDA was running.** Python
   caches every imported module, so a constant added to
