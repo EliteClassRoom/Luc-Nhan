@@ -16,6 +16,11 @@ class ContextWindowManager:
         self._total_tokens = 0
 
     @property
+    def total_tokens(self) -> int:
+        """The tracked context usage in tokens (0 right after a reset)."""
+        return self._total_tokens
+
+    @property
     def usage_ratio(self) -> float:
         if self.max_tokens <= 0:
             return 0

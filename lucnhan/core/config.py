@@ -87,6 +87,20 @@ class LucNhanConfig:
     approve_mutations: bool = False  # require approval for mutating tools (rename, retype, etc.)
     exploration_turn_limit: int = 100  # max turns in exploration phase before forcing transition
     max_retries: int = 3  # max retries on rate-limit / transient API errors
+
+    # --- Anti-loop controls (see plans/anti_loop_design.md) ---
+    loop_guard_enabled: bool = True
+    loop_guard_profile: str = "auto"  # "auto" | "full" | "glm" | "off"
+    tool_repeat_warn_at: int = 3
+    tool_repeat_block_at: int = 5
+    tool_repeat_stop_at: int = 8
+    prune_stale_results: bool = True
+    stream_idle_timeout_seconds: int = 90
+    stream_first_progress_timeout_seconds: int = 120
+    retry_base_delay_ms: int = 500
+    retry_max_delay_ms: int = 8000
+    goal_continuation_enabled: bool = True
+
     silent_retry_mode: bool = False  # show loading indicator instead of error messages on retry
     docs_review_mode: Literal["on_error", "off"] = (
         "on_error"  # docs-reviewer trigger: on runtime API-shaped error, or off
@@ -242,6 +256,21 @@ class LucNhanConfig:
             errors.append(f"knowledge_max_context_items {self.knowledge_max_context_items} out of range [1, 100]")
         if not (1_000 <= self.knowledge_max_context_chars <= 60_000):
             errors.append(f"knowledge_max_context_chars {self.knowledge_max_context_chars} out of range [1000, 60000]")
+        if not (2 <= self.tool_repeat_warn_at < self.tool_repeat_block_at < self.tool_repeat_stop_at <= 60):
+            errors.append(
+                "tool repeat thresholds must satisfy 2 <= warn < block < stop <= 60 "
+                f"(got {self.tool_repeat_warn_at}/{self.tool_repeat_block_at}/{self.tool_repeat_stop_at})"
+            )
+        for name, value in (
+            ("stream_idle_timeout_seconds", self.stream_idle_timeout_seconds),
+            ("stream_first_progress_timeout_seconds", self.stream_first_progress_timeout_seconds),
+        ):
+            if value != 0 and not (5 <= value <= 3600):
+                errors.append(f"{name} must be 0 (disabled) or in [5, 3600], got {value}")
+        if not (100 <= self.retry_base_delay_ms <= 10_000):
+            errors.append(f"retry_base_delay_ms {self.retry_base_delay_ms} out of range [100, 10000]")
+        if not (500 <= self.retry_max_delay_ms <= 300_000):
+            errors.append(f"retry_max_delay_ms {self.retry_max_delay_ms} out of range [500, 300000]")
         # GLM dialect validation — only when the active provider has
         # ``extra["dialect"] == "glm"``.  Non-GLM extras remain opaque so
         # custom-provider configuration is never reinterpreted.
@@ -284,6 +313,21 @@ class LucNhanConfig:
                 self.hide_strings = False
             self.knowledge_max_context_items = max(1, min(100, int(self.knowledge_max_context_items or 12)))
             self.knowledge_max_context_chars = max(1000, min(60_000, int(self.knowledge_max_context_chars or 12_000)))
+            # Upper bounds are 58/59/60 (not 59/60/60) so the strict
+            # ladder warn < block < stop <= 60 always fits — clamping
+            # warn to 59 would force block=60 and stop=61, which
+            # violates the very invariant validate() enforces.
+            warn = max(2, min(58, int(self.tool_repeat_warn_at or 3)))
+            block = max(warn + 1, min(59, int(self.tool_repeat_block_at or 5)))
+            self.tool_repeat_warn_at = warn
+            self.tool_repeat_block_at = block
+            self.tool_repeat_stop_at = max(block + 1, min(60, int(self.tool_repeat_stop_at or 8)))
+            self.stream_idle_timeout_seconds = max(0, min(3600, int(self.stream_idle_timeout_seconds or 90)))
+            self.stream_first_progress_timeout_seconds = max(
+                0, min(3600, int(self.stream_first_progress_timeout_seconds or 120))
+            )
+            self.retry_base_delay_ms = max(100, min(10_000, int(self.retry_base_delay_ms or 500)))
+            self.retry_max_delay_ms = max(500, min(300_000, int(self.retry_max_delay_ms or 8000)))
 
         os.makedirs(self._config_dir, exist_ok=True)
         # Owner-only on POSIX (mirrors memory/storage_guard.ensure_private_directory):
@@ -481,6 +525,17 @@ class LucNhanConfig:
             "knowledge_max_context_items",
             "knowledge_max_context_chars",
             "hide_strings",
+            "loop_guard_enabled",
+            "loop_guard_profile",
+            "tool_repeat_warn_at",
+            "tool_repeat_block_at",
+            "tool_repeat_stop_at",
+            "prune_stale_results",
+            "stream_idle_timeout_seconds",
+            "stream_first_progress_timeout_seconds",
+            "retry_base_delay_ms",
+            "retry_max_delay_ms",
+            "goal_continuation_enabled",
         ):
             if k in data:
                 val = data[k]
@@ -504,6 +559,30 @@ class LucNhanConfig:
                 # Normalize invalid docs_review_mode to "on_error"
                 if k == "docs_review_mode" and val not in ("on_error", "off"):
                     val = "on_error"
+                # Anti-loop numeric knobs arrive as JSON strings from
+                # hand-edited configs; coerce them like the provider
+                # numerics above and reject unparsable values so
+                # validate()/save() never raise TypeError.
+                if k in {
+                    "tool_repeat_warn_at",
+                    "tool_repeat_block_at",
+                    "tool_repeat_stop_at",
+                    "stream_idle_timeout_seconds",
+                    "stream_first_progress_timeout_seconds",
+                    "retry_base_delay_ms",
+                    "retry_max_delay_ms",
+                }:
+                    if isinstance(val, bool) or not isinstance(val, (int, float, str)):
+                        continue
+                    try:
+                        val = int(val)
+                    except (TypeError, ValueError):
+                        continue
+                if k in {"loop_guard_enabled", "prune_stale_results", "goal_continuation_enabled"}:
+                    if not isinstance(val, bool):
+                        continue
+                if k == "loop_guard_profile" and val not in ("auto", "full", "glm", "off"):
+                    val = "auto"
                 # Boolean fields must be real JSON booleans — reject
                 # truthy strings/integers so a hand-edited config file
                 # can never silently enable security/UX gates (consent,

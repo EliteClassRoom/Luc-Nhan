@@ -32,6 +32,15 @@ ln -s "$(pwd)/lucnhan" ~/.idapro/plugins/lucnhan
 mklink /D "%APPDATA%\Hex-Rays\IDA Pro\plugins\lucnhan" "<full path to cloned repo>"
 ```
 
+### Editing While IDA Is Running
+
+The plugin directory links to the repository, so an edit is on disk
+immediately — but Python caches every imported module, so a running IDA
+keeps the version it imported. The panel reloads `lucnhan/constants.py` in
+place when it is created, so a new constant there takes effect without a
+restart; edits to any other module need an IDA restart (or a plugin
+reload) to reach the running session.
+
 ---
 
 ## Python Dependencies

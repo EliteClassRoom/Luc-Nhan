@@ -9,6 +9,7 @@ import importlib.util as _importlib_util
 from typing import Any
 
 from lucnhan.core.early_log import _early_log, _early_log_crash
+from lucnhan.core.module_refresh import refresh_constants_module
 from lucnhan.core.startup_timing import end, start
 from lucnhan.ui.panel_core import LucNhanPanelCore
 from lucnhan.ui.qt_compat import QApplication, QVBoxLayout, QWidget
@@ -304,6 +305,18 @@ class LucNhanPanel(idaapi.PluginForm):
     def OnCreate(self, form: Any) -> None:
         _early_log("ida_panel:on_create:entry")
         t_oncreate = start("ida_form.on_create_total")
+
+        # A source edit made while IDA was running leaves the session with
+        # a mix of old and new modules: ``lucnhan.constants`` may still be
+        # the copy cached before the edit, and the agent modules imported
+        # below then fail with "cannot import name ... from
+        # 'lucnhan.constants'".  Refreshing the constants module in place
+        # heals that skew before the agent graph is imported.
+        try:
+            if refresh_constants_module():
+                _early_log("ida_panel:on_create:constants_refreshed")
+        except Exception as _exc:
+            _early_log_crash_safe(_exc)
 
         try:
             t_widget = start("ida_form.to_qt_widget")

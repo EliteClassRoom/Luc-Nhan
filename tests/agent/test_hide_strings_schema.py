@@ -52,6 +52,7 @@ def _make_loop(tools: list[dict[str, Any]], hide_strings: bool):
     tools_obj.to_provider_format = MagicMock(return_value=list(tools))
     loop.tools = tools_obj
     loop._unattended = False  # read surface of _build_tools_schema
+    loop._blocked_tools = set()  # read surface of _build_tools_schema
     return loop
 
 
@@ -117,6 +118,7 @@ class TestHideStringsDirectCallGuard(unittest.TestCase):
         cfg.hide_strings = hide_strings
         loop.config = cfg
         loop._unattended = False  # read surface of _execute_single_tool
+        loop._blocked_tools = set()  # read surface of _execute_single_tool
         return loop
 
     def _drain(self, loop, tc: ToolCall):

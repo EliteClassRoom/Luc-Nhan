@@ -154,6 +154,64 @@ class TestRunnerModelOverride(unittest.TestCase):
         assert runner.config.provider.model == cfg_before_model
 
 
+class TestRunnerContextWindowCap(unittest.TestCase):
+    """A child run must never inherit a context window above the 256k cap.
+
+    The parent's provider config can advertise up to 1M tokens
+    (Gemini/MiniMax). The child gets a shallow copy of the parent
+    config with ``provider.context_window`` capped, so the child's
+    compaction and prompt trimming trigger against a bounded window
+    instead of the parent's full window. The parent config is never
+    mutated.
+    """
+
+    def _runner(self, cfg: LucNhanConfig, model_override: str = "") -> SubagentRunner:
+        return SubagentRunner(
+            provider=_StubProvider(),
+            tool_registry=ToolRegistry(),
+            config=cfg,
+            host_name="test",
+            model_override=model_override,
+        )
+
+    def test_child_config_caps_context_window_at_256k(self) -> None:
+        cfg = LucNhanConfig()
+        cfg.provider.context_window = 1_000_000
+        runner = self._runner(cfg)
+        with patch("lucnhan.agent.loop.AgentLoop", _FakeAgentLoop):
+            loop = runner._build_loop(SessionState())
+        assert loop.config.provider.context_window == 256_000
+        assert loop.config.provider is not cfg.provider
+        assert cfg.provider.context_window == 1_000_000
+
+    def test_child_config_keeps_smaller_parent_window(self) -> None:
+        cfg = LucNhanConfig()
+        cfg.provider.context_window = 128_000
+        runner = self._runner(cfg)
+        with patch("lucnhan.agent.loop.AgentLoop", _FakeAgentLoop):
+            loop = runner._build_loop(SessionState())
+        assert loop.config.provider.context_window == 128_000
+
+    def test_model_override_still_caps_context_window(self) -> None:
+        cfg = LucNhanConfig()
+        cfg.provider.context_window = 1_000_000
+        runner = self._runner(cfg, model_override="child-model")
+        with patch("lucnhan.agent.loop.AgentLoop", _FakeAgentLoop):
+            loop = runner._build_loop(SessionState())
+        assert loop.config.provider.context_window == 256_000
+        assert loop.config.provider.model == "child-model"
+        assert cfg.provider.context_window == 1_000_000
+
+    def test_real_child_loop_context_manager_uses_capped_window(self) -> None:
+        """End-to-end: a 1M-window parent yields a child loop bounded at 256k."""
+        cfg = LucNhanConfig()
+        cfg.provider.context_window = 1_000_000
+        runner = self._runner(cfg)
+        child = runner._build_loop(SessionState())
+        assert child._context_manager.max_tokens == 256_000
+        assert child.config.provider.context_window == 256_000
+
+
 class TestRunnerRespectsCancelEvent(unittest.TestCase):
     def test_cancel_event_reaches_provider_stream(self) -> None:
         """The cancel event must be forwarded into the chat_stream cancel_event slot."""

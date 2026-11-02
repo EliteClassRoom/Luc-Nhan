@@ -329,6 +329,12 @@ class LucNhanPanelCore(QWidget):
     ):
         _early_log("panel_core:init:entry")
         super().__init__(parent)
+        # A constructor that raises (bad config, controller factory error)
+        # leaves a half-built widget behind, and Qt keeps delivering resize
+        # events to it.  The presentation helpers must not touch chrome
+        # attributes the aborted constructor never assigned, so the flag
+        # starts False and flips to True only once the UI is complete.
+        self._ui_ready = False
         try:
             self._config = LucNhanConfig.load_or_create()
             _early_log("panel_core:config_loaded")
@@ -527,6 +533,9 @@ class LucNhanPanelCore(QWidget):
         except Exception as _exc:
             _early_log_crash(_exc)
             raise
+        # The UI is complete: resize events may now drive the responsive
+        # presentation.
+        self._ui_ready = True
         _early_log("panel_core:init:done")
 
     @staticmethod
@@ -1609,6 +1618,13 @@ class LucNhanPanelCore(QWidget):
         so every relocated action keeps its keyboard/AT access.
         """
         super().resizeEvent(event)
+        if not getattr(self, "_ui_ready", False):
+            # The constructor aborted before the UI was built (e.g. the
+            # controller factory raised).  Qt still delivers resize events
+            # to the half-built widget; touching the chrome here would
+            # raise AttributeError on top of the original failure and
+            # bury its traceback.
+            return
         self._apply_narrow_presentation(self.width() <= NARROW_BREAKPOINT_PX)
         self._schedule_footer_trigger_width()
 
