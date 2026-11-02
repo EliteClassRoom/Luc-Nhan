@@ -2362,10 +2362,13 @@ class AgentLoop:
             # bug here must not turn a successful mutation into a reported tool
             # failure, and a lost /undo record must be logged, never silent.
             if is_mutating:
-                # A successful mutation is real progress: unblock the tool and
-                # record that the run moved forward.  Kept outside the
-                # bookkeeping ``try`` so a lost /undo record never hides it.
-                self._blocked_tools.discard(tc.name)
+                # A successful mutation is real progress: the state a blocked
+                # read was stuck on has changed, so lift every block (a blocked
+                # tool is refused before it can run, so unblocking only the
+                # mutating tool itself would be a no-op) and record that the
+                # run moved forward.  Kept outside the bookkeeping ``try`` so
+                # a lost /undo record never hides it.
+                self._blocked_tools.clear()
                 self._progress.note_mutation_success()
                 try:
                     record = build_reverse_record(tc.name, exec_args, pre_state)
