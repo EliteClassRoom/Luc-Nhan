@@ -106,6 +106,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenAI-compatible reasoning streams now feed the degeneration guard.**
+  Reasoning returned as `delta.reasoning_content` or as literal think tags in
+  `delta.content` was counted as visible text, disabling the guard's detectors
+  once 256 visible chars arrived; a four-line thinking cycle streamed until the
+  90 s stall. Both transports now reach the reasoning lane (tags may split
+  across chunks), and recovery clears the UI's unclosed inline-tag buffer.
+
 - **Max Output Tokens is no longer stuck at 4096.** OpenAI-compatible
   endpoints and Ollama publish no per-model output limit, so their model
   entries carried the 4096 placeholder as if it were the model's real

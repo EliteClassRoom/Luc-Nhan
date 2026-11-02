@@ -378,15 +378,22 @@ class OpenAIProvider(LLMProvider):
                 total_tokens=getattr(response.usage, "total_tokens", 0),
             )
 
-        # OpenAI o-series reasoning_content
+        # Reasoning is a separate channel for providers that advertise it
+        # (GLM, custom OpenAI-compatible endpoints); plain OpenAI keeps
+        # legacy inline `` thinking`` wrapping.
         text = rm.content or ""
-        reasoning = getattr(rm, "reasoning_content", None)
+        reasoning = getattr(rm, "reasoning_content", None) or ""
+        reasoning_content = ""
         if reasoning:
-            text = f"<think>{reasoning}</think>\n{text}"
+            if self.capabilities.reasoning_content:
+                reasoning_content = reasoning
+            else:
+                text = f"<think>{reasoning}</think>\n{text}"
 
         return Message(
             role=Role.ASSISTANT,
             content=text,
+            reasoning_content=reasoning_content,
             tool_calls=tool_calls,
             token_usage=usage,
         )

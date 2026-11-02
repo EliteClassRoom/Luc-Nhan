@@ -137,6 +137,104 @@ def test_compat_default_constructor_never_leaks_env_key_to_sdk(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Reasoning channel: delta.reasoning_content must never be inlined as
+# visible `` thinking`` text (that bypasses the agent loop's degeneration
+# guard — visible chars disable repetition detection and reasoning bytes
+# never reach the ceiling).
+# ---------------------------------------------------------------------------
+
+
+def _delta(*, content=None, reasoning_content=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=content,
+                    reasoning_content=reasoning_content,
+                    tool_calls=None,
+                ),
+                finish_reason=None,
+            )
+        ],
+        usage=None,
+    )
+
+
+def test_compat_reasoning_content_routes_to_reasoning_delta():
+    """A custom endpoint's repeated ``reasoning_content`` becomes
+    ``reasoning_delta`` chunks (separate channel), never inline text."""
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
+
+    p = OpenAICompatProvider(api_key="sk-test", api_base="https://custom.example/v1", model="custom-model")
+    cycle = "OK.\nLet me write.\nWriting.\nGo.\n"
+    stream = [_delta(reasoning_content=line) for line in cycle.splitlines(keepends=True) * 3]
+
+    emitted = list(p._iter_stream_chunks(iter(stream)))
+
+    assert "".join(c.reasoning_delta or "" for c in emitted) == cycle * 3
+    assert all(c.reasoning_delta for c in emitted)
+    assert all(c.text == "" for c in emitted), "reasoning must not leak into the visible text channel"
+
+
+def test_compat_without_reasoning_field_keeps_plain_text_channel():
+    """Endpoints that never send ``reasoning_content`` are unaffected."""
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
+
+    p = OpenAICompatProvider(api_key="sk-test", api_base="https://custom.example/v1", model="custom-model")
+    emitted = list(p._iter_stream_chunks(iter([_delta(content="hello")])))
+
+    assert "".join(c.text for c in emitted) == "hello"
+    assert all(c.reasoning_delta is None for c in emitted)
+
+
+def test_compat_normalize_response_keeps_reasoning_out_of_content():
+    """Non-streaming responses follow the same separate-channel contract."""
+    from types import SimpleNamespace
+
+    from lucnhan.providers.openai_compat import OpenAICompatProvider
+
+    p = OpenAICompatProvider(api_key="sk-test", api_base="https://custom.example/v1", model="custom-model")
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="Visible", reasoning_content="Hidden", tool_calls=None),
+            )
+        ],
+        usage=None,
+    )
+
+    msg = p._normalize_response(response)
+
+    assert msg.content == "Visible"
+    assert msg.reasoning_content == "Hidden"
+
+
+def test_plain_openai_normalize_response_still_inlines_reasoning():
+    """Control: plain OpenAI (no reasoning capability) keeps the legacy
+    inline `` thinking`` wrapper — the compat change must not leak into it."""
+    from types import SimpleNamespace
+
+    from lucnhan.providers.openai_provider import OpenAIProvider
+
+    p = OpenAIProvider(api_key="sk-test", model="gpt-test")
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="Visible", reasoning_content="Hidden", tool_calls=None),
+            )
+        ],
+        usage=None,
+    )
+
+    msg = p._normalize_response(response)
+
+    assert msg.content == "<think>Hidden</think>\nVisible"
+    assert msg.reasoning_content == ""
+
+
+# ---------------------------------------------------------------------------
 # _ENDPOINT_LAG_MODELS: documented models missing from /v1/models
 # ---------------------------------------------------------------------------
 

@@ -164,6 +164,91 @@ _VERIFY_MUTATION_TOOLS: frozenset[str] = frozenset(
 )
 
 
+# Inline reasoning markers embedded in ``delta.content`` by some
+# OpenAI-compatible endpoints.  Must stay in sync with the UI parser
+# (``message_widgets._THINK_RE``): opening and closing plain ``think``
+# tags.
+_INLINE_THINK_OPEN = "<think>"
+_INLINE_THINK_CLOSE = "</think>"
+
+
+class _InlineThinkingSplitter:
+    """Split streamed assistant text into visible vs inline-thinking spans.
+
+    Some OpenAI-compatible endpoints put their reasoning trace in
+    ``delta.content`` wrapped in literal ``think`` tags.  The UI already
+    extracts those blocks for display, but the stream loop guard must
+    also see them as *reasoning* (its repetition/ceiling detectors only
+    consume ``on_reasoning_delta``; inline text routed to
+    ``on_visible_delta`` can never trip them).
+
+    :meth:`feed` returns ``(is_reasoning, text)`` spans.  Only a
+    possible partial marker suffix is held back (at most
+    ``len(marker) - 1`` characters), so markers split across chunk
+    boundaries are classified correctly.  An unclosed opening marker
+    means everything after it is reasoning.  Call :meth:`flush` at end
+    of stream to release the held suffix.
+    """
+
+    __slots__ = ("_in_thinking", "_pending")
+
+    def __init__(self) -> None:
+        self._in_thinking: bool = False
+        self._pending: str = ""
+
+    def feed(self, text: str) -> list[tuple[bool, str]]:
+        """Classify *text*, returning spans that are safe to emit now."""
+        if text:
+            self._pending += text
+        spans: list[tuple[bool, str]] = []
+        while self._pending:
+            marker = _INLINE_THINK_CLOSE if self._in_thinking else _INLINE_THINK_OPEN
+            idx = self._pending.find(marker)
+            if idx >= 0:
+                if idx:
+                    spans.append((self._in_thinking, self._pending[:idx]))
+                self._pending = self._pending[idx + len(marker) :]
+                self._in_thinking = not self._in_thinking
+                continue
+            # Hold back the longest suffix that could be the start of a
+            # marker split across the chunk boundary.
+            keep = self._partial_marker_suffix(self._pending, marker)
+            emit_len = len(self._pending) - keep
+            if emit_len:
+                spans.append((self._in_thinking, self._pending[:emit_len]))
+                self._pending = self._pending[emit_len:]
+            break
+        return spans
+
+    def flush(self) -> list[tuple[bool, str]]:
+        """Release any held suffix at end of stream."""
+        spans: list[tuple[bool, str]] = []
+        if self._pending:
+            spans.append((self._in_thinking, self._pending))
+            self._pending = ""
+        return spans
+
+    @staticmethod
+    def _partial_marker_suffix(text: str, marker: str) -> int:
+        """Length of the longest suffix of *text* that starts *marker*."""
+        limit = min(len(marker) - 1, len(text))
+        for size in range(limit, 0, -1):
+            if text.endswith(marker[:size]):
+                return size
+        return 0
+
+
+def _feed_guard_spans(guard: StreamLoopGuard, spans: list[tuple[bool, str]]) -> None:
+    """Route classified text spans to the guard's reasoning/visible lanes."""
+    for is_reasoning, span in spans:
+        if not span:
+            continue
+        if is_reasoning:
+            guard.on_reasoning_delta(span)
+        else:
+            guard.on_visible_delta(span)
+
+
 @dataclass
 class _StreamToolState:
     """Ordered per-tool-call state during streaming.
@@ -1478,6 +1563,9 @@ class AgentLoop:
         #   3. The resolved profile has at least one active detector
         #      (and, for GLM, the guard is enabled in the parsed GLM config)
         guard: StreamLoopGuard | None = self._create_stream_guard(tools_schema)
+        # Classifies literal inline think tags in ``chunk.text`` so the
+        # guard's reasoning detectors see them; raw emission is unchanged.
+        inline_thinking = _InlineThinkingSplitter()
 
         # Determine whether this provider uses GLM strict partial-tool-call
         # semantics.  GLM providers reject malformed/incomplete tool args
@@ -1533,7 +1621,13 @@ class AgentLoop:
                     assistant_text_parts.append(chunk.text)
                     yield TurnEvent.text_delta(chunk.text)
                     if guard is not None:
-                        guard.on_visible_delta(chunk.text)
+                        if chunk.is_thinking:
+                            # Provider-level thinking lane (Anthropic):
+                            # the whole chunk is reasoning, no tag parsing.
+                            _feed_guard_spans(guard, inline_thinking.flush())
+                            guard.on_reasoning_delta(chunk.text)
+                        else:
+                            _feed_guard_spans(guard, inline_thinking.feed(chunk.text))
 
                 if chunk.reasoning_delta:
                     reasoning_parts.append(chunk.reasoning_delta)
@@ -1673,6 +1767,10 @@ class AgentLoop:
                 f"{self._format_provider_error_for_user(e)} "
                 "The response above is incomplete — it was cut off mid-stream."
             )
+        if guard is not None and not guard_triggered:
+            _feed_guard_spans(guard, inline_thinking.flush())
+            if guard.should_abort():
+                guard_triggered = True
         last_usage, need_usage_update = self._finalize_stream_usage(
             last_usage, estimated_usage, estimated_prompt_tokens
         )

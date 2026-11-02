@@ -1111,6 +1111,60 @@ class TestAgentLoop(unittest.TestCase):
         self.assertEqual(section, "")
 
 
+class TestInlineThinkingSplitter(unittest.TestCase):
+    """Unit tests for the streaming inline-think classifier used by the
+    guard (markers, split boundaries, unclosed blocks, balanced control)."""
+
+    @staticmethod
+    def _splitter():
+        from lucnhan.agent.loop import _InlineThinkingSplitter
+
+        return _InlineThinkingSplitter()
+
+    @staticmethod
+    def _open_tag() -> str:
+        return "<think>"
+
+    @staticmethod
+    def _close_tag() -> str:
+        return "</think>"
+
+    def test_marker_split_across_chunk_boundaries(self):
+        splitter = self._splitter()
+        spans = []
+        for chunk in ("<thi", "nk>hidden</thi", "nk>visible"):
+            spans.extend(splitter.feed(chunk))
+        spans.extend(splitter.flush())
+
+        reasoning = "".join(text for is_reasoning, text in spans if is_reasoning)
+        visible = "".join(text for is_reasoning, text in spans if not is_reasoning)
+        assert reasoning == "hidden"
+        assert visible == "visible"
+
+    def test_unclosed_open_tag_marks_rest_as_reasoning(self):
+        splitter = self._splitter()
+        payload = self._open_tag() + "OK.\nLet me write.\nWriting.\nGo.\n"
+        spans = splitter.feed(payload) + splitter.flush()
+
+        assert "".join(text for is_reasoning, text in spans if is_reasoning) == ("OK.\nLet me write.\nWriting.\nGo.\n")
+        assert all(is_reasoning for is_reasoning, _ in spans)
+
+    def test_balanced_block_is_reasoning_then_visible(self):
+        splitter = self._splitter()
+        payload = self._open_tag() + "plan" + self._close_tag() + "answer"
+        spans = splitter.feed(payload) + splitter.flush()
+
+        reasoning = "".join(text for is_reasoning, text in spans if is_reasoning)
+        visible = "".join(text for is_reasoning, text in spans if not is_reasoning)
+        assert reasoning == "plan"
+        assert visible == "answer"
+
+    def test_partial_marker_suffix_is_released_at_eof(self):
+        splitter = self._splitter()
+        spans = splitter.feed("visible<thi") + splitter.flush()
+        assert "".join(text for _, text in spans) == "visible<thi"
+
+
 class TestStreamOutcomeGuardIntegration(unittest.TestCase):
     def _make_loop(self, provider, tools=None):
         config = LucNhanConfig()
@@ -1199,6 +1253,157 @@ class TestStreamOutcomeGuardIntegration(unittest.TestCase):
         # Exact: ceil(total_bytes / 3)
         expected = math.ceil(len(big_reasoning.encode("utf-8")) / 3)
         assert outcome.attempt_usage.usage.completion_tokens == expected
+
+    def test_compat_reasoning_cycle_is_guarded_end_to_end(self):
+        """A custom OpenAI-compatible provider streaming a short thinking
+        cycle must reach DEGENERATED through the real adapter + loop guard,
+        with the repetition on the reasoning channel (never visible text)."""
+        from lucnhan.providers.openai_compat import OpenAICompatProvider
+
+        cycle = "OK.\nLet me write.\nWriting.\nGo.\n"
+        deltas = [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content=None,
+                            reasoning_content=line,
+                            tool_calls=None,
+                        ),
+                        finish_reason=None,
+                    )
+                ],
+                usage=None,
+            )
+            for line in cycle.splitlines(keepends=True) * 400
+        ]
+
+        class CompatStreamProvider(OpenAICompatProvider):
+            def __init__(self):
+                super().__init__(
+                    api_key="sk-test",
+                    api_base="https://custom.example/v1",
+                    model="unknown-model",
+                    provider_name="custom-endpoint",
+                )
+
+            def chat_stream(
+                self,
+                messages,
+                tools=None,
+                temperature=0.3,
+                max_tokens=4096,
+                system="",
+                cancel_event=None,
+                *,
+                request_context=None,
+            ):
+                yield from self._iter_stream_chunks(iter(deltas))
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo",
+                description="echo",
+                parameters=[ParameterSchema(name="text", type="string", description="t", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+        provider = CompatStreamProvider()
+        config = LucNhanConfig()
+        config.auto_context = False
+        config.provider.model = "unknown-model"
+        loop = AgentLoop(
+            provider=provider,
+            tool_registry=registry,
+            config=config,
+            session=SessionState(provider_name="custom-endpoint", model_name="unknown-model"),
+        )
+
+        events, outcome = _drain_generator_with_return(loop._stream_llm_turn("system", registry.to_provider_format()))
+
+        assert outcome.disposition == TurnDisposition.DEGENERATED
+        assert outcome.guard_trigger
+        assert outcome.visible_text == ""
+        assert any(e.type == TurnEventType.REASONING_DELTA for e in events)
+        assert not any(e.type == TurnEventType.TEXT_DELTA for e in events)
+
+    def _echo_registry(self) -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo",
+                description="echo",
+                parameters=[ParameterSchema(name="text", type="string", description="t", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+        return registry
+
+    def test_inline_think_tag_stream_is_guarded_end_to_end(self):
+        """Incident shape: the endpoint puts an UNCLOSED literal think tag
+        in ``delta.content``, followed by a 6.4k-char preamble and 400
+        four-line cycles.  Raw text emission must stay unchanged while the
+        guard classifies the block as reasoning and latches."""
+        open_tag = "<think>"
+        cycle = "Let me write.\n\nWriting.\n\nGo.\n\nOK.\n\n"
+        preamble = "\n".join(f"Unique analysis step {i}: inspect item 0x{i:x}." for i in range(400))[:6371]
+        content = open_tag + preamble + cycle * 400  # never closed
+        chunks = [StreamChunk(text=content[offset : offset + 37]) for offset in range(0, len(content), 37)]
+
+        registry = self._echo_registry()
+
+        class InlineCompatProvider(MockProvider):
+            @property
+            def name(self):
+                return "openai_compat"
+
+        provider = InlineCompatProvider(responses=[chunks])
+        loop = self._make_loop(provider, tools=registry)
+        # Incident provider/model: the auto profile resolves to FULL for
+        # this model family.
+        loop.config.provider.model = "deepseek-v4.1-flash-uncensored"
+
+        events, outcome = _drain_generator_with_return(loop._stream_llm_turn("system", registry.to_provider_format()))
+
+        assert outcome.disposition == TurnDisposition.DEGENERATED
+        assert outcome.guard_trigger == "verbatim_tail"
+        text_deltas = [e for e in events if e.type == TurnEventType.TEXT_DELTA]
+        assert text_deltas, "raw TEXT_DELTA events must still be emitted"
+        raw = "".join(e.text for e in text_deltas)
+        assert raw.startswith(open_tag + "Unique analysis step")
+        assert len(raw) < len(content), "guard must stop the stream before the scripted content ends"
+        assert outcome.visible_text.startswith(open_tag)
+
+    def test_balanced_inline_think_block_does_not_trigger(self):
+        """A short balanced think block followed by a normal answer is
+        classified for the guard but must not abort the turn."""
+        content = "<think>Step one.\nStep two.</think>\nFinal answer."
+        registry = self._echo_registry()
+        provider = MockProvider(responses=[[StreamChunk(text=content)]])
+        loop = self._make_loop(provider, tools=registry)
+
+        _events, outcome = _drain_generator_with_return(loop._stream_llm_turn("system", registry.to_provider_format()))
+
+        assert outcome.disposition == TurnDisposition.COMPLETED
+        assert outcome.guard_trigger == ""
+        assert outcome.visible_text == content
+
+    def test_is_thinking_chunk_feeds_guard_reasoning_lane(self):
+        """Provider-level thinking chunks (Anthropic-style) count as
+        reasoning for the guard while remaining raw text on the wire."""
+        big = "x" * 49_150  # exactly the ceiling boundary
+        registry = self._echo_registry()
+        provider = MockProvider(responses=[[StreamChunk(text=big, is_thinking=True)]])
+        loop = self._make_loop(provider, tools=registry)
+
+        _events, outcome = _drain_generator_with_return(loop._stream_llm_turn("system", registry.to_provider_format()))
+
+        assert outcome.disposition == TurnDisposition.DEGENERATED
+        assert outcome.guard_trigger == "reasoning_ceiling"
+        assert outcome.visible_text == big
 
     def test_authoritative_usage_wins_over_estimate(self):
         """When provider emits usage before guard trigger, provenance

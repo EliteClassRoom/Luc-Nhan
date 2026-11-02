@@ -31,6 +31,7 @@ from lucnhan.agent.loop_guard import (
     _PROFILE_DEFAULT,
     _PROFILE_FULL,
     _PROFILE_OFF,
+    EXACT_TAIL_WINDOW,
     LoopGuardProfile,
     LoopGuardSnapshot,
     StreamLoopGuard,
@@ -378,3 +379,24 @@ def test_resolver_maps_families() -> None:
     assert resolve_loop_guard_profile("openai", "gpt-5", "off").enabled is False
     assert resolve_loop_guard_profile("openai", "gpt-5", "full").header_runaway is True
     assert resolve_loop_guard_profile("openai", "gpt-5", "glm").trigram_jaccard is False
+
+
+def test_default_profile_latches_short_four_line_cycle() -> None:
+    """Regression: a custom OpenAI-compatible provider (unknown family →
+    default profile) streaming a short 4-line thinking cycle must latch
+    within a bounded amount of input instead of streaming forever."""
+    profile = resolve_loop_guard_profile("custom-endpoint", "unknown-model", "auto")
+    assert profile == _PROFILE_DEFAULT
+
+    guard = StreamLoopGuard(exposed_tool_names=["read_bytes"], profile=profile)
+    cycle = ["OK.\n", "Let me write.\n", "Writing.\n", "Go.\n"]
+    fed = 0
+    for _ in range(1000):
+        for line in cycle:
+            guard.on_reasoning_delta(line)
+            fed += len(line.encode("utf-8"))
+            if guard.should_abort():
+                assert guard.trigger
+                assert fed <= EXACT_TAIL_WINDOW, f"guard needed {fed} bytes (bound {EXACT_TAIL_WINDOW})"
+                return
+    raise AssertionError(f"guard did not latch after {fed} bytes of a {len(cycle)}-line cycle")

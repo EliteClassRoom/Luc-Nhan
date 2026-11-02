@@ -1286,6 +1286,13 @@ class ChatView(QScrollArea):
             old.hide()
             self._layout.removeWidget(old)
             old.deleteLater()
+        # Hard boundary: the inline-tag streaming buffer belongs to the
+        # discarded attempt.  If it opened an unclosed inline thinking
+        # block, recovery text would otherwise be appended to that stale
+        # buffer and parsed as thinking (dropping the new answer from the
+        # visible widget).
+        self._think_buffer = ""
+        self._waiting_think_close = False
         # Insert one compact status label.
         status_text = f"Recovery (attempt {attempt})"
         if reason:

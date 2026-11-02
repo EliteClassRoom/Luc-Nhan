@@ -182,6 +182,41 @@ class TestRecoveryStartRendering(unittest.TestCase):
         )
         assert self._view._message_thinking is None
 
+    def test_recovery_start_resets_unclosed_inline_thinking_buffer(self):
+        """Incident shape: attempt 1 streams an unclosed inline think tag,
+        so TEXT_DELTA buffering waits for a close that never comes.  The
+        recovery boundary must drop that buffer so attempt 2's answer is
+        not parsed as stale thinking."""
+        open_tag = "<think>"
+        close_tag = "</think>"
+        stale = "Let me write.\n\nWriting.\n\nGo.\n\nOK.\n\n"
+        self._view.handle_event(TurnEvent.text_delta(open_tag + stale * 20))
+
+        assert self._view._waiting_think_close is True
+        assert self._view._think_buffer.startswith(open_tag)
+        assert self._view._message_thinking is not None
+
+        self._view.handle_event(
+            TurnEvent.recovery_start(
+                attempt=2,
+                reason="reasoning_degenerated",
+                discard_transient_reasoning=True,
+            )
+        )
+
+        assert self._view._message_thinking is None
+        assert self._view._waiting_think_close is False
+        assert self._view._think_buffer == ""
+
+        self._view.handle_event(TurnEvent.text_delta(close_tag + "\nAnswer"))
+
+        assistant = self._view._current_assistant
+        assert assistant is not None
+        rendered = assistant._full_text
+        assert "Answer" in rendered
+        assert "Let me write" not in rendered
+        assert "Writing." not in rendered
+
     def test_recovery_start_removes_thinking_block_from_layout(self):
         """After recovery, no thinking_block widget should remain in the layout."""
         self._view.handle_event(TurnEvent.reasoning_event("discard me"))
