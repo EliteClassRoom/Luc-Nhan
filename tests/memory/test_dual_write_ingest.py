@@ -269,3 +269,42 @@ def test_research_note_related_write_failure_is_logged(tmp_path: Path, monkeypat
         ingest._write_research_to_jsonl(store, paths, **kwargs)
 
     assert log_error_mock.called
+
+
+def test_exploration_memory_write_failure_is_logged(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "append_observation", _boom("observation boom"))
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest._write_exploration_to_jsonl(
+            store,
+            paths,
+            category="function_purpose",
+            summary="main parses config",
+            address=0x401000,
+            relevance="high",
+        )
+
+    assert log_error_mock.called
+    assert len(store.list_memories()) == 1
+
+
+def test_research_note_function_relation_write_failure_is_logged(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "upsert_relation_from", _boom("relation boom"))
+    kwargs = _research_note_kwargs(tmp_path)
+    kwargs["content"] = "# T\nsee 0x401000"
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest._write_research_to_jsonl(store, paths, **kwargs)
+
+    assert log_error_mock.called
+    assert len(store.list_memories()) == 1
