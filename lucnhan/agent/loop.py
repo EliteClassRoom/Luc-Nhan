@@ -1007,8 +1007,8 @@ class AgentLoop:
             try:
                 meta = build_retrieval_metadata(pack)
                 self.session.metadata["last_knowledge_retrieval"] = meta
-            except Exception:
-                pass
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                log_debug(f"knowledge retrieval metadata build failed: {exc!r}")
 
             return section
         except Exception as e:
@@ -2316,7 +2316,7 @@ class AgentLoop:
                         memory_service=self.memory_service,
                     )
             except Exception as e:
-                log_debug(f"knowledge ingest (exploration_report) failed: {e}")
+                log_error(f"knowledge ingest (exploration_report) failed: {e!r}")
         if category == "patch_result" and address is not None:
             original_hex = tc.arguments.get("original_hex", "")
             new_hex = tc.arguments.get("new_hex", "")
@@ -2490,7 +2490,7 @@ class AgentLoop:
                     memory_service=self.memory_service,
                 )
         except Exception as e:
-            log_debug(f"knowledge ingest (research_note) failed: {e}")
+            log_error(f"knowledge ingest (research_note) failed: {e!r}")
 
         result_text = f"Note saved: {note.path}"
         tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=result_text, is_error=False)
