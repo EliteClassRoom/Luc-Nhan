@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -309,6 +309,60 @@ class TestCreateStructIda9Path(unittest.TestCase):
             types_tools._parse_type = orig_parse
 
 
+class TestCreateStructFieldCommentFailure(unittest.TestCase):
+    def test_comment_failure_is_reported_and_logged(self):
+        class _CmtFailTif:
+            def __init__(self):
+                self._size = 0
+
+            def create_udt(self, union):
+                return True
+
+            def get_size(self):
+                return self._size
+
+            def add_udm(self, *args):
+                self._size += 4
+                return 0
+
+            def find_udm(self, name, kind):
+                return 0
+
+            def set_udm_cmt(self, idx, cmt):
+                raise RuntimeError("cmt boom")
+
+            def set_named_type(self, til, name):
+                return 0
+
+            def is_udt(self):
+                return True
+
+            def get_named_type(self, til, name):
+                return False
+
+        fake_ti = MagicMock()
+        fake_ti.TERR_OK = 0
+        fake_ti.ETF_MAY_DESTROY = 4
+        fake_ti.PT_SIL = 0
+        fake_ti.STRMEM_NAME = 0
+        fake_ti.tinfo_t = _CmtFailTif
+
+        orig_t = types_tools.ida_typeinf
+        try:
+            types_tools.ida_typeinf = fake_ti
+            with patch.object(types_tools, "log_warning") as log_warning_mock:
+                result = types_tools.create_struct(
+                    "Foo",
+                    '[{"name": "a", "type": "int", "comment": "note"}]',
+                )
+            self.assertIn("Created struct", result)
+            self.assertIn("comments not set", result)
+            self.assertIn("a", result)
+            self.assertTrue(log_warning_mock.called)
+        finally:
+            types_tools.ida_typeinf = orig_t
+
+
 # ---------------------------------------------------------------------------
 # modify_struct (IDA 9.x path)
 # ---------------------------------------------------------------------------
@@ -416,6 +470,24 @@ class TestGetTypeLibraries(unittest.TestCase):
             types_tools.ida_typeinf = mock_ti
             result = types_tools.get_type_libraries()
             self.assertIn("Type libraries", result)
+        finally:
+            types_tools.ida_typeinf = orig
+
+    def test_main_til_fallback_propagates_unexpected_error(self):
+        class _BadBases:
+            name = "main"
+
+            @property
+            def nbases(self):
+                raise AttributeError("no nbases")
+
+        orig = types_tools.ida_typeinf
+        try:
+            mock_ti = MagicMock()
+            mock_ti.get_idati.side_effect = [_BadBases(), RuntimeError("bad til")]
+            types_tools.ida_typeinf = mock_ti
+            with self.assertRaises(ToolError):
+                types_tools.get_type_libraries()
         finally:
             types_tools.ida_typeinf = orig
 
@@ -604,6 +676,76 @@ class TestArgumentValidation(unittest.TestCase):
             self.assertIn("MyType", result)
         finally:
             types_tools.idc = orig
+
+
+class _FakeDecompFailure(Exception):
+    """Stand-in for ida_hexrays.DecompilationFailure in tests."""
+
+
+class _FakeHexrays:
+    """Minimal ida_hexrays stub with a real exception class.
+
+    ``tests/mocks/ida_mock.py`` installs ``ida_hexrays`` as a MagicMock;
+    using that directly in an ``except`` clause raises
+    ``TypeError: catching classes that do not inherit from BaseException``.
+    """
+
+    DecompilationFailure = _FakeDecompFailure
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def decompile(self, _ea):
+        raise self._exc
+
+
+class TestGetVariableTypeDecompileFailure(unittest.TestCase):
+    def _run_with(self, exc: BaseException) -> str:
+        orig_hr = types_tools._HAS_HEXRAYS
+        orig_hexrays = types_tools.ida_hexrays
+        orig_ti = types_tools.ida_typeinf
+        try:
+            types_tools._HAS_HEXRAYS = True
+            types_tools.ida_typeinf = MagicMock()
+            types_tools.ida_hexrays = _FakeHexrays(exc)
+            return types_tools.get_variable_type("0x1000", "v1")
+        finally:
+            types_tools._HAS_HEXRAYS = orig_hr
+            types_tools.ida_hexrays = orig_hexrays
+            types_tools.ida_typeinf = orig_ti
+
+    def test_expected_decompile_failure_returns_empty(self):
+        self.assertEqual(self._run_with(_FakeDecompFailure("no decompile")), "")
+
+    def test_unexpected_decompile_error_propagates_as_tool_error(self):
+        with self.assertRaises(ToolError) as ctx:
+            self._run_with(AttributeError("bad ida api"))
+        self.assertIsInstance(ctx.exception.__cause__, AttributeError)
+
+
+class TestApplyTypeToVariableDecompileFailure(unittest.TestCase):
+    def _run_with(self, exc: BaseException) -> str:
+        orig_hr = types_tools._HAS_HEXRAYS
+        orig_hexrays = types_tools.ida_hexrays
+        orig_ti = types_tools.ida_typeinf
+        try:
+            types_tools._HAS_HEXRAYS = True
+            types_tools.ida_typeinf = MagicMock()
+            types_tools.ida_hexrays = _FakeHexrays(exc)
+            return types_tools.apply_type_to_variable("0x1000", "v1", "int")
+        finally:
+            types_tools._HAS_HEXRAYS = orig_hr
+            types_tools.ida_hexrays = orig_hexrays
+            types_tools.ida_typeinf = orig_ti
+
+    def test_expected_decompile_failure_returns_message(self):
+        result = self._run_with(_FakeDecompFailure("no decompile"))
+        self.assertIn("Decompilation failed", result)
+
+    def test_unexpected_decompile_error_propagates_as_tool_error(self):
+        with self.assertRaises(ToolError) as ctx:
+            self._run_with(AttributeError("bad ida api"))
+        self.assertIsInstance(ctx.exception.__cause__, AttributeError)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from typing import Annotated
 
 from ...core.atomic_io import atomic_replace
 from ...core.host import get_database_path
+from ...core.logging import log_error
 from ...memory.storage_guard import StorageError, validate_regular_contained_path
 from ...tools.base import tool
 
@@ -245,11 +246,12 @@ def write_file(
             except OSError:
                 pass
             return f"Error: atomic replace failed: {exc}"
-    except Exception as exc:  # pragma: no cover - defensive
+    except (OSError, ValueError) as exc:  # pragma: no cover - defensive
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
+        log_error(f"write_file: write failed for {'/'.join(parts)}: {exc!r}")
         return f"Error: write failed: {exc!r}"
     rel = "/".join(parts)
     return f"Wrote {rel} ({len(encoded)} bytes, {len(content)} chars)"

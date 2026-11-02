@@ -142,3 +142,179 @@ def test_no_memory_service_skips_sqlite_path(tmp_path: Path, monkeypatch) -> Non
     )
     # Pure JSONL write — at least one memory must land.
     assert len(store.list_memories()) == 1
+
+
+def _boom(message: str):
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError(message)
+
+    return _raise
+
+
+def test_make_store_logs_path_build_failure(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    with (
+        patch("lucnhan.memory.paths.knowledge_paths", side_effect=OSError("bad path")),
+        patch("lucnhan.memory.ingest.log_error") as log_error_mock,
+    ):
+        store, paths = ingest.make_store(str(tmp_path / "x.i64"))
+
+    assert store is None and paths is None
+    assert log_error_mock.called
+
+
+def test_make_store_never_raises_on_unexpected_error(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    with (
+        patch("lucnhan.memory.paths.knowledge_paths", side_effect=KeyError("odd")),
+        patch("lucnhan.memory.ingest.log_error"),
+    ):
+        assert ingest.make_store(str(tmp_path / "x.i64")) == (None, None)
+
+
+def test_ingest_save_memory_logs_jsonl_failure(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "upsert_memory", _boom("jsonl boom"))
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest.ingest_save_memory(store, paths, fact="uses RC4", category="crypto")
+
+    assert log_error_mock.called
+
+
+def test_exploration_entity_write_failure_is_logged(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "upsert_entity", _boom("entity boom"))
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest._write_exploration_to_jsonl(
+            store,
+            paths,
+            category="function_purpose",
+            summary="main parses config",
+            address=0x401000,
+            relevance="high",
+        )
+
+    assert log_error_mock.called
+    # The memory write still lands: a failed entity write must not abort the rest.
+    assert len(store.list_memories()) == 1
+
+
+def _research_note_kwargs(tmp_path: Path) -> dict:
+    return {
+        "note_path": str(tmp_path / "notes" / "n.md"),
+        "genre": "general",
+        "title": "T",
+        "content": "# T\nbody",
+        "related": [],
+        "review_passed": True,
+    }
+
+
+def test_research_note_memory_write_failure_is_logged(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "upsert_memory", _boom("memory boom"))
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest._write_research_to_jsonl(store, paths, **_research_note_kwargs(tmp_path))
+
+    assert log_error_mock.called
+
+
+def test_research_note_entity_write_failure_is_logged(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "upsert_entity", _boom("entity boom"))
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest._write_research_to_jsonl(store, paths, **_research_note_kwargs(tmp_path))
+
+    assert log_error_mock.called
+    assert len(store.list_memories()) == 1
+
+
+def test_research_note_observation_failure_is_logged(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "append_observation", _boom("observation boom"))
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest._write_research_to_jsonl(store, paths, **_research_note_kwargs(tmp_path))
+
+    assert log_error_mock.called
+
+
+def test_research_note_related_write_failure_is_logged(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "upsert_relation_from", _boom("relation boom"))
+    kwargs = _research_note_kwargs(tmp_path)
+    kwargs["related"] = ["other-note"]
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest._write_research_to_jsonl(store, paths, **kwargs)
+
+    assert log_error_mock.called
+
+
+def test_exploration_memory_write_failure_is_logged(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "append_observation", _boom("observation boom"))
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest._write_exploration_to_jsonl(
+            store,
+            paths,
+            category="function_purpose",
+            summary="main parses config",
+            address=0x401000,
+            relevance="high",
+        )
+
+    assert log_error_mock.called
+    assert len(store.list_memories()) == 1
+
+
+def test_research_note_function_relation_write_failure_is_logged(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    paths = _make_paths(tmp_path)
+    paths.ensure()
+    store = KnowledgeRawStore(paths)
+    monkeypatch.setattr(store, "upsert_relation_from", _boom("relation boom"))
+    kwargs = _research_note_kwargs(tmp_path)
+    kwargs["content"] = "# T\nsee 0x401000"
+
+    with patch("lucnhan.memory.ingest.log_error") as log_error_mock:
+        ingest._write_research_to_jsonl(store, paths, **kwargs)
+
+    assert log_error_mock.called
+    assert len(store.list_memories()) == 1

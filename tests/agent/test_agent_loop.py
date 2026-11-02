@@ -10,7 +10,7 @@ import unittest
 from collections.abc import Generator as GeneratorType
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -2468,6 +2468,139 @@ class TestMaxTurnsHardCeiling(unittest.TestCase):
         assert len(turn_ends) == 1
         errors = [e for e in events if e.type == TurnEventType.ERROR and e.error]
         assert any("max turns limit (1)" in (e.error or "") for e in errors)
+
+
+class TestMutationBookkeepingFailure(unittest.TestCase):
+    """A bookkeeping bug must not turn a successful mutation into a tool error."""
+
+    def test_bookkeeping_error_does_not_fail_successful_tool(self):
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="rename_thing",
+                description="Rename a thing",
+                parameters=[ParameterSchema(name="address", type="string", description="Address", required=True)],
+                handler=lambda address: f"Renamed {address}",
+                category="test",
+                mutating=True,
+            )
+        )
+        config = LucNhanConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        loop = AgentLoop(
+            provider=MockProvider(responses=[]),
+            tool_registry=registry,
+            config=config,
+            session=session,
+        )
+        tc = ToolCall(id="call_mut", name="rename_thing", arguments={"address": "0x401000"})
+
+        with (
+            patch("lucnhan.agent.loop.build_reverse_record", side_effect=RuntimeError("builder boom")),
+            patch("lucnhan.agent.loop.log_error") as log_error_mock,
+        ):
+            _events, tr = _drain_generator_with_return(loop._execute_single_tool(tc))
+
+        self.assertFalse(tr.is_error)
+        self.assertIn("Renamed 0x401000", tr.content)
+        self.assertEqual(loop.mutation_records(), [])
+        self.assertTrue(
+            any("mutation bookkeeping failed" in str(call) for call in log_error_mock.call_args_list),
+            "expected the bookkeeping failure to be logged",
+        )
+
+
+class TestKnowledgeMetadataLogging(unittest.TestCase):
+    def _make_loop(self):
+        config = LucNhanConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        return AgentLoop(
+            provider=MockProvider(responses=[]),
+            tool_registry=ToolRegistry(),
+            config=config,
+            session=session,
+        )
+
+    def test_metadata_build_failure_is_logged_and_section_kept(self):
+        loop = self._make_loop()
+        loop.memory_service = MagicMock()
+        with (
+            patch("lucnhan.memory.sqlite_retrieval.repository_to_retrieval_pack", return_value=MagicMock()),
+            patch("lucnhan.memory.context.build_section_from_pack", return_value="SECTION"),
+            patch("lucnhan.memory.context.build_retrieval_metadata", side_effect=KeyError("bad pack")),
+            patch("lucnhan.agent.loop.log_debug") as log_debug_mock,
+        ):
+            section = loop._build_retrieved_knowledge_section(None, None, loop.config.get_active_profile())
+
+        self.assertEqual(section, "SECTION")
+        self.assertTrue(
+            any("knowledge retrieval metadata" in str(call) for call in log_debug_mock.call_args_list),
+            "metadata failure must be logged, not swallowed",
+        )
+
+
+class TestKnowledgeIngestErrorLogging(unittest.TestCase):
+    def _make_loop(self):
+        config = LucNhanConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        return AgentLoop(
+            provider=MockProvider(responses=[]),
+            tool_registry=ToolRegistry(),
+            config=config,
+            session=session,
+        )
+
+    def test_exploration_ingest_failure_logs_error(self):
+        loop = self._make_loop()
+        state = loop._ensure_exploration_state()
+        tc = ToolCall(
+            id="t1",
+            name="exploration_report",
+            arguments={
+                "category": "general",
+                "summary": "summary",
+                "address": "0x401000",
+                "evidence": "evidence",
+                "relevance": "high",
+            },
+        )
+        with (
+            patch("lucnhan.memory.ingest.make_store", return_value=(MagicMock(), MagicMock())),
+            patch("lucnhan.memory.ingest.ingest_exploration_finding", side_effect=RuntimeError("ingest boom")),
+            patch("lucnhan.agent.loop.log_error") as log_error_mock,
+        ):
+            list(loop._handle_exploration_report_tool(tc, state))
+
+        self.assertTrue(log_error_mock.called)
+
+    def test_research_note_ingest_failure_logs_error(self):
+        loop = self._make_loop()
+        loop._research_state = MagicMock()
+
+        def _fake_note(**_kwargs):
+            yield
+            return SimpleNamespace(
+                path="n.md",
+                genre="general",
+                title="T",
+                content="# T\nbody",
+                related_notes=[],
+                review_passed=True,
+            )
+
+        tc = ToolCall(id="t2", name="research_note", arguments={"content": "# T\nbody"})
+        with (
+            patch("lucnhan.agent.modes.research.write_and_review_note", _fake_note),
+            patch("lucnhan.memory.ingest.make_store", return_value=(MagicMock(), MagicMock())),
+            patch("lucnhan.memory.ingest.ingest_research_note", side_effect=RuntimeError("ingest boom")),
+            patch("lucnhan.agent.loop.log_error") as log_error_mock,
+        ):
+            list(loop._handle_research_note_tool(tc))
+
+        self.assertTrue(log_error_mock.called)
 
 
 if __name__ == "__main__":

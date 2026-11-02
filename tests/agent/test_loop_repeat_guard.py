@@ -220,6 +220,18 @@ def test_successful_mutation_records_progress() -> None:
     assert loop._progress.run_made_progress() is True
 
 
+def test_successful_mutation_lifts_every_block() -> None:
+    """State changed, so tools blocked as repeats may run again."""
+    loop = _make_loop(ScriptedProvider(tool_calls=0), mutating=True)
+    loop._blocked_tools.update({"list_functions", "get_xrefs_to"})
+
+    tc = ToolCall(id="x", name=_TOOL_NAME, arguments={"address": "0x401000"})
+    result = _drain(loop._execute_single_tool(tc))
+
+    assert result is not None and result.is_error is False
+    assert loop._blocked_tools == set()
+
+
 def test_blocked_tool_is_refused_without_executing() -> None:
     """A blocked tool is refused instead of being run again."""
     loop = _make_loop(ScriptedProvider(tool_calls=0))

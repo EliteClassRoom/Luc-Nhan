@@ -161,5 +161,21 @@ class TestBackgroundAgentRunnerReportFlow(unittest.TestCase):
         self.assertIn("Report discarded", events[2].text)
 
 
+class TestBuildReportContextNotesFailure(unittest.TestCase):
+    def test_notes_failure_is_logged_and_context_still_builds(self):
+        tmp = tempfile.mkdtemp()
+        store, paths = fresh_store(tmp)
+        _seed_verified_hypothesis(store, paths)
+
+        with (
+            patch("lucnhan.memory.report.list_notes", side_effect=OSError("notes boom")),
+            patch("lucnhan.memory.report.log_debug") as log_debug_mock,
+        ):
+            ctx = build_report_context(store, paths)
+
+        self.assertIsNotNone(ctx)
+        self.assertTrue(log_debug_mock.called)
+
+
 if __name__ == "__main__":
     unittest.main()

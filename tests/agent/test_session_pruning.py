@@ -174,3 +174,58 @@ def test_results_inside_the_keep_tail_are_never_blanked() -> None:
     contents = _tool_contents(session.get_messages_for_provider(drop_stale=True))
     assert "first body" in contents
     assert "second body" in contents
+
+
+def _call_pair(call_id: str, name: str, arguments: dict, content: str) -> tuple[Message, Message]:
+    """Return the (assistant, tool) message pair of an arbitrary call."""
+    assistant = Message(
+        role=Role.ASSISTANT, content="", tool_calls=[ToolCall(id=call_id, name=name, arguments=arguments)]
+    )
+    tool = Message(role=Role.TOOL, tool_results=[ToolResult(tool_call_id=call_id, name=name, content=content)])
+    return assistant, tool
+
+
+def _session_with(*pairs: tuple[Message, Message]) -> SessionState:
+    """A session holding *pairs*, padded so none sits in the keep-tail."""
+    session = SessionState()
+    session.add_message(Message(role=Role.USER, content="go"))
+    for assistant, tool in pairs:
+        session.add_message(assistant)
+        session.add_message(tool)
+    for i in range(3):
+        a, t = _filler(i)
+        session.add_message(a)
+        session.add_message(t)
+    return session
+
+
+def test_windowed_reads_of_one_file_are_all_kept() -> None:
+    """Two offsets of the same reference file are different reads."""
+    args = {"skill": "deobfuscation", "file": "ida/api-hashing.md"}
+    session = _session_with(
+        _call_pair("w0", "read_skill_reference", {**args, "offset": 0}, "window zero"),
+        _call_pair("w1", "read_skill_reference", {**args, "offset": 7000}, "window seven thousand"),
+    )
+    contents = _tool_contents(session.get_messages_for_provider(drop_stale=True))
+    assert "window zero" in contents
+    assert "window seven thousand" in contents
+
+
+def test_searches_that_share_only_an_offset_are_all_kept() -> None:
+    session = _session_with(
+        _call_pair("s0", "search_strings", {"pattern": "http", "offset": 0}, "http hits"),
+        _call_pair("s1", "search_strings", {"pattern": "mutex", "offset": 0}, "mutex hits"),
+    )
+    contents = _tool_contents(session.get_messages_for_provider(drop_stale=True))
+    assert "http hits" in contents
+    assert "mutex hits" in contents
+
+
+def test_same_read_with_reordered_arguments_still_supersedes() -> None:
+    session = _session_with(
+        _call_pair("r0", "read_bytes", {"address": "0x401000", "size": 16}, "stale bytes"),
+        _call_pair("r1", "read_bytes", {"size": 16, "address": "0x401000"}, "fresh bytes"),
+    )
+    contents = _tool_contents(session.get_messages_for_provider(drop_stale=True))
+    assert "fresh bytes" in contents
+    assert "stale bytes" not in contents

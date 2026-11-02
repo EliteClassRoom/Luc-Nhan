@@ -178,6 +178,18 @@ class TestWriteFile(unittest.TestCase):
         ]
         self.assertEqual(leftovers, [])
 
+    def test_unexpected_write_error_propagates_as_tool_error(self):
+        """A programming error must not be returned as a successful tool string."""
+
+        from lucnhan.core.errors import ToolError
+
+        with (
+            _with_root(self.tmp),
+            patch.object(file_io.os, "fdopen", side_effect=RuntimeError("bug")),
+        ):
+            with self.assertRaises(ToolError):
+                file_io.write_file("notes/bug.md", "x")
+
     def test_write_file_is_mutating(self):
         registry = _build_registry()
         for tool in registry.list_available_tools():

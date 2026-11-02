@@ -1138,9 +1138,13 @@ class TestHistoryOnDemandIntegration(unittest.TestCase):
         self.facade.open_history()
         primary = Path(self.cfg.checkpoints_dir) / "sessions" / f"{self.a1_id}.json"
         original_remove = os.remove
+        # History deletes the *resolved* path, so compare resolved forms: a
+        # temp dir in 8.3 short form (``RUNNER~1`` on Windows CI) would never
+        # match the unresolved ``primary`` and the injected failure would not fire.
+        primary_resolved = os.path.normcase(os.path.realpath(primary))
 
         def fail_target(path):
-            if os.path.normcase(str(path)) == os.path.normcase(str(primary)):
+            if os.path.normcase(os.path.realpath(path)) == primary_resolved:
                 raise PermissionError("locked")
             original_remove(path)
 

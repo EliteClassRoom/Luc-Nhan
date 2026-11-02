@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..core.logging import log_warning
 from ..core.sanitize import strip_injection_markers, strip_lone_surrogates
 from .paths import KnowledgePaths
 from .raw_store import KnowledgeRawStore
@@ -239,7 +240,8 @@ def build_retrieved_context_with_pack(
             max_notes=budget.max_notes,
             expand_relations=True,
         )
-    except Exception:
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        log_warning(f"retrieval failed; dropping Retrieved Knowledge section: {exc!r}")
         return "", None
 
     section = build_section_from_pack(pack, budget=budget)

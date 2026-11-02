@@ -1,11 +1,12 @@
 # Anti-Loop Hardening — Design & Implementation Plan
 
-> **Status**: Design spec — NOT YET IMPLEMENTED (2026-10-30).
+> **Status**: Design spec (2026-10-30), implemented in the 1.14.x line — see CHANGELOG `[Unreleased]`.
+> Where this document and the code differ, the code is authoritative.
 > Source of the mechanisms: oh-my-pi (`omp` 18.13.1) harness documentation
 > shipped at `omp://` (provider-compat-reference, provider-quirks,
 > non-compaction-retry-policy, compaction, ttsr-injection-lifecycle,
 > advisor-watchdog, tools/todo, tools/wait) and its runtime behaviour.
-> Target: Luc Nhan 1.14.1 (`lucnhan/` package, repo root `C:\Users\kiennd14\.rikugan`).
+> Target: Luc Nhan 1.14.1 (`lucnhan/` package).
 
 ---
 
