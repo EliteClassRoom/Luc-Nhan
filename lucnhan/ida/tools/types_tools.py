@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 from ...core.errors import ToolError, ToolValidationError
 from ...core.host import HAS_HEXRAYS as _HAS_HEXRAYS
-from ...core.logging import log_debug
+from ...core.logging import log_debug, log_warning
 from ...tools.base import parse_addr, tool
 
 # Import each module independently so a single missing module (e.g. ida_struct
@@ -165,6 +165,7 @@ def _create_struct_ida9(name: str, field_list: list) -> str:
     # (otherwise add_udm raises TERR_OVERLAP "member overlaps ...")
     ETF_MAY_DESTROY = getattr(ida_typeinf, "ETF_MAY_DESTROY", 0)
 
+    failed_comments: list[str] = []
     for fld in field_list:
         fname = fld["name"]
         ftype_str = fld.get("type", "int")
@@ -196,8 +197,9 @@ def _create_struct_ida9(name: str, field_list: list) -> str:
             if idx >= 0:
                 try:
                     tif.set_udm_cmt(idx, fld["comment"])
-                except Exception as exc:
-                    log_debug(f"Failed to set comment on field {fname!r}: {exc}")
+                except (AttributeError, RuntimeError) as exc:
+                    log_warning(f"Failed to set comment on field {fname!r}: {exc}")
+                    failed_comments.append(fname)
 
     # Register in the local type library (None = local IDB TIL)
     err = tif.set_named_type(None, name)
@@ -205,7 +207,8 @@ def _create_struct_ida9(name: str, field_list: list) -> str:
         return f"Failed to register struct '{name}' (err={err})"
 
     total_size = tif.get_size()
-    return f"Created struct '{name}' with {len(field_list)} fields, size={total_size}"
+    comment_note = f" (comments not set: {', '.join(failed_comments)})" if failed_comments else ""
+    return f"Created struct '{name}' with {len(field_list)} fields, size={total_size}{comment_note}"
 
 
 def _get_struct_tinfo(name: str) -> ida_typeinf.tinfo_t | None:
@@ -903,7 +906,7 @@ def get_type_libraries() -> str:
             ti = ida_typeinf.get_idati()
             name = getattr(ti, "name", "(unknown)")
             lines.append(f"  {name} (main)")
-        except Exception as e:
+        except (AttributeError, TypeError) as e:
             log_debug(f"Could not retrieve main TIL name: {e}")
             lines.append("  (enumeration not supported in this IDA version)")
 
