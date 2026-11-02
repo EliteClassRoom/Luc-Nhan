@@ -41,10 +41,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     more turn.
   - *Retry hardening* (`retry_base_delay_ms`, `retry_max_delay_ms`) — the
     provider backoff is exponential, capped and jittered, and an empty
-    provider response is retried with a request-local suffix before the turn
-    fails with a visible reason.
+  provider response is retried with a request-local suffix before the turn
+  fails with a visible reason.
 
 ### Changed
+
+- **Subagents run against a 256k context window.** A child spawned by
+  `spawn_subagent`, an exploration sub-agent, or any other `SubagentRunner`
+  run inherits the parent's provider and tool registry, but its config is a
+  shallow copy whose `provider.context_window` is capped at 256 000 tokens.
+  A parent configured with a 1M window (Gemini, MiniMax M3) therefore
+  compacts and trims its child's prompts four times earlier, keeping child
+  prompts smaller and faster. The cap is a ceiling — a parent configured below
+  256k keeps its smaller window — and the parent config is never mutated.
 
 - **`spawn_subagent` calls in one turn now run in parallel, and appear in the
   Agents tab.** Multiple `spawn_subagent` calls issued in a single turn used to
@@ -96,6 +105,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   view-switch does not.
 
 ### Fixed
+
+- **The panel no longer fails with `cannot import name ... from
+  'lucnhan.constants'` after an edit made while IDA was running.** Python
+  caches every imported module, so a constant added to
+  `lucnhan/constants.py` during a session stays invisible to the modules
+  imported afterwards — the panel died on `ImportError` instead of
+  opening. The panel now reloads the constants module in place before it
+  builds the agent graph, so the running session picks the change up
+  without an IDA restart. A panel whose constructor aborts (bad config,
+  controller failure) no longer raises a second `AttributeError` from the
+  resize event that follows it — the original traceback stays visible.
 
 - **Auto / IDA theme no longer paints unreadable white chat and tool rows
   on a dark host.** Host-derived secondary backgrounds fall back to the host's

@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 # module's collection, so sibling tests that need real Qt
 # (e.g. ``lucnhan/tests/test_chat_view_async_restore.py``)
 # pick up the real classes even when this file runs first.
-from tests.qt_stubs import ensure_pyside6_stubs
+from tests.qt_stubs import _qt_class, ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
@@ -4975,6 +4975,55 @@ class TestHistoryDeleteInvalidate(unittest.TestCase):
         self.assertIsNone(panel._history_last_delete_session_id)
         panel._stop_history_delete_watchdog.assert_called_once()
         panel._history_panel.set_operation_pending.assert_called_with(None)
+
+
+class TestPartialConstructionResizeGuard(unittest.TestCase):
+    """A panel whose constructor aborted must survive Qt resize events.
+
+    ``LucNhanPanelCore.__init__`` can raise (config load, controller
+    factory).  The half-built widget stays in the IDA form and Qt keeps
+    delivering resize events to it.  Touching the chrome attributes the
+    aborted constructor never assigned would raise ``AttributeError`` on
+    top of the original failure and bury its traceback.
+    """
+
+    def _half_built_panel(self):
+        """A panel whose constructor aborted before the chrome was built.
+
+        The class is imported inside the test so the real module is used
+        even when a sibling test file installed a stand-in for
+        ``lucnhan.ui.panel_core``.
+        """
+        from lucnhan.ui.panel_core import LucNhanPanelCore
+        from lucnhan.ui.qt_compat import QWidget
+
+        panel = LucNhanPanelCore.__new__(LucNhanPanelCore)
+        QWidget.__init__(panel)
+        panel._footer_width_timer = MagicMock()
+        return panel
+
+    def test_resize_event_on_a_half_built_panel_does_not_raise(self) -> None:
+        panel = self._half_built_panel()
+        # The aborted constructor never reached the chrome build.
+        self.assertFalse(hasattr(panel, "_history_btn"))
+
+        panel.resizeEvent(MagicMock())
+
+    def test_ready_panel_still_applies_the_narrow_presentation(self) -> None:
+        """The guard must not disable the responsive presentation."""
+        panel = self._half_built_panel()
+        panel._ui_ready = True
+        panel._history_btn = _qt_class("QPushButton")()
+        panel._settings_btn = _qt_class("QPushButton")()
+
+        # The breakpoint constant is stubbed in this module; pin the real
+        # value so the narrow / wide branch is deterministic.
+        with patch("lucnhan.ui.panel_core.NARROW_BREAKPOINT_PX", 640):
+            panel.resizeEvent(MagicMock())
+
+        # Narrow presentation: the wide-only chrome buttons are hidden.
+        self.assertFalse(panel._history_btn.isVisible())
+        self.assertFalse(panel._settings_btn.isVisible())
 
 
 if __name__ == "__main__":

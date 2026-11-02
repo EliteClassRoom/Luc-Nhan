@@ -520,6 +520,11 @@ Plan mode is orthogonal to exploration mode. `/plan` does not enter exploration 
 
 Subagents are isolated `AgentLoop` instances with their own `SessionState`. They keep the parent's context window clean from verbose tool output.
 
+### Context Window Cap
+
+A child never inherits the parent's full context window.
+`SubagentRunner._resolve_child_provider_and_config()` hands the child a shallow copy of the parent config whose `provider.context_window` is capped at `SUBAGENT_CONTEXT_WINDOW` (256 000, `lucnhan/constants.py`). The provider and tool registry are still shared, and the parent config and provider are never mutated. The cap is a ceiling — a parent configured below 256k keeps its smaller window. The child's `ContextWindowManager` and `SessionState.get_messages_for_provider()` therefore compact and trim against the capped value, so a 1M-window parent (Gemini, MiniMax M3) yields smaller, faster child prompts. External A2A subprocess agents are unaffected — they never build a local `AgentLoop`.
+
 ### `SubagentRunner`
 
 ```python
@@ -973,6 +978,22 @@ The main Qt widget. Layout:
 │ ContextBar (model name, token count)        │
 └─────────────────────────────────────────────┘
 ```
+
+### Panel Construction
+
+`LucNhanPanelCore.__init__` can fail (config load, controller factory).
+The half-built widget stays in the IDA form and Qt keeps delivering
+resize events to it, so the panel tracks readiness with `_ui_ready`: the
+responsive presentation runs only after the constructor completed, and a
+failed construction surfaces the original traceback instead of an
+`AttributeError` raised by the resize handler on top of it.
+
+The IDA host (`lucnhan/ida/ui/panel.py`) reloads `lucnhan.constants` in
+place before it builds the panel (`lucnhan/core/module_refresh.py`).
+Python caches imported modules, so a constant added to that file while
+IDA was running would otherwise be missing from the cached module, and
+the agent modules imported afterwards would fail with
+`ImportError: cannot import name ... from 'lucnhan.constants'`.
 
 ### Event Polling
 

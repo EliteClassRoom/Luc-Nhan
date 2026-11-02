@@ -27,6 +27,11 @@ DEFAULT_MAX_TOKENS = 16384
 DEFAULT_TEMPERATURE = 0.2
 DEFAULT_CONTEXT_WINDOW = 200000
 
+#: Hard ceiling for a subagent's effective context window. Children
+#: inherit the parent's provider/config but never a window larger than
+#: this, so compaction and prompt trimming trigger earlier.
+SUBAGENT_CONTEXT_WINDOW = 256_000
+
 TOOL_RESULT_TRUNCATE_LEN = 8000
 
 SYSTEM_PROMPT_VERSION = 1

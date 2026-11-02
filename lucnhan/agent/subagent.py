@@ -6,6 +6,7 @@ import copy
 from collections.abc import Generator
 from typing import Any
 
+from ..constants import SUBAGENT_CONTEXT_WINDOW
 from ..core.config import LucNhanConfig
 from ..core.logging import log_debug, log_info
 from ..providers.base import LLMProvider
@@ -28,10 +29,13 @@ _MODE_PREFIXES = {
 class SubagentRunner:
     """Runs an isolated AgentLoop with its own SessionState.
 
-    The subagent shares the same provider, tool registry, and config as
-    the parent, but has a fresh session — its own message history and
+    The subagent shares the same provider and tool registry as the
+    parent and runs against a shallow copy of the parent config whose
+    ``provider.context_window`` is capped at ``SUBAGENT_CONTEXT_WINDOW``
+    (256k), but has a fresh session — its own message history and
     context window.  This keeps the parent's context clean from verbose
-    tool output (decompilations, disassembly dumps, etc.).
+    tool output (decompilations, disassembly dumps, etc.) and keeps the
+    child's own prompts bounded.
 
     After the subagent finishes, the parent receives only a compact
     summary rather than the full exploration trace.
@@ -115,26 +119,39 @@ class SubagentRunner:
     ) -> tuple[LLMProvider, LucNhanConfig]:
         """Return (provider, config) for the child run, honoring ``_model_override``.
 
-        When no override is configured, the original provider and config
-        are returned unchanged so existing callers see the same object
-        identity they had before this feature.
+        The provider identity is preserved when no override is
+        configured. The config is always a shallow copy whose
+        ``provider.context_window`` is capped at
+        ``SUBAGENT_CONTEXT_WINDOW`` (256k) — a child never runs against
+        the parent's full window (up to 1M tokens), so its compaction
+        and prompt trimming trigger earlier. The parent config and
+        provider are never mutated.
 
-        When an override is configured, the provider is shallow-copied,
-        the config is shallow-copied, and both `.model` attributes are
-        set to the override model. The SDK client / base URL / credentials
-        on the provider copy remain shared with the parent because the
-        provider modules do not require a state reset per model. The
-        config copy isolates the agent loop's effective ``provider.model``
-        without leaking back to the parent config.
+        When an override is configured, the provider is shallow-copied
+        and both `.model` attributes are set to the override model. The
+        SDK client / base URL / credentials on the provider copy remain
+        shared with the parent because the provider modules do not
+        require a state reset per model. The config copy isolates the
+        agent loop's effective ``provider.model`` without leaking back
+        to the parent config.
         """
-        if not self._model_override:
-            return self.provider, self.config
-        child_provider = copy.copy(self.provider)
-        child_provider.model = self._model_override
+        # Always hand the child a copied config whose context window is
+        # capped: the parent's window may be 1M, and an uncapped child
+        # would send prompts far larger than it needs. The cap is a
+        # ceiling — a parent configured below 256k keeps its smaller
+        # window. The ``128_000`` fallback mirrors AgentLoop's
+        # ``or 128000``; validated configs never hit it.
         child_config = copy.copy(self.config)
         child_provider_config = copy.copy(self.config.provider)
-        child_provider_config.model = self._model_override
+        parent_ctx = getattr(child_provider_config, "context_window", 0) or 128_000
+        child_provider_config.context_window = min(parent_ctx, SUBAGENT_CONTEXT_WINDOW)
         child_config.provider = child_provider_config
+
+        if not self._model_override:
+            return self.provider, child_config
+        child_provider = copy.copy(self.provider)
+        child_provider.model = self._model_override
+        child_provider_config.model = self._model_override
         # Providers with model-dependent cached state (e.g. GLM) must
         # refresh their internal lookup for the override model. Keep this
         # generic by attempting the standard helpers when present; absent
