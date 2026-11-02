@@ -94,9 +94,14 @@ def _patch_close_tracker(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     from lucnhan.memory.workspace_store import WorkspaceStore
 
     calls: list[int] = []
+    # Strong refs: ``id()`` is only unique among live objects, so a closed store
+    # that gets collected would let a later one reuse its id and read as a
+    # double close.
+    closed: list[WorkspaceStore] = []
     original_close = WorkspaceStore.close
 
     def tracking_close(self) -> None:
+        closed.append(self)
         calls.append(id(self))
         return original_close(self)
 
