@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
 from dataclasses import dataclass
 
 # Folder names. Hidden + dot-prefixed for the JSONL store so it doesn't
@@ -34,6 +35,14 @@ LEGACY_KB_DIR_NAME = ".rikugan-kb"
 REPORTS_SUBDIR = "reports"
 
 
+#: Windows briefly denies renaming a directory while a scanner or indexer holds
+#: a handle on a file inside it (WinError 5, ~1 in 100 on a freshly written
+#: store).  A single failed move would let ``ensure()`` create an empty store and
+#: never adopt the legacy one, so the move is retried a few times.
+_ADOPT_ATTEMPTS = 5
+_ADOPT_BACKOFF_SEC = 0.05
+
+
 def _adopt_legacy_kb_dir(kb_dir: str) -> None:
     """Move a pre-rename ``.rikugan-kb`` sibling onto *kb_dir*.
 
@@ -41,11 +50,14 @@ def _adopt_legacy_kb_dir(kb_dir: str) -> None:
     failed move leaves the old store intact instead of half-migrated.
     """
     legacy = os.path.join(os.path.dirname(kb_dir), LEGACY_KB_DIR_NAME)
-    try:
-        if not os.path.exists(kb_dir) and os.path.isdir(legacy):
-            os.rename(legacy, kb_dir)
-    except OSError:
-        pass
+    for attempt in range(_ADOPT_ATTEMPTS):
+        try:
+            if not os.path.exists(kb_dir) and os.path.isdir(legacy):
+                os.rename(legacy, kb_dir)
+            return
+        except OSError:
+            if attempt + 1 < _ADOPT_ATTEMPTS:
+                time.sleep(_ADOPT_BACKOFF_SEC * 2**attempt)
 
 
 @dataclass

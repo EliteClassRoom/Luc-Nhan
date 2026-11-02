@@ -178,6 +178,53 @@ class TestKnowledgePaths(unittest.TestCase):
             paths.ensure()
             self.assertTrue(os.path.isdir(legacy))
 
+    def test_adopt_legacy_kb_dir_retries_a_transient_rename_denial(self):
+        """Windows briefly denies the move while a scanner holds a handle inside."""
+        from unittest.mock import patch
+
+        real_rename = os.rename
+        attempts: list[str] = []
+
+        def flaky_rename(src, dst):
+            attempts.append(src)
+            if len(attempts) == 1:
+                raise PermissionError(13, "Access is denied")
+            real_rename(src, dst)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = os.path.join(tmp, ".rikugan-kb")
+            os.makedirs(legacy)
+            with open(os.path.join(legacy, "memories.jsonl"), "w", encoding="utf-8") as fh:
+                fh.write("{}\n")
+
+            paths = knowledge_paths(os.path.join(tmp, "x.i64"))
+            with (
+                patch("lucnhan.memory.paths.os.rename", side_effect=flaky_rename),
+                patch("lucnhan.memory.paths.time.sleep"),
+            ):
+                paths.ensure()
+
+            self.assertEqual(len(attempts), 2)
+            self.assertTrue(os.path.isfile(paths.memories_path))
+            self.assertFalse(os.path.exists(legacy))
+
+    def test_adopt_legacy_kb_dir_gives_up_quietly_and_keeps_the_legacy_store(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = os.path.join(tmp, ".rikugan-kb")
+            os.makedirs(legacy)
+
+            paths = knowledge_paths(os.path.join(tmp, "x.i64"))
+            with (
+                patch("lucnhan.memory.paths.os.rename", side_effect=PermissionError(13, "denied")),
+                patch("lucnhan.memory.paths.time.sleep"),
+            ):
+                paths.ensure()  # best effort: must not raise
+
+            self.assertTrue(os.path.isdir(legacy))
+            self.assertTrue(os.path.isdir(paths.kb_dir))
+
     def test_ensure_empty_idb_path_raises(self):
         with self.assertRaises(ValueError):
             knowledge_paths("")
