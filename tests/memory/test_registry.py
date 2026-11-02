@@ -88,6 +88,38 @@ class TestEvidenceUniqueness:
         second = registry.create_workspace("binary", "b.i64", memory_id=new_memory_id())
         registry.bind_evidence(second.memory_id, "filesystem", "vol:inode1", status="current")
 
+    def test_non_integrity_error_with_unique_text_is_not_misclassified(self, tmp_path: Path, monkeypatch) -> None:
+        """A non-sqlite error must not be translated just because its text says UNIQUE."""
+
+        class _FakeConn:
+            def __init__(self) -> None:
+                self.rolled_back = False
+                self.closed = False
+
+            def execute(self, *_args, **_kwargs):
+                raise RuntimeError("statement failed: UNIQUE-ish text")
+
+            def commit(self) -> None:
+                pass
+
+            def rollback(self) -> None:
+                self.rolled_back = True
+
+            def close(self) -> None:
+                self.closed = True
+
+        registry = _make_registry(tmp_path)
+        fake = _FakeConn()
+        monkeypatch.setattr(registry, "_connect", lambda: fake)
+        monkeypatch.setattr("lucnhan.memory.registry.begin_immediate_with_retry", lambda _conn: None)
+
+        with pytest.raises(RuntimeError) as ctx:
+            registry.bind_evidence("mem_x", "filesystem", "vol:inode1", status="current")
+
+        assert not isinstance(ctx.value, EvidenceConflictError)
+        assert "UNIQUE-ish" in str(ctx.value)
+        assert fake.rolled_back
+
 
 class TestPathAlias:
     def test_touch_path_alias(self, tmp_path: Path) -> None:

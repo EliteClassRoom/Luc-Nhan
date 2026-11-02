@@ -24,6 +24,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import NamedTuple, TypedDict
 
+from ..core.logging import log_debug
 from .notes import list_notes
 from .paths import (
     KnowledgePaths,
@@ -345,7 +346,8 @@ def retrieve(
     if paths.notes_dir:
         try:
             parsed_notes = list_notes(paths.notes_dir)
-        except Exception:
+        except (OSError, ValueError) as exc:  # UnicodeError is a ValueError subclass
+            log_debug(f"retrieve: note read failed for {paths.notes_dir}: {exc!r}")
             parsed_notes = []
         notes = [NoteExcerpt(title=pn.title or "", body=pn.body or "") for pn in parsed_notes]
     return retrieve_from_records(

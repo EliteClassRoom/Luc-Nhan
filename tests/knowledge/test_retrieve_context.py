@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from lucnhan.core.config import LucNhanConfig
 from lucnhan.memory.context import (
@@ -249,6 +249,35 @@ class TestSearchAll(unittest.TestCase):
         result = search_all(self.store, "")
         self.assertEqual(result["memories"], [])
         self.assertEqual(result["entities"], [])
+
+
+class TestRetrieveNotesFailure(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.store, self.paths = fresh_store(self.tmp)
+        ingest_save_memory(self.store, self.paths, fact="RC4 decrypts payload at 0x401000", category="crypto")
+
+    def test_notes_failure_is_logged_and_other_results_survive(self):
+        q = RetrievalQuery(text="rc4", address="0x401000")
+        with (
+            patch("lucnhan.memory.retrieve.list_notes", side_effect=OSError("notes boom")),
+            patch("lucnhan.memory.retrieve.log_debug") as log_debug_mock,
+        ):
+            pack = retrieve(self.store, self.paths, q)
+        self.assertGreater(pack.counts.get("memories", 0), 0)
+        self.assertTrue(log_debug_mock.called, "note-read failure must be logged")
+
+
+class TestBuildRetrievedContextFailure(unittest.TestCase):
+    def test_retrieve_failure_is_logged_and_returns_empty(self):
+        with (
+            patch("lucnhan.memory.context.retrieve", side_effect=ValueError("bad pack")),
+            patch("lucnhan.memory.context.log_warning") as log_warning_mock,
+        ):
+            section, pack = build_retrieved_context_with_pack(MagicMock(), MagicMock(), query=RetrievalQuery())
+
+        self.assertEqual((section, pack), ("", None))
+        self.assertTrue(log_warning_mock.called, "retrieval failure must be logged")
 
 
 if __name__ == "__main__":

@@ -329,6 +329,15 @@ class TestRunGuardedScript(unittest.TestCase):
         assert "oops" in result
         assert "stderr" in result
 
+    def test_base_exception_is_captured_not_propagated(self):
+        result = run_guarded_script("raise SystemExit(3)", _empty_ns)
+        assert "SystemExit" in result
+        assert "stderr" in result
+
+    def test_keyboard_interrupt_propagates(self):
+        with pytest.raises(KeyboardInterrupt):
+            run_guarded_script("raise KeyboardInterrupt", _empty_ns)
+
     def test_no_output_placeholder(self):
         result = run_guarded_script("x = 1 + 2", _empty_ns)
         assert result == "(no output)"

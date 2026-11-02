@@ -12,6 +12,7 @@ Identity evidence follows the spec's ordered decision table:
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -255,7 +256,9 @@ class MemoryRegistry:
                 conn.commit()
             except Exception as exc:
                 conn.rollback()
-                if "uq_current_durable_evidence" in str(exc) or "UNIQUE" in str(exc).upper():
+                if isinstance(exc, sqlite3.IntegrityError) and (
+                    "uq_current_durable_evidence" in str(exc) or "UNIQUE" in str(exc).upper()
+                ):
                     raise EvidenceConflictError(f"{kind} evidence {value!r} is already bound as current") from exc
                 raise
         finally:

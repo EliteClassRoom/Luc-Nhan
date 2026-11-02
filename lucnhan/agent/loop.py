@@ -7,6 +7,7 @@ import json
 import math
 import os
 import queue
+import sqlite3
 import threading
 import time
 import traceback
@@ -1006,8 +1007,8 @@ class AgentLoop:
             try:
                 meta = build_retrieval_metadata(pack)
                 self.session.metadata["last_knowledge_retrieval"] = meta
-            except Exception:
-                pass
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                log_debug(f"knowledge retrieval metadata build failed: {exc!r}")
 
             return section
         except Exception as e:
@@ -2159,36 +2160,6 @@ class AgentLoop:
             # Hysteresis: decrement instead of resetting so a single success
             # after several failures doesn't fully clear the counter.
             self._consecutive_errors = max(0, self._consecutive_errors - 1)
-            if is_mutating:
-                record = build_reverse_record(tc.name, exec_args, pre_state)
-                verification = self._verify_mutation(tc.name, exec_args, result)
-                if not verification.ok:
-                    # Post-state verification failed — do not append to the
-                    # undo stack.  Log the reason so it is still available
-                    # for debugging but does not consume /undo slots.
-                    log_debug(f"mutation recording skipped for {tc.name}: {verification.reason}")
-                elif not record.reversible:
-                    # Successful mutation but non-reversible — emit a UI-only
-                    # diagnostic event but do NOT append to the undo stack.
-                    log_debug(f"mutation not added to undo stack because it is not reversible: {record.description}")
-                    yield TurnEvent.mutation_recorded(
-                        tool_name=record.tool_name,
-                        description=record.description,
-                        reversible=record.reversible,
-                        reverse_tool=record.reverse_tool,
-                        reverse_args=record.reverse_arguments,
-                    )
-                else:
-                    with self._mutation_lock:
-                        self._mutation_log.append(record)
-                    log_debug(f"Mutation recorded: {record.description}")
-                    yield TurnEvent.mutation_recorded(
-                        tool_name=record.tool_name,
-                        description=record.description,
-                        reversible=record.reversible,
-                        reverse_tool=record.reverse_tool,
-                        reverse_args=record.reverse_arguments,
-                    )
         except ToolError as e:
             result = f"Error: {e}"
             is_error = True
@@ -2225,6 +2196,45 @@ class AgentLoop:
                     augmented = yield from self._review_failed_script(tc, tb, code, classification)
                     if augmented:
                         result = augmented
+        else:
+            # Mutation bookkeeping runs after the tool committed its change: a
+            # bug here must not turn a successful mutation into a reported tool
+            # failure, and a lost /undo record must be logged, never silent.
+            if is_mutating:
+                try:
+                    record = build_reverse_record(tc.name, exec_args, pre_state)
+                    verification = self._verify_mutation(tc.name, exec_args, result)
+                    if not verification.ok:
+                        # Post-state verification failed — do not append to the
+                        # undo stack.  Log the reason so it is still available
+                        # for debugging but does not consume /undo slots.
+                        log_debug(f"mutation recording skipped for {tc.name}: {verification.reason}")
+                    elif not record.reversible:
+                        # Successful mutation but non-reversible — emit a UI-only
+                        # diagnostic event but do NOT append to the undo stack.
+                        log_debug(
+                            f"mutation not added to undo stack because it is not reversible: {record.description}"
+                        )
+                        yield TurnEvent.mutation_recorded(
+                            tool_name=record.tool_name,
+                            description=record.description,
+                            reversible=record.reversible,
+                            reverse_tool=record.reverse_tool,
+                            reverse_args=record.reverse_arguments,
+                        )
+                    else:
+                        with self._mutation_lock:
+                            self._mutation_log.append(record)
+                        log_debug(f"Mutation recorded: {record.description}")
+                        yield TurnEvent.mutation_recorded(
+                            tool_name=record.tool_name,
+                            description=record.description,
+                            reversible=record.reversible,
+                            reverse_tool=record.reverse_tool,
+                            reverse_args=record.reverse_arguments,
+                        )
+                except Exception:
+                    log_error(f"mutation bookkeeping failed for {tc.name}: {traceback.format_exc()}")
 
         # Sanitize tool output before it enters the conversation. Errors are
         # wrapped too: tracebacks can carry attacker-controlled content
@@ -2306,7 +2316,7 @@ class AgentLoop:
                         memory_service=self.memory_service,
                     )
             except Exception as e:
-                log_debug(f"knowledge ingest (exploration_report) failed: {e}")
+                log_error(f"knowledge ingest (exploration_report) failed: {e!r}")
         if category == "patch_result" and address is not None:
             original_hex = tc.arguments.get("original_hex", "")
             new_hex = tc.arguments.get("new_hex", "")
@@ -2411,8 +2421,9 @@ class AgentLoop:
                 # detection. The UI pairs this with the originating tool
                 # call via ``tool_call_id``.
                 yield TurnEvent.memory_saved(tc.id)
-            except Exception as e:
-                content = f"Error saving to central memory: {e}"
+            except (ValueError, RuntimeError, OSError, sqlite3.Error) as e:
+                log_error(f"save_memory failed: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+                content = f"Error saving to central memory ({type(e).__name__})."
                 is_err = True
         else:
             content = "Error: Central memory is not available in this context."
@@ -2479,7 +2490,7 @@ class AgentLoop:
                     memory_service=self.memory_service,
                 )
         except Exception as e:
-            log_debug(f"knowledge ingest (research_note) failed: {e}")
+            log_error(f"knowledge ingest (research_note) failed: {e!r}")
 
         result_text = f"Note saved: {note.path}"
         tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=result_text, is_error=False)

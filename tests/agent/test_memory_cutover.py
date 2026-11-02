@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from lucnhan.agent.loop import AgentLoop
 from lucnhan.agent.turn import TurnEventType
@@ -142,3 +143,29 @@ class TestSaveMemoryCentralDispatch:
         dedup_match = next(e for e in dedup_events if e.type == TurnEventType.MEMORY_SAVED)
         assert created_match.tool_call_id == "tc1"
         assert dedup_match.tool_call_id == "tc2"
+
+
+def _drain_generator(gen):
+    """Drain a generator and return its StopIteration value (ToolResult)."""
+    while True:
+        try:
+            next(gen)
+        except StopIteration as stop:
+            return stop.value
+
+
+class TestSaveMemoryErrorPath:
+    def test_error_message_does_not_leak_exception_text(self, tmp_path: Path) -> None:
+        loop, service = _make_loop_with_central_memory(tmp_path)
+        service.save_fact = MagicMock(
+            side_effect=sqlite3.OperationalError("unable to open database file: C:\\secret\\state.db")
+        )
+        tc = ToolCall(id="tc_err", name="save_memory", arguments={"category": "test", "fact": "X"})
+
+        with patch("lucnhan.agent.loop.log_error") as log_error_mock:
+            tr = _drain_generator(loop._handle_save_memory_tool(tc))
+
+        assert tr.is_error is True
+        assert "secret" not in tr.content
+        assert "Error saving to central memory" in tr.content
+        assert log_error_mock.called
