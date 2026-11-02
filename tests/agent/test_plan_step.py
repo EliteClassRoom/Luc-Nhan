@@ -25,6 +25,7 @@ from lucnhan.agent.modes import plan as plan_mode
 from lucnhan.agent.modes.turn_helpers import TurnResult
 from lucnhan.agent.turn import TurnEvent, TurnEventType
 from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.types import TurnDisposition
 from lucnhan.state.session import SessionState
 
 
@@ -105,6 +106,38 @@ class TestPlanStepStatus(unittest.TestCase):
         dones = [e for e in events if e.type == TurnEventType.PLAN_STEP_DONE]
         self.assertEqual(len(dones), 1)
         self.assertEqual(dones[0].text, "turn_limit")
+
+
+class TestPlanGenerationDegeneration(unittest.TestCase):
+    """A degenerated plan turn must fail instead of persisting the loop."""
+
+    def test_degenerated_plan_is_not_persisted(self):
+        loop = _make_loop()
+
+        def fake_stream(sys_prompt, tools_schema):
+            yield TurnEvent.turn_start(1)
+            return SimpleNamespace(
+                visible_text="Let me read. Let me go.",
+                usage=None,
+                disposition=TurnDisposition.DEGENERATED,
+            )
+
+        with patch.object(loop, "_stream_llm_turn", side_effect=fake_stream):
+            events = []
+            returned = None
+            gen = plan_mode._generate_plan_text(loop, "sys")
+            while True:
+                try:
+                    events.append(next(gen))
+                except StopIteration as stopped:
+                    returned = stopped.value
+                    break
+
+        self.assertIsNone(returned)
+        errors = [e for e in events if e.type == TurnEventType.ERROR]
+        self.assertEqual(len(errors), 1)
+        assistant = [m for m in loop.session.messages if m.role == "assistant"]
+        self.assertEqual(assistant, [])
 
 
 if __name__ == "__main__":

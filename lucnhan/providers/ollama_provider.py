@@ -43,12 +43,16 @@ class OllamaProvider(OpenAICompatProvider):
 
     @property
     def capabilities(self) -> ProviderCapabilities:
+        # ``reasoning_content=True``: Ollama exposes the thinking trace in
+        # ``delta.reasoning_content``; the shared OpenAI-compat stream
+        # parser routes it to the reasoning channel.
         return ProviderCapabilities(
             streaming=True,
             tool_use=True,
             vision=False,
             max_context_window=128000,
             max_output_tokens=4096,
+            reasoning_content=True,
         )
 
     def list_models(self) -> list[ModelInfo]:

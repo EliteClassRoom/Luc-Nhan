@@ -378,16 +378,24 @@ class OpenAIProvider(LLMProvider):
                 total_tokens=getattr(response.usage, "total_tokens", 0),
             )
 
-        # Reasoning is a separate channel for providers that advertise it
-        # (GLM, custom OpenAI-compatible endpoints); plain OpenAI keeps
-        # legacy inline `` thinking`` wrapping.
+        # OpenAI o-series reasoning_content
         text = rm.content or ""
-        reasoning = getattr(rm, "reasoning_content", None) or ""
+        reasoning = getattr(rm, "reasoning_content", None)
+        if not reasoning:
+            # OpenRouter / vLLM-style endpoints spell the same field
+            # ``reasoning``.  Accept both spellings.
+            fallback = getattr(rm, "reasoning", None)
+            if isinstance(fallback, str):
+                reasoning = fallback
         reasoning_content = ""
         if reasoning:
             if self.capabilities.reasoning_content:
+                # The provider owns a dedicated reasoning channel: keep the
+                # answer clean and carry the thinking trace separately.
                 reasoning_content = reasoning
             else:
+                # Legacy lane (plain OpenAI): keep the inline ``<think>``
+                # rendering so existing o-series sessions look the same.
                 text = f"<think>{reasoning}</think>\n{text}"
 
         return Message(
@@ -457,14 +465,15 @@ class OpenAIProvider(LLMProvider):
     ) -> dict[str, Any]:
         """Build kwargs dict for chat.completions.create.
 
-        ``request_context`` is keyword-only and a pure pass-through for
-        this provider — the base :meth:`LLMProvider.chat` already merges
-        ``context.system_suffix`` into ``system`` and applies any
-        ``max_tokens_override`` before this hook is reached, so for
-        non-GLM providers the wire payload is identical with or without
-        a context.
+        ``request_context`` is keyword-only.  The base
+        :meth:`LLMProvider.chat` already merges ``context.system_suffix``
+        into ``system`` and applies any ``max_tokens_override`` before
+        this hook is reached, so for non-GLM providers the wire payload
+        is identical with or without a context — with one exception:
+        ``context.disable_thinking`` suppresses ``reasoning_effort``.
+        The one-shot recovery attempt uses that flag to stop asking the
+        endpoint for maximum reasoning effort.
         """
-        del request_context  # explicitly unused on the OpenAI wire
         msgs = []
         if system:
             msgs.append({"role": "system", "content": system})
@@ -478,7 +487,7 @@ class OpenAIProvider(LLMProvider):
         }
         if tools:
             kwargs["tools"] = tools
-        if self._thinking_level:
+        if self._thinking_level and not (request_context and request_context.disable_thinking):
             # Top-level Chat Completions parameter (not ``extra_body``):
             # this is the spelling OpenAI, o-series, Ollama's OpenAI
             # shim, and every OpenAI-compatible endpoint expect.
@@ -672,6 +681,12 @@ class OpenAIProvider(LLMProvider):
                 #   the legacy inline-``<think>`` behavior so existing
                 #   o-series sessions continue to render reasoning inline.
                 reasoning = getattr(delta, "reasoning_content", None)
+                if not reasoning:
+                    # OpenRouter / vLLM-style endpoints spell the same
+                    # field ``reasoning``.  Accept both spellings.
+                    fallback = getattr(delta, "reasoning", None)
+                    if isinstance(fallback, str):
+                        reasoning = fallback
                 if reasoning and self.capabilities.reasoning_content:
                     yield StreamChunk(reasoning_delta=reasoning)
                 elif reasoning:

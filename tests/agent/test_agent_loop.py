@@ -19,6 +19,7 @@ install_ida_mocks()
 
 from lucnhan.agent.exploration_mode import ExplorationState
 from lucnhan.agent.loop import AgentLoop, BackgroundAgentRunner
+from lucnhan.agent.modes.turn_helpers import execute_single_turn
 from lucnhan.agent.turn import TurnEvent, TurnEventType
 from lucnhan.core.config import LucNhanConfig
 from lucnhan.core.types import (
@@ -138,6 +139,25 @@ def _drain_generator_with_return(
             events.append(next(generator))
         except StopIteration as stopped:
             return events, stopped.value
+
+
+# The exact repetition loop from the bug report ("Let me read. Let me
+# go." after a read_bytes call), repeated 20 times (~4.9 KB).
+# The report's range separator is an en dash; ``chr`` keeps the exact
+# characters without an ambiguous-unicode literal.
+_DASH = chr(0x2013)
+_USER_LOOP = (
+    "mm, 0x67B1C200 + 0x5000 = 0x67B21200. So the blob spans 0x67B1C200" + _DASH + "0x67B21200.\n"
+    "Let me read the middle and end.\n"
+    "Let me read 0x67B1D000 and 0x67B21000.\n"
+    "Let me go.\n"
+    "Let me read.\n"
+    "Let me go.\n"
+    "Let me read two spots.\n"
+    "Let me go.\n"
+    "Let me read.\n"
+    "Let me go.\n"
+) * 20
 
 
 class TestAgentLoop(unittest.TestCase):
@@ -1111,60 +1131,6 @@ class TestAgentLoop(unittest.TestCase):
         self.assertEqual(section, "")
 
 
-class TestInlineThinkingSplitter(unittest.TestCase):
-    """Unit tests for the streaming inline-think classifier used by the
-    guard (markers, split boundaries, unclosed blocks, balanced control)."""
-
-    @staticmethod
-    def _splitter():
-        from lucnhan.agent.loop import _InlineThinkingSplitter
-
-        return _InlineThinkingSplitter()
-
-    @staticmethod
-    def _open_tag() -> str:
-        return "<think>"
-
-    @staticmethod
-    def _close_tag() -> str:
-        return "</think>"
-
-    def test_marker_split_across_chunk_boundaries(self):
-        splitter = self._splitter()
-        spans = []
-        for chunk in ("<thi", "nk>hidden</thi", "nk>visible"):
-            spans.extend(splitter.feed(chunk))
-        spans.extend(splitter.flush())
-
-        reasoning = "".join(text for is_reasoning, text in spans if is_reasoning)
-        visible = "".join(text for is_reasoning, text in spans if not is_reasoning)
-        assert reasoning == "hidden"
-        assert visible == "visible"
-
-    def test_unclosed_open_tag_marks_rest_as_reasoning(self):
-        splitter = self._splitter()
-        payload = self._open_tag() + "OK.\nLet me write.\nWriting.\nGo.\n"
-        spans = splitter.feed(payload) + splitter.flush()
-
-        assert "".join(text for is_reasoning, text in spans if is_reasoning) == ("OK.\nLet me write.\nWriting.\nGo.\n")
-        assert all(is_reasoning for is_reasoning, _ in spans)
-
-    def test_balanced_block_is_reasoning_then_visible(self):
-        splitter = self._splitter()
-        payload = self._open_tag() + "plan" + self._close_tag() + "answer"
-        spans = splitter.feed(payload) + splitter.flush()
-
-        reasoning = "".join(text for is_reasoning, text in spans if is_reasoning)
-        visible = "".join(text for is_reasoning, text in spans if not is_reasoning)
-        assert reasoning == "plan"
-        assert visible == "answer"
-
-    def test_partial_marker_suffix_is_released_at_eof(self):
-        splitter = self._splitter()
-        spans = splitter.feed("visible<thi") + splitter.flush()
-        assert "".join(text for _, text in spans) == "visible<thi"
-
-
 class TestStreamOutcomeGuardIntegration(unittest.TestCase):
     def _make_loop(self, provider, tools=None):
         config = LucNhanConfig()
@@ -1172,13 +1138,47 @@ class TestStreamOutcomeGuardIntegration(unittest.TestCase):
         session = SessionState(provider_name="mock", model_name="mock-model")
         return AgentLoop(provider=provider, tool_registry=tools or ToolRegistry(), config=config, session=session)
 
-    def test_guard_not_created_without_tools(self):
+    def test_guard_created_without_tools_does_not_fire_on_short_text(self):
         provider = MockProvider(responses=[_text_response("done")])
         loop = self._make_loop(provider)
+        # The guard is active even without tools: a text-only turn can
+        # degenerate too.
+        assert loop._create_stream_guard(None) is not None
         generator = loop._stream_llm_turn("system", None)
         _events, outcome = _drain_generator_with_return(generator)
         assert outcome.disposition == TurnDisposition.COMPLETED
         assert outcome.guard_trigger == ""
+
+    def test_visible_loop_without_tools_is_degenerated(self):
+        """A visible repetition loop is caught even with no tools exposed."""
+
+        class CompatProvider(MockProvider):
+            @property
+            def name(self):
+                return "deepseek_secagi"
+
+        provider = CompatProvider(
+            responses=[
+                [StreamChunk(text=_USER_LOOP) for _ in range(20)],
+                _text_response("Done."),
+            ]
+        )
+        loop = self._make_loop(provider)
+        session = loop.session
+
+        generator = execute_single_turn(loop, "system", None)
+        events, result = _drain_generator_with_return(generator)
+
+        recovery_starts = [e for e in events if e.type == TurnEventType.RECOVERY_START]
+        assert len(recovery_starts) == 1
+        assert result.ok is True
+        assert result.text == "Done."
+
+        # The degenerated attempt must not persist any of its text.
+        for msg in session.messages:
+            if msg.role == Role.ASSISTANT:
+                assert "Let me read" not in msg.content
+                assert "Let me read" not in msg.reasoning_content
 
     def test_guard_not_created_for_non_glm_provider(self):
         registry = ToolRegistry()

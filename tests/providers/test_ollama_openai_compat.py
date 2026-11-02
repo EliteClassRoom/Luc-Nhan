@@ -57,6 +57,8 @@ class TestOllamaProviderInit(unittest.TestCase):
         assert caps.tool_use is True
         assert caps.vision is False
         assert caps.max_context_window > 0
+        # Ollama surfaces the thinking trace in ``delta.reasoning_content``.
+        assert caps.reasoning_content is True
 
 
 class TestOllamaListModels(unittest.TestCase):
@@ -133,6 +135,67 @@ class TestOpenAICompatProvider(unittest.TestCase):
         caps = OpenAICompatProvider().capabilities
         assert caps.streaming is True
         assert caps.tool_use is True
+        # The compat adapter owns a reasoning channel: ``delta.reasoning_content``
+        # must reach the agent as reasoning, never as inline answer text.
+        assert caps.reasoning_content is True
+
+    def test_reasoning_content_routed_to_reasoning_channel(self):
+        """``delta.reasoning_content`` becomes a reasoning delta."""
+        from types import SimpleNamespace
+
+        provider = OpenAICompatProvider(api_key="k", api_base="http://localhost/v1", model="deepseek")
+        chunks = [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            reasoning_content="Let me read.",
+                            content=None,
+                            tool_calls=None,
+                        ),
+                        finish_reason=None,
+                    )
+                ],
+                usage=None,
+            ),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(reasoning_content=None, content="Done.", tool_calls=None),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=None,
+            ),
+        ]
+
+        emitted = list(provider._iter_stream_chunks(iter(chunks)))
+
+        assert any(c.reasoning_delta == "Let me read." for c in emitted)
+        assert not any("<think>" in (c.text or "") for c in emitted)
+        assert any(c.text == "Done." for c in emitted)
+
+    def test_reasoning_field_fallback(self):
+        """Endpoints that spell the field ``reasoning`` are supported too."""
+        from types import SimpleNamespace
+
+        provider = OpenAICompatProvider(api_key="k", api_base="http://localhost/v1", model="deepseek")
+        chunks = [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(reasoning="Let me read.", content=None, tool_calls=None),
+                        finish_reason=None,
+                    )
+                ],
+                usage=None,
+            ),
+        ]
+
+        emitted = list(provider._iter_stream_chunks(iter(chunks)))
+
+        assert any(c.reasoning_delta == "Let me read." for c in emitted)
+        assert not any("<think>" in (c.text or "") for c in emitted)
 
     def test_list_models_uses_current_model_when_endpoint_fails(self):
         p = OpenAICompatProvider(model="my-model", api_key="k")

@@ -38,13 +38,44 @@ from lucnhan.agent.loop_guard import (
     resolve_loop_guard_profile,
 )
 
+# The exact repetition loop from the bug report ("Let me read. Let me
+# go." after a read_bytes call), repeated 20 times (~4.9 KB).
+# The report's range separator is an en dash; ``chr`` keeps the exact
+# characters without an ambiguous-unicode literal.
+_DASH = chr(0x2013)
+_USER_LOOP = (
+    "mm, 0x67B1C200 + 0x5000 = 0x67B21200. So the blob spans 0x67B1C200" + _DASH + "0x67B21200.\n"
+    "Let me read the middle and end.\n"
+    "Let me read 0x67B1D000 and 0x67B21000.\n"
+    "Let me go.\n"
+    "Let me read.\n"
+    "Let me go.\n"
+    "Let me read two spots.\n"
+    "Let me go.\n"
+    "Let me read.\n"
+    "Let me go.\n"
+) * 20
+
+# 40 near-duplicate visible lines: identical apart from a trailing
+# counter, so every adjacent pair stays above the 0.9 Jaccard
+# threshold the visible trigram detector uses.
+_USER_TRIGRAM_LINES = [
+    f"Let me read the middle and the end of the blob and let me go, pass {i % 10}" for i in range(40)
+]
+
 # ---------------------------------------------------------------------------
 # Step 1: hard ceiling boundary (token-unit API)
 # ---------------------------------------------------------------------------
 
 
 def test_hard_ceiling_flips_at_first_16384_estimated_token_byte() -> None:
-    guard = StreamLoopGuard(exposed_tool_names=["read_bytes"])
+    # An explicit profile without the verbatim detector: a 49 KB run of
+    # "a" repeats itself, so the verbatim detector would otherwise fire
+    # before the ceiling boundary.
+    guard = StreamLoopGuard(
+        exposed_tool_names=["read_bytes"],
+        profile=LoopGuardProfile(ceiling=True, meta_intent=True),
+    )
 
     guard.on_reasoning_delta("a" * 49_149)
     assert guard.should_abort() is False
@@ -61,6 +92,10 @@ def test_constructor_rejects_non_positive_ceiling_tokens() -> None:
         StreamLoopGuard(exposed_tool_names=[], ceiling_tokens=0)
     with pytest.raises(ValueError, match="ceiling_tokens must be positive"):
         StreamLoopGuard(exposed_tool_names=[], ceiling_tokens=-1)
+    with pytest.raises(ValueError, match="visible_ceiling_tokens must be positive"):
+        StreamLoopGuard(exposed_tool_names=[], visible_ceiling_tokens=0)
+    with pytest.raises(ValueError, match="visible_ceiling_tokens must be positive"):
+        StreamLoopGuard(exposed_tool_names=[], visible_ceiling_tokens=-1)
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +184,13 @@ def test_255_visible_chars_still_allows_repetition() -> None:
     assert guard.trigger == "repetition_meta_intent"
 
 
-def test_256_visible_chars_disables_repetition() -> None:
-    """At exactly 256 visible chars, the repetition path is silenced."""
+def test_256_visible_chars_disables_meta_intent() -> None:
+    """At exactly 256 visible chars, the meta-intent path is silenced.
+
+    The generic repetition detectors and both ceilings stay active — a
+    visible answer only means the model is no longer *narrating* a tool
+    call.
+    """
     guard = StreamLoopGuard(exposed_tool_names=["read_bytes"])
     guard.on_visible_delta("v" * 256)
     guard.on_reasoning_delta("outputting read_bytes tool now\n" * 64)
@@ -216,9 +256,11 @@ def test_guard_state_stays_bounded() -> None:
     guard = StreamLoopGuard(exposed_tool_names=[])
     for i in range(10_000):
         guard.on_reasoning_delta(f"unique segment {i}\n")
+        guard.on_visible_delta(f"unique visible segment {i}\n")
 
     assert guard.retained_segment_count <= 128
     assert guard.max_retained_segment_chars <= 240
+    assert guard.visible_tail_chars <= 4096
 
 
 def test_buffer_stays_bounded_under_one_huge_no_newline_delta() -> None:
@@ -367,6 +409,9 @@ def test_resolver_maps_families() -> None:
     default = resolve_loop_guard_profile("openai", "gpt-5", "auto")
     assert default.meta_intent is False
     assert default.verbatim_tail is True
+    assert default.visible_verbatim is True
+    assert default.visible_trigram is True
+    assert default.visible_ceiling is True
 
     full = resolve_loop_guard_profile("deepseek", "deepseek-r1", "auto")
     assert full.trigram_jaccard is True
@@ -375,10 +420,122 @@ def test_resolver_maps_families() -> None:
     glm = resolve_loop_guard_profile("glm", "glm-5.2", "auto")
     assert glm.meta_intent is True
     assert glm.trigram_jaccard is False
+    assert glm.visible_verbatim is True
 
     assert resolve_loop_guard_profile("openai", "gpt-5", "off").enabled is False
+    assert resolve_loop_guard_profile("openai", "gpt-5", "off").visible_ceiling is False
     assert resolve_loop_guard_profile("openai", "gpt-5", "full").header_runaway is True
     assert resolve_loop_guard_profile("openai", "gpt-5", "glm").trigram_jaccard is False
+
+
+# ---------------------------------------------------------------------------
+# Visible-channel detectors (the reported loop lives in the visible text)
+# ---------------------------------------------------------------------------
+
+
+def test_visible_verbatim_tail_fires_on_reported_loop() -> None:
+    """The loop from the bug report must trip the visible detector.
+
+    Before the fix the 256 visible-character threshold silenced every
+    repetition detector, so the loop streamed for tens of kilobytes.
+    """
+    guard = StreamLoopGuard(
+        exposed_tool_names=[],
+        profile=LoopGuardProfile(ceiling=False, meta_intent=False, visible_verbatim=True),
+    )
+    guard.on_visible_delta(_USER_LOOP)
+
+    assert guard.should_abort() is True
+    assert guard.trigger == "visible_verbatim_tail"
+    # The old suppression threshold is exceeded — the detector is no
+    # longer silenced by visible text.
+    assert guard.snapshot().visible_non_whitespace_chars > 256
+
+
+def test_visible_trigram_fires_on_near_duplicate_lines() -> None:
+    """Near-duplicate visible lines trip the visible trigram detector."""
+    guard = StreamLoopGuard(
+        exposed_tool_names=[],
+        profile=LoopGuardProfile(ceiling=False, meta_intent=False, visible_trigram=True),
+    )
+    for line in _USER_TRIGRAM_LINES:
+        guard.on_visible_delta(line + "\n")
+
+    assert guard.should_abort() is True
+    assert guard.trigger == "visible_trigram_jaccard"
+
+
+def test_visible_detectors_ignore_varied_answer() -> None:
+    """A long, verbose but genuinely varied answer must not trip.
+
+    Enumerated analysis steps share a template, so the near-duplicate
+    detector must stay strict enough to ignore them.
+    """
+    guard = StreamLoopGuard(exposed_tool_names=[], profile=_PROFILE_FULL)
+    for i in range(300):
+        guard.on_visible_delta(
+            f"Step {i}: analyze function sub_{i:04x} at 0x{0x401000 + i * 16:x}, "
+            "inspect its callers and rename local variables accordingly.\n"
+        )
+
+    assert guard.should_abort() is False
+
+
+def test_visible_ceiling_fires() -> None:
+    """The visible channel has its own token ceiling."""
+    guard = StreamLoopGuard(
+        exposed_tool_names=[],
+        profile=LoopGuardProfile(ceiling=False, meta_intent=False, visible_ceiling=True),
+        visible_ceiling_tokens=1024,
+    )
+    guard.on_visible_delta("x" * 3072)
+
+    assert guard.should_abort() is True
+    assert guard.trigger == "visible_ceiling"
+
+
+# ---------------------------------------------------------------------------
+# Inline-``<think>`` routing
+# ---------------------------------------------------------------------------
+
+
+def test_on_text_delta_routes_think_block_to_reasoning() -> None:
+    """A literal ``<think>`` span is reasoning, not visible answer text."""
+    guard = StreamLoopGuard(exposed_tool_names=[], profile=_PROFILE_FULL)
+
+    guard.on_text_delta("<thi")
+    guard.on_text_delta("nk>")
+    guard.on_text_delta(_USER_LOOP)
+    guard.on_text_delta("</thi")
+    guard.on_text_delta("nk>")
+
+    snap = guard.snapshot()
+    assert guard.trigger == "verbatim_tail"
+    assert snap.visible_non_whitespace_chars == 0
+    assert snap.reasoning_utf8_bytes > 4096
+
+
+def test_on_text_delta_split_close_tag() -> None:
+    """A close tag split across deltas still routes the text correctly."""
+    guard = StreamLoopGuard(exposed_tool_names=[], profile=_PROFILE_FULL)
+
+    guard.on_text_delta("<think>hello</thi")
+    guard.on_text_delta("nk>world")
+
+    snap = guard.snapshot()
+    assert snap.reasoning_utf8_bytes == len("hello")
+    assert snap.visible_non_whitespace_chars == len("world")
+
+
+def test_flush_routes_unclosed_think_tail() -> None:
+    """``flush()`` releases text held back for a possible tag."""
+    guard = StreamLoopGuard(exposed_tool_names=[], profile=_PROFILE_FULL)
+
+    guard.on_text_delta("<think>hello</thi")
+    assert guard.snapshot().reasoning_utf8_bytes == len("hello")
+
+    guard.flush()
+    assert guard.snapshot().reasoning_utf8_bytes == len("hello</thi")
 
 
 def test_default_profile_latches_short_four_line_cycle() -> None:

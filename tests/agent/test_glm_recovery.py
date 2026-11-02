@@ -44,6 +44,7 @@ from lucnhan.core.types import (
     Role,
     StreamChunk,
     TokenUsage,
+    TurnDisposition,
 )
 from lucnhan.providers.base import LLMProvider
 from lucnhan.state.session import SessionState
@@ -635,6 +636,163 @@ class TestReasoningContentPersistence(unittest.TestCase):
             "reasoning_content must be persisted on accepted assistant messages",
         )
         self.assertIn("read_bytes", assistant_messages[-1].reasoning_content)
+
+
+# ---------------------------------------------------------------------------
+# Custom (non-GLM) OpenAI-compatible provider — the reported setup
+# ---------------------------------------------------------------------------
+
+# The exact repetition loop from the bug report ("Let me read. Let me
+# go." after a read_bytes call), repeated 20 times (~4.9 KB).
+# The report's range separator is an en dash; ``chr`` keeps the exact
+# characters without an ambiguous-unicode literal.
+_DASH = chr(0x2013)
+_USER_LOOP = (
+    "mm, 0x67B1C200 + 0x5000 = 0x67B21200. So the blob spans 0x67B1C200" + _DASH + "0x67B21200.\n"
+    "Let me read the middle and end.\n"
+    "Let me read 0x67B1D000 and 0x67B21000.\n"
+    "Let me go.\n"
+    "Let me read.\n"
+    "Let me go.\n"
+    "Let me read two spots.\n"
+    "Let me go.\n"
+    "Let me read.\n"
+    "Let me go.\n"
+) * 20
+
+
+class ScriptedCompatProvider(ScriptedGLMProvider):
+    """Custom provider with no dialect — resolves to the OpenAI-compat adapter.
+
+    ``deepseek_secagi`` has no dialect, so the guard profile is resolved
+    from the provider/model name ("deepseek" -> the full profile).
+    """
+
+    def __init__(self, responses: list[list[StreamChunk]] | None = None):
+        super().__init__(responses)
+        self.model = "deepseek-v4.1-flash-uncensored"
+
+    @property
+    def name(self) -> str:
+        return "deepseek_secagi"
+
+
+def _make_compat_config() -> LucNhanConfig:
+    """Config for a custom (non-GLM) OpenAI-compatible provider."""
+    config = LucNhanConfig()
+    config.auto_context = False
+    config.provider.name = "deepseek_secagi"
+    config.provider.model = "deepseek-v4.1-flash-uncensored"
+    config.provider.api_key = "test"
+    config.provider.extra = {}
+    config.loop_guard_profile = "auto"
+    return config
+
+
+def _make_compat_loop(
+    provider: ScriptedCompatProvider,
+    session: SessionState | None = None,
+    tools: ToolRegistry | None = None,
+) -> AgentLoop:
+    config = _make_compat_config()
+    return AgentLoop(
+        provider=provider,
+        tool_registry=tools or _make_tool_registry(),
+        config=config,
+        session=session
+        or SessionState(
+            provider_name="deepseek_secagi",
+            model_name="deepseek-v4.1-flash-uncensored",
+        ),
+    )
+
+
+class TestCompatProviderLoopGuard(unittest.TestCase):
+    """The reported loop: a custom compat provider whose reasoning (or
+    inline ``<think>`` text) degenerates into a repetition loop."""
+
+    @staticmethod
+    def _reasoning_loop_response() -> list[StreamChunk]:
+        """20 separate reasoning chunks repeating the reported loop."""
+        return [StreamChunk(reasoning_delta=_USER_LOOP) for _ in range(20)]
+
+    @staticmethod
+    def _inline_think_loop_response() -> list[StreamChunk]:
+        """The same loop delivered as inline ``<think>`` text."""
+        return (
+            [StreamChunk(text="<think>")]
+            + [StreamChunk(text=_USER_LOOP) for _ in range(20)]
+            + [StreamChunk(text="</think>")]
+        )
+
+    def test_compat_reasoning_loop_outcome_is_degenerated(self):
+        provider = ScriptedCompatProvider(responses=[self._reasoning_loop_response()])
+        loop = _make_compat_loop(provider)
+        tools_schema = loop._build_tools_schema(active_skill=None, use_exploration_mode=False)
+
+        gen = loop._stream_llm_turn("system", tools_schema)
+        _events, outcome = _drain(gen)
+
+        self.assertEqual(outcome.disposition, TurnDisposition.DEGENERATED)
+        self.assertEqual(outcome.guard_trigger, "verbatim_tail")
+        # The guard cut the stream at ~4.1 KB instead of letting the
+        # full 4.9 KB (or tens of KB) through.
+        self.assertLess(len(outcome.reasoning_content), 6000)
+
+    def test_compat_reasoning_loop_is_degenerated_and_recovered(self):
+        provider = ScriptedCompatProvider(
+            responses=[
+                self._reasoning_loop_response(),
+                _text_response("Done."),
+            ]
+        )
+        session = SessionState(
+            provider_name="deepseek_secagi",
+            model_name="deepseek-v4.1-flash-uncensored",
+        )
+        loop = _make_compat_loop(provider, session)
+        tools_schema = loop._build_tools_schema(active_skill=None, use_exploration_mode=False)
+
+        gen = execute_single_turn(loop, "system", tools_schema)
+        events, result = _drain(gen)
+
+        recovery_starts = [e for e in events if e.type == TurnEventType.RECOVERY_START]
+        self.assertEqual(len(recovery_starts), 1)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.text, "Done.")
+
+        # The degenerated attempt must not leave any of its text behind.
+        for msg in session.messages:
+            if msg.role == Role.ASSISTANT:
+                self.assertNotIn("Let me read", msg.content)
+                self.assertNotIn("Let me read", msg.reasoning_content)
+
+    def test_compat_inline_think_loop_is_degenerated(self):
+        provider = ScriptedCompatProvider(
+            responses=[
+                self._inline_think_loop_response(),
+                _text_response("Done."),
+            ]
+        )
+        session = SessionState(
+            provider_name="deepseek_secagi",
+            model_name="deepseek-v4.1-flash-uncensored",
+        )
+        loop = _make_compat_loop(provider, session)
+        tools_schema = loop._build_tools_schema(active_skill=None, use_exploration_mode=False)
+
+        gen = execute_single_turn(loop, "system", tools_schema)
+        events, result = _drain(gen)
+
+        recovery_starts = [e for e in events if e.type == TurnEventType.RECOVERY_START]
+        self.assertEqual(len(recovery_starts), 1)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.text, "Done.")
+
+        for msg in session.messages:
+            if msg.role == Role.ASSISTANT:
+                self.assertNotIn("Let me read", msg.content)
+                self.assertNotIn("Let me read", msg.reasoning_content)
 
 
 if __name__ == "__main__":

@@ -106,12 +106,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **OpenAI-compatible reasoning streams now feed the degeneration guard.**
-  Reasoning returned as `delta.reasoning_content` or as literal think tags in
-  `delta.content` was counted as visible text, disabling the guard's detectors
-  once 256 visible chars arrived; a four-line thinking cycle streamed until the
-  90 s stall. Both transports now reach the reasoning lane (tags may split
-  across chunks), and recovery clears the UI's unclosed inline-tag buffer.
+- **A reasoning model that loops in its own thinking trace no longer
+  streams for minutes.** On providers that surface the thinking trace in
+  `delta.reasoning_content` (every OpenAI-compatible endpoint and
+  Ollama), the trace was folded into the visible answer text. Once the
+  answer passed 256 characters the stream-loop guard silenced *every*
+  repetition detector, so a "Let me read. Let me go." loop ran for tens
+  of kilobytes before the user cancelled. The trace now travels on its
+  own reasoning channel (rendered as a thinking block, not as answer
+  text), the guard keeps its generic detectors and both token ceilings
+  active regardless of how much visible text arrived, and it also
+  watches the visible channel itself: a repeated visible block, a run of
+  near-identical visible lines and a runaway visible answer are detected
+  too. Text-only turns are guarded as well — previously the guard was
+  only armed when tools were exposed. A literal ` thinking…</think>` span
+  in provider text is routed to the reasoning channel (including tags
+  split across chunks, case-insensitively), and the one-shot recovery
+  attempt no longer asks the endpoint for maximum reasoning effort. A
+  recovery boundary also clears the UI's buffered unclosed inline tag so
+  the retry's answer is not parsed as stale thinking text.
 
 - **Max Output Tokens is no longer stuck at 4096.** OpenAI-compatible
   endpoints and Ollama publish no per-model output limit, so their model

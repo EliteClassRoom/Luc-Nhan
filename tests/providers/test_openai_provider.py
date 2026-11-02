@@ -304,6 +304,53 @@ class TestOpenAINormalizeResponse(unittest.TestCase):
         msg = p._normalize_response(response)
         self.assertEqual(msg.token_usage.total_tokens, 0)
 
+    def test_normalize_response_separates_reasoning_when_capable(self):
+        """A provider with a reasoning channel keeps the answer clean."""
+        from lucnhan.providers.openai_provider import OpenAIProvider
+
+        class _ReasoningProvider(OpenAIProvider):
+            @property
+            def capabilities(self):
+                caps = super().capabilities
+                caps.reasoning_content = True
+                return caps
+
+        p = _ReasoningProvider(api_key="test-key", model="gpt-test")
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="answer",
+                        tool_calls=None,
+                        reasoning_content="think",
+                    )
+                )
+            ],
+            usage=None,
+        )
+        msg = p._normalize_response(response)
+        self.assertEqual(msg.content, "answer")
+        self.assertEqual(msg.reasoning_content, "think")
+
+    def test_normalize_response_keeps_legacy_inline_think_when_not_capable(self):
+        """Plain OpenAI keeps the legacy inline ``<think>`` rendering."""
+        p = _make_provider()
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="answer",
+                        tool_calls=None,
+                        reasoning_content="think",
+                    )
+                )
+            ],
+            usage=None,
+        )
+        msg = p._normalize_response(response)
+        self.assertEqual(msg.content, "<think>think</think>\nanswer")
+        self.assertEqual(msg.reasoning_content, "")
+
 
 class TestOpenAIHandleApiError(unittest.TestCase):
     def test_generic_error_raises_provider_error(self):
@@ -654,6 +701,36 @@ class TestOpenAIRequestContextPayloadEquivalence(unittest.TestCase):
             "the context must be a pure pass-through for non-GLM "
             "providers.",
         )
+
+    def test_disable_thinking_omits_reasoning_effort(self) -> None:
+        """The one-shot recovery attempt must not re-request max reasoning."""
+        from lucnhan.providers.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(
+            api_key="test-key",
+            model="gpt-test",
+            extra={"thinking": {"enabled": True, "reasoning_effort": "high"}},
+        )
+
+        recovery_kwargs = provider._build_request_kwargs(
+            [],
+            None,
+            0.3,
+            128,
+            "",
+            request_context=LLMRequestContext(disable_thinking=True),
+        )
+        self.assertNotIn("reasoning_effort", recovery_kwargs)
+
+        normal_kwargs = provider._build_request_kwargs(
+            [],
+            None,
+            0.3,
+            128,
+            "",
+            request_context=LLMRequestContext(),
+        )
+        self.assertEqual(normal_kwargs["reasoning_effort"], "high")
 
 
 class TestOpenAIThinkingLevelWire(unittest.TestCase):

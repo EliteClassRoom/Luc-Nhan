@@ -91,18 +91,10 @@ class OpenAICompatProvider(OpenAIProvider):
 
     @property
     def capabilities(self) -> ProviderCapabilities:
-        # Custom endpoints commonly stream a thinking trace as
-        # ``delta.reasoning_content`` (DeepSeek/Qwen/Kimi/vLLM and any
-        # GLM-compatible proxy).  Advertising the capability routes that
-        # field to the dedicated ``reasoning_delta`` channel.  Without it
-        # the base adapter wraps the trace inline as visible `` thinking``
-        # text, which bypasses the stream loop guard: visible reasoning
-        # crosses ``VISIBLE_DISABLE_THRESHOLD`` and disables repetition
-        # detection, and it never counts toward the reasoning-byte ceiling
-        # — so a degenerate thinking loop can stream forever.
-        # Endpoints that never send the field are unaffected (the branch
-        # is gated on its presence), and history requests still omit it
-        # because ``_format_messages`` keeps the OpenAI wire shape.
+        # ``reasoning_content=True``: OpenAI-compatible endpoints surface
+        # the model's thinking trace in ``delta.reasoning_content``.  The
+        # stream parser routes it to the dedicated reasoning channel so it
+        # is never mixed into the user-visible answer.
         return ProviderCapabilities(
             streaming=True,
             tool_use=True,
