@@ -2416,5 +2416,46 @@ class TestMaxTurnsHardCeiling(unittest.TestCase):
         assert any("max turns limit (1)" in (e.error or "") for e in errors)
 
 
+class TestMutationBookkeepingFailure(unittest.TestCase):
+    """A bookkeeping bug must not turn a successful mutation into a tool error."""
+
+    def test_bookkeeping_error_does_not_fail_successful_tool(self):
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="rename_thing",
+                description="Rename a thing",
+                parameters=[ParameterSchema(name="address", type="string", description="Address", required=True)],
+                handler=lambda address: f"Renamed {address}",
+                category="test",
+                mutating=True,
+            )
+        )
+        config = LucNhanConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        loop = AgentLoop(
+            provider=MockProvider(responses=[]),
+            tool_registry=registry,
+            config=config,
+            session=session,
+        )
+        tc = ToolCall(id="call_mut", name="rename_thing", arguments={"address": "0x401000"})
+
+        with (
+            patch("lucnhan.agent.loop.build_reverse_record", side_effect=RuntimeError("builder boom")),
+            patch("lucnhan.agent.loop.log_error") as log_error_mock,
+        ):
+            _events, tr = _drain_generator_with_return(loop._execute_single_tool(tc))
+
+        self.assertFalse(tr.is_error)
+        self.assertIn("Renamed 0x401000", tr.content)
+        self.assertEqual(loop.mutation_records(), [])
+        self.assertTrue(
+            any("mutation bookkeeping failed" in str(call) for call in log_error_mock.call_args_list),
+            "expected the bookkeeping failure to be logged",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
