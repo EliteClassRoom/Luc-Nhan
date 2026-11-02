@@ -1293,7 +1293,7 @@ class TestStreamOutcomeGuardIntegration(unittest.TestCase):
         tools_schema = registry.to_provider_format()
 
         with self.assertRaises(ValueError):
-            loop._maybe_create_guard(tools_schema)
+            loop._create_stream_guard(tools_schema)
 
 
 # ---------------------------------------------------------------------------

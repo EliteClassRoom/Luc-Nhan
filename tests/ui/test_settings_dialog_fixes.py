@@ -2246,3 +2246,57 @@ class TestRefreshKeepsUnlistedModel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ----------------------------------------------------------------------------
+# Anti-loop controls in Settings
+# ----------------------------------------------------------------------------
+
+
+class TestAntiLoopSettings(unittest.TestCase):
+    """The anti-loop controls must be discoverable and persist."""
+
+    def test_defaults_are_mirrored(self) -> None:
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
+
+        _ensure_qapplication()
+        config = LucNhanConfig()
+        dlg = SettingsDialog(config)
+        try:
+            self.assertTrue(hasattr(dlg, "_loop_guard_cb"))
+            self.assertTrue(hasattr(dlg, "_loop_guard_profile_combo"))
+            self.assertTrue(hasattr(dlg, "_prune_stale_cb"))
+            self.assertTrue(hasattr(dlg, "_goal_continue_cb"))
+
+            self.assertEqual(dlg._loop_guard_cb.isChecked(), config.loop_guard_enabled)
+            self.assertEqual(dlg._prune_stale_cb.isChecked(), config.prune_stale_results)
+            self.assertEqual(dlg._goal_continue_cb.isChecked(), config.goal_continuation_enabled)
+            self.assertEqual(
+                dlg._loop_guard_profile_combo.currentData(),
+                config.loop_guard_profile,
+            )
+        finally:
+            dlg.done(0)
+
+    def test_toggles_persist_via_on_accept(self) -> None:
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
+
+        _ensure_qapplication()
+        config = LucNhanConfig()
+        dlg = SettingsDialog(config)
+        try:
+            dlg._loop_guard_cb.setChecked(False)
+            dlg._prune_stale_cb.setChecked(False)
+            dlg._goal_continue_cb.setChecked(False)
+            idx = dlg._loop_guard_profile_combo.findData("full")
+            dlg._loop_guard_profile_combo.setCurrentIndex(idx)
+            dlg._on_accept()
+
+            self.assertFalse(config.loop_guard_enabled)
+            self.assertFalse(config.prune_stale_results)
+            self.assertFalse(config.goal_continuation_enabled)
+            self.assertEqual(config.loop_guard_profile, "full")
+        finally:
+            dlg.done(0)

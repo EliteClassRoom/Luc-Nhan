@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import threading
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 from dataclasses import replace as dataclass_replace
 from typing import Any, NoReturn
 
+from ..core.errors import StreamStallError
 from ..core.logging import log_debug, silence_sdk_debug_loggers
 from ..core.sanitize import (
     sanitize_messages_for_provider,
@@ -25,6 +27,76 @@ from ..core.types import (
 # its per-request ``done`` event while parked on the loop cancel event.
 # Small enough that a finished request releases the thread promptly.
 _WATCHDOG_POLL_INTERVAL = 0.5
+
+# How often the stream stall watchdog checks whether the provider is
+# still delivering data.
+_STALL_POLL_INTERVAL = 0.25
+
+
+class _ProgressGate(threading.Event):
+    """Cancel event that also trips when the stream stops making progress.
+
+    The gate behaves exactly like the cancel event every provider
+    already honours (``is_set()`` + ``wait(timeout)``), so passing it
+    as ``cancel_event`` needs no provider changes.  The watchdog trips
+    it when the provider stops delivering data — either before the
+    first chunk arrives or between two chunks.
+    """
+
+    def __init__(
+        self,
+        cancel_event: threading.Event | None,
+        first_progress_timeout: float,
+        idle_timeout: float,
+    ) -> None:
+        super().__init__()
+        self._cancel = cancel_event
+        self._first_progress_timeout = first_progress_timeout
+        self._idle_timeout = idle_timeout
+        self._lock = threading.Lock()
+        self._last_activity = time.monotonic()
+        self._started = False
+        self.stalled = False
+        self.stalled_after = 0.0
+
+    def touch(self) -> None:
+        """Record that the provider just delivered something."""
+        with self._lock:
+            self._last_activity = time.monotonic()
+            self._started = True
+
+    def is_set(self) -> bool:
+        """True when the gate tripped *or* the upstream cancel fired."""
+        if super().is_set():
+            return True
+        return self._cancel is not None and self._cancel.is_set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Wait for the gate or the upstream cancel event to fire."""
+        if self._cancel is not None:
+            if self._cancel.wait(timeout):
+                return True
+            return super().wait(0)
+        return super().wait(timeout)
+
+    def poll_stall(self) -> bool:
+        """Trip the gate if the stream has been silent for too long."""
+        with self._lock:
+            limit = self._idle_timeout if self._started else self._first_progress_timeout
+            idle = time.monotonic() - self._last_activity
+        if limit <= 0 or idle <= limit:
+            return False
+        self.stalled = True
+        self.stalled_after = idle
+        self.set()
+        return True
+
+
+def _stall_monitor(gate: _ProgressGate, done: threading.Event) -> None:
+    """Trip *gate* when the provider stops delivering data."""
+    while not done.wait(_STALL_POLL_INTERVAL):
+        if gate.poll_stall():
+            return
 
 
 class LLMProvider(ABC):
@@ -70,6 +142,11 @@ class LLMProvider(ABC):
         self.api_base = api_base
         self.model = model
         self._client: Any = None
+        # Stream stall watchdog budgets (seconds).  ``0`` disables the
+        # respective timeout.  The agent loop refreshes them from the
+        # user config at the start of every run.
+        self.stream_first_progress_timeout: float = 120.0
+        self.stream_idle_timeout: float = 90.0
 
     # -- Abstract interface ----------------------------------------------------
 
@@ -342,7 +419,37 @@ class LLMProvider(ABC):
             request_context=context,
         )
         silence_sdk_debug_loggers()
-        yield from self._stream_chunks(client, kwargs, cancel_event=cancel_event)
+        # Stream stall watchdog: every provider honours ``cancel_event``
+        # (it force-closes the SDK stream), so the gate can interrupt a
+        # provider that stopped delivering data without touching a
+        # single provider implementation.
+        gate = _ProgressGate(cancel_event, self.stream_first_progress_timeout, self.stream_idle_timeout)
+        monitor_done = threading.Event()
+        if self.stream_first_progress_timeout > 0 or self.stream_idle_timeout > 0:
+            threading.Thread(
+                target=_stall_monitor,
+                args=(gate, monitor_done),
+                daemon=True,
+                name=f"{self.name}-stall-watchdog",
+            ).start()
+        try:
+            for chunk in self._stream_chunks(client, kwargs, cancel_event=gate):
+                gate.touch()
+                yield chunk
+        except Exception as exc:
+            if gate.stalled:
+                raise StreamStallError(
+                    f"{self.name} stream stalled: no data for {gate.stalled_after:.0f}s",
+                    provider=self.name,
+                ) from exc
+            raise
+        finally:
+            monitor_done.set()
+        if gate.stalled:
+            raise StreamStallError(
+                f"{self.name} stream stalled: no data for {gate.stalled_after:.0f}s",
+                provider=self.name,
+            )
 
     # -- Streaming cancel watchdog ---------------------------------------------
 

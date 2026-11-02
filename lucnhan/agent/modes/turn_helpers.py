@@ -40,6 +40,8 @@ class TurnResult:
     usage: TokenUsage | None = None
     cancelled: bool = False
     error: str | None = None
+    #: True when the provider stream stalled mid-response.
+    stalled: bool = False
     # --- GLM one-shot recovery extension ---
     finish_reason: str | None = None
     disposition: TurnDisposition | str | None = None
@@ -450,11 +452,17 @@ def _finalize_accepted_outcome(
             disposition=outcome.disposition,
             recovery_attempted=recovery_attempted,
             attempt_usages=all_usages,
+            stalled=bool(getattr(outcome, "stalled", False)),
         )
 
     # Execute tools and store results
     tool_results: list[ToolResult] = yield from loop._execute_tool_calls(tool_calls)
     loop.session.add_message(Message(role=Role.TOOL, tool_results=tool_results))
+    # Anti-loop reminders are injected AFTER the tool results: the
+    # assistant tool_calls message and its TOOL results must stay
+    # adjacent or OpenAI/Anthropic reject the payload with 400.
+    for reminder in loop._after_tool_batch(tool_calls, tool_results):
+        loop.session.add_message(Message(role=Role.USER, content=reminder))
 
     return TurnResult(
         text=assistant_text,
@@ -464,4 +472,5 @@ def _finalize_accepted_outcome(
         disposition=outcome.disposition,
         recovery_attempted=recovery_attempted,
         attempt_usages=all_usages,
+        stalled=bool(getattr(outcome, "stalled", False)),
     )

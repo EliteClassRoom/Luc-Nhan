@@ -100,6 +100,13 @@ class ContextLengthError(ProviderError):
         super().__init__(message, provider=provider, status_code=400, retryable=False)
 
 
+class StreamStallError(ProviderError):
+    """Provider stream stopped delivering data before finishing."""
+
+    def __init__(self, message: str = "Provider stream stalled", provider: str = ""):
+        super().__init__(message, provider=provider, retryable=True)
+
+
 class ToolError(LucNhanError):
     """Tool execution errors."""
 

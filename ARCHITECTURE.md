@@ -65,6 +65,9 @@ Key files:
 
 - `lucnhan/agent/loop.py` — `AgentLoop` + `BackgroundAgentRunner`
 - `lucnhan/agent/turn.py` — `TurnEvent` / `TurnEventType`
+- `lucnhan/agent/loop_guard.py` — `StreamLoopGuard` (stream degeneration detectors)
+- `lucnhan/agent/progress.py` — `ProgressTracker` (tool-call repeat detection)
+- `lucnhan/agent/reminders.py` — `ReminderScheduler` (rate-limited corrective nudges)
 - `lucnhan/tools/base.py` — `@tool` decorator, `ToolDefinition`
 - `lucnhan/tools/registry.py` — `ToolRegistry`
 - `lucnhan/ui/panel_core.py` — `LucNhanPanelCore` (Qt UI)
@@ -671,6 +674,74 @@ At the top of each turn in `run()`:
 if self._context_manager.should_compact():
     messages = self._context_manager.compact_messages(messages)
 ```
+
+---
+
+## Anti-Loop Hardening
+
+**Files**: `lucnhan/agent/loop_guard.py`, `lucnhan/agent/progress.py`,
+`lucnhan/agent/reminders.py`, `lucnhan/agent/loop.py`,
+`lucnhan/providers/base.py`, `lucnhan/state/session.py`
+
+A stuck agent can loop at four independent layers. Each layer has its
+own guard; each is on by default and individually disableable.
+
+### Stream layer — `StreamLoopGuard`
+
+Watches the reasoning/visible deltas of one turn. A `LoopGuardProfile`
+selects the active detectors:
+
+| Detector | Trigger |
+| --- | --- |
+| `reasoning_ceiling` | estimated reasoning tokens >= ceiling (default 16 384) |
+| `repetition_meta_intent` | >= 60 % of the evaluation window repeats *and* >= 8 segments narrate a tool call |
+| `verbatim_tail` | the last 180 characters of the 4 096-character tail repeat earlier inside it |
+| `trigram_jaccard` | >= 80 % of adjacent segments in a 16-segment window are near-duplicates |
+| `progress_stall` | 8 consecutive segments add no new trigrams and name no concrete anchor |
+| `header_runaway` | 24 or more titled lines with no tool call |
+
+`resolve_loop_guard_profile(provider, model, setting)` picks the profile:
+`auto` maps GLM models to the GLM parity set, Gemini/DeepSeek/Grok/Qwen/
+Kimi/MiniMax to the full set, and everything else to a generic subset.
+`full`, `glm` and `off` force a set. A visible answer (>= 256 non-whitespace
+characters) or a tool-call start suppresses every detector except the ceiling.
+
+### Turn layer — tool-call repeat ladder
+
+`ProgressTracker` (`agent/progress.py`) identifies a tool call by its name
+plus canonicalised arguments and classifies each batch as a repeat, an
+identical result, or new information. `AgentLoop._after_tool_batch()`
+escalates on the number of identical calls:
+
+1. `tool_repeat_warn_at` (3) — a rate-limited reminder tells the model to
+   change approach;
+2. `tool_repeat_block_at` (5) — the tool is withheld from the provider
+   payload and refused at execution;
+3. `tool_repeat_stop_at` (8) — tools are disabled for the next turn.
+
+`ReminderScheduler` (`agent/reminders.py`) caps every reminder kind per run
+(`max_per_run`) and between turns (`min_gap_turns`).
+
+### Context layer
+
+- `SessionState._prune_stale_tool_results()` replaces an earlier read of a
+  target with `[Superseded by later read]` and an identical repeated result
+  with `[Duplicate of a later result]`. The message and its `tool_call_id`
+  survive, so the provider's tool-call/result pairing stays valid.
+- `AgentLoop._prepare_provider_messages()` counts compaction passes that
+  reclaimed less than 10 % of the context and suspends automatic compaction
+  after two of them.
+
+### Run layer
+
+- `LLMProvider.chat_stream()` hands a `_ProgressGate` to the provider as its
+  `cancel_event`. The gate trips when the provider stops delivering data
+  (first-progress and idle timeouts), which every provider already honours by
+  force-closing its SDK stream. The stall surfaces as `StreamStallError`;
+  the partial answer is kept and the turn continues.
+- When an active goal is set and the last turn produced no new information,
+  the normal-mode runner injects one `GOAL_PENDING_REMINDER` and runs one
+  more turn.
 
 ---
 

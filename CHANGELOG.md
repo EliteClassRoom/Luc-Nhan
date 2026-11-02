@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Anti-loop hardening: five independent guards stop a stuck agent from
+  burning tokens.** Each guard is on by default and individually disableable
+  (Settings → Behavior → Advanced, or `config.json`):
+  - *Stream loop guard* (`loop_guard_enabled`, `loop_guard_profile`) — the
+    GLM-only reasoning guard became a generic detector set (`agent/loop_guard.py`)
+    with a hard token ceiling, a verbatim-tail detector, a near-duplicate
+    (trigram) detector, a progress-stall detector and a header-runaway
+    detector. The profile is resolved per model family: `auto` keeps GLM
+    models on their previous detectors, enables every detector for
+    Gemini/DeepSeek/Grok/Qwen/Kimi/MiniMax, and uses a generic subset
+    elsewhere. `full` and `glm` force a set, `off` disables stream guarding.
+  - *Tool-call repeat ladder* (`tool_repeat_warn_at` / `_block_at` /
+    `_stop_at`, default 3/5/8) — the same tool called with the same arguments
+    is warned about, then withheld from the provider payload and refused, and
+    finally disables tools for the turn. Rate-limited reminders tell the model
+    to change approach instead of looping.
+  - *Stale tool-result elision* (`prune_stale_results`) — an earlier read of
+    a target is replaced by `[Superseded by later read]` and an identical
+    repeated result by `[Duplicate of a later result]`; tool-call/result
+    pairing is preserved.
+  - *Compaction no-progress suspension* — compaction that reclaims less than
+    10 % of the context is suspended after two passes and resumed once the
+    history grew enough to be worth another attempt.
+  - *Stream stall watchdog* (`stream_idle_timeout_seconds`,
+    `stream_first_progress_timeout_seconds`) — a provider that stops
+    delivering data is interrupted; the partial answer is kept and the turn
+    continues with a "continue where it stopped" reminder.
+  - *Goal continuation* (`goal_continuation_enabled`) — when an active goal
+    is set and the last turn made no verifiable progress, the agent gets one
+    more turn.
+  - *Retry hardening* (`retry_base_delay_ms`, `retry_max_delay_ms`) — the
+    provider backoff is exponential, capped and jittered, and an empty
+    provider response is retried with a request-local suffix before the turn
+    fails with a visible reason.
+
 ### Changed
 
 - **`spawn_subagent` calls in one turn now run in parallel, and appear in the

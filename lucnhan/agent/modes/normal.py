@@ -6,6 +6,9 @@ from collections.abc import Generator
 from typing import TYPE_CHECKING
 
 from ...core.logging import log_debug
+from ...core.types import Message, Role
+from ..loop_commands import ACTIVE_GOAL_METADATA_KEY
+from ..reminders import GOAL_PENDING_REMINDER, STREAM_STALL_REMINDER, ReminderKind
 from ..turn import TurnEvent
 from .turn_helpers import execute_single_turn
 
@@ -32,6 +35,8 @@ def run_normal_loop(
     # outright so we should never see one here.
     mt = getattr(loop, "_max_turns", None)
     max_turns: int = _DEFAULT_MAX_TURNS if mt is None else int(mt)
+    # One-shot: the goal continuation fires at most once per run.
+    goal_continue_used = False
     turn = 0
     while True:
         loop._check_cancelled()
@@ -54,6 +59,28 @@ def run_normal_loop(
 
         if not result.has_tool_calls:
             loop._consecutive_errors = 0
+            if result.stalled and loop._reminders.should_emit(ReminderKind.STREAM_STALL, turn):
+                loop._reminders.mark_emitted(ReminderKind.STREAM_STALL, turn)
+                loop.session.add_message(Message(role=Role.USER, content=STREAM_STALL_REMINDER))
+                log_debug(f"Turn {turn} end (stream stalled, continuing)")
+                yield TurnEvent.turn_end(turn)
+                continue
+            # A goal is still set but the turn produced no verifiable
+            # progress: give the agent exactly one more chance to act on
+            # it instead of stopping with the goal half-done.
+            if (
+                loop.config.goal_continuation_enabled
+                and not goal_continue_used
+                and loop.session.metadata.get(ACTIVE_GOAL_METADATA_KEY)
+                and not loop._progress.run_made_progress()
+                and loop._reminders.should_emit(ReminderKind.GOAL_PENDING, turn)
+            ):
+                goal_continue_used = True
+                loop._reminders.mark_emitted(ReminderKind.GOAL_PENDING, turn)
+                loop.session.add_message(Message(role=Role.USER, content=GOAL_PENDING_REMINDER))
+                log_debug(f"Turn {turn} end (goal pending, continuing)")
+                yield TurnEvent.turn_end(turn)
+                continue
             log_debug(f"Turn {turn} end (final)")
             yield TurnEvent.turn_end(turn)
             break

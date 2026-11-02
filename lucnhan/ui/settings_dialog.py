@@ -1200,6 +1200,44 @@ class SettingsDialog(QDialog):
             "Enable for deep RE sessions where losing decompilation context is worse than higher token cost."
         )
         advanced_form.addRow(self._preserve_context_cb)
+        # --- Anti-loop controls ---
+        self._loop_guard_cb = QCheckBox("Detect and break reasoning loops")
+        self._loop_guard_cb.setChecked(bool(self._config.loop_guard_enabled))
+        self._loop_guard_cb.setToolTip(
+            "Watches streamed reasoning for repetition and progress stalls. On a trigger the\n"
+            "turn is discarded and retried once without extended thinking."
+        )
+        advanced_form.addRow(self._loop_guard_cb)
+
+        self._loop_guard_profile_combo = QComboBox()
+        self._loop_guard_profile_combo.addItem("Auto (per model family)", "auto")
+        self._loop_guard_profile_combo.addItem("Full (all detectors)", "full")
+        self._loop_guard_profile_combo.addItem("GLM-only detectors", "glm")
+        self._loop_guard_profile_combo.addItem("Off", "off")
+        idx = self._loop_guard_profile_combo.findData(self._config.loop_guard_profile)
+        self._loop_guard_profile_combo.setCurrentIndex(max(0, idx))
+        self._loop_guard_profile_combo.setToolTip(
+            "Auto enables the detectors tuned for the active model family.\n"
+            "Full enables every detector; Off disables stream guarding entirely."
+        )
+        advanced_form.addRow("Loop guard profile:", self._loop_guard_profile_combo)
+
+        self._prune_stale_cb = QCheckBox("Elide superseded tool results from context")
+        self._prune_stale_cb.setChecked(bool(self._config.prune_stale_results))
+        self._prune_stale_cb.setToolTip(
+            "When enabled, an earlier read of the same target is replaced by\n"
+            "'[Superseded by later read]' and an identical repeated result by\n"
+            "'[Duplicate of a later result]'. Tool-call/result pairing is preserved."
+        )
+        advanced_form.addRow(self._prune_stale_cb)
+
+        self._goal_continue_cb = QCheckBox("Continue once when an active goal stalls")
+        self._goal_continue_cb.setChecked(bool(self._config.goal_continuation_enabled))
+        self._goal_continue_cb.setToolTip(
+            "When an active goal is set and the last turn produced no new information,\n"
+            "inject one reminder and run one more turn."
+        )
+        advanced_form.addRow(self._goal_continue_cb)
         # --- String analysis restriction ---
         self._hide_strings_cb = QCheckBox("Hide strings from analysis (prefer disassembly/decompilation)")
         self._hide_strings_cb.setChecked(bool(getattr(self._config, "hide_strings", False)))
@@ -2642,6 +2680,16 @@ class SettingsDialog(QDialog):
         self._config.font_family = "" if font_family_text == "(Inherit from IDA)" else font_family_text
         self._config.font_size_override = self._font_size_spin.value()
         self._config.preserve_context = self._preserve_context_cb.isChecked()
+        if hasattr(self, "_loop_guard_cb"):
+            self._config.loop_guard_enabled = self._loop_guard_cb.isChecked()
+        if hasattr(self, "_loop_guard_profile_combo"):
+            profile = self._loop_guard_profile_combo.currentData()
+            if profile:
+                self._config.loop_guard_profile = str(profile)
+        if hasattr(self, "_prune_stale_cb"):
+            self._config.prune_stale_results = self._prune_stale_cb.isChecked()
+        if hasattr(self, "_goal_continue_cb"):
+            self._config.goal_continuation_enabled = self._goal_continue_cb.isChecked()
         self._config.oauth_consent_accepted = self._oauth_cb.isChecked()
         if hasattr(self, "_knowledge_enabled_cb"):
             self._config.knowledge_enabled = self._knowledge_enabled_cb.isChecked()

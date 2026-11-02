@@ -184,6 +184,9 @@ class TurnOutcome:
     attempt_usage: AttemptUsage | None = None
     guard_trigger: str = ""
     repetition_ratio_millis: int = 0
+    #: True when the provider stream stopped delivering data before
+    #: finishing (the stream stall watchdog fired).
+    stalled: bool = False
 
 
 @dataclass

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
@@ -11,7 +12,7 @@ from typing import Any
 
 from ..core.logging import log_debug
 from ..core.sanitize import strip_injection_markers
-from ..core.types import Message, Role, TokenUsage, ToolResult
+from ..core.types import Message, Role, TokenUsage, ToolCall, ToolResult
 
 # ---------- Token estimation ----------
 
@@ -21,6 +22,38 @@ _CHARS_PER_TOKEN = 3.5
 _OLD_RESULT_THRESHOLD = 8
 _OLD_RESULT_MAX_CHARS = 500
 _RECENT_RESULT_MAX_CHARS = 8000
+
+# ---------- Stale tool-result elision ----------
+
+#: Replacement content for a tool result that a later read superseded.
+_STALE_SUPERSEDED = "[Superseded by later read]"
+
+#: Replacement content for a tool result identical to a later one.
+_STALE_DUPLICATE = "[Duplicate of a later result]"
+
+#: The last N messages are never elided — the model still needs the
+#: most recent results verbatim.
+_STALE_KEEP_TAIL = 4
+
+#: Tool-call argument keys that identify *what* was read.  The first one
+#: present in the arguments identifies the target.
+_STALE_TARGET_KEYS = ("address", "function", "name", "path", "file", "offset", "pattern")
+
+
+def _stale_key(tc: ToolCall | None) -> tuple[str, str] | None:
+    """Return the identity of the target a tool call read, if any."""
+    if tc is None:
+        return None
+    for key in _STALE_TARGET_KEYS:
+        value = tc.arguments.get(key)
+        if isinstance(value, (str, int)) and str(value):
+            return (tc.name, f"{key}={value}")
+    return None
+
+
+def _stale_hash(content: str) -> str:
+    """Return a stable hash of a tool result's content."""
+    return hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
 
 
 def _estimate_tokens(msg: Message) -> int:
@@ -119,16 +152,16 @@ class SessionState:
         # on the next read.
         #
         # ``_provider_cache`` holds the sanitized/minified message lists
-        # keyed by ``(revision, context_window, preserve_context)``.
-        # Values are *list copies* — callers cannot mutate the cached
-        # payload and corrupt future reads.
+        # keyed by ``(revision, context_window, preserve_context,
+        # drop_stale)``.  Values are *list copies* — callers cannot
+        # mutate the cached payload and corrupt future reads.
         #
         # ``_message_token_cache`` is an ``id(msg) -> int`` map that lets
         # :func:`_estimate_tokens` skip the (relatively expensive) char
         # walk on repeated calls for the same ``Message`` object. Cleared
         # on full replace/clear since object identity no longer matches.
         self._revision: int = 0
-        self._provider_cache: dict[tuple[int, int, bool], list[Message]] = {}
+        self._provider_cache: dict[tuple[int, int, bool, bool], list[Message]] = {}
         self._message_token_cache: dict[int, int] = {}
 
     @property
@@ -244,13 +277,16 @@ class SessionState:
         self,
         context_window: int = 0,
         preserve_context: bool = False,
+        drop_stale: bool = False,
     ) -> list[Message]:
         """Return messages sanitized and trimmed for the provider API.
 
         1. Ensures every tool_use has a matching tool_result.
         2. Strips injection markers from assistant output (anti self-injection).
-        3. Truncates old / large tool results (skipped when *preserve_context*).
-        4. Drops oldest messages if the estimated token count exceeds
+        3. Elides superseded / duplicate tool results (skipped when
+           *preserve_context* or when *drop_stale* is False).
+        4. Truncates old / large tool results (skipped when *preserve_context*).
+        5. Drops oldest messages if the estimated token count exceeds
            the context window budget (skipped when *preserve_context*).
 
         When *preserve_context* is True, only safety sanitization is applied —
@@ -258,7 +294,8 @@ class SessionState:
         decompilation output and analysis context at the cost of higher token
         usage.
 
-        Results are cached by ``(revision, context_window, preserve_context)``
+        Results are cached by
+        ``(revision, context_window, preserve_context, drop_stale)``
         so back-to-back calls from the same turn — e.g. an estimate pass
         and the actual provider payload — do not pay for the full
         sanitize + truncate + trim pipeline twice.  Returns a *list copy*
@@ -267,7 +304,7 @@ class SessionState:
         with self._lock:
             snapshot = list(self.messages)
             revision = self._revision
-            cache_key = (revision, context_window, preserve_context)
+            cache_key = (revision, context_window, preserve_context, drop_stale)
             cached = self._provider_cache.get(cache_key)
 
         if cached is not None:
@@ -275,6 +312,8 @@ class SessionState:
 
         sanitized = self._sanitize(snapshot)
         sanitized = self._sanitize_assistant_output(sanitized)
+        if drop_stale and not preserve_context:
+            sanitized = self._prune_stale_tool_results(sanitized)
         if not preserve_context:
             sanitized = self._truncate_results(sanitized)
             if context_window > 0:
@@ -293,6 +332,64 @@ class SessionState:
         return sanitized
 
     # --- Internal helpers ---
+
+    @staticmethod
+    def _prune_stale_tool_results(messages: list[Message]) -> list[Message]:
+        """Blank out tool results that a later read superseded.
+
+        Walking backwards from the newest message, the first occurrence
+        of a target wins and every earlier read of the *same* target is
+        replaced by :data:`_STALE_SUPERSEDED`.  A result whose content
+        is byte-identical to a newer one is replaced by
+        :data:`_STALE_DUPLICATE` even when the targets differ.
+
+        The last :data:`_STALE_KEEP_TAIL` messages are never touched —
+        the model still needs the most recent results verbatim.  Error
+        results and empty results are never blanked either: an error is
+        information, and blanking an empty result would only add
+        tokens.
+
+        The ``Message`` and every ``tool_call_id`` survive, so the
+        assistant/tool pairing the provider requires is preserved.
+        """
+        if len(messages) <= _STALE_KEEP_TAIL:
+            return messages
+        cutoff = len(messages) - _STALE_KEEP_TAIL
+        calls: dict[str, ToolCall] = {}
+        for msg in messages:
+            for tc in msg.tool_calls:
+                calls[tc.id] = tc
+        seen_keys: set[tuple[str, str]] = set()
+        seen_hashes: set[str] = set()
+        out: list[Message] = []
+        for idx in range(len(messages) - 1, -1, -1):
+            msg = messages[idx]
+            if msg.role is not Role.TOOL or not msg.tool_results or idx >= cutoff:
+                out.append(msg)
+                continue
+            new_results: list[ToolResult] = []
+            changed = False
+            for tr in msg.tool_results:
+                content = tr.content or ""
+                if tr.is_error or not content.strip():
+                    new_results.append(tr)
+                    continue
+                key = _stale_key(calls.get(tr.tool_call_id))
+                content_hash = _stale_hash(content)
+                if key is not None and key in seen_keys:
+                    new_results.append(replace(tr, content=_STALE_SUPERSEDED))
+                    changed = True
+                elif content_hash in seen_hashes:
+                    new_results.append(replace(tr, content=_STALE_DUPLICATE))
+                    changed = True
+                else:
+                    new_results.append(tr)
+                if key is not None:
+                    seen_keys.add(key)
+                seen_hashes.add(content_hash)
+            out.append(replace(msg, tool_results=new_results) if changed else msg)
+        out.reverse()
+        return out
 
     @staticmethod
     def _sanitize_assistant_output(messages: list[Message]) -> list[Message]:

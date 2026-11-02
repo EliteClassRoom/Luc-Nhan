@@ -7,11 +7,13 @@ import json
 import math
 import os
 import queue
+import random
 import threading
 import time
 import traceback
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclass_replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -24,6 +26,7 @@ from ..core.errors import (
     CancellationError,
     ProviderError,
     RateLimitError,
+    StreamStallError,
     ToolError,
     ToolNotFoundError,
 )
@@ -64,7 +67,6 @@ from .exploration_mode import (
     KnowledgeBase,
     PatchRecord,
 )
-from .glm_guard import GLMGuardSnapshot, GLMReasoningGuard
 from .loop_commands import (
     ACTIVE_GOAL_METADATA_KEY,
     _handle_doctor_command,
@@ -77,6 +79,12 @@ from .loop_commands import (
     _handle_verify_command,
     normalize_goal,
 )
+from .loop_guard import (
+    DEFAULT_CEILING_TOKENS,
+    LoopGuardSnapshot,
+    StreamLoopGuard,
+    resolve_loop_guard_profile,
+)
 from .minify import minify_messages, minify_text
 from .modes.a2a import run_a2a_mode
 from .modes.exploration import run_exploration_mode
@@ -85,6 +93,7 @@ from .modes.orchestra import run_orchestra_mode
 from .modes.plan import run_plan_mode
 from .modes.research import run_research_mode
 from .mutation import MutationRecord, build_reverse_record, capture_pre_state
+from .progress import ProgressTracker, RepeatKind
 from .pseudo_tool_schemas import (
     ASK_USER_SCHEMA,
     DELEGATE_EXTERNAL_TASK_SCHEMA,
@@ -93,6 +102,12 @@ from .pseudo_tool_schemas import (
     RESEARCH_NOTE_SCHEMA,
     SAVE_MEMORY_SCHEMA,
     SPAWN_SUBAGENT_SCHEMA,
+)
+from .reminders import (
+    NO_PROGRESS_REMINDER,
+    TOOL_REPEAT_REMINDER,
+    ReminderKind,
+    ReminderScheduler,
 )
 from .subagent import SubagentRunner
 from .subagent_manager import SubagentStatus
@@ -119,10 +134,22 @@ _HARD_SUBAGENT_MAX_CONCURRENT = 16
 _SUBAGENT_WAIT_POLL_SECONDS = 0.5
 
 # Fallback provider retry count when ``config.max_retries`` is unset/zero,
-# and the exponential-backoff ceiling / sleep granularity for retries.
+# and the sleep granularity for retries.  The backoff *base* and *ceiling*
+# are configurable (``retry_base_delay_ms`` / ``retry_max_delay_ms``) and
+# jittered per attempt so concurrent clients do not resynchronise.
 _DEFAULT_MAX_RETRIES = 3
-_RETRY_BACKOFF_MAX_SECONDS = 10
 _RETRY_POLL_SECONDS = 0.5
+
+# How many times an empty provider response (no text, no tool calls) is
+# retried before the turn is failed.  An empty response carries no
+# committed state, so retrying it can never replay side effects.
+_EMPTY_RESPONSE_RETRIES = 2
+
+# Request-local suffix appended to the system prompt when retrying after
+# an empty response — it tells the model to actually produce something.
+_EMPTY_RESPONSE_SUFFIX = (
+    "Your previous response was empty. Produce the next concrete step now: either a tool call or a short answer."
+)
 
 # High-confidence mutating tools for which post-state verification runs.
 _VERIFY_MUTATION_TOOLS: frozenset[str] = frozenset(
@@ -573,6 +600,16 @@ class AgentLoop:
         self._running: bool = False
         self._consecutive_errors: int = 0
         self._tools_disabled_for_turn: bool = False
+        # Anti-loop state: tools the agent kept re-issuing, the repeat
+        # tracker that spots them, and the reminder scheduler that keeps
+        # the corrective nudges rate-limited.
+        self._blocked_tools: set[str] = set()
+        self._progress = ProgressTracker(
+            warn_at=config.tool_repeat_warn_at,
+            block_at=config.tool_repeat_block_at,
+            stop_at=config.tool_repeat_stop_at,
+        )
+        self._reminders = ReminderScheduler()
         # Subagents share the parent's queues so UI signals reach them.
         self._user_answer_queue: queue.Queue[str] = (
             parent_loop._user_answer_queue if parent_loop else queue.Queue(maxsize=1)
@@ -609,6 +646,13 @@ class AgentLoop:
             max_tokens=ctx_window,
             compaction_threshold=0.8,
         )
+        # Compaction no-progress guard: compaction that does not shrink the
+        # conversation is pure waste, so it is suspended after two futile
+        # passes and resumed only once the history grew enough to make a
+        # new attempt worthwhile.
+        self._compaction_no_progress = 0
+        self._compaction_suspended = False
+        self._compaction_suspend_at = 0
 
         # get_binary_info scans every function in the IDB (idautils.Functions)
         # and is static per binary — cache per idb_path instead of paying a
@@ -1088,13 +1132,13 @@ class AgentLoop:
         silent_mode = self.config.silent_retry_mode
 
         last_error: Exception | None = None
+        empty_retries = 0
         for attempt in range(max_retries):
             self._check_cancelled()
             try:
                 result = yield from self._stream_llm_turn_inner(
                     system_prompt, tools_schema, request_context=request_context
                 )
-                return result
             except (RateLimitError, ProviderError) as e:
                 is_rate_limit = isinstance(e, RateLimitError)
                 if not is_rate_limit and not (e.retryable and attempt < max_retries - 1):
@@ -1103,9 +1147,9 @@ class AgentLoop:
                 log_error(f"Retryable error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     if is_rate_limit:
-                        backoff = e.retry_after if e.retry_after > 0 else min(2**attempt, _RETRY_BACKOFF_MAX_SECONDS)
+                        backoff = e.retry_after if e.retry_after > 0 else self._retry_backoff(attempt)
                     else:
-                        backoff = min(2**attempt, _RETRY_BACKOFF_MAX_SECONDS)
+                        backoff = self._retry_backoff(attempt)
                     if silent_mode:
                         yield TurnEvent.error_event(
                             f"\u23f3 Retrying in {backoff:.0f}s (attempt {attempt + 2}/{max_retries})..."
@@ -1115,17 +1159,56 @@ class AgentLoop:
                             f"{self._format_provider_error_for_user(e)} "
                             f"Retrying in {backoff:.0f}s (attempt {attempt + 2}/{max_retries})."
                         )
-                    deadline = time.monotonic() + backoff
-                    while time.monotonic() < deadline:
-                        self._check_cancelled()
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            break
-                        time.sleep(min(_RETRY_POLL_SECONDS, remaining))
+                    self._sleep_with_cancel(backoff)
                 continue
+
+            # The provider completed but produced nothing at all: no
+            # text, no tool calls, no filter, no truncation, no broken
+            # stream.  Nothing was committed, so retrying cannot replay
+            # side effects — it can only give the model another chance
+            # to answer.
+            if result.disposition is TurnDisposition.FAILED:
+                if empty_retries < _EMPTY_RESPONSE_RETRIES and attempt < max_retries - 1:
+                    empty_retries += 1
+                    backoff = self._retry_backoff(attempt)
+                    yield TurnEvent.error_event(f"\u23f3 Empty response \u2014 retrying in {backoff:.0f}s...")
+                    self._sleep_with_cancel(backoff)
+                    request_context = dataclass_replace(
+                        request_context or LLMRequestContext(), system_suffix=_EMPTY_RESPONSE_SUFFIX
+                    )
+                    continue
+                # The retries are exhausted: fail the turn with a visible
+                # reason instead of persisting a silently empty answer.
+                raise ProviderError(
+                    f"Provider returned an empty response {empty_retries + 1} time(s) in a row.",
+                    provider=self.provider.name,
+                    retryable=False,
+                )
+            return result
 
         # All retries exhausted
         raise last_error  # type: ignore[misc]
+
+    def _retry_backoff(self, attempt: int) -> float:
+        """Return the jittered backoff (seconds) before retry *attempt*.
+
+        The delay is ``base * 2**attempt`` capped at the configured
+        maximum, then scaled by a random factor in ``[0.75, 1.0]`` so
+        concurrent clients that failed together do not retry in lockstep.
+        """
+        base = max(0.05, self.config.retry_base_delay_ms / 1000.0)
+        cap = max(base, self.config.retry_max_delay_ms / 1000.0)
+        return min(base * (2**attempt), cap) * random.uniform(0.75, 1.0)
+
+    def _sleep_with_cancel(self, seconds: float) -> None:
+        """Sleep *seconds*, waking early when the run is cancelled."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self._check_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(_RETRY_POLL_SECONDS, remaining))
 
     def _maybe_inject_error_hint(self) -> None:
         """Inject a system hint when consecutive tool errors exceed thresholds."""
@@ -1155,9 +1238,19 @@ class AgentLoop:
                 )
             )
 
-    def _prepare_provider_messages(self, system_prompt: str) -> tuple[list, int, TokenUsage | None]:
-        """Estimate tokens, compact context if needed, return (provider_messages, estimated_tokens, estimated_usage)."""
+    def _prepare_provider_messages(self, system_prompt: str) -> tuple[list, int, TokenUsage | None, str | None]:
+        """Estimate tokens, compact context if needed.
+
+        Returns ``(provider_messages, estimated_tokens, estimated_usage,
+        compaction_warning)``.  The warning is non-None when automatic
+        compaction was suspended because it stopped reducing the
+        conversation.
+        """
         preserve = self.config.preserve_context
+        # Anti-loop: elide tool results that a later read superseded or
+        # that repeat a newer result verbatim.  Preserving the full
+        # context wins over this optimization.
+        drop_stale = self.config.prune_stale_results and not preserve
 
         # Fast path: use running token counter to skip expensive O(n)
         # estimation when we're clearly below the compaction threshold.
@@ -1175,7 +1268,7 @@ class AgentLoop:
             # conservative (triggers a touch early rather than late). This
             # avoids a second full-history minify pass; the actual provider
             # messages below are still minified before being sent.
-            full_messages = self.session.get_messages_for_provider(context_window=0)
+            full_messages = self.session.get_messages_for_provider(context_window=0, drop_stale=drop_stale)
             full_prompt_tokens = self._estimate_prompt_tokens(full_messages, system_prompt)
             if full_prompt_tokens > 0:
                 self._context_manager.update_usage(
@@ -1185,25 +1278,55 @@ class AgentLoop:
                     )
                 )
 
-        if self._context_manager.should_compact():
+        warning: str | None = None
+        if self._compaction_suspended:
+            # Resume only once the history grew enough that a new
+            # compaction attempt could actually reclaim something.
+            grown = len(self.session.messages) >= max(
+                self._compaction_suspend_at + 1, int(self._compaction_suspend_at * 1.2)
+            )
+            if grown:
+                self._compaction_suspended = False
+                self._compaction_no_progress = 0
+
+        if self._context_manager.should_compact() and not self._compaction_suspended:
             log_info(f"Context compaction triggered (usage ratio: {self._context_manager.usage_ratio:.1%})")
             # Use the dedicated replace_messages() method so the cache
             # invalidation hooks (revision bump, provider-message cache
             # clear, token-estimate recompute) all fire — bypassing them
             # would let stale cached messages flow back into the next
             # get_messages_for_provider() call.
+            before = self._context_manager.total_tokens
             compacted = self._context_manager.compact_messages(self.session.messages)
-            self.session.replace_messages(compacted)
-            # Reset the tracked usage: update_usage is monotonic, so without
-            # this the stale pre-compaction total would re-trigger compaction
-            # on every following turn and collapse the history.
-            self._context_manager.reset()
+            if compacted is not self.session.messages:
+                self.session.replace_messages(compacted)
+                # Reset the tracked usage: update_usage is monotonic, so without
+                # this the stale pre-compaction total would re-trigger compaction
+                # on every following turn and collapse the history.
+                self._context_manager.reset()
+                after = self._estimate_prompt_tokens(
+                    self.session.get_messages_for_provider(context_window=0, drop_stale=drop_stale),
+                    system_prompt,
+                )
+                if before > 0 and after >= before * 0.9:
+                    # Compaction reclaimed (almost) nothing — count it.
+                    self._compaction_no_progress += 1
+                    if self._compaction_no_progress >= 2:
+                        self._compaction_suspended = True
+                        self._compaction_suspend_at = len(self.session.messages)
+                        warning = (
+                            "Context compaction is not reducing the conversation; "
+                            "continuing without further automatic compaction."
+                        )
+                else:
+                    self._compaction_no_progress = 0
 
         ctx_window = self.config.provider.context_window
         provider_messages = minify_messages(
             self.session.get_messages_for_provider(
                 context_window=ctx_window,
                 preserve_context=preserve,
+                drop_stale=drop_stale,
             )
         )
         estimated_prompt_tokens = self._estimate_prompt_tokens(provider_messages, system_prompt)
@@ -1214,7 +1337,7 @@ class AgentLoop:
                 total_tokens=estimated_prompt_tokens,
             )
             self._context_manager.update_usage(estimated_usage)
-        return provider_messages, estimated_prompt_tokens, estimated_usage
+        return provider_messages, estimated_prompt_tokens, estimated_usage, warning
 
     def _accumulate_chunk_usage(self, last: TokenUsage | None, chunk: TokenUsage) -> TokenUsage:
         """Merge a streaming chunk's usage into the accumulated total.
@@ -1347,12 +1470,13 @@ class AgentLoop:
         completed_tool_call_ids: set[str] = set()
         reasoning_parts: list[str] = []
 
-        # Determine if the GLM reasoning guard should be active for this turn.
+        # Determine if the stream loop guard should be active for this turn.
         # The guard fires only when:
-        #   1. The provider is GLM (via extra["dialect"] == "glm" or provider.name == "glm")
+        #   1. The loop guard is enabled in the config
         #   2. Tools are exposed (guarding reasoning that degenerates before tool calls)
-        #   3. The guard is enabled in parsed GLM config
-        guard: GLMReasoningGuard | None = self._maybe_create_guard(tools_schema)
+        #   3. The resolved profile has at least one active detector
+        #      (and, for GLM, the guard is enabled in the parsed GLM config)
+        guard: StreamLoopGuard | None = self._create_stream_guard(tools_schema)
 
         # Determine whether this provider uses GLM strict partial-tool-call
         # semantics.  GLM providers reject malformed/incomplete tool args
@@ -1360,13 +1484,17 @@ class AgentLoop:
         # existing ``{}`` + warning fallback unchanged.
         is_glm = _is_glm_provider(self.config, self.provider)
 
-        provider_messages, estimated_prompt_tokens, estimated_usage = self._prepare_provider_messages(system_prompt)
+        provider_messages, estimated_prompt_tokens, estimated_usage, compaction_warning = (
+            self._prepare_provider_messages(system_prompt)
+        )
+        if compaction_warning is not None:
+            yield TurnEvent.error_event(compaction_warning)
         # Do not emit a pre-stream estimate — it causes the display to jump
         # to an estimated value only to be overwritten by real data moments later.
 
         stream = self.provider.chat_stream(
             messages=provider_messages,
-            tools=tools_schema if tools_schema else None,
+            tools=self._filter_blocked_tools(tools_schema) if tools_schema else None,
             temperature=self.config.provider.temperature,
             max_tokens=self.config.provider.max_tokens,
             system=system_prompt,
@@ -1387,6 +1515,9 @@ class AgentLoop:
         # sees streamed text vanish and the session gains a silent gap (the
         # "chat bị ngắt đột ngột" symptom).
         stream_broke: bool = False
+        # ``stalled`` marks a stream that stopped delivering data before
+        # finishing (the provider-side stall watchdog fired).
+        stalled: bool = False
         guard_triggered: bool = False
         # Track whether the provider actually emitted usage chunks
         # (vs estimated_usage from pre-stream estimation). This is needed
@@ -1527,6 +1658,8 @@ class AgentLoop:
             has_partial = bool(assistant_text_parts) or bool(tool_calls)
             if not has_partial:
                 raise
+            if isinstance(e, StreamStallError):
+                stalled = True
             stream_broke = True
             log_error(
                 f"Provider stream broke after {chunk_count} chunks with partial output: {e}. "
@@ -1609,7 +1742,7 @@ class AgentLoop:
 
         # Build the guard trigger info if applicable.
         guard_trigger_str = ""
-        guard_snapshot: GLMGuardSnapshot | None = None
+        guard_snapshot: LoopGuardSnapshot | None = None
         if guard is not None:
             guard_snapshot = guard.snapshot()
             if guard_triggered:
@@ -1683,6 +1816,7 @@ class AgentLoop:
             attempt_usage=attempt_usage,
             guard_trigger=guard_trigger_str,
             repetition_ratio_millis=rep_ratio_millis,
+            stalled=stalled,
         )
 
     @staticmethod
@@ -1724,35 +1858,45 @@ class AgentLoop:
             return TurnDisposition.COMPLETED
         return TurnDisposition.FAILED
 
-    def _maybe_create_guard(self, tools_schema: list | None) -> GLMReasoningGuard | None:
-        """Create a GLM reasoning guard if this is a GLM+tools request.
+    def _create_stream_guard(self, tools_schema: list | None) -> StreamLoopGuard | None:
+        """Create the stream loop guard for this turn.
 
         Returns ``None`` when the guard should not be active:
-        - Provider is not GLM
+        - ``loop_guard_enabled`` is off in the config
         - No tools are exposed
-        - Guard is disabled in config
+        - The resolved profile has every detector disabled
+        - (GLM only) the guard is disabled in the parsed GLM config
         """
+        if not self.config.loop_guard_enabled or not tools_schema:
+            return None
+
         is_glm = self.config.provider.extra.get("dialect") == "glm" or self.provider.name == "glm"
-        if not is_glm:
-            return None
-        if not tools_schema:
-            return None
+        parsed_glm_config = None
+        if is_glm:
+            # Read the already-validated GLMConfig from the provider instance
+            # when available (the canonical GLMProvider path). Fall back to
+            # a fresh parse for non-GLM providers that nevertheless report
+            # ``dialect == "glm"`` (custom providers, test doubles) so the
+            # guard still activates.
+            parsed_glm_config = getattr(self.provider, "glm_config", None)
+            if parsed_glm_config is None:
+                try:
+                    from ..core.glm_config import parse_glm_extra
+                except ImportError:
+                    log_debug("Loop guard: glm_config module unavailable, skipping guard")
+                    return None
+                # ValueError from parse_glm_extra MUST propagate so invalid
+                # GLM config surfaces to the user instead of being silently
+                # swallowed by a broad except.
+                parsed_glm_config = parse_glm_extra(self.config.provider.extra, self.config.provider.model)
 
-        # Read the already-validated GLMConfig from the provider instance
-        # when available (the canonical GLMProvider path). Fall back to
-        # a fresh parse for non-GLM providers that nevertheless report
-        # ``dialect == "glm"`` (custom providers, test doubles) so the
-        # guard still activates.
-        parsed_glm_config = getattr(self.provider, "glm_config", None)
-        if parsed_glm_config is None:
-            try:
-                from ..core.glm_config import parse_glm_extra
-            except ImportError:
-                log_debug("GLM guard: glm_config module unavailable, skipping guard")
+            if not parsed_glm_config.guard.enabled:
                 return None
-            parsed_glm_config = parse_glm_extra(self.config.provider.extra, self.config.provider.model)
 
-        if not parsed_glm_config.guard.enabled:
+        profile = resolve_loop_guard_profile(
+            self.provider.name, self.config.provider.model, self.config.loop_guard_profile
+        )
+        if not profile.enabled:
             return None
 
         # Extract exposed tool names from the schema for meta-intent detection.
@@ -1764,9 +1908,13 @@ class AgentLoop:
                 if name:
                     exposed_tool_names.append(name)
 
-        return GLMReasoningGuard(
+        ceiling = (
+            parsed_glm_config.guard.reasoning_token_ceiling if parsed_glm_config is not None else DEFAULT_CEILING_TOKENS
+        )
+        return StreamLoopGuard(
             exposed_tool_names=exposed_tool_names,
-            ceiling_tokens=parsed_glm_config.guard.reasoning_token_ceiling,
+            ceiling_tokens=ceiling,
+            profile=profile,
         )
 
     @staticmethod
@@ -2054,6 +2202,19 @@ class AgentLoop:
 
     def _execute_single_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle approval gating, mutation tracking, and execution of a real tool."""
+        # Anti-loop: the tool was blocked after repeated identical calls.
+        # The schema filter already hides it, but the model may still
+        # ask for it (stale schema, third-party provider) — refuse
+        # explicitly instead of running it again.
+        if tc.name in self._blocked_tools:
+            content = (
+                f"Error: tool '{tc.name}' is blocked for this turn after repeated identical calls. "
+                "Use a different approach or explain what is failing."
+            )
+            log_debug(f"Blocked repeated tool: {tc.name}")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr
         # Config: hide string-list/search tools when analysis strings are
         # disabled. Defense-in-depth: even if the schema filter is bypassed
         # (stale provider schema, third-party schema) the agent cannot call
@@ -2160,6 +2321,10 @@ class AgentLoop:
             # after several failures doesn't fully clear the counter.
             self._consecutive_errors = max(0, self._consecutive_errors - 1)
             if is_mutating:
+                # A successful mutation is real progress: unblock the
+                # tool and record that the run moved forward.
+                self._blocked_tools.discard(tc.name)
+                self._progress.note_mutation_success()
                 record = build_reverse_record(tc.name, exec_args, pre_state)
                 verification = self._verify_mutation(tc.name, exec_args, result)
                 if not verification.ok:
@@ -2898,6 +3063,54 @@ class AgentLoop:
 
         return _MutationVerification(True)
 
+    def _filter_blocked_tools(self, tools_schema: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Drop the tools the agent kept re-issuing from *tools_schema*.
+
+        The schema is built once per run, but a tool can be blocked
+        mid-run, so the filter is applied both when the schema is built
+        and again right before the payload is sent to the provider.
+        """
+        if not self._blocked_tools:
+            return tools_schema
+        return [t for t in tools_schema if t.get("function", {}).get("name") not in self._blocked_tools]
+
+    def _after_tool_batch(self, tool_calls: list[ToolCall], tool_results: list[ToolResult]) -> list[str]:
+        """Observe a completed tool batch and apply the repeat ladder.
+
+        Escalation is driven by how many times the same tool has been
+        called with the same arguments:
+
+        * ``tool_repeat_warn_at`` — inject a reminder telling the model
+          to change approach;
+        * ``tool_repeat_block_at`` — stop advertising the tool and
+          refuse to execute it;
+        * ``tool_repeat_stop_at`` — disable tools for the next turn.
+
+        Returns the reminder texts to inject as hidden user messages.
+        """
+        turn = self.session.current_turn
+        verdict = self._progress.observe_turn(turn, tool_calls, tool_results)
+        reminders: list[str] = []
+        if verdict.repeat_kind is not RepeatKind.NONE:
+            # The block must be in place *before* the Nth identical call
+            # runs: with ``tool_repeat_block_at == 5`` the tool is
+            # withheld after the 4th identical call, so the 5th request
+            # no longer advertises it and the 5th call is refused.
+            if verdict.occurrences >= self.config.tool_repeat_block_at - 1:
+                self._blocked_tools.add(verdict.tool_name)
+                log_debug(f"Tool '{verdict.tool_name}' blocked after {verdict.occurrences} identical calls")
+            if verdict.occurrences >= self.config.tool_repeat_stop_at:
+                self._tools_disabled_for_turn = True
+            if verdict.occurrences >= self.config.tool_repeat_warn_at and self._reminders.should_emit(
+                ReminderKind.TOOL_REPEAT, turn
+            ):
+                self._reminders.mark_emitted(ReminderKind.TOOL_REPEAT, turn)
+                reminders.append(TOOL_REPEAT_REMINDER.format(tool=verdict.tool_name, count=verdict.occurrences))
+        if verdict.no_progress and self._reminders.should_emit(ReminderKind.NO_PROGRESS, turn):
+            self._reminders.mark_emitted(ReminderKind.NO_PROGRESS, turn)
+            reminders.append(NO_PROGRESS_REMINDER)
+        return reminders
+
     def _execute_tool_calls(
         self,
         tool_calls: list[ToolCall],
@@ -3039,6 +3252,11 @@ class AgentLoop:
             tools_schema.append(ASK_USER_SCHEMA)
             tools_schema.append(DELEGATE_EXTERNAL_TASK_SCHEMA)
 
+        # Anti-loop: tools the agent kept re-issuing with identical
+        # arguments are withheld from the provider so the model cannot
+        # keep choosing them.
+        tools_schema = self._filter_blocked_tools(tools_schema)
+
         # Deduplicate — Anthropic rejects requests with duplicate tool names
         seen: set = set()
         deduped: list = []
@@ -3102,6 +3320,16 @@ class AgentLoop:
         if self._owns_cancel_event:
             self._cancelled.clear()
         self._docs_reviewer_invoked = False
+        # Anti-loop state is per user request: a fresh request gets a
+        # fresh repeat history, a fresh reminder budget, and no blocked
+        # tools carried over from the previous one.
+        self._progress.reset_user_turn()
+        self._reminders.reset_run()
+        self._blocked_tools.clear()
+        # Refresh the provider's stream stall budgets from the config so
+        # a settings change takes effect on the next run.
+        self.provider.stream_first_progress_timeout = float(self.config.stream_first_progress_timeout_seconds)
+        self.provider.stream_idle_timeout = float(self.config.stream_idle_timeout_seconds)
         self._running = True
         self.session.is_running = True
 
