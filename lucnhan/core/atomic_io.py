@@ -21,7 +21,11 @@ import time
 
 # Windows transient file-lock errors worth retrying:
 #   32 = ERROR_SHARING_VIOLATION, 33 = ERROR_LOCK_VIOLATION.
-_DEFAULT_RETRY_WINERRORS = frozenset({32, 33})
+# 5 (access denied) is included because that is what Windows reports for a
+# replace over a file that a scanner/indexer has just opened without
+# FILE_SHARE_DELETE; measured at ~1 lost write per 2000 on a plain Defender
+# setup.  A genuine permission problem still surfaces, after the bounded retry.
+_DEFAULT_RETRY_WINERRORS = frozenset({5, 32, 33})
 _DEFAULT_ATTEMPTS = 6
 _DEFAULT_INITIAL_BACKOFF_SEC = 0.05
 
@@ -42,9 +46,8 @@ def atomic_replace(src: StrPath, dst: StrPath) -> None:
             os.replace(src, dst)
             return
         except OSError as exc:
-            # Retry only on the two transient Windows file-lock errors;
-            # everything else (genuine permission denied, missing source)
-            # propagates immediately.
+            # Retry only on the transient Windows file-lock errors; everything
+            # else (missing source, non-Windows errors) propagates immediately.
             if getattr(exc, "winerror", None) not in _DEFAULT_RETRY_WINERRORS:
                 raise
             if attempt + 1 == _DEFAULT_ATTEMPTS:
