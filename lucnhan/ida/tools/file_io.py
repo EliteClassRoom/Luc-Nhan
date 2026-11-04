@@ -32,6 +32,9 @@ _WRITE_MAX_BYTES = 2 * 1024 * 1024
 
 _SEGMENT_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 _ABS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+# Windows treats these as devices whatever the extension (``aux.txt``); a file
+# created under such a name cannot be opened or deleted by ordinary tools.
+_WINDOWS_DEVICE_RE = re.compile(r"(con|prn|aux|nul|com[0-9]|lpt[0-9])", re.IGNORECASE)
 
 
 class _FileToolError(ValueError):
@@ -71,6 +74,9 @@ def _normalize_relative_path(candidate: object) -> list[str]:
     if any(seg == ".." for seg in raw_parts):
         raise _FileToolError("path traversal is not permitted")
     parts = [_SEGMENT_SAFE_RE.sub("_", seg) or "_" for seg in raw_parts]
+    for seg in parts:
+        if _WINDOWS_DEVICE_RE.fullmatch(seg.split(".", 1)[0]):
+            raise _FileToolError(f"'{seg}' is a reserved Windows device name")
     return parts
 
 

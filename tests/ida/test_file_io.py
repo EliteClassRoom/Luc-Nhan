@@ -125,6 +125,21 @@ class TestWriteFile(unittest.TestCase):
         with open(os.path.join(self.tmp, "notes", "out.md"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "hello\nworld")
 
+    def test_rejects_windows_device_names(self):
+        """CON/AUX/COM1/... create files Explorer and ``del`` cannot remove."""
+        for name in ("CON", "aux.txt", "COM1", "lpt1.log", "notes/Nul", "notes/prn.md", "con."):
+            with self.subTest(name=name), _with_root(self.tmp):
+                result = file_io.write_file(name, "x")
+            self.assertIn("Error", result)
+            self.assertIn("reserved", result)
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["notes", "x.idb"])
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "notes")), [])
+
+    def test_allows_names_that_merely_contain_a_device_name(self):
+        for name in ("notes/console.md", "notes/com10.txt", "notes/auxiliary.md", "notes/nullable.txt"):
+            with self.subTest(name=name), _with_root(self.tmp):
+                self.assertIn("Wrote", file_io.write_file(name, "x"))
+
     def test_rejects_existing_without_overwrite(self):
         target = os.path.join(self.tmp, "notes", "present.md")
         with open(target, "w", encoding="utf-8") as f:
