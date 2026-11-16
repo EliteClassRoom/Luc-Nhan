@@ -398,6 +398,24 @@ class TestIdaSessionController(unittest.TestCase):
         self.ctrl.shutdown()
         self.ctrl.shutdown()  # Should not raise
 
+    def test_shutdown_cancels_then_waits_for_running_agents(self) -> None:
+        """Cancelled agents must leave the IDA API before the host unloads the DB."""
+        calls: list[object] = []
+
+        class _Runner:
+            def cancel(self) -> None:
+                calls.append("cancel")
+
+            def wait_stopped(self, timeout: float) -> None:
+                calls.append(("wait", timeout))
+
+        self.ctrl._runners["t1"] = _Runner()  # type: ignore[assignment]
+        self.ctrl.shutdown()
+
+        self.assertEqual(calls[0], "cancel")
+        self.assertIsInstance(calls[1], tuple)
+        self.assertGreater(calls[1][1], 0.0)  # type: ignore[index]
+
     def test_wire_central_memory_routes_existing_workspace_through_backup_helper(self) -> None:
         """Second-run _wire_central_memory must open via open_workspace_for_write."""
         from unittest.mock import MagicMock

@@ -67,6 +67,12 @@ def _normalize_db_path(path: str) -> str:
         return path
 
 
+# How long shutdown waits for cancelled agents to leave the IDA API. The agent
+# threads are daemons, so the deadline only bounds the wait — a wedged one is
+# abandoned rather than blocking the host's teardown.
+_SHUTDOWN_JOIN_SECONDS = 2.0
+
+
 class SessionControllerBase:
     """Non-Qt orchestrator for Luc Nhan sessions."""
 
@@ -1406,6 +1412,15 @@ class SessionControllerBase:
             self._runtime_init_done.wait(timeout=1.0)
         # Cancel every running agent across all tabs.
         self.cancel_all()
+        # Give them a moment to leave the IDA API: ``IDA`` unloads the database
+        # right after this, and a handler still inside ``execute_sync`` writes
+        # into a dead IDB. Bounded, because the threads are daemons.
+        deadline = time.monotonic() + _SHUTDOWN_JOIN_SECONDS
+        for runner in list(self._runners.values()):
+            # ``getattr`` so test doubles that only implement ``cancel`` work.
+            wait = getattr(runner, "wait_stopped", None)
+            if wait is not None:
+                wait(max(0.0, deadline - time.monotonic()))
         self._runners.clear()
         # In-memory undo stacks die with the controller.
         with self._mutation_log_lock:

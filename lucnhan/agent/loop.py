@@ -1128,8 +1128,11 @@ class AgentLoop:
         no override, thinking enabled) and the wire payload is identical
         to the pre-context behaviour.
         """
+        # Defence in depth: config load clamps this, but a config built in code
+        # (tests, headless callers) can still hand us 0, which made range()
+        # empty and the retry loop fall through with no attempt at all.
         if max_retries <= 0:
-            max_retries = self.config.max_retries or _DEFAULT_MAX_RETRIES
+            max_retries = max(1, self.config.max_retries or _DEFAULT_MAX_RETRIES)
         silent_mode = self.config.silent_retry_mode
 
         last_error: Exception | None = None
@@ -1174,9 +1177,15 @@ class AgentLoop:
                     backoff = self._retry_backoff(attempt)
                     yield TurnEvent.error_event(f"\u23f3 Empty response \u2014 retrying in {backoff:.0f}s...")
                     self._sleep_with_cancel(backoff)
-                    request_context = dataclass_replace(
-                        request_context or LLMRequestContext(), system_suffix=_EMPTY_RESPONSE_SUFFIX
-                    )
+                    # Append, never replace: the caller may already carry a
+                    # suffix (the degeneracy-recovery pass does), and the
+                    # empty-response hint must not evict it. Repeated empty
+                    # answers must not stack the hint either.
+                    _current = request_context or LLMRequestContext()
+                    _suffix = _current.system_suffix
+                    if _EMPTY_RESPONSE_SUFFIX not in _suffix:
+                        _suffix = "\n\n".join(part for part in (_suffix, _EMPTY_RESPONSE_SUFFIX) if part)
+                    request_context = dataclass_replace(_current, system_suffix=_suffix)
                     continue
                 # The retries are exhausted: fail the turn with a visible
                 # reason instead of persisting a silently empty answer.
@@ -1187,8 +1196,11 @@ class AgentLoop:
                 )
             return result
 
-        # All retries exhausted
-        raise last_error  # type: ignore[misc]
+        # All retries exhausted. ``last_error`` is only unset for a direct
+        # ``max_retries=0`` caller, where the loop body never ran.
+        if last_error is not None:
+            raise last_error
+        raise ProviderError("No attempt was made: max_retries is 0.", provider=self.provider.name)
 
     def _retry_backoff(self, attempt: int) -> float:
         """Return the jittered backoff (seconds) before retry *attempt*.
@@ -3724,7 +3736,7 @@ class BackgroundAgentRunner:
                             event = TurnEvent.text_delta("".join(pending_buffer))
                             pending_buffer.clear()
                             pending_type = None
-                        self.event_queue.put(event)
+                        _put_delta(event)
                 elif event.type == TurnEventType.REASONING_DELTA:
                     if pending_type is not None and pending_type != TurnEventType.REASONING_DELTA:
                         _flush_pending()
@@ -3737,7 +3749,7 @@ class BackgroundAgentRunner:
                             event = TurnEvent.reasoning_event("".join(pending_buffer))
                             pending_buffer.clear()
                             pending_type = None
-                        self.event_queue.put(event)
+                        _put_delta(event)
                 elif event.type in _BACKGROUND_RUNNER_CONTROL_EVENT_TYPES:
                     if event.type == TurnEventType.RECOVERY_START:
                         # RECOVERY_START is a hard boundary: drop the
@@ -3764,6 +3776,17 @@ class BackgroundAgentRunner:
 
     def cancel(self) -> None:
         self.agent_loop.cancel()
+
+    def wait_stopped(self, timeout: float) -> None:
+        """Join the agent thread, bounded.
+
+        Shutdown-only: the thread is a daemon, so this just gives a cancelled
+        run the chance to return from a host call before the database goes
+        away. A wedged thread is abandoned at the deadline.
+        """
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout)
 
     def get_event(self, timeout: float = 0.1) -> TurnEvent | None:
         """Get the next event, or None if queue is empty."""

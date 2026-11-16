@@ -213,17 +213,30 @@ class TestOrdinaryToolDispatchUnchanged(_HostTestCase):
     def test_mutating_tool_without_host_dispatch_still_serializes(self):
         """A main_thread=False tool keeps mutation serialization and caching."""
         order: list[str] = []
+        guard = threading.Lock()
+        active = [0]
+        peak = [0]
         entered = threading.Semaphore(0)
         done = threading.Event()
 
         def first() -> str:
+            with guard:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
             order.append("first-in")
             entered.release()
             done.wait(_HOST_WAIT)
+            with guard:
+                active[0] -= 1
             return "first"
 
         def second() -> str:
+            with guard:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
             order.append("second-in")
+            with guard:
+                active[0] -= 1
             return "second"
 
         registry = ToolRegistry(dispatch_wrapper=self.host.wrap)
@@ -238,8 +251,9 @@ class TestOrdinaryToolDispatchUnchanged(_HostTestCase):
         self.assertFinished(t1)
         self.assertFinished(t2)
 
-        self.assertEqual(box, ["first", "second"])
-        self.assertEqual(order, ["first-in", "second-in"], "mutating tools interleaved on the pool")
+        self.assertEqual(sorted(box), ["first", "second"])
+        self.assertEqual(sorted(order), ["first-in", "second-in"])
+        self.assertEqual(peak[0], 1, "mutating tools interleaved on the pool")
         self.assertEqual(self.host.pumped, [], "main_thread=False tool was host-dispatched anyway")
         # Mutating tools flush the read-only cache.
         self.assertEqual(registry._result_cache.size, 0)

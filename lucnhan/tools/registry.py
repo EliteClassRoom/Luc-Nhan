@@ -24,6 +24,11 @@ _DEFAULT_TOOL_TIMEOUT = 30.0
 
 # Shared executor — single thread is sufficient since IDA tools run on main thread via idasync
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tool-timeout")
+#: Per-thread nesting depth of mutating handlers, so a nested call runs inline.
+_mutation_depth = threading.local()
+#: A mutating call may first wait this many timeouts for the mutation lock and
+#: only then starts its own clock, so the caller waits ``timeout * factor``.
+MUTATION_LOCK_WAIT_FACTOR = 2
 
 
 def _bind_context(
@@ -81,8 +86,10 @@ class ToolRegistry:
         self._lock = threading.RLock()  # protects against MCP thread concurrent registration
         # ponytail: global lock serializing mutating tools so concurrent agents
         # don't interleave IDB writes (keeps the undo stack coherent). Upgrade to
-        # per-tool locks if mutation throughput ever matters.
-        self._mutate_lock = threading.Lock()
+        # per-tool locks if mutation throughput ever matters. Reentrant because a
+        # handler may call back into the registry (bulk_renamer does) on its own
+        # thread; a plain Lock would deadlock there.
+        self._mutate_lock = threading.RLock()
 
     @staticmethod
     def _coerce_arguments(defn: ToolDefinition, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -338,6 +345,49 @@ class ToolRegistry:
             self._catalog_cache = format_tools_catalog(available)
             return self._catalog_cache
 
+    def _serialized_mutation(
+        self,
+        handler: Callable[..., Any],
+        *,
+        tool_name: str,
+        dispatch_wrapper: Callable | None,
+        cancel_event: threading.Event | None,
+        timeout: float,
+    ) -> Callable[..., Any]:
+        """Wrap *handler* so it runs under the mutation lock, tracking nesting.
+
+        The lock has to be held by the thread that runs the handler; the depth
+        counter lets a nested mutating call (a handler re-entering the registry)
+        run inline instead of queueing behind itself.
+
+        The lock wait gets its own :data:`MUTATION_LOCK_WAIT_FACTOR` share of the
+        timeout, so a call queued behind a long mutation is not reported as a
+        tool timeout before it ever starts.  The execution context is bound
+        *after* the lock — that is when the handler's clock should start.
+        """
+
+        def serialized(**kwargs: Any) -> Any:
+            lock_wait = timeout * MUTATION_LOCK_WAIT_FACTOR
+            if not self._mutate_lock.acquire(timeout=lock_wait):
+                raise ToolError(
+                    f"Tool {tool_name} timed out after {lock_wait}s waiting for the mutation lock",
+                    tool_name=tool_name,
+                )
+            depth = getattr(_mutation_depth, "depth", 0)
+            _mutation_depth.depth = depth + 1
+            try:
+                return _bind_context(
+                    handler,
+                    dispatch_wrapper=dispatch_wrapper,
+                    cancel_event=cancel_event,
+                    deadline=time.monotonic() + timeout,
+                )(**kwargs)
+            finally:
+                _mutation_depth.depth = depth
+                self._mutate_lock.release()
+
+        return serialized
+
     def execute(self, name: str, arguments: dict[str, Any], *, cancel_event: threading.Event | None = None) -> str:
         with self._lock:
             defn = self._tools.get(name)
@@ -371,20 +421,22 @@ class ToolRegistry:
         try:
             # Mutating tools serialize so concurrent agents don't interleave IDB
             # writes — this keeps capture_pre_state / undo records coherent.
-            # The deadline is bound after the lock for the mutating path so it
-            # matches the enforced future.result(timeout), which also starts
-            # only once the lock is held — handlers clamping their own budget
-            # against context.deadline see the same clock the registry uses.
+            # The lock is taken inside the worker, not around ``submit``: a
+            # handler that calls back into the registry runs on that worker, and
+            # a lock held by the calling thread would deadlock it.
             if is_mutating:
-                with self._mutate_lock:
-                    handler = _bind_context(
-                        handler,
-                        dispatch_wrapper=dispatch_wrapper,
-                        cancel_event=cancel_event,
-                        deadline=time.monotonic() + timeout,
-                    )
+                handler = self._serialized_mutation(
+                    handler,
+                    tool_name=name,
+                    dispatch_wrapper=dispatch_wrapper,
+                    cancel_event=cancel_event,
+                    timeout=timeout,
+                )
+                if getattr(_mutation_depth, "depth", 0) > 0:
+                    result = handler(**arguments)
+                else:
                     future = _executor.submit(handler, **arguments)
-                    result = future.result(timeout=timeout)
+                    result = future.result(timeout=timeout * MUTATION_LOCK_WAIT_FACTOR)
             else:
                 # Deadline covers the host dispatch + handler, so handlers
                 # that split host and CPU phases can clamp their own budget
@@ -396,10 +448,17 @@ class ToolRegistry:
                     deadline=time.monotonic() + timeout,
                 )
                 future = _executor.submit(handler, **arguments)
-                result = future.result(timeout=timeout)
+                wait = timeout * MUTATION_LOCK_WAIT_FACTOR if is_mutating else timeout
+                result = future.result(timeout=wait)
         except FuturesTimeoutError:
             if future is not None:
                 future.cancel()
+            # ``cancel()`` is a no-op once the worker started, so a mutating
+            # handler keeps writing after we give up on it: the cached reads
+            # from before the timeout are no longer trustworthy.
+            if is_mutating:
+                self._result_cache.invalidate()
+                self._notify_ida_cache_invalidation()
             raise ToolError(
                 f"Tool {name} timed out after {timeout}s",
                 tool_name=name,
@@ -474,20 +533,53 @@ class ToolRegistry:
         if dispatch_wrapper is not None and needs_host_dispatch:
             handler = dispatch_wrapper(handler)
 
-        handler = _bind_context(
-            handler,
-            dispatch_wrapper=dispatch_wrapper,
-            cancel_event=cancel_event,
-            deadline=time.monotonic() + timeout,
-        )
+        # Serialized like :meth:`execute` — but the lock is taken *inside* the
+        # worker, not around ``submit``/``result``: a handler that calls back
+        # into the registry (bulk_renamer) runs on that worker, and a lock held
+        # by the calling thread would deadlock it. This is the path the agent
+        # loop uses for every tool call, so without it the "don't interleave
+        # IDB writes" invariant only held for the rare direct ``execute``
+        # callers while parallel subagents raced. The context is bound inside
+        # the wrapper for the same reason: it starts once the lock is held.
+        if is_mutating:
+            handler = self._serialized_mutation(
+                handler,
+                tool_name=name,
+                dispatch_wrapper=dispatch_wrapper,
+                cancel_event=cancel_event,
+                timeout=timeout,
+            )
+        else:
+            handler = _bind_context(
+                handler,
+                dispatch_wrapper=dispatch_wrapper,
+                cancel_event=cancel_event,
+                deadline=time.monotonic() + timeout,
+            )
+
+        # A mutating handler running on a worker already holds the lock; a
+        # nested call that went back to the pool would wait on a second worker
+        # for a lock its own caller holds. Run it inline on that thread instead
+        # — the reentrant lock admits it, and no timeout is enforceable inline.
+        nested_mutation = is_mutating and getattr(_mutation_depth, "depth", 0) > 0
 
         future = None
         try:
-            future = _executor.submit(handler, **arguments)
-            result = future.result(timeout=timeout)
+            if nested_mutation:
+                result = handler(**arguments)
+            else:
+                future = _executor.submit(handler, **arguments)
+                wait = timeout * MUTATION_LOCK_WAIT_FACTOR if is_mutating else timeout
+                result = future.result(timeout=wait)
         except FuturesTimeoutError:
             if future is not None:
                 future.cancel()
+            # ``cancel()`` is a no-op once the worker started, so a mutating
+            # handler keeps writing after we give up on it: the cached reads
+            # from before the timeout are no longer trustworthy.
+            if is_mutating:
+                self._result_cache.invalidate()
+                self._notify_ida_cache_invalidation()
             raise ToolError(
                 f"Tool {name} timed out after {timeout}s",
                 tool_name=name,

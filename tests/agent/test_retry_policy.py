@@ -19,6 +19,8 @@ import os
 import sys
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
 
@@ -218,6 +220,35 @@ def test_empty_response_retried_twice_then_errors() -> None:
     assert result.error is not None
     assert result.ok is False
     assert any("empty response" in str(getattr(e, "error", "")) for e in events)
+
+
+def test_empty_response_suffix_is_appended_not_replaced() -> None:
+    """A caller-supplied suffix survives the empty-response retries.
+
+    The degeneracy-recovery pass sets its own ``system_suffix``; the
+    empty-response hint used to *replace* it, so a recovered attempt that
+    also came back empty lost the recovery instruction. It must also not
+    stack on a second retry.
+    """
+    from lucnhan.core.types import LLMRequestContext
+
+    provider = ScriptedProvider(
+        [
+            [StreamChunk(finish_reason="stop")],
+            [StreamChunk(finish_reason="stop")],
+            [StreamChunk(finish_reason="stop")],
+        ]
+    )
+    loop = _make_loop(provider)
+
+    with pytest.raises(ProviderError):
+        _drain(loop._stream_llm_turn("system", None, request_context=LLMRequestContext(system_suffix="RECOVERY-HINT")))
+
+    assert provider.suffixes_sent[1].startswith("RECOVERY-HINT")
+    assert _EMPTY_RESPONSE_SUFFIX in provider.suffixes_sent[1]
+    # Not appended a second time on the next retry.
+    assert provider.suffixes_sent[2].count(_EMPTY_RESPONSE_SUFFIX) == 1
+    assert provider.suffixes_sent[2].startswith("RECOVERY-HINT")
 
 
 # ---------------------------------------------------------------------------

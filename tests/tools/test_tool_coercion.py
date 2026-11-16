@@ -13,7 +13,7 @@ install_ida_mocks()
 
 from lucnhan.tools.base import ParameterSchema, ToolDefinition
 from lucnhan.tools.coercion import coerce_bool
-from lucnhan.tools.registry import ToolRegistry
+from lucnhan.tools.registry import ToolError, ToolRegistry
 
 
 def _make_defn(params: list[ParameterSchema]) -> ToolDefinition:
@@ -252,3 +252,122 @@ class TestCoerceBool(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMutatingCallsAreSerialized(unittest.TestCase):
+    """``execute_coerced`` is the agent path; it must obey the mutation lock."""
+
+    def test_two_threads_never_overlap_a_mutating_tool(self) -> None:
+        import threading
+        import time
+
+        active = 0
+        peak = 0
+        guard = threading.Lock()
+
+        def handler(**_: object) -> str:
+            nonlocal active, peak
+            with guard:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.05)
+            with guard:
+                active -= 1
+            return "ok"
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="mutant",
+                description="mutating",
+                parameters=[],
+                handler=handler,
+                mutating=True,
+            )
+        )
+
+        threads = [threading.Thread(target=registry.execute_coerced, args=("mutant", {})) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertEqual(peak, 1)
+
+    def test_reentrant_mutation_does_not_deadlock(self) -> None:
+        """A mutating handler calling another mutating tool must not deadlock."""
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="inner",
+                description="inner",
+                parameters=[],
+                handler=lambda **_: "inner-ok",
+                mutating=True,
+            )
+        )
+        registry.register(
+            ToolDefinition(
+                name="outer",
+                description="outer",
+                parameters=[],
+                handler=lambda **_: registry.execute_coerced("inner", {}),
+                mutating=True,
+            )
+        )
+
+        self.assertEqual(registry.execute_coerced("outer", {}), "inner-ok")
+
+    def test_lock_wait_does_not_eat_the_handler_budget(self) -> None:
+        """A queued mutator must not time out before its handler ever starts."""
+        import threading
+        import time
+
+        started = threading.Event()
+
+        def slow(**_: object) -> str:
+            started.set()
+            time.sleep(0.3)
+            return "slow"
+
+        registry = ToolRegistry()
+        registry.register(ToolDefinition(name="slow", description="", parameters=[], handler=slow, mutating=True))
+        registry.register(
+            ToolDefinition(
+                name="queued", description="", parameters=[], handler=lambda **_: "queued", mutating=True, timeout=0.2
+            )
+        )
+
+        holder = threading.Thread(target=registry.execute_coerced, args=("slow", {}))
+        holder.start()
+        self.assertTrue(started.wait(5))
+        self.assertEqual(registry.execute_coerced("queued", {}), "queued")
+        holder.join(timeout=5)
+
+    def test_timed_out_mutation_drops_cached_reads(self) -> None:
+        """An abandoned mutating handler keeps running, so cached reads go stale."""
+        import time
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(name="get_function_name", description="", parameters=[], handler=lambda **_: "before")
+        )
+        registry.register(
+            ToolDefinition(
+                name="slow_write",
+                description="",
+                parameters=[],
+                handler=lambda **_: time.sleep(2) or "late",
+                mutating=True,
+                timeout=0.1,
+            )
+        )
+
+        self.assertEqual(registry.execute("get_function_name", {}), "before")
+        self.assertEqual(registry.execute("get_function_name", {}), "before")
+        self.assertEqual(registry._result_cache.size, 1)
+
+        with self.assertRaises(ToolError):
+            registry.execute_coerced("slow_write", {})
+
+        self.assertEqual(registry._result_cache.size, 0)
