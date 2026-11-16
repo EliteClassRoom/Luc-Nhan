@@ -150,10 +150,13 @@ def export_workspace(
             )
         )
 
+    # Built from the manifest entries by name: MEMORY.md is appended to
+    # ``manifest_files`` without a record file, so zipping the two sequences
+    # positionally only lined up while the markdown was missing.
     record_counts = {
-        name.replace("records/", "").replace(".jsonl", ""): f.record_count
-        for name, f in zip(record_files.keys(), manifest_files, strict=True)
-        if name.startswith("records/")
+        f.name.removeprefix("records/").removesuffix(".jsonl"): f.record_count
+        for f in manifest_files
+        if f.name.startswith("records/")
     }
 
     from datetime import datetime

@@ -22,6 +22,7 @@ from lucnhan.mcp.protocol import (
     decode_jsonrpc_response,
     encode_jsonrpc_request,
 )
+from lucnhan.tools.base import ToolDefinition
 from lucnhan.tools.registry import ToolRegistry
 
 
@@ -314,6 +315,194 @@ class TestMCPStartTimeout(unittest.TestCase):
         finally:
             mgr.stop_all()
 
+    def test_restart_drops_tools_left_by_the_previous_client(self):
+        """A stale ``mcp_<server>_*`` tool must not outlive its client."""
+        from unittest.mock import patch
+
+        from lucnhan.tools.base import ToolDefinition
+
+        mgr = MCPManager()
+        registry = ToolRegistry()
+        registry.register(ToolDefinition(name="mcp_stale_old", description="", parameters=[], handler=lambda **_: "x"))
+        config = MCPServerConfig(name="stale", command="whatever")
+
+        class FakeClient:
+            name = "stale"
+
+            def __init__(self, cfg):
+                pass
+
+            def start(self, timeout):
+                pass
+
+            def stop(self):
+                pass
+
+            def get_tools(self):
+                return []
+
+        try:
+            with (
+                patch("lucnhan.mcp.client.MCPClient", FakeClient),
+                patch("lucnhan.mcp.bridge.register_mcp_tools", lambda client, registry, prefix="": 0),
+            ):
+                mgr._start_one(config, registry, None, generation=mgr._generation)
+            self.assertIsNone(registry.get("mcp_stale_old"))
+        finally:
+            mgr.stop_all()
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMCPSafeNames:
+    """Server-chosen names must survive provider function-name rules."""
+
+    @staticmethod
+    def _client(name: str, tools: list[str]):
+        from unittest.mock import MagicMock
+
+        from lucnhan.mcp.client import MCPClient
+
+        client = MagicMock(spec=MCPClient)
+        client.name = name
+        client.get_tools.return_value = [
+            MCPToolSchema(name=t, description="d", input_schema={"type": "object", "properties": {}}) for t in tools
+        ]
+        return client
+
+    def test_space_in_tool_name_is_underscored(self) -> None:
+        registry = ToolRegistry()
+        register_mcp_tools(self._client("my server", ["read file"]), registry)
+        assert registry.list_names() == ["mcp_my_server_read_file"]
+
+    def test_long_name_is_capped_at_the_provider_limit(self) -> None:
+        registry = ToolRegistry()
+        register_mcp_tools(self._client("srv", ["x" * 90]), registry)
+        (name,) = registry.list_names()
+        assert len(name) == 64
+        assert name.startswith("mcp_srv_x")
+
+    def test_all_non_ascii_name_gets_a_placeholder(self) -> None:
+        registry = ToolRegistry()
+        register_mcp_tools(self._client("srv", ["读取文件"]), registry)
+        assert registry.list_names() == ["mcp_srv_tool"]
+
+    def test_partially_non_ascii_name_keeps_its_ascii_letters(self) -> None:
+        registry = ToolRegistry()
+        register_mcp_tools(self._client("srv", ["đọc tệp"]), registry)
+        assert registry.list_names() == ["mcp_srv_c_t_p"]
+
+    def test_long_prefix_leaves_room_for_the_tool(self) -> None:
+        registry = ToolRegistry()
+        register_mcp_tools(self._client("s" * 40, ["t" * 50]), registry)
+        (name,) = registry.list_names()
+        assert len(name) == 64
+        assert name.startswith("mcp_sss")
+        assert name.endswith("t")
+
+    def test_description_is_capped(self) -> None:
+        registry = ToolRegistry()
+        client = self._client("srv", ["t"])
+        client.get_tools.return_value[0].description = "d" * 500
+        register_mcp_tools(client, registry)
+        assert len(registry.get("mcp_srv_t").description) <= 73
+
+    def test_duplicate_names_are_disambiguated(self) -> None:
+        registry = ToolRegistry()
+        register_mcp_tools(self._client("srv", ["dup", "dup"]), registry)
+        assert sorted(registry.list_names()) == ["mcp_srv_dup", "mcp_srv_dup_2"]
+
+    def test_existing_registry_entry_is_not_overwritten(self) -> None:
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(name="mcp_srv_dup", category="native", description="n", parameters=[], handler=lambda: "n")
+        )
+        register_mcp_tools(self._client("srv", ["dup"]), registry)
+        assert registry.get("mcp_srv_dup").category == "native"
+        assert registry.get("mcp_srv_dup_2") is not None
+
+
+class TestKillLeftovers:
+    """``_kill_leftovers`` is the last resort for a wedged server shutdown."""
+
+    @staticmethod
+    def _spawn():
+        import subprocess
+        import sys
+
+        return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+    @staticmethod
+    def _spawn_other_image():
+        """A child whose image differs from ``python`` on every platform."""
+        import os
+        import subprocess
+
+        if os.name == "nt":
+            # ``timeout`` refuses redirected stdin; ping does not. Its path is
+            # absolute because some test module trims PATH, which leaves
+            # ``cmd /c ping`` with "'ping' is not recognized".
+            ping = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "ping.exe")
+            return subprocess.Popen([ping, "-n", "60", "127.0.0.1"], stdout=subprocess.DEVNULL)
+        return subprocess.Popen(["sleep", "60"])
+
+    @staticmethod
+    def _assert_dead(proc) -> None:
+        proc.wait(timeout=10)
+
+    def test_kills_only_processes_started_after_the_snapshot(self) -> None:
+        import os
+        import time
+
+        from lucnhan.mcp.client import _descendants, _kill_leftovers
+
+        before = set(_descendants(os.getpid()))
+        proc = self._spawn()
+        try:
+            time.sleep(0.4)
+            assert proc.pid in _descendants(os.getpid())
+            _kill_leftovers(before, "python")
+            self._assert_dead(proc)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+    def test_unmatched_image_falls_back_to_killing_all_new_children(self) -> None:
+        """Wrapper commands (npx/uvx) match no image; they must still be killed."""
+        import os
+        import time
+
+        from lucnhan.mcp.client import _descendants, _kill_leftovers
+
+        before = set(_descendants(os.getpid()))
+        proc = self._spawn()
+        try:
+            time.sleep(0.4)
+            _kill_leftovers(before, "definitely-not-this-image")
+            self._assert_dead(proc)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+    def test_other_servers_survive_when_the_image_matches(self) -> None:
+        """A parallel server of a different image is not a leftover."""
+        import os
+        import time
+
+        from lucnhan.mcp.client import _descendants, _kill_leftovers
+
+        other = self._spawn_other_image()
+        time.sleep(0.4)
+        before = set(_descendants(os.getpid())) - {other.pid}
+        own = self._spawn()
+        try:
+            time.sleep(0.4)
+            _kill_leftovers(before, "python")
+            self._assert_dead(own)
+            assert other.poll() is None
+        finally:
+            for proc in (own, other):
+                if proc.poll() is None:
+                    proc.kill()

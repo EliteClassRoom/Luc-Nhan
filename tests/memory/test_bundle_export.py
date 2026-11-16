@@ -80,6 +80,36 @@ class TestExport:
         assert len(facts_file) == 1
         assert facts_file[0].record_count == 3
 
+    def test_export_with_memory_markdown(self, tmp_path: Path) -> None:
+        """MEMORY.md is bundled without breaking the record counts.
+
+        It is appended to the manifest without a record file of its own, so
+        the counts used to be built by zipping two sequences of unequal
+        length (``strict=True``) and the export raised as soon as a manual
+        note existed.
+        """
+        _store, repo, locator, mid = _seed_workspace(tmp_path)
+        repo.upsert_memory(
+            KnowledgeMemory(
+                id=new_record_id("fact"),
+                binary_id=mid,
+                type="t",
+                title="Fact",
+                content="c",
+                confidence=0.5,
+            )
+        )
+        paths = locator.binary(mid)
+        paths.markdown.parent.mkdir(parents=True, exist_ok=True)
+        paths.markdown.write_text("- manual note\n", encoding="utf-8")
+
+        output = tmp_path / "bundle.zip"
+        result = export_workspace(paths, repo, output)
+
+        assert result.total_records == 1
+        assert "MEMORY.md" in [f.name for f in result.manifest.files]
+        assert result.manifest.record_counts == {"facts": 1}
+
     def test_export_deterministic_record_order(self, tmp_path: Path) -> None:
         """Two exports of the same workspace produce the same record hashes."""
         _store, repo, locator, mid = _seed_workspace(tmp_path)

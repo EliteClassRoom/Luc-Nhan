@@ -45,6 +45,166 @@ def reset_mcp_sdk_probe() -> None:
     _HAS_MCP = None
 
 
+def _child_map() -> tuple[dict[int, list[int]], dict[int, str]]:
+    """Map processes to their children plus a pid -> image-name table.
+
+    Returns ``({}, {})`` when the platform gives us nothing to work with.
+    """
+    rows: list[tuple[int, int, str]] = []
+    try:
+        if sys.platform == "win32":
+            rows = _win_process_pairs()
+        else:
+            import subprocess
+
+            out = subprocess.run(
+                ["ps", "-eo", "pid=,ppid=,comm="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            ).stdout
+            for line in out.splitlines():
+                parts = line.split(maxsplit=2)
+                if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+                    rows.append((int(parts[0]), int(parts[1]), parts[2]))
+    except Exception:  # best effort - stop() must not fail here
+        return {}, {}
+
+    children: dict[int, list[int]] = {}
+    images: dict[int, str] = {}
+    for pid, ppid, image in rows:
+        children.setdefault(ppid, []).append(pid)
+        images[pid] = image
+    return children, images
+
+
+def _win_process_pairs() -> list[tuple[int, int, str]]:
+    """(pid, ppid, exe) rows from a Toolhelp snapshot; no child process needed."""
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", ctypes.c_char * 260),
+        ]
+
+    kernel32 = ctypes.windll.kernel32
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot == -1:
+        return []
+    rows: list[tuple[int, int, str]] = []
+    entry = ProcessEntry32()
+    entry.dwSize = ctypes.sizeof(ProcessEntry32)
+    try:
+        ok = kernel32.Process32First(snapshot, ctypes.byref(entry))
+        while ok:
+            exe = entry.szExeFile.decode("mbcs", "replace") if entry.szExeFile else ""
+            rows.append((entry.th32ProcessID, entry.th32ParentProcessID, exe))
+            ok = kernel32.Process32Next(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return rows
+
+
+def _descendants(root: int) -> list[int]:
+    """All descendants of *root*."""
+    return _descendants_in(_child_map()[0], root)
+
+
+def _descendants_in(children: dict[int, list[int]], root: int) -> list[int]:
+    """All descendants of *root* inside an already-snapshotted child map."""
+    found: list[int] = []
+    pending = list(children.get(root, []))
+    while pending:
+        pid = pending.pop()
+        found.append(pid)
+        pending.extend(children.get(pid, []))
+    return found
+
+
+def _same_image(candidate: str, expected: str) -> bool:
+    """True when *candidate* names the executable in *expected*."""
+    return os.path.basename(candidate).lower().removesuffix(".exe") == os.path.basename(expected).lower().removesuffix(
+        ".exe"
+    )
+
+
+def _terminate_pids(pids: list[int], force: bool) -> None:
+    """Terminate *pids*; ``force`` escalates to SIGKILL / ``taskkill /F``."""
+    if not pids:
+        return
+    if sys.platform == "win32":
+        import subprocess
+
+        # taskkill needs one /PID flag per process
+        args = ["taskkill", "/T"]
+        for pid in pids:
+            args += ["/PID", str(pid)]
+        if force:
+            args.insert(1, "/F")
+        subprocess.run(args, capture_output=True, timeout=10, check=False)
+        return
+
+    import signal
+
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def _kill_leftovers(before: set[int], expect: str = "") -> None:
+    """Kill children spawned after *before* was snapshotted (descendants included).
+
+    Last resort for a shutdown that ``join()`` could not complete: the SDK's
+    own ``finally`` block is stuck on the wedged loop, so nothing else will.
+
+    *expect* (the configured command) narrows the candidates to processes whose
+    image matches it: ``MCPManager.start_servers`` starts servers in parallel,
+    so the unfiltered "every new child of IDA" set also contains healthy
+    servers that are still handshaking. Wrapper commands (``npx``/``uvx``)
+    never match on image name — their child is ``node``/``python`` — so an
+    empty match set deliberately falls back to the unfiltered list, and that
+    residual race stays.
+    """
+    children, images = _child_map()
+    leftover = [pid for pid in _descendants_in(children, os.getpid()) if pid not in before]
+    if not leftover:
+        return
+    if expect:
+        matched: set[int] = {pid for pid in leftover if _same_image(images.get(pid, ""), expect)}
+        if matched:
+            for pid in list(matched):
+                matched.update(_descendants_in(children, pid))
+            leftover = [pid for pid in leftover if pid in matched]
+        else:
+            log_debug(f"MCP: no image match for {expect!r}, killing all new descendants")
+    log_debug(f"MCP: killing leftover server processes {leftover}")
+    # Windows taskkill without /F only posts to a window, which a console
+    # server may not have; servers keep no unsaved state, so force there.
+    if sys.platform == "win32":
+        _terminate_pids(leftover, force=True)
+        return
+    _terminate_pids(leftover, force=False)
+    for _ in range(10):
+        alive = set(_descendants(os.getpid()))
+        if not alive.intersection(leftover):
+            return
+        threading.Event().wait(0.1)
+    _terminate_pids(leftover, force=True)
+
+
 def _unwrap_exception(exc: BaseException) -> str:
     """Extract a human-readable message from potentially nested ExceptionGroups.
 
@@ -121,6 +281,9 @@ class MCPClient:
         self._shutdown_event: asyncio.Event | None = None
         self._ready = threading.Event()
         self._start_error: str | None = None
+        # Child PIDs present before we spawn, so a wedged stop() can kill
+        # exactly what this client started and nothing else.
+        self._pre_start_pids: set[int] | None = None
 
     @property
     def is_running(self) -> bool:
@@ -143,6 +306,7 @@ class MCPClient:
         self._running = True
         self._ready.clear()
         self._start_error = None
+        self._pre_start_pids = set(_descendants(os.getpid()))
 
         self._thread = threading.Thread(
             target=self._run_loop,
@@ -154,10 +318,12 @@ class MCPClient:
         # Wait for the async loop to finish initialization
         if not self._ready.wait(timeout=timeout):
             self._running = False
+            self._kill_leftovers_if_stuck()
             raise MCPConnectionError(f"MCP[{self.name}]: initialize timed out after {timeout}s")
 
         if self._start_error:
             self._running = False
+            self._kill_leftovers_if_stuck()
             raise MCPConnectionError(f"MCP[{self.name}]: handshake failed: {self._start_error}")
 
         self._started = True
@@ -175,9 +341,23 @@ class MCPClient:
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5)
+            self._kill_leftovers_if_stuck()
 
         self._session = None
         self._loop = None
+        self._thread = None
+
+    def _kill_leftovers_if_stuck(self) -> None:
+        """Kill the server tree when the loop thread cannot finish on its own.
+
+        The SDK terminates the tree from a ``finally`` block, which never runs
+        while the event loop is wedged (a hung handshake, a full pipe). Without
+        this the orphaned server outlives the client and the restart collides
+        with it.
+        """
+        if self._pre_start_pids is None or not (self._thread and self._thread.is_alive()):
+            return
+        _kill_leftovers(self._pre_start_pids, self.config.command)
         self._thread = None
 
     def get_tools(self) -> list[MCPToolSchema]:

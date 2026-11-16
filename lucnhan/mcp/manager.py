@@ -166,6 +166,10 @@ class MCPManager:
                     client.stop()
                     return
                 # Do NOT store client yet — registration happens outside lock
+            # A previous client of the same server may have left tools behind
+            # (a start that failed after registration, or a restart whose tool
+            # list changed): drop them so the registry only holds this session.
+            registry.unregister_by_prefix(prefix)
             count = register_mcp_tools(client, registry, prefix=prefix)
             # Re-check generation after registration.  If a reload or
             # shutdown happened during registration, unregister the tools

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -44,15 +45,47 @@ def _mcp_schema_to_parameters(input_schema: dict[str, Any]) -> list[ParameterSch
     return params
 
 
-def _make_mcp_handler(client: MCPClient, tool_name: str) -> Callable:
+# Underscores only: MCP names and server names both use "-" and ".", and the
+# rest of the codebase already normalizes those to underscores.
+_UNSAFE_NAME_CHARS_RE = re.compile(r"[^a-zA-Z0-9_]")
+# Provider function-name limit (OpenAI and Anthropic both enforce 64).
+_MAX_TOOL_NAME = 64
+# Used when a tool name is entirely non-ASCII and sanitizes to nothing.
+_TOOL_NAME_PLACEHOLDER = "tool"
+
+
+def _make_mcp_handler(client: MCPClient, tool_name: str, registered_name: str) -> Callable:
     """Create a closure that calls client.call_tool() for the given tool."""
 
     def handler(**kwargs: Any) -> str:
         return client.call_tool(tool_name, kwargs)
 
-    handler.__name__ = f"mcp_{client.name}_{tool_name}"
+    handler.__name__ = registered_name
     handler.__doc__ = f"MCP tool: {tool_name} (server: {client.name})"
     return handler
+
+
+def _registered_tool_name(prefix: str, tool_name: str, registry: ToolRegistry) -> str:
+    """Return a provider-safe, collision-free ``<prefix><tool_name>``.
+
+    MCP servers pick their own tool names and may use characters providers
+    reject (a space, a dot) or names long enough that the prefixed result
+    exceeds the 64-character function-name limit, which fails the whole
+    request. Sanitize, cap, and de-duplicate instead.
+    """
+    safe_prefix = _UNSAFE_NAME_CHARS_RE.sub("_", prefix)[: _MAX_TOOL_NAME - 1]
+    budget = _MAX_TOOL_NAME - len(safe_prefix)
+    tool_part = _UNSAFE_NAME_CHARS_RE.sub("_", tool_name)[:budget].strip("_")
+    if not tool_part:
+        tool_part = _TOOL_NAME_PLACEHOLDER[:budget]
+    base = safe_prefix + tool_part
+    name = base
+    counter = 2
+    while registry.get(name) is not None:
+        suffix = f"_{counter}"
+        name = base[: _MAX_TOOL_NAME - len(suffix)] + suffix
+        counter += 1
+    return name
 
 
 def register_mcp_tools(client: MCPClient, registry: ToolRegistry, prefix: str = "") -> int:
@@ -62,17 +95,18 @@ def register_mcp_tools(client: MCPClient, registry: ToolRegistry, prefix: str = 
     """
     if not prefix:
         # Sanitize server name for use in tool names
-        safe_name = client.name.replace("-", "_").replace(".", "_")
+        safe_name = _UNSAFE_NAME_CHARS_RE.sub("_", client.name)[:24]
         prefix = f"{MCP_TOOL_PREFIX}{safe_name}_"
 
     tools = client.get_tools()
     count = 0
 
     for mcp_tool in tools:
-        lucnhan_name = f"{prefix}{mcp_tool.name}"
-        description = f"[MCP:{client.name}] {mcp_tool.description}"
+        lucnhan_name = _registered_tool_name(prefix, mcp_tool.name, registry)
+        # Capped: the description rides along in every request's tool schema.
+        description = f"[MCP:{client.name}] {mcp_tool.description}"[:73]
         parameters = _mcp_schema_to_parameters(mcp_tool.input_schema)
-        handler = _make_mcp_handler(client, mcp_tool.name)
+        handler = _make_mcp_handler(client, mcp_tool.name, lucnhan_name)
 
         defn = ToolDefinition(
             name=lucnhan_name,

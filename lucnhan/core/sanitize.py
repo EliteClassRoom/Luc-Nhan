@@ -174,40 +174,39 @@ _INSTRUCTION_OVERRIDE_RE = re.compile(
 # ---------------------------------------------------------------------------
 
 
+def _replace_normalized(text: str, pattern: re.Pattern[str], replacement: str = "[FILTERED]") -> str:
+    """Replace *pattern* matches in *text*, matching homoglyph-insensitively.
+
+    ``_normalize_homoglyphs`` is a length-preserving 1-to-1 ``translate()``
+    mapping, so match positions in the normalized shadow copy map exactly
+    onto the original. Replacing in reverse keeps the remaining offsets
+    valid; the surrounding original bytes are preserved verbatim.
+    """
+    normalized = _normalize_homoglyphs(text)
+    for m in reversed(list(pattern.finditer(normalized))):
+        text = text[: m.start()] + replacement + text[m.end() :]
+    return text
+
+
 def strip_injection_markers(text: str) -> str:
     """Remove sequences that mimic LLM role/control markers.
 
     Processing order:
     1. Strip zero-width / invisible characters (prevents regex evasion).
-    2. Normalize homoglyphs on a shadow copy for matching, then apply
-       substitutions to the *original* text at the same positions.
-    3. Apply Anthropic control-string pattern (flexible separators).
-    4. Apply generic role-marker and instruction-override patterns.
-    """
+    2. Apply the Anthropic control-string pattern (flexible separators).
+    3. Apply generic role-marker and instruction-override patterns.
+
+    Every pattern matches against a homoglyph-normalized copy, so a single
+    Cyrillic lookalike (``ignоre``, ``[ЅYSTEM]``) cannot slip a marker
+    through. Replacing in the original keeps the payload bytes intact.
+    """  # noqa: RUF002 — the mixed-script samples are the point
     # 1. Strip invisible characters that break pattern matching
     text = _ZERO_WIDTH_RE.sub("", text)
 
-    # 2. Homoglyph-aware matching for Anthropic control strings.
-    #    We normalize a copy to find match positions, then replace in the
-    #    original to preserve surrounding content faithfully.
-    normalized = _normalize_homoglyphs(text)
-    # Apply Anthropic control pattern on the normalized text, but replace
-    # in the *original* — positions are identical because _normalize_homoglyphs
-    # is a 1-to-1 character mapping (same length).
-    for m in reversed(list(_ANTHROPIC_CONTROL_RE.finditer(normalized))):
-        text = text[: m.start()] + "[FILTERED]" + text[m.end() :]
-
-    # 3. Standard patterns (these are ASCII-only so homoglyph evasion is
-    #    less of a concern — adversaries mostly target the Anthropic string).
-    # NOTE: the homoglyph-aware loop above (steps 1-2) already replaces EVERY
-    # _ANTHROPIC_CONTROL_RE match — both ASCII and obfuscated variants — because
-    # _normalize_homoglyphs is a 1-to-1 length-preserving translate() mapping, so
-    # positions in `normalized` map exactly onto `text`. A plain .sub() here would
-    # only re-scan already-[FILTERED] text and find nothing. Do NOT re-add it: the
-    # loop is strictly stronger (it also catches homoglyph-obfuscated variants the
-    # plain ASCII .sub() cannot match).
-    text = _ROLE_MARKER_RE.sub("[FILTERED]", text)
-    text = _INSTRUCTION_OVERRIDE_RE.sub("[FILTERED]", text)
+    # 2/3. Homoglyph-aware matching. Normalization is recomputed per pattern
+    # because each insertion shifts every later offset.
+    for pattern in (_ANTHROPIC_CONTROL_RE, _ROLE_MARKER_RE, _INSTRUCTION_OVERRIDE_RE):
+        text = _replace_normalized(text, pattern)
     return text
 
 
@@ -455,9 +454,19 @@ _IPV6_RE = re.compile(
     r")"
 )
 
-# Domains — 2+ labels, TLD 2-6 chars, word-bounded
+# Domains — 2+ labels, TLD 2-6 chars, word-bounded.
+# The lookbehind after the \b is a *performance* guard: every position inside
+# a dot run (a.a.a.a…) is a word boundary, so without it the engine retries the
+# unbounded `{1,}` group from each dot — quadratic, 33 s for a 50 000-char run.
+# Rejecting a start that is already mid-token in O(1) has one precision cost,
+# pinned in tests/core/test_sanitize.py: a domain directly after a "." is
+# missed ("see ...evil.com", "foo..bar.com") — catching it means re-admitting
+# every interior position of a dot run and losing the O(1) rejection. A "/",
+# "\" or "-" before the domain is unaffected (they are not in the guard).
+# Same technique as _HASH_RE below.
 _DOMAIN_RE = re.compile(
-    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.){1,}"
+    r"\b(?<![a-zA-Z0-9.])"
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.){1,}"
     r"[a-zA-Z]{2,6}\b"
 )
 
@@ -496,8 +505,16 @@ _UNIX_PATH_RE = re.compile(
     r'/(?:tmp|var|usr|etc|home|opt|root)/[^\s"\'<>,;]+',
 )
 
-# Email addresses
+# Email addresses.
+# The lookbehind is a performance guard: without it the greedy local-part
+# class is re-scanned from every offset of a long alnum run (2.1 s for
+# 50 000 hex chars that contain no '@' at all). Guarded, a failed start is
+# O(1). strip_iocs also skips this pattern entirely when '@' is absent.
+# No measured precision cost: the local-part class already accepts a leading
+# "." or "-", so "...attacker@x.com" and "-attacker@x.com" still match. '-'
+# therefore stays out of the guard class.
 _EMAIL_RE = re.compile(
+    r"(?<![a-zA-Z0-9._%+])"
     r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
 )
 
@@ -547,10 +564,12 @@ _IOC_STRIP_DISPATCH: dict[str, Callable[[str], str]] = {
     "urls": lambda t: _URL_RE.sub("[URL_REDACTED]", t),
     "ipv4": lambda t: _IPV4_RE.sub("[IP_REDACTED]", t),
     "ipv6": lambda t: _IPV6_RE.sub("[IP_REDACTED]", t),
-    "domains": lambda t: _DOMAIN_RE.sub(_domain_replacer, t),
+    # Cheap pre-checks: a text without '.' cannot hold a domain and one
+    # without '@' cannot hold an email, so skip the regex entirely.
+    "domains": lambda t: _DOMAIN_RE.sub(_domain_replacer, t) if "." in t else t,
     "registry_keys": lambda t: _REGKEY_RE.sub("[REGKEY_REDACTED]", t),
     "file_paths": lambda t: _WIN_PATH_RE.sub("[PATH_REDACTED]", _UNIX_PATH_RE.sub("[PATH_REDACTED]", t)),
-    "emails": lambda t: _EMAIL_RE.sub("[EMAIL_REDACTED]", t),
+    "emails": lambda t: _EMAIL_RE.sub("[EMAIL_REDACTED]", t) if "@" in t else t,
     "crypto_wallets": lambda t: _ETH_WALLET_RE.sub("[WALLET_REDACTED]", _BTC_WALLET_RE.sub("[WALLET_REDACTED]", t)),
     "mutexes": lambda t: _MUTEX_RE.sub("[MUTEX_REDACTED]", t),
 }
@@ -787,10 +806,11 @@ def _neutralize_closing_tag(text: str, tag_name: str) -> str:
     Prevents content from breaking out of the delimiter wrapper by
     containing its own closing tag.  The replacement uses square brackets
     which are visually similar but won't be parsed as XML-style delimiters.
-    """
-    return re.sub(
+    Matched on the homoglyph-normalized shadow, so ``</tооl_result>`` (Cyrillic
+    о) cannot smuggle a real-looking closing tag through.
+    """  # noqa: RUF002 — the sample is the point
+    pattern = re.compile(
         rf"</\s*{re.escape(tag_name)}\s*>",
-        f"[/{tag_name}]",
-        text,
         flags=re.IGNORECASE,
     )
+    return _replace_normalized(text, pattern, f"[/{tag_name}]")

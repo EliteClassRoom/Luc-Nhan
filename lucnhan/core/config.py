@@ -64,6 +64,45 @@ def _default_config_dir() -> str:
     return os.path.join(get_user_config_base_dir(), CONFIG_DIR_NAME)
 
 
+# Integer knobs a hand-edited config can get wrong, with the range each one is
+# assumed to honour. 0 is a meaningful value only where noted (font size, the
+# two stream timeouts).
+_CLAMPED_FIELDS: dict[str, tuple[int, int | None]] = {
+    "exploration_turn_limit": (1, None),
+    "max_retries": (1, 10),
+    "font_size_override": (0, 72),
+    "bulk_renamer_batch_size": (1, None),
+    "bulk_renamer_max_concurrent": (1, None),
+    "parallel_agent_max_concurrent": (1, None),
+    "subagent_max_concurrent": (1, None),
+    "knowledge_max_context_items": (1, 100),
+    "knowledge_max_context_chars": (1_000, 60_000),
+    "tool_repeat_warn_at": (2, 60),
+    "tool_repeat_block_at": (2, 60),
+    "tool_repeat_stop_at": (2, 60),
+    "stream_idle_timeout_seconds": (0, 3_600),
+    "stream_first_progress_timeout_seconds": (0, 3_600),
+    "retry_base_delay_ms": (100, 10_000),
+    "retry_max_delay_ms": (500, 300_000),
+}
+_NUMERIC_FIELDS = frozenset(_CLAMPED_FIELDS)
+
+
+def _coerce_numeric_field(name: str, value: object) -> int | None:
+    """Coerce a stored JSON value to an in-range int, or None to keep the default."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    low, high = _CLAMPED_FIELDS[name]
+    number = max(number, low)
+    if high is not None:
+        number = min(number, high)
+    return number
+
+
 @dataclass
 class ProviderConfig:
     name: str = "anthropic"
@@ -438,8 +477,21 @@ class LucNhanConfig:
     def load(self) -> None:
         if not os.path.exists(self.config_path):
             return
-        with open(self.config_path) as f:
-            data = json.load(f)
+        try:
+            # utf-8-sig on the read side only: save() writes plain UTF-8, but
+            # PowerShell 5.1 and legacy Notepad prepend a BOM, and a BOM would
+            # otherwise be quarantined away with the user's keys.
+            with open(self.config_path, encoding="utf-8-sig") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            # A hand-edited or externally-truncated file must not abort the
+            # panel constructor. Keep the broken file as ``.bak`` (so the
+            # user can recover names/keys) and run on defaults.
+            self._quarantine_broken_config(exc)
+            return
+        if not isinstance(data, dict):
+            self._quarantine_broken_config(ValueError(f"top-level JSON is {type(data).__name__}, not object"))
+            return
         # Schema version check (for future migrations)
         _stored_version = data.pop("schema_version", 0)
 
@@ -559,25 +611,15 @@ class LucNhanConfig:
                 # Normalize invalid docs_review_mode to "on_error"
                 if k == "docs_review_mode" and val not in ("on_error", "off"):
                     val = "on_error"
-                # Anti-loop numeric knobs arrive as JSON strings from
-                # hand-edited configs; coerce them like the provider
-                # numerics above and reject unparsable values so
-                # validate()/save() never raise TypeError.
-                if k in {
-                    "tool_repeat_warn_at",
-                    "tool_repeat_block_at",
-                    "tool_repeat_stop_at",
-                    "stream_idle_timeout_seconds",
-                    "stream_first_progress_timeout_seconds",
-                    "retry_base_delay_ms",
-                    "retry_max_delay_ms",
-                }:
-                    if isinstance(val, bool) or not isinstance(val, (int, float, str)):
+                # Integer knobs arrive as JSON strings from hand-edited
+                # configs, or as 0/-1 where the code assumes >= 1 (a 0
+                # max_retries made range() empty and the retry loop raise
+                # None). Coerce and clamp on load so no reader has to.
+                if k in _NUMERIC_FIELDS:
+                    coerced = _coerce_numeric_field(k, val)
+                    if coerced is None:
                         continue
-                    try:
-                        val = int(val)
-                    except (TypeError, ValueError):
-                        continue
+                    val = coerced
                 if k in {"loop_guard_enabled", "prune_stale_results", "goal_continuation_enabled"}:
                     if not isinstance(val, bool):
                         continue
@@ -605,6 +647,18 @@ class LucNhanConfig:
                 if k in _BOOLEAN_FIELDS and not isinstance(val, bool):
                     continue
                 setattr(self, k, val)
+
+    def _quarantine_broken_config(self, exc: Exception) -> None:
+        """Move an unreadable config aside and fall back to defaults."""
+        bak = f"{self.config_path}.bak"
+        try:
+            if os.path.exists(bak):
+                os.unlink(bak)
+            os.replace(self.config_path, bak)
+        except OSError as move_err:
+            log_warning(f"Config: could not move broken config aside: {move_err}")
+            return
+        log_warning(f"Config: unreadable config moved to {bak} ({exc}); starting from defaults")
 
     def has_encrypted_keys(self) -> bool:
         """True if encrypted keys are present and still pending decryption."""

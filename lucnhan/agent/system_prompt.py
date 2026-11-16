@@ -6,7 +6,13 @@ from typing import TYPE_CHECKING
 
 from ..core.logging import log_debug
 from ..core.profile import IOC_FILTER_CATEGORIES
-from ..core.sanitize import MEMORY_MAX_CHARS, quote_untrusted, sanitize_binary_context, sanitize_memory
+from ..core.sanitize import (
+    MEMORY_MAX_CHARS,
+    quote_untrusted,
+    sanitize_binary_context,
+    sanitize_memory,
+    strip_injection_markers,
+)
 from ..tools.catalog import format_tools_catalog as _format_tools_catalog  # re-export
 from .prompts.ida import IDA_BASE_PROMPT
 
@@ -86,7 +92,10 @@ def build_system_prompt(
         parts.append("\n## Skills\n" + quote_untrusted(skill_summary, "skill_summary"))
 
     if extra_context:
-        parts.append(f"\n## Additional Context\n{extra_context}")
+        # Callers hand this over already fenced (``<retrieved_knowledge>`` etc.)
+        # and checkpoints reached through it are binary-derived, so only the
+        # markers are stripped — re-fencing would nest the existing tags.
+        parts.append(f"\n## Additional Context\n{strip_injection_markers(extra_context)}")
 
     # Profile-driven prompt additions
     if profile:

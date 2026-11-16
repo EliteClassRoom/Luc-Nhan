@@ -316,3 +316,68 @@ def test_save_failure_on_first_write_leaves_no_file_or_temp(tmp_path: Path, monk
         cfg.save()
 
     assert list(tmp_path.iterdir()) == []
+
+
+class TestLoadHardening:
+    """A hand-edited config must not crash the panel or poison the agent loop."""
+
+    def test_string_numbers_are_coerced(self, tmp_path: Path) -> None:
+        cfg = _config(tmp_path)
+        (tmp_path / CONFIG_FILE).write_text(
+            json.dumps({"max_retries": "5", "exploration_turn_limit": "42"}), encoding="utf-8"
+        )
+        cfg.load()
+        assert cfg.max_retries == 5
+        assert cfg.exploration_turn_limit == 42
+
+    def test_out_of_range_values_are_clamped(self, tmp_path: Path) -> None:
+        """A 0 retry made range() empty and the retry loop raise None."""
+        cfg = _config(tmp_path)
+        (tmp_path / CONFIG_FILE).write_text(
+            json.dumps({"max_retries": 0, "font_size_override": 400, "knowledge_max_context_chars": 10}),
+            encoding="utf-8",
+        )
+        cfg.load()
+        assert cfg.max_retries == 1
+        assert cfg.font_size_override == 72
+        assert cfg.knowledge_max_context_chars == 1_000
+
+    def test_unparsable_value_keeps_the_default(self, tmp_path: Path) -> None:
+        cfg = _config(tmp_path)
+        (tmp_path / CONFIG_FILE).write_text(json.dumps({"max_retries": "abc"}), encoding="utf-8")
+        cfg.load()
+        assert cfg.max_retries == LucNhanConfig().max_retries
+
+    def test_boolean_is_not_accepted_as_a_number(self, tmp_path: Path) -> None:
+        cfg = _config(tmp_path)
+        (tmp_path / CONFIG_FILE).write_text(json.dumps({"max_retries": True}), encoding="utf-8")
+        cfg.load()
+        assert cfg.max_retries == LucNhanConfig().max_retries
+
+    def test_corrupt_json_falls_back_to_defaults_and_keeps_a_backup(self, tmp_path: Path) -> None:
+        cfg = _config(tmp_path)
+        path = tmp_path / CONFIG_FILE
+        path.write_text("{ broken ,,", encoding="utf-8")
+        cfg.load()
+        assert cfg.max_retries == LucNhanConfig().max_retries
+        assert not path.exists()
+        assert (tmp_path / f"{CONFIG_FILE}.bak").read_text(encoding="utf-8") == "{ broken ,,"
+
+    def test_bom_is_tolerated(self, tmp_path: Path) -> None:
+        """PowerShell 5.1 / legacy Notepad write a BOM; it must not wipe keys."""
+        cfg = _config(tmp_path)
+        (tmp_path / CONFIG_FILE).write_bytes(
+            b"\xef\xbb\xbf" + json.dumps({"provider": {"api_key": "sk-1"}, "max_retries": 4}).encode()
+        )
+        cfg.load()
+        assert cfg.provider.api_key == "sk-1"
+        assert cfg.max_retries == 4
+        assert not (tmp_path / f"{CONFIG_FILE}.bak").exists()
+
+    def test_non_object_json_is_quarantined(self, tmp_path: Path) -> None:
+        cfg = _config(tmp_path)
+        path = tmp_path / CONFIG_FILE
+        path.write_text("[1, 2]", encoding="utf-8")
+        cfg.load()
+        assert cfg.max_retries == LucNhanConfig().max_retries
+        assert (tmp_path / f"{CONFIG_FILE}.bak").exists()
