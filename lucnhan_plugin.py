@@ -15,6 +15,7 @@ Startup path:
 import builtins
 import importlib
 import os
+import sys
 import threading
 
 # Import the stdlib-only early-startup log first so that any failure in
@@ -116,6 +117,36 @@ def _ensure_import_guard() -> None:
 _ensure_import_guard()
 if _el is not None:
     _el._early_log("module_import:complete")
+
+
+_MIN_PYTHON = (3, 11)
+_MIN_PYSIDE6 = (6, 12)
+
+
+def _environment_warnings() -> list[str]:
+    """Name environment problems the user cannot see from the symptom.
+
+    Neither check blocks loading — the interpreter and the Qt build ship with
+    IDA, so the only useful action is to say which one is at fault before it
+    looks like a Luc Nhan bug.
+    """
+    found: list[str] = []
+    if sys.version_info < _MIN_PYTHON:
+        found.append(
+            f"Python {sys.version_info.major}.{sys.version_info.minor} is older than the "
+            f"supported {_MIN_PYTHON[0]}.{_MIN_PYTHON[1]}+"
+        )
+    try:
+        _raw = importlib.import_module("importlib.metadata").version("PySide6")
+        _parts = tuple(int(part) for part in _raw.split(".")[:2] if part.isdigit())
+    except Exception:
+        _raw, _parts = "", ()
+    if _parts and _parts < _MIN_PYSIDE6:
+        found.append(
+            f"PySide6 {_raw} precedes {_MIN_PYSIDE6[0]}.{_MIN_PYSIDE6[1]}, which the message "
+            f"viewport was measured against — scrolling and sizing may behave differently"
+        )
+    return found
 
 
 class LucNhanPlugmod(idaapi.plugmod_t):
@@ -298,6 +329,10 @@ class LucNhanPlugin(idaapi.plugin_t):
             _el._early_log("plugin_init:entry")
         _ver = importlib.import_module("lucnhan.constants").PLUGIN_VERSION
         idaapi.msg(f"[Lục nhãn] Plugin loaded (v{_ver})\n")
+        for _warning in _environment_warnings():
+            idaapi.msg(f"[Lục nhãn] WARNING: {_warning}\n")
+            if _el is not None:
+                _el._early_log(f"environment_warning: {_warning}", level="WARNING")
         return LucNhanPlugmod()
 
 

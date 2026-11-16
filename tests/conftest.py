@@ -19,6 +19,16 @@ from __future__ import annotations
 import pytest
 
 from tests import purge_lucnhan_stubs
+from tests.mocks.ida_mock import install_ida_mocks
+
+# Install the IDA mocks before *any* test module is imported. Several modules
+# import lucnhan at import time without installing mocks first, and
+# ``lucnhan.core.host`` decides ``_HOST`` from ``importlib.import_module
+# ("idaapi")`` at import: whichever module is collected first therefore froze
+# the whole process to "standalone" (``get_database_path()`` returns "" and
+# every history-restore test fails with WRONG_IDB). Doing it here makes the
+# host detection independent of collection order.
+install_ida_mocks()
 
 
 @pytest.fixture(scope="session")
@@ -39,6 +49,21 @@ def qapp():
     yield app
     # Don't quit() here — leave the singleton alive so Qt cleans up via its
     # normal shutdown sequence when the process exits.
+
+
+def pytest_collect_file(file_path, parent=None):
+    """Purge stub modules before a test file is imported.
+
+    Test files install their ``_StubModule`` stand-ins at import time and only
+    restore the real modules in a fixture teardown, so a later file binds the
+    stubs. This hook is best effort: pytest 9 collects the whole tree before
+    importing any module, so a stub left in :data:`sys.modules` is usually
+    already too late to purge here. The durable fix is to stub only what the
+    file really needs — ``tests/tools/test_panel_core.py`` stubs ``lucnhan.ui.*``
+    only, ``tests/tools/test_settings_dialog.py`` and ``tests/tools/test_ida_panel.py``
+    import ``lucnhan.core.*`` and ``lucnhan.ida.ui.*`` for real.
+    """
+    purge_lucnhan_stubs()
 
 
 def pytest_runtest_setup(item):

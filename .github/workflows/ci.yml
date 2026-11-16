@@ -119,6 +119,42 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1
 
+      # ``tests/qt_real.py`` decides its skip at *import* time from a global
+      # process state, and the suite imports every module before running any
+      # test, so the full run above always skips these (~157 tests). Run each
+      # file in its own process so the guard sees the real binding.
+      - name: Run real-Qt tests (one process per file)
+        if: runner.os == 'Linux' && matrix.python-version == '3.11'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          mapfile -t files < <(grep -rl "requires_real_qt" tests/ --include='*.py' | sort)
+          echo "real-Qt files: ${#files[@]}"
+          # These two assert platform font metrics and a 400 px offscreen
+          # layout: they pass on a developer box and differ on a bare runner.
+          # They still run, they just report instead of failing the job.
+          soft_re='test_settings_profiles_transactions\.py|test_workspace_fidelity_real_qt\.py'
+          status=0
+          soft=0
+          for f in "${files[@]}"; do
+            rc=0
+            python -m pytest -p tests.qt_app_plugin "$f" -q --timeout=120 || rc=$?
+            if [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]; then
+              continue
+            fi
+            if [[ "$f" =~ $soft_re ]]; then
+              echo "::warning::$f failed (exit $rc) — environment-sensitive, not blocking"
+              soft=1
+            else
+              echo "::error::$f failed (exit $rc)"
+              status=1
+            fi
+          done
+          if [ "$soft" -ne 0 ]; then
+            echo "Environment-sensitive real-Qt files failed — see the warnings above."
+          fi
+          exit $status
+
       - name: Run tests
         run: python -m pytest --tb=short -q
 
@@ -182,47 +218,75 @@ jobs:
       - name: Gate on security findings in changed files
         if: github.event_name == 'pull_request' || github.event_name == 'push'
         run: |
-          python -c "
-          import json, subprocess, sys
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          import tempfile
 
-          changed = [l.strip() for l in open('/tmp/changed_files.txt') if l.strip()]
+          changed = [line.strip() for line in open('/tmp/changed_files.txt') if line.strip()]
           if not changed:
               print('No Python files changed — skipping security gate')
               sys.exit(0)
 
+          # ``desloppify show --output`` emits {query, status_filter, total,
+          # summary, by_file, total_matching} with the issues grouped under
+          # ``by_file`` and shaped {id, tier, confidence, summary, detail} — there
+          # is no flat ``findings`` list and no ``detector`` field. Security
+          # issues are the ones whose id starts with ``security::`` (bandit ids
+          # are ``security::B602::<file>::<line>``). A file with no open issues
+          # writes no output file at all.
           findings = []
-          for f in changed:
+          for path in changed:
+              handle, out = tempfile.mkstemp(suffix='.json')
+              os.close(handle)
+              os.unlink(out)
               result = subprocess.run(
-                  ['desloppify', 'show', f, '--output', '/tmp/file_findings.json', '--status', 'open'],
-                  capture_output=True, text=True
+                  ['desloppify', 'show', path, '--output', out, '--status', 'open'],
+                  capture_output=True,
+                  text=True,
               )
               if result.returncode != 0:
-                  print(f'Warning: desloppify show failed ({result.returncode}) for {f} — skipping file')
+                  print(f'Warning: desloppify show failed ({result.returncode}) for {path} — skipping file')
                   continue
               try:
-                  data = json.load(open('/tmp/file_findings.json'))
-                  file_findings = data if isinstance(data, list) else (data.get('findings', []) if isinstance(data, dict) else [])
-                  findings.extend(file_findings)
-              except (json.JSONDecodeError, FileNotFoundError):
-                  print(f'Warning: could not parse desloppify findings for {f} — skipping file')
+                  with open(out, encoding='utf-8') as fh:
+                      data = json.load(fh)
+              except FileNotFoundError:
+                  continue
+              except json.JSONDecodeError:
+                  print(f'Warning: could not parse desloppify findings for {path} — skipping file')
+                  continue
+              finally:
+                  try:
+                      os.unlink(out)
+                  except OSError:
+                      pass
+              if isinstance(data, list):
+                  findings.extend(data)
+                  continue
+              for file_path, items in (data.get('by_file') or {}).items():
+                  findings.extend({**item, 'file': file_path} for item in items)
 
           if not findings:
               print(f'OK — no open findings in {len(changed)} changed file(s)')
               sys.exit(0)
 
-          security = [f for f in findings if f.get('detector') == 'security']
-          other    = [f for f in findings if f.get('detector') != 'security']
+          is_security = lambda finding: str(finding.get('id', '')).startswith('security::')
+          security = [f for f in findings if is_security(f)]
+          other = [f for f in findings if not is_security(f)]
 
           for f in security:
-              print(f\"SECURITY: {f.get('file')} — {f.get('message', f.get('id', '?'))}\")
+              print(f"SECURITY: {f.get('file')} — {f.get('summary', f.get('id', '?'))}")
           for f in other[:5]:
-              print(f\"  {f.get('detector')}: {f.get('file')} — {f.get('message', f.get('id', '?'))}\")
+              print(f"  {f.get('file')} — {f.get('summary', f.get('id', '?'))}")
 
           if security:
               sys.exit(f'{len(security)} security finding(s) in your changed files — fix before merging')
 
           print(f'Advisory: {len(other)} non-security finding(s) in changed files (not blocking)')
-          "
+          PY
 
   # Single gate job — mark this as a required status check in branch protection
   gate:

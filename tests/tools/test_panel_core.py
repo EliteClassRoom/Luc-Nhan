@@ -62,16 +62,6 @@ _STUBBED_MODULES = [
     "lucnhan.ui.theme.palette_light",
     "lucnhan.ui.theme.palette_ida",
     "lucnhan.ui.theme.widgets_common",
-    "lucnhan.core.config",
-    "lucnhan.core.logging",
-    "lucnhan.core.types",
-    "lucnhan.core.host",
-    "lucnhan.agent.turn",
-    "lucnhan.agent.mutation",
-    "lucnhan.providers.auth_cache",
-    "lucnhan.providers.anthropic_provider",
-    "lucnhan.providers.ollama_provider",
-    "lucnhan.providers.registry",
 ]
 _STUBBED_MODULE_BACKUPS: dict[str, object] = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
 
@@ -92,16 +82,6 @@ for _mod_name in [
     "lucnhan.ui.theme.palette_light",
     "lucnhan.ui.theme.palette_ida",
     "lucnhan.ui.theme.widgets_common",
-    "lucnhan.core.config",
-    "lucnhan.core.logging",
-    "lucnhan.core.types",
-    "lucnhan.core.host",
-    "lucnhan.agent.turn",
-    "lucnhan.agent.mutation",
-    "lucnhan.providers.auth_cache",
-    "lucnhan.providers.anthropic_provider",
-    "lucnhan.providers.ollama_provider",
-    "lucnhan.providers.registry",
 ]:
     # Always (re)install the stub.  Other test files may have left
     # partial stubs in sys.modules that lack the names this module

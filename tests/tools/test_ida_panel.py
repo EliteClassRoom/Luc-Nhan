@@ -22,16 +22,12 @@ _panel_core_mod = types.ModuleType("lucnhan.ui.panel_core")
 _panel_core_mod.LucNhanPanelCore = _qt_class("LucNhanPanelCore")
 sys.modules.setdefault("lucnhan.ui.panel_core", _panel_core_mod)
 
-# Stub session/actions modules
-_session_mod = types.ModuleType("lucnhan.ida.ui.session_controller")
-_session_mod.IdaSessionController = MagicMock()
-_session_mod.SessionController = _session_mod.IdaSessionController  # backwards-compat alias
-sys.modules["lucnhan.ida.ui.session_controller"] = _session_mod
-
-_actions_mod = types.ModuleType("lucnhan.ida.ui.actions")
-_actions_mod.LucNhanUIHooks = MagicMock()
-sys.modules["lucnhan.ida.ui.actions"] = _actions_mod
-
+# The session controller and the UI hooks are imported for real (IDA is mocked)
+# instead of being replaced by ``types.ModuleType`` stand-ins: those survive in
+# sys.modules past this file, and pytest imports every collected module before
+# running any test, so a stand-in here would hand MagicMock classes to whatever
+# is imported later.
+from lucnhan.ida.ui import actions, session_controller  # noqa: F401
 from lucnhan.ida.ui.panel import LucNhanPanel
 
 # ---------------------------------------------------------------------------

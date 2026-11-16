@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sys
-import types
 import unittest
 from unittest.mock import MagicMock
 
@@ -12,38 +11,11 @@ from tests.qt_stubs import ensure_pyside6_stubs
 
 ensure_pyside6_stubs()
 
-# Stub all heavy submodules that chat_view imports.
-# Reinstall them unconditionally because other tests may have left behind
-# incomplete stubs in sys.modules.  Each stub has a ``__getattr__``
-# fallback so any missing attribute resolves to a fresh MagicMock,
-# keeping this test file resilient to new names added by the
-# production code.
-
-
-class _StubModule(types.ModuleType):
-    def __getattr__(self, name):
-        m = MagicMock()
-        object.__setattr__(self, name, m)
-        return m
-
-
-for _mod_name in [
-    "lucnhan.agent.turn",
-    "lucnhan.core.types",
-]:
-    _stub = _StubModule(_mod_name)
-    # Add commonly-needed attrs
-    for _attr in [
-        "PlanView",
-        "TurnEvent",
-        "TurnEventType",
-        "Message",
-        "Role",
-        "ToolCall",
-        "ToolResult",
-    ]:
-        setattr(_stub, _attr, MagicMock())
-    sys.modules[_mod_name] = _stub
+# This file used to install ``_StubModule`` stand-ins for ``lucnhan.agent.turn``
+# and ``lucnhan.core.types``. They are pure dataclasses, and a stub left in
+# sys.modules during collection poisons every later module that imports them
+# (pytest collects the whole tree before running anything), so the real
+# modules are used now and nothing is installed here.
 
 # Other tests may leave stubbed UI modules behind; force fresh imports.
 # Note: we must also pop the parent package ``lucnhan.ui.theme`` so

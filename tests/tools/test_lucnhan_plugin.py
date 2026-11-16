@@ -197,5 +197,30 @@ class TestPluginEntry(unittest.TestCase):
         self.assertIsInstance(result, rp.LucNhanPlugin)
 
 
+class TestEnvironmentWarnings(unittest.TestCase):
+    """The checks are advisory: wrong answers here must never break loading."""
+
+    def _warn_with_pyside6(self, reported: object) -> list[str]:
+        def fake_version(name: str) -> str:
+            if isinstance(reported, Exception):
+                raise reported
+            return str(reported)
+
+        with patch("importlib.metadata.version", fake_version):
+            return rp._environment_warnings()
+
+    def test_supported_versions_are_quiet(self):
+        self.assertEqual(self._warn_with_pyside6("6.12.0"), [])
+
+    def test_old_pyside6_is_named(self):
+        warnings = self._warn_with_pyside6("6.8.2")
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("6.8.2", warnings[0])
+
+    def test_unparseable_and_failing_lookups_stay_quiet(self):
+        self.assertEqual(self._warn_with_pyside6("not-a-version"), [])
+        self.assertEqual(self._warn_with_pyside6(RuntimeError("no dist")), [])
+
+
 if __name__ == "__main__":
     unittest.main()

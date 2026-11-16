@@ -59,6 +59,19 @@ import lucnhan.core.host as _host_mod
 
 _host_mod._HOST = _host_mod.HOST_STANDALONE
 
+
+def teardown_module(module=None):
+    """Hand the host kind back.
+
+    ``is_ida()`` reads ``_HOST`` at call time, so leaving it forced here made
+    every later module believe it runs standalone — ``get_database_path()``
+    then returns "" and history/session tests fail with a wrong-idb scope.
+    The suite always installs the IDA mocks (see ``tests/conftest.py``), so
+    ``HOST_IDA`` is the truthful default here.
+    """
+    _host_mod._HOST = _host_mod.HOST_IDA
+
+
 # ---------------------------------------------------------------------------
 # Helper: create a ContextBar without calling __init__
 # ---------------------------------------------------------------------------

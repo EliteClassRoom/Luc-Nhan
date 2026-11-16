@@ -71,3 +71,11 @@ lucnhan/data/**/*.tmp.*
 /.cocoindex_code/
 
 UNCOMMITTED_COMMIT_READINESS_CONSOLIDATED_REPORT.md
+
+# IDA databases / bank files opened next to sources
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+*.i64

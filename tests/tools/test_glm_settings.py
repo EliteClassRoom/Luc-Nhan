@@ -35,7 +35,6 @@ class _StubModule(types.ModuleType):
 
 
 for _mod_name in [
-    "lucnhan.core.host",
     "lucnhan.providers.anthropic_provider",
     "lucnhan.providers.auth_cache",
     "lucnhan.providers.ollama_provider",
@@ -122,7 +121,6 @@ def _ensure_qapplication():
 
 _STUBBED_BY_THIS_MODULE = frozenset(
     [
-        "lucnhan.core.host",
         "lucnhan.providers.anthropic_provider",
         "lucnhan.providers.auth_cache",
         "lucnhan.providers.ollama_provider",

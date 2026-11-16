@@ -32,11 +32,11 @@ class _StubModule(types.ModuleType):
         return m
 
 
+# ``lucnhan.core.*`` is deliberately absent: they are cheap and every other
+# module imports them, so stubbing them would hand MagicMocks to whatever gets
+# imported later in the same collection pass (``Message(...).token_usage`` then
+# breaks every ``>`` comparison in the session tests).
 for _mod_name in [
-    "lucnhan.core.config",
-    "lucnhan.core.logging",
-    "lucnhan.core.types",
-    "lucnhan.core.host",
     "lucnhan.providers.anthropic_provider",
     "lucnhan.providers.auth_cache",
     "lucnhan.providers.ollama_provider",

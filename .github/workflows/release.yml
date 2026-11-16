@@ -26,6 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # On ``workflow_dispatch`` the dispatch ref is the default branch, so
+          # without this the job would verify (and later publish) whatever HEAD
+          # happens to be there instead of the tag the caller named.
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v7
@@ -121,6 +125,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-python@v7
         with:
