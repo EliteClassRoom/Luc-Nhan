@@ -154,6 +154,42 @@ class TestResolveHostsafe(unittest.TestCase):
             assert safe is True
 
 
+class TestRedirectHopLifetime(unittest.TestCase):
+    """A streamed redirect hop must not leak its socket."""
+
+    @staticmethod
+    def _response(status: int, location: str | None = None) -> mock.MagicMock:
+        response = mock.MagicMock()
+        response.status_code = status
+        response.headers = {} if location is None else {"Location": location}
+        return response
+
+    def test_followed_hop_is_closed(self):
+        first = self._response(302, "https://example.com/two")
+        second = self._response(200)
+
+        with (
+            mock.patch.object(web_fetch, "_is_safe_url", return_value=(True, "")),
+            mock.patch("requests.get", side_effect=[first, second]),
+        ):
+            result = web_fetch._fetch_with_safe_redirects("https://example.com/one", {})
+
+        self.assertIs(result, second)
+        first.close.assert_called_once()
+
+    def test_hop_without_location_is_closed(self):
+        response = self._response(302)
+
+        with (
+            mock.patch.object(web_fetch, "_is_safe_url", return_value=(True, "")),
+            mock.patch("requests.get", return_value=response),
+            self.assertRaises(ToolError),
+        ):
+            web_fetch._fetch_with_safe_redirects("https://example.com/one", {})
+
+        response.close.assert_called_once()
+
+
 class TestUnderstandImageSSRFGuard(unittest.TestCase):
     """``understand_image`` must reject SSRF attempts in image URLs."""
 

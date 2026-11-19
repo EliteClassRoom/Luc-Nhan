@@ -143,11 +143,15 @@ def _fetch_with_safe_redirects(
 
         location = response.headers.get("Location", "")
         if not location:
+            response.close()
             raise ToolError(
                 f"Redirect response (HTTP {response.status_code}) from {current_url} has no Location header",
                 tool_name="web_fetch",
             )
 
+        # ``stream=True`` holds the socket open; a hop that we do not return
+        # must release it rather than wait for GC.
+        response.close()
         current_url = urllib.parse.urljoin(current_url, location)
 
     raise ToolError(
