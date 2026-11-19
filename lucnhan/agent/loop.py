@@ -3107,14 +3107,19 @@ class AgentLoop:
                     yield event
                 elif event.type == TurnEventType.ERROR:
                     is_error = True
-                    collected_text = event.error or "External agent error"
+                    # The agent may already have streamed real output before
+                    # failing; overwriting it would hand the model only the
+                    # error and throw that work away.
+                    detail = event.error or "External agent error"
+                    collected_text = f"{collected_text}\n\n[delegation error] {detail}" if collected_text else detail
                     yield event
                 # Other event types (TURN_START, etc.) are not
                 # relevant in a sub-tool context — silently drop.
         except Exception as e:
             is_error = True
-            collected_text = f"Delegation error: {e}"
-            yield TurnEvent.error_event(collected_text)
+            detail = f"Delegation error: {e}"
+            collected_text = f"{collected_text}\n\n{detail}" if collected_text else detail
+            yield TurnEvent.error_event(detail)
 
         # Sanitize the result before returning to the LLM. Untrusted
         # agent output flows into our conversation history, so it

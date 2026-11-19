@@ -241,6 +241,25 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
         self.assertTrue(tr.is_error)
         self.assertIn("denied by user", tr.content)
 
+    def test_partial_output_survives_a_later_error(self):
+        """An agent that streams then fails must not lose its work."""
+        loop = self._make_loop()
+        tc = self._delegate_tc()
+
+        def fake_run(self_dispatcher, agent_name, task, cancel_event=None, include_context=""):
+            yield TurnEvent.text_delta("first finding")
+            yield TurnEvent.error_event("Timeout after 120s")
+
+        with patch("lucnhan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
+            _events, tr = _drain_generator_with_return(
+                loop._handle_delegate_external_task_tool(tc),
+                on_first_yield=lambda: loop._tool_approval_queue.put("allow"),
+            )
+
+        self.assertTrue(tr.is_error)
+        self.assertIn("first finding", tr.content)
+        self.assertIn("Timeout after 120s", tr.content)
+
     def test_delegate_runs_after_allow(self):
         loop = self._make_loop()
         tc = self._delegate_tc()
