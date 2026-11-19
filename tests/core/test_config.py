@@ -10,6 +10,7 @@ path). Independent of Qt, IDA, or any keychain.
 from __future__ import annotations
 
 import json
+import unittest
 from pathlib import Path
 
 import pytest
@@ -381,3 +382,34 @@ class TestLoadHardening:
         cfg.load()
         assert cfg.max_retries == LucNhanConfig().max_retries
         assert (tmp_path / f"{CONFIG_FILE}.bak").exists()
+
+
+class TestApiBaseValidation(unittest.TestCase):
+    """A base URL that cannot work must be refused before the SDK sees it."""
+
+    def test_problem_is_none_for_a_usable_base(self):
+        from lucnhan.core.config import api_base_problem
+
+        self.assertIsNone(api_base_problem("https://api.example.com/v1"))
+        self.assertIsNone(api_base_problem("http://127.0.0.1:8080/v1"))
+        self.assertIsNone(api_base_problem(""))
+
+    def test_problem_names_the_reason(self):
+        from lucnhan.core.config import api_base_problem
+
+        self.assertIn("http://", api_base_problem("ftp://host/v1") or "")
+        self.assertIn("no host", api_base_problem("https:///v1") or "")
+        self.assertIn("user:pass", api_base_problem("https://u:p@host/v1") or "")
+        self.assertIn("whitespace", api_base_problem("https://a.test/v 1") or "")
+        self.assertIn("not a string", api_base_problem(7) or "")
+
+    def test_validate_reports_and_trims(self):
+        config = LucNhanConfig()
+        config.provider.api_base = "  https://api.example.com/v1  "
+        self.assertEqual(config.validate(), [])
+        self.assertEqual(config.provider.api_base, "https://api.example.com/v1")
+
+    def test_validate_rejects_a_bad_base(self):
+        config = LucNhanConfig()
+        config.provider.api_base = "api.example.com"
+        self.assertTrue(any("api_base" in err for err in config.validate()))

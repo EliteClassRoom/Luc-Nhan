@@ -156,22 +156,19 @@ def validate_bootstrap_memory_source(value: object) -> IdentityRequest | None:
 
 
 def _validate_api_base(value: object) -> str | None:
-    """Return an error string when *value* is not a usable base URL.
+    """Normalize ``api_base`` or return ``None`` when it is unusable.
 
-    Bootstrap config is untrusted input: an ``http://user:pass@evil`` base
-    ships the API key to an arbitrary host over plaintext.
+    Delegates to the config helper so the dialog, ``validate()`` and the
+    headless bootstrap cannot drift apart.
     """
-    if not isinstance(value, str) or not value.strip():
-        return f"bootstrap api_base is not a string: {value!r}"
-    if any(ch.isspace() for ch in value):
-        return f"bootstrap api_base contains whitespace: {value!r}"
-    parsed = urlparse(value)
-    if parsed.scheme not in ("http", "https"):
-        return f"bootstrap api_base must start with http:// or https://: {value!r}"
-    if not parsed.hostname:
-        return f"bootstrap api_base has no host: {value!r}"
-    if parsed.username or parsed.password:
-        return f"bootstrap api_base must not carry user:pass credentials: {value!r}"
+    from ..core.config import api_base_problem
+
+    problem = api_base_problem(value)
+    if problem is not None:
+        return problem
+    if not str(value or "").strip():
+        # An override that only carries whitespace is not a string either.
+        return f"api_base {value!r} is not a string with a URL"
     return None
 
 

@@ -45,6 +45,7 @@ from .qt_compat import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -2655,6 +2656,15 @@ class SettingsDialog(QDialog):
         return password
 
     def _on_accept(self) -> None:
+        # A base URL with a typo fails deep inside the SDK with an opaque
+        # message, so refuse it here while the dialog is still open.
+        from ..core.config import api_base_problem
+
+        base_problem = api_base_problem(self._api_base_edit.text())
+        if base_problem is not None:
+            QMessageBox.warning(self, "API base URL", base_problem)
+            return
+
         api_key = self._api_key_edit.text().strip()
 
         # If the user pasted an OAuth token with the checkbox unchecked,
@@ -2744,8 +2754,6 @@ class SettingsDialog(QDialog):
             # Verify the password is correct before disabling
             if self._config.has_encrypted_keys():
                 if not self._config.decrypt_stored_keys(password):
-                    from .qt_compat import QMessageBox
-
                     QMessageBox.warning(self, "Wrong Password", "Incorrect password.")
                     return
             password = ""  # save unencrypted

@@ -237,7 +237,7 @@ def _safe_errlog():
         # Open /dev/null as a real file descriptor that anyio can use.
         # We return the file object (not subprocess.DEVNULL) because the
         # MCP SDK types errlog as TextIO.
-        return open(os.devnull, "w")
+        return open(os.devnull, "w", encoding="utf-8", errors="replace")
 
 
 class MCPClient:

@@ -22,6 +22,7 @@ import os
 import tempfile
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from .profile import AnalysisProfile
@@ -101,6 +102,40 @@ def _coerce_numeric_field(name: str, value: object) -> int | None:
     if high is not None:
         number = min(number, high)
     return number
+
+
+def api_base_problem(value: object) -> str | None:
+    """Describe why *value* is unusable as a provider base URL (``None`` = fine).
+
+    An empty value means "use the provider default". Anything else must be an
+    absolute http(s) URL with a host: ``requests`` (and every SDK) fails with
+    an opaque message otherwise, and a ``user:pass@`` form is sent verbatim.
+    """
+    if not isinstance(value, str):
+        return f"api_base {value!r} is not a string"
+    text = value.strip()
+    if not text:
+        return None
+    if any(ch.isspace() for ch in text):
+        return f"api_base {value!r} contains whitespace"
+    try:
+        parsed = urlparse(text)
+    except ValueError as exc:
+        return f"api_base {value!r} is not a URL: {exc}"
+    if parsed.scheme not in ("http", "https"):
+        return f"api_base {value!r} must start with http:// or https://"
+    if not parsed.hostname:
+        return f"api_base {value!r} has no host"
+    if parsed.username or parsed.password:
+        return f"api_base {value!r} carries user:pass credentials"
+    return None
+
+
+def normalize_api_base(value: object) -> str | None:
+    """Return *value* as a usable provider base URL, or ``None`` when unusable."""
+    if api_base_problem(value) is not None:
+        return None
+    return str(value or "").strip()
 
 
 @dataclass
@@ -285,6 +320,11 @@ class LucNhanConfig:
             errors.append(
                 f"ida_output_log_level '{self.ida_output_log_level}' must be debug|info|warning|error|critical|off"
             )
+        base = normalize_api_base(self.provider.api_base)
+        if base is None:
+            errors.append(f"api_base '{self.provider.api_base}' is not an http(s) URL with a host")
+        elif base:
+            self.provider.api_base = base
         if not isinstance(self.knowledge_enabled, bool):
             errors.append("knowledge_enabled must be a bool")
         if not isinstance(self.knowledge_show_retrieved_in_chat, bool):
