@@ -16,7 +16,9 @@ Host-agnostic: imports only the stdlib.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import tempfile
 import time
 
 # Windows transient file-lock errors worth retrying:
@@ -56,4 +58,23 @@ def atomic_replace(src: StrPath, dst: StrPath) -> None:
             delay *= 2
 
 
-__all__ = ["StrPath", "atomic_replace"]
+def write_text_atomic(path: StrPath, text: str, *, newline: str | None = None) -> None:
+    """Write *text* to *path* through a sibling temp file.
+
+    A crash mid-write would otherwise leave a truncated file behind — and
+    when *path* already exists, plain ``open(path, "w")`` destroys the old
+    copy before the new one is complete.
+    """
+    directory = os.path.dirname(os.fspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".lucnhan-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline=newline) as handle:
+            handle.write(text)
+        atomic_replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+__all__ = ["StrPath", "atomic_replace", "write_text_atomic"]

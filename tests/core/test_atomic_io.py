@@ -70,3 +70,31 @@ def test_other_errors_are_not_retried(tmp_path: Path, monkeypatch: pytest.Monkey
         atomic_io.atomic_replace(tmp_path / "a", tmp_path / "b")
 
     assert calls["n"] == 1
+
+
+def test_write_text_atomic_replaces_the_target(tmp_path: Path) -> None:
+    target = tmp_path / "export.md"
+    target.write_text("old", encoding="utf-8")
+
+    atomic_io.write_text_atomic(target, "new")
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert [p.name for p in tmp_path.iterdir()] == ["export.md"]
+
+
+def test_write_text_atomic_keeps_the_old_file_when_the_replace_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "export.md"
+    target.write_text("old", encoding="utf-8")
+
+    def boom(src: object, dst: object) -> None:
+        raise OSError(5, "denied")
+
+    monkeypatch.setattr(atomic_io, "atomic_replace", boom)
+
+    with pytest.raises(OSError):
+        atomic_io.write_text_atomic(target, "new")
+
+    assert target.read_text(encoding="utf-8") == "old"
+    assert [p.name for p in tmp_path.iterdir()] == ["export.md"], "temp file must be cleaned up"

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from ..agent.turn import TurnEvent, TurnEventType
 from ..constants import HISTORY_DELETE_SLOW_NOTICE_SECONDS
+from ..core.atomic_io import write_text_atomic
 from ..core.config import LucNhanConfig
 from ..core.early_log import _early_log, _early_log_crash
 from ..core.logging import log_debug, log_error, log_info, log_warning
@@ -2448,8 +2449,7 @@ class LucNhanPanelCore(QWidget):
                     lines.append("\n---\n\n### Exploration Subagent Log\n")
                     lines.append(_export_format_subagent_log(msgs))
 
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
+        write_text_atomic(path, "\n".join(lines))
 
     def _on_export_current(self) -> None:
         """Export the currently active tab's chat."""

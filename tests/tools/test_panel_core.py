@@ -5053,3 +5053,25 @@ class TestPartialConstructionResizeGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExportWritesAtomically:
+    def test_export_goes_through_the_atomic_writer(self, tmp_path) -> None:
+        """A crash mid-export must not truncate an existing file."""
+        from unittest.mock import patch
+
+        from lucnhan.core.types import Message, Role
+        from lucnhan.state.session import SessionState
+
+        session = SessionState()
+        session.add_message(Message(role=Role.USER, content="hello"))
+        target = tmp_path / "export.md"
+        target.write_text("previous export", encoding="utf-8")
+
+        with patch("lucnhan.ui.panel_core.write_text_atomic") as writer:
+            LucNhanPanelCore._export_session_to_file(session, str(target))
+
+        writer.assert_called_once()
+        assert writer.call_args.args[0] == str(target)
+        assert "hello" in writer.call_args.args[1]
+        assert target.read_text(encoding="utf-8") == "previous export"

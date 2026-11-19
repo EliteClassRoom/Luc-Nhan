@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import contextlib
 import os
 import re
-import tempfile
 import unicodedata
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ...core.atomic_io import write_text_atomic
 from ...core.errors import CancellationError
 from ...core.logging import log_error, log_info
 from ...core.types import Message, Role
@@ -83,15 +82,7 @@ def _write_text_atomic(path: str, text: str) -> None:
     Notes are read back by later phases, so a crash during the write must
     not leave a half-written note for them to consume.
     """
-    fd, tmp = tempfile.mkstemp(prefix=".research-", dir=os.path.dirname(path) or ".")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    write_text_atomic(path, text, newline="\n")
 
 
 def _ensure_dir(path: str) -> None:
