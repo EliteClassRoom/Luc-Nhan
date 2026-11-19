@@ -42,6 +42,9 @@ class MCPManager:
         self._configs: list[MCPServerConfig] = []
         self._clients: dict[str, MCPClient] = {}
         self._lock = threading.Lock()
+        #: Held for the whole of a reload so two overlapping reloads cannot
+        #: interleave stop_all()/start_servers() on the same clients.
+        self._reload_lock = threading.Lock()
         self._shut_down = False
         self._generation = 0  # incremented on each start/reload cycle
         MCPManager._instance = self
@@ -248,8 +251,14 @@ class MCPManager:
         Does NOT import lucnhan.mcp.client unless an enabled server is
         actually starting (SDK probe reset happens inside start_servers).
         """
-        log_info("MCP: reloading configuration")
-        self.stop_all()
-        registry.unregister_by_prefix(MCP_TOOL_PREFIX)
-        self.load_config(config_path)
-        self.start_servers(registry, on_complete=on_complete)
+        if not self._reload_lock.acquire(blocking=False):
+            log_info("MCP: reload already in progress; this one is skipped")
+            return
+        try:
+            log_info("MCP: reloading configuration")
+            self.stop_all()
+            registry.unregister_by_prefix(MCP_TOOL_PREFIX)
+            self.load_config(config_path)
+            self.start_servers(registry, on_complete=on_complete)
+        finally:
+            self._reload_lock.release()

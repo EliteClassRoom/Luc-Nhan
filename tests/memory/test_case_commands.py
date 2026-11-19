@@ -103,3 +103,37 @@ class TestDispatchCaseCommand:
             context=context,
         )
         assert "Cleared" in result
+
+    def test_delete_after_a_vanished_case_reports_not_found(self, tmp_path: Path) -> None:
+        """Another tab can delete between resolution and the mutation."""
+        from unittest.mock import patch
+
+        cases, case_service, manager, issuer, context = self._setup(tmp_path)
+        created = dispatch_case_command(
+            parse_case_command("/case create Race"),
+            case_repository=cases,
+            case_service=case_service,
+            manager=manager,
+            authority=issuer.issue(context),
+            context=context,
+        )
+        case_id = created.split()[-1].rstrip(".")
+
+        real_get = cases.get_case
+        calls = {"n": 0}
+
+        def flaky_get(cid):
+            calls["n"] += 1
+            return real_get(cid) if calls["n"] == 1 else None
+
+        with patch.object(cases, "get_case", side_effect=flaky_get):
+            result = dispatch_case_command(
+                parse_case_command(f"/case delete {case_id}"),
+                case_repository=cases,
+                case_service=case_service,
+                manager=manager,
+                authority=issuer.issue(context),
+                context=context,
+            )
+
+        assert "not found" in result.lower()

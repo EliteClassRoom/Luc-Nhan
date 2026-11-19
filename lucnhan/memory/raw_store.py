@@ -49,6 +49,22 @@ def _lock_for(path: str) -> threading.Lock:
         return lock
 
 
+def _parse_rows(rows: list[dict[str, Any]], cls: Any) -> list[Any]:
+    """Build dataclasses, skipping rows that no longer match the schema.
+
+    One record written by an older build (or a bundle) with a missing
+    field used to raise TypeError out of every ``list_*``/``counts``
+    call, taking the whole read path down with it.
+    """
+    parsed: list[Any] = []
+    for row in rows:
+        try:
+            parsed.append(cls.from_dict(row))
+        except (TypeError, ValueError, KeyError) as exc:
+            log_debug(f"Skipping unreadable {cls.__name__} row: {exc!r}")
+    return parsed
+
+
 class KnowledgeRawStore:
     """Thin façade over the JSONL files for one :class:`KnowledgePaths`."""
 
@@ -200,7 +216,7 @@ class KnowledgeRawStore:
         self._locked_upsert(self.paths.memories_path, memory.to_dict())
 
     def list_memories(self) -> list[KnowledgeMemory]:
-        return [KnowledgeMemory.from_dict(r) for r in self._read_jsonl(self.paths.memories_path)]
+        return _parse_rows(self._read_jsonl(self.paths.memories_path), KnowledgeMemory)
 
     # ------------------------------------------------------------------
     # Entities
@@ -211,7 +227,7 @@ class KnowledgeRawStore:
         self._locked_upsert(self.paths.entities_path, entity.to_dict())
 
     def list_entities(self) -> list[KnowledgeEntity]:
-        return [KnowledgeEntity.from_dict(r) for r in self._read_jsonl(self.paths.entities_path)]
+        return _parse_rows(self._read_jsonl(self.paths.entities_path), KnowledgeEntity)
 
     def get_entity(self, entity_id: str) -> KnowledgeEntity | None:
         for ent in self.list_entities():
@@ -228,7 +244,7 @@ class KnowledgeRawStore:
         self._locked_upsert(self.paths.relations_path, relation.to_dict())
 
     def list_relations(self) -> list[KnowledgeRelation]:
-        return [KnowledgeRelation.from_dict(r) for r in self._read_jsonl(self.paths.relations_path)]
+        return _parse_rows(self._read_jsonl(self.paths.relations_path), KnowledgeRelation)
 
     def upsert_relation_from(self, src: str, predicate: str, dst: str, **kwargs: Any) -> KnowledgeRelation:
         """Helper that builds a deterministic relation ID and upserts."""
@@ -348,7 +364,7 @@ class KnowledgeRawStore:
         return self.list_memories(), self.list_observations()
 
     def list_observations(self) -> list[KnowledgeObservation]:
-        return [KnowledgeObservation.from_dict(r) for r in self._read_jsonl(self.paths.observations_path)]
+        return _parse_rows(self._read_jsonl(self.paths.observations_path), KnowledgeObservation)
 
     def _restore_observations_surgically(self, path: str, our_ids: set[str]) -> None:
         """Remove only observations with IDs in ``our_ids`` from ``path``.

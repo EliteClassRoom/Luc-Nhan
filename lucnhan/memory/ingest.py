@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from ..core.logging import log_error
+from .authority import MemoryWriteAuthority
 from .notes import extract_inline_addresses, extract_inline_tags, parse_note
 from .paths import (
     KnowledgePaths,
@@ -227,6 +228,7 @@ def _write_exploration_to_sqlite(
     relevance: str,
     evidence: str = "",
     *,
+    owner_authority: MemoryWriteAuthority | None = None,
     status: str = "unverified",
     verdict_claim: str = "",
     verification_citations: list[str] | None = None,
@@ -260,9 +262,13 @@ def _write_exploration_to_sqlite(
     mem_status = status if cat == "hypothesis" else "unverified"
     mem_verdict = verdict_claim if cat == "hypothesis" else ""
     mem_citations = list(verification_citations or []) if cat == "hypothesis" else None
+    if evidence.strip():
+        # The skills require evidence and the JSONL payload carries it; the
+        # SQLite row would otherwise lose it entirely.
+        summary = f"{summary}\n\nEvidence:\n{evidence.strip()}"
     try:
         memory_service.save_exploration_finding(
-            None,
+            owner_authority,
             category=cat,
             title=resolved_title,
             content=summary,
@@ -403,6 +409,7 @@ def ingest_exploration_finding(
     title: str | None = None,
     confidence: float | None = None,
     memory_service: BinaryMemoryService | None = None,
+    owner_authority: MemoryWriteAuthority | None = None,
 ) -> None:
     """Upsert a memory + entity/relation record for a single finding.
 
@@ -430,6 +437,7 @@ def ingest_exploration_finding(
             address,
             relevance,
             evidence,
+            owner_authority=owner_authority,
             status=status,
             verdict_claim=verdict_claim,
             verification_citations=verification_citations,
@@ -496,6 +504,7 @@ def _entity_id_for(category: str, entity_type: str, address: int | None, name: s
 def _write_research_to_sqlite(
     memory_service: BinaryMemoryService,
     *,
+    owner_authority: MemoryWriteAuthority | None = None,
     note_path: str,
     genre: str,
     title: str,
@@ -516,7 +525,7 @@ def _write_research_to_sqlite(
     fact = f"{title}\n\n{content}" if title else content
     try:
         memory_service.save_fact(
-            None,
+            owner_authority,
             category=cat,
             fact=fact,
             source="research_note",
@@ -677,6 +686,7 @@ def ingest_research_note(
     related: list[str] | None = None,
     review_passed: bool = False,
     memory_service: BinaryMemoryService | None = None,
+    owner_authority: MemoryWriteAuthority | None = None,
 ) -> None:
     """Ingest a finished research note into memories, entities, and relations.
 
@@ -689,6 +699,7 @@ def ingest_research_note(
     if memory_service is not None:
         _write_research_to_sqlite(
             memory_service,
+            owner_authority=owner_authority,
             note_path=note_path,
             genre=genre,
             title=title,

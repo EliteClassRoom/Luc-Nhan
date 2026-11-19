@@ -240,9 +240,11 @@ def retrieve_from_records(
     if not (terms or addresses):
         # Empty query — return the newest few records of each type so
         # the LLM still gets useful context (e.g., "what do we know?").
-        pack.memories = memories[:max_memories]
-        pack.entities = entities[:max_entities]
-        pack.relations = relations[:max_relations]
+        # The loaders hand these over oldest-first, and the docstring above
+        # promises the newest few: take from the tail.
+        pack.memories = list(reversed(memories))[:max_memories]
+        pack.entities = list(reversed(entities))[:max_entities]
+        pack.relations = list(reversed(relations))[:max_relations]
         pack.counts = {
             "memories": len(pack.memories),
             "entities": len(pack.entities),
@@ -297,22 +299,23 @@ def retrieve_from_records(
     pack.relations = [r for _, r in rel_scored[:max_relations]]
 
     # --- Notes (parse on-demand for selected memory titles) ---
-    if pack.memories:
-        # Select notes whose title matches a memory title (cheap proxy).
-        memory_titles = {m.title.lower() for m in pack.memories}
-        scored_notes: list[tuple[int, str]] = []
-        for pn in notes:
-            title_l = pn.title.lower()
-            body_l = pn.body.lower()
-            if pn.title and title_l in memory_titles:
-                scored_notes.append((10, _note_excerpt(pn)))
-            else:
-                # Generic keyword hits in title/body
-                hits = sum(1 for t in terms if t in title_l or t in body_l)
-                if hits:
-                    scored_notes.append((hits, _note_excerpt(pn)))
-        scored_notes.sort(key=lambda x: x[0], reverse=True)
-        pack.notes = [body for _, body in scored_notes[:max_notes]]
+    #
+    # Not gated on ``pack.memories``: a query can match a note and no
+    # memory, and the notes used to disappear with it.
+    memory_titles = {m.title.lower() for m in pack.memories}
+    scored_notes: list[tuple[int, str]] = []
+    for pn in notes:
+        title_l = pn.title.lower()
+        body_l = pn.body.lower()
+        if pn.title and title_l in memory_titles:
+            scored_notes.append((10, _note_excerpt(pn)))
+        else:
+            # Generic keyword hits in title/body
+            hits = sum(1 for t in terms if t in title_l or t in body_l)
+            if hits:
+                scored_notes.append((hits, _note_excerpt(pn)))
+    scored_notes.sort(key=lambda x: x[0], reverse=True)
+    pack.notes = [body for _, body in scored_notes[:max_notes]]
 
     pack.counts = {
         "memories": len(pack.memories),

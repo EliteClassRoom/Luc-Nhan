@@ -2668,6 +2668,7 @@ class AgentLoop:
                         evidence=evidence,
                         function_name=func_name,
                         memory_service=self.memory_service,
+                        owner_authority=self._memory_authority,
                     )
             except Exception as e:
                 log_error(f"knowledge ingest (exploration_report) failed: {e!r}")
@@ -2682,12 +2683,25 @@ class AgentLoop:
                 new_bytes = bytes.fromhex(new_hex.replace(" ", "")) if new_hex else b""
             except ValueError:
                 new_bytes = b""
+            # The report arrives after the patch was written, so a read-back
+            # here proves the claimed bytes really are at that address. The
+            # pre-patch bytes stay whatever the model reported: nothing else
+            # captured them, and the discard path replays them.
+            from .modes.exploration import read_actual_patch_bytes
+
+            actual = read_actual_patch_bytes(self, address, len(new_bytes)) if new_bytes else b""
+            read_matches = bool(actual) and len(actual) == len(new_bytes) and actual == new_bytes
+            if actual and not read_matches:
+                log_error(
+                    f"patch_result at 0x{address:x} reports {len(new_bytes)} byte(s) that do not match the database "
+                    f"({actual.hex()[:64]})"
+                )
             patch_record = PatchRecord(
                 address=address,
                 original_bytes=original_bytes,
                 new_bytes=new_bytes,
                 description=summary,
-                verified="verif" in evidence.lower() or "confirm" in evidence.lower(),
+                verified=read_matches or "verif" in evidence.lower() or "confirm" in evidence.lower(),
                 verification_result=evidence,
             )
             state.patches_applied.append(patch_record)
@@ -2806,23 +2820,31 @@ class AgentLoop:
             yield TurnEvent.tool_result_event(tc.id, tc.name, err, True)
             return tr
 
-        note = yield from write_and_review_note(
-            state=state,
-            genre=genre,
-            title=title,
-            content=content,
-            related_notes=related,
-            runner_factory=lambda: SubagentRunner(
-                provider=self.provider,
-                tool_registry=self.tools,
-                config=self.config,
-                host_name=self.host_name,
-                skill_registry=self.skills,
-                parent_loop=self,
-                unattended=self._unattended,
-            ),
-            loop=self,
-        )
+        try:
+            note = yield from write_and_review_note(
+                state=state,
+                genre=genre,
+                title=title,
+                content=content,
+                related_notes=related,
+                runner_factory=lambda: SubagentRunner(
+                    provider=self.provider,
+                    tool_registry=self.tools,
+                    config=self.config,
+                    host_name=self.host_name,
+                    skill_registry=self.skills,
+                    parent_loop=self,
+                    unattended=self._unattended,
+                ),
+                loop=self,
+            )
+        except (OSError, ValueError) as exc:
+            # Path validation and the draft write happen before the review
+            # pipeline; nothing else would turn them into a tool error.
+            err = f"Error: note could not be written: {exc}"
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=err, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, err, True)
+            return tr
 
         # Auto-ingest the *final* research note into the raw knowledge
         # store. We only do this after the review pipeline commits,
@@ -2842,6 +2864,7 @@ class AgentLoop:
                     related=note.related_notes,
                     review_passed=note.review_passed,
                     memory_service=self.memory_service,
+                    owner_authority=self._memory_authority,
                 )
         except Exception as e:
             log_error(f"knowledge ingest (research_note) failed: {e!r}")

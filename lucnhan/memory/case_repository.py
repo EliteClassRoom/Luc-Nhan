@@ -349,10 +349,13 @@ class CaseRepository:
         # Store as entity pair + relation
         subj_entity = new_record_id("entity")
         obj_entity = new_record_id("entity")
-        store.put_entity(subj_entity, "binary_ref", subj, {"memory_id": subj, "artifact_ref": artifact_ref})
-        store.put_entity(obj_entity, "binary_ref", obj, {"memory_id": obj})
-        store.put_relation(relation_id, subj_entity, predicate.value, obj_entity, confidence)
-        store.close()
+        try:
+            store.put_entity(subj_entity, "binary_ref", subj, {"memory_id": subj, "artifact_ref": artifact_ref})
+            store.put_entity(obj_entity, "binary_ref", obj, {"memory_id": obj})
+            store.put_relation(relation_id, subj_entity, predicate.value, obj_entity, confidence)
+        finally:
+            # Leaked handle pins memory.db on Windows against later replaces.
+            store.close()
 
         return CaseRelation(
             relation_id=relation_id,

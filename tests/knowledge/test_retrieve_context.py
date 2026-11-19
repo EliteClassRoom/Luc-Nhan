@@ -24,6 +24,7 @@ from lucnhan.memory.ingest import (
     ingest_exploration_finding,
     ingest_save_memory,
 )
+from lucnhan.memory.notes import ParsedNote
 from lucnhan.memory.retrieve import RetrievalQuery, retrieve, search_all
 from tests.knowledge._helpers import fresh_store
 
@@ -291,6 +292,16 @@ class TestRetrieveNotesFailure(unittest.TestCase):
             pack = retrieve(self.store, self.paths, q)
         self.assertGreater(pack.counts.get("memories", 0), 0)
         self.assertTrue(log_debug_mock.called, "note-read failure must be logged")
+
+    def test_note_matches_without_any_memory_match(self):
+        """A query that only hits a note used to drop the note entirely."""
+        note = ParsedNote(title="zzz-unique", body="zzz-unique marker body")
+        q = RetrievalQuery(text="zzz-unique")
+        with patch("lucnhan.memory.retrieve.list_notes", return_value=[note]):
+            pack = retrieve(self.store, self.paths, q)
+        self.assertEqual(pack.counts.get("memories", 0), 0)
+        self.assertEqual(len(pack.notes), 1)
+        self.assertIn("zzz-unique marker body", pack.notes[0])
 
 
 class TestBuildRetrievedContextFailure(unittest.TestCase):

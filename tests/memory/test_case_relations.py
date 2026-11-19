@@ -173,3 +173,22 @@ def test_list_relations_does_not_migrate_stale_workspace(tmp_path: Path) -> None
         cases.list_case_relations(case.case_id)
     with sqlite3.connect(case_paths.database) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+def test_a_failed_relation_write_still_closes_the_workspace(tmp_path: Path) -> None:
+    """A leaked handle pins memory.db on Windows against later replaces."""
+    cases, _, mid_a, mid_b = _setup(tmp_path)
+    case = cases.list_cases()[0]
+
+    from lucnhan.memory import workspace_store
+
+    with patch.object(workspace_store.WorkspaceStore, "put_relation", side_effect=RuntimeError("boom")):
+        with patch.object(
+            workspace_store.WorkspaceStore,
+            "close",
+            autospec=True,
+        ) as closed:
+            with pytest.raises(RuntimeError):
+                cases.put_case_relation(case.case_id, mid_a, CaseRelationType.SAME_FAMILY_AS, mid_b)
+
+    assert closed.call_count >= 1

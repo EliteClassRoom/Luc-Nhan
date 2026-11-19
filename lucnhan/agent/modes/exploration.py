@@ -39,6 +39,89 @@ if TYPE_CHECKING:
 # sub-step inside the mini agent loop.
 _EXECUTE_SUBSTEP_MAX_TURNS = 10
 
+_ROLLBACK_COUNT_RE = re.compile(r"restored=(\d+) skipped=(\d+)")
+
+
+def _build_ida_rollback_code(pending: list[Any]) -> str:
+    """Build the IDAPython that restores only the bytes still as reported.
+
+    ``original_hex``/``new_hex`` come from ``exploration_report`` arguments,
+    i.e. from the model, so the address may never have been touched. Writing
+    blindly would corrupt whatever lives there now; the restore is therefore
+    conditional on the current bytes still matching the reported ``new``
+    bytes, and outside any segment the record is skipped.
+    """
+    lines = ["import idaapi, ida_bytes", "_r = 0", "_s = 0"]
+    for p in pending:
+        orig = bytes(p.original_bytes)
+        new = bytes(p.new_bytes)
+        if not orig or len(orig) != len(new):
+            lines.append("_s += 1")
+            continue
+        lines.append(
+            f"_ea = 0x{p.address:x}\n"
+            f"_s0 = idaapi.getseg(_ea)\n"
+            f"if _s0 is None or not _s0.contains(_ea):\n    _s += 1\n"
+            f"elif ida_bytes.get_bytes(_ea, {len(orig)}) == {new!r}:\n"
+            f"    ida_bytes.patch_bytes(_ea, {orig!r})\n    _r += 1\n"
+            f"else:\n    _s += 1"
+        )
+    lines.append("print(f'restored={_r} skipped={_s}')")
+    return "\n".join(lines)
+
+
+def _build_bn_rollback_code(pending: list[Any]) -> str:
+    """Binary Ninja twin of :func:`_build_ida_rollback_code`."""
+    lines = ["_r = 0", "_s = 0"]
+    for p in pending:
+        orig = bytes(p.original_bytes)
+        new = bytes(p.new_bytes)
+        if not orig or len(orig) != len(new):
+            lines.append("_s += 1")
+            continue
+        lines.append(
+            f"if bv.read(0x{p.address:x}, {len(orig)}) == {new!r}:\n"
+            f"    bv.write(0x{p.address:x}, {orig!r})\n    _r += 1\n"
+            f"else:\n    _s += 1"
+        )
+    lines.append("print(f'restored={_r} skipped={_s}')")
+    return "\n".join(lines)
+
+
+def parse_hexdump_bytes(raw: str) -> bytes:
+    """Extract the bytes of a ``read_bytes`` hexdump (the ASCII side is ignored)."""
+    out = bytearray()
+    for line in raw.splitlines():
+        body = line.split("|", 1)[0]
+        for token in body.split()[1:]:  # token 0 is the row address
+            if len(token) == 2:
+                try:
+                    out.append(int(token, 16))
+                except ValueError:
+                    return bytes(out)
+    return bytes(out)
+
+
+def read_actual_patch_bytes(loop: Any, address: int, size: int) -> bytes:
+    """Read what the database currently holds at *address*.
+
+    An empty result means the read failed or the range is not readable, so
+    callers must treat it as "unknown", never as "zero bytes".
+    """
+    try:
+        raw = loop.tools.execute("read_bytes", {"address": f"0x{address:x}", "size": max(1, size)})
+    except ToolError:
+        return b""
+    return parse_hexdump_bytes(raw)
+
+
+def _parse_rollback_counts(output: str) -> tuple[int, int]:
+    """Return ``(restored, skipped)`` from the rollback script's printout."""
+    match = _ROLLBACK_COUNT_RE.search(output or "")
+    if match is None:
+        return 0, 0
+    return int(match.group(1)), int(match.group(2))
+
 
 def _id_for_pair(finding) -> str:
     from ...memory.ingest import _stable_hash
@@ -549,12 +632,6 @@ def _run_phase3_execute(
     """Phase 3: execute each planned patch step. Returns True if completed."""
     for i, step_desc in enumerate(steps):
         loop._check_cancelled()
-        state.execute_turns += 1
-        if state.execute_turns > state.max_execute_turns:
-            yield TurnEvent.error_event(
-                f"Execute turn limit reached ({state.max_execute_turns}). Some patches may not have been applied."
-            )
-            return False
 
         yield TurnEvent.plan_step_start(i, step_desc)
         loop.session.add_message(
@@ -568,9 +645,16 @@ def _run_phase3_execute(
             )
         )
 
-        # Mini agent loop for this step
+        # Mini agent loop for this step. ``execute_turns`` counts agent turns
+        # (not plan steps), which is what ``max_execute_turns`` names.
         for _st in range(_EXECUTE_SUBSTEP_MAX_TURNS):
             loop._check_cancelled()
+            state.execute_turns += 1
+            if state.execute_turns > state.max_execute_turns:
+                yield TurnEvent.error_event(
+                    f"Execute turn limit reached ({state.max_execute_turns}). Some patches may not have been applied."
+                )
+                return False
             state.total_turns += 1
             yield TurnEvent.turn_start(state.total_turns)
 
@@ -633,31 +717,34 @@ def _run_phase4_save(
         yield TurnEvent.save_completed(len(state.patches_applied), summary.total_bytes_modified)
         log_info("Exploration mode: patches saved")
     else:
-        rolled_back = False
-        if state.patches_applied:
-            rollback_parts = [
-                (
-                    f"import ida_bytes; ida_bytes.patch_bytes(0x{p.address:x}, {bytes(p.original_bytes)!r})"
-                    if loop.host_name == "IDA Pro"
-                    else f"bv.write(0x{p.address:x}, {bytes(p.original_bytes)!r})"
+        pending = [p for p in reversed(state.patches_applied) if p.original_bytes]
+        restored = 0
+        skipped = len(pending)
+        if pending:
+            builder = _build_ida_rollback_code if loop.host_name == "IDA Pro" else _build_bn_rollback_code
+            try:
+                output = loop.tools.execute(
+                    constants.EXECUTE_PYTHON_TOOL_NAME,
+                    {"code": builder(pending)},
                 )
-                for p in reversed(state.patches_applied)
-                if p.original_bytes
-            ]
-            if rollback_parts:
-                try:
-                    loop.tools.execute(constants.EXECUTE_PYTHON_TOOL_NAME, {"code": "; ".join(rollback_parts)})
-                    rolled_back = True
-                    log_info("Exploration mode: patches rolled back via execute_python")
-                except ToolError as e:
-                    log_error(f"Exploration mode: rollback failed: {e}")
+                restored, skipped = _parse_rollback_counts(output)
+                log_info(f"Exploration mode: rollback restored {restored}, skipped {skipped}")
+            except ToolError as e:
+                log_error(f"Exploration mode: rollback failed: {e}")
 
-        discard_msg = (
-            "[SYSTEM] Patches discarded. Original bytes have been restored."
-            if rolled_back
-            else "[SYSTEM] Patches discarded. The in-memory changes persist "
-            "until the analysis database is reloaded without saving."
-        )
+        rolled_back = restored > 0
+        if restored and not skipped:
+            discard_msg = "[SYSTEM] Patches discarded. Original bytes have been restored."
+        elif rolled_back:
+            discard_msg = (
+                f"[SYSTEM] Patches discarded. {restored} of {restored + skipped} patch(es) were restored; "
+                "the rest no longer match the reported bytes and stay applied."
+            )
+        else:
+            discard_msg = (
+                "[SYSTEM] Patches discarded. The in-memory changes persist "
+                "until the analysis database is reloaded without saving."
+            )
         loop.session.add_message(Message(role=Role.USER, content=discard_msg))
         yield TurnEvent.save_discarded(len(state.patches_applied), rolled_back)
         log_info(f"Exploration mode: patches discarded by user (rolled_back={rolled_back})")
@@ -742,13 +829,12 @@ def run_exploration_mode(
             exploration_system,
             tools_schema,
         )
-        if not ok:
-            loop._clear_exploration_state()
-            tracker.complete()
-            return
-        # Phase 4: SAVE
+        # A failed execute phase still has patches in the database, so the
+        # save/discard decision is taken rather than silently abandoned.
         tracker.enter("save")
         yield from _run_phase4_save(loop, state)
+        if not ok:
+            log_info("Exploration mode: execute phase ended early; save decision still taken")
 
     log_info("Exploration mode finished")
     tracker.complete()

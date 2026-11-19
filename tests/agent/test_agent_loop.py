@@ -22,6 +22,7 @@ from lucnhan.agent.loop import AgentLoop, BackgroundAgentRunner, _audit_tool_nam
 from lucnhan.agent.modes.turn_helpers import execute_single_turn
 from lucnhan.agent.turn import TurnEvent, TurnEventType
 from lucnhan.core.config import LucNhanConfig
+from lucnhan.core.errors import ToolError
 from lucnhan.core.types import (
     Message,
     ModelInfo,
@@ -2870,6 +2871,46 @@ class TestKnowledgeIngestErrorLogging(unittest.TestCase):
             list(loop._handle_exploration_report_tool(tc, state))
 
         self.assertTrue(log_error_mock.called)
+
+    def _report(self, loop, evidence: str = "evidence"):
+        state = loop._ensure_exploration_state()
+        tc = ToolCall(
+            id="t1",
+            name="exploration_report",
+            arguments={
+                "category": "patch_result",
+                "summary": "patched the compare",
+                "address": "0x401000",
+                "evidence": evidence,
+                "relevance": "high",
+                "original_hex": "74 05",
+                "new_hex": "90 90",
+            },
+        )
+        with patch("lucnhan.memory.ingest.make_store", return_value=(MagicMock(), MagicMock())):
+            list(loop._handle_exploration_report_tool(tc, state))
+        return state.patches_applied[-1]
+
+    def test_patch_read_back_marks_a_verified_patch(self):
+        loop = self._make_loop()
+        loop.tools.execute = MagicMock(return_value="  0x00401000  90 90  " + " " * 24 + "  |..|")
+        record = self._report(loop)
+        self.assertTrue(record.verified)
+        loop.tools.execute.assert_called_once()
+
+    def test_patch_read_back_mismatch_is_not_verified_and_logged(self):
+        loop = self._make_loop()
+        loop.tools.execute = MagicMock(return_value="  0x00401000  cc cc  " + " " * 24 + "  |..|")
+        with patch("lucnhan.agent.loop.log_error") as log_error_mock:
+            record = self._report(loop)
+        self.assertFalse(record.verified)
+        self.assertTrue(log_error_mock.called, "a mismatch must be logged")
+
+    def test_patch_without_new_bytes_falls_back_to_the_evidence(self):
+        loop = self._make_loop()
+        loop.tools.execute = MagicMock(side_effect=ToolError("no such tool"))
+        record = self._report(loop, evidence="verified with a read")
+        self.assertTrue(record.verified)
 
     def test_research_note_ingest_failure_logs_error(self):
         loop = self._make_loop()

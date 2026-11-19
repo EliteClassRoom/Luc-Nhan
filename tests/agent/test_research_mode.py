@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -515,3 +516,39 @@ class TestWriteAndReviewNoteCancellation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_index_lists_notes_already_on_disk(self):
+        """A resumed run starts with an empty notes_written list."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as base:
+            notes = Path(base) / "notes"
+            (notes / "networking").mkdir(parents=True)
+            (notes / "networking" / "from-disk.md").write_text("# Disk Title\nbody\n", encoding="utf-8")
+            state = ResearchState(notes_dir=str(notes))
+            index = _generate_index(state, "firmware.bin", "goal")
+            self.assertIn("[[from-disk]]", index)
+            self.assertIn("Disk Title", index)
+            self.assertIn("(needs review)", index)
+
+    def test_index_skips_itself(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as base:
+            notes = Path(base) / "notes"
+            notes.mkdir()
+            (notes / "index.md").write_text("# Research Index\n", encoding="utf-8")
+            state = ResearchState(notes_dir=str(notes))
+            index = _generate_index(state, "firmware.bin", "goal")
+            self.assertNotIn("[[index]]", index)
+
+
+class TestSlugDeviceNames(unittest.TestCase):
+    """A slug must not collide with a Windows device name."""
+
+    def test_console_becomes_usable(self):
+        self.assertNotEqual(_slugify("CON"), "con")
+        self.assertTrue(_slugify("CON").startswith("con"))
+
+    def test_ordinary_slug_is_untouched(self):
+        self.assertEqual(_slugify("Console Init"), "console-init")

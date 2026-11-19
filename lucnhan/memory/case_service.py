@@ -133,34 +133,38 @@ class CaseMemoryService:
             case_store = open_workspace_for_write(case_paths, case_id, self._cases.locator.backups(case_id))
         else:
             case_store = WorkspaceStore.create(case_paths, owner_memory_id=case_id, workspace_kind="case")
-        case_store.put_fact(
-            case_fact_id,
-            "promoted",
-            fact.title,
-            fact.content,
-            fact.confidence,
-            expected_revision=0,
-        )
-        oid = new_record_id("observation")
         import json
 
-        case_store.append_observation(
-            oid,
-            "promotion",
-            json.dumps(
-                {
-                    "promotion_id": promotion_id,
-                    "source_memory_id": source_memory_id,
-                    "source_record_id": source_record_id,
-                    "source_revision": fact.revision,
-                    "source_hash": source_hash,
-                    "promotion_kind": promotion_kind,
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-        )
-        case_store.close()
+        oid = new_record_id("observation")
+        try:
+            case_store.put_fact(
+                case_fact_id,
+                "promoted",
+                fact.title,
+                fact.content,
+                fact.confidence,
+                expected_revision=0,
+            )
+            case_store.append_observation(
+                oid,
+                "promotion",
+                json.dumps(
+                    {
+                        "promotion_id": promotion_id,
+                        "source_memory_id": source_memory_id,
+                        "source_record_id": source_record_id,
+                        "source_revision": fact.revision,
+                        "source_hash": source_hash,
+                        "promotion_kind": promotion_kind,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
+        finally:
+            # A leaked handle keeps memory.db open on Windows, so a later
+            # backup/restore replace of the case workspace fails.
+            case_store.close()
 
         return CasePromotion(
             promotion_id=promotion_id,

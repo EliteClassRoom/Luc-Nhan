@@ -687,3 +687,35 @@ class TestKillLeftovers:
             for proc in (own, other):
                 if proc.poll() is None:
                     proc.kill()
+
+
+class TestMCPReloadIsSerialized(unittest.TestCase):
+    """Two reloads interleaving stop_all()/start_servers() would double-start."""
+
+    def test_overlapping_reload_is_skipped(self):
+        from unittest.mock import patch
+
+        mgr = MCPManager()
+        registry = ToolRegistry()
+        started: list[int] = []
+
+        def slow_start(reg, on_complete=None):
+            started.append(1)
+            # A reload landing while this one runs must not start a second time.
+            mgr.reload(reg)
+
+        with patch.object(mgr, "start_servers", side_effect=slow_start):
+            mgr.reload(registry)
+
+        self.assertEqual(len(started), 1)
+
+    def test_reload_runs_again_afterwards(self):
+        from unittest.mock import patch
+
+        mgr = MCPManager()
+        registry = ToolRegistry()
+        with patch.object(mgr, "start_servers") as start:
+            mgr.reload(registry)
+            mgr.reload(registry)
+
+        self.assertEqual(start.call_count, 2)

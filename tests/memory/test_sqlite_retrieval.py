@@ -160,3 +160,19 @@ def test_repository_to_retrieval_pack_reads_sqlite(tmp_path: Path) -> None:
     assert isinstance(pack, RetrievalPack)
     assert any("main" in m.content for m in pack.memories)
     store.close()
+
+
+def test_empty_query_returns_the_newest_records() -> None:
+    """The docstring promises the newest few; loaders hand over oldest-first."""
+    memories = [
+        KnowledgeMemory(id=f"mem:{i}", binary_id="b", type="general", title=f"t{i}", content=f"c{i}") for i in range(4)
+    ]
+    entities = [
+        KnowledgeEntity(id=f"func:0x40100{i}", binary_id="b", type="function", name=f"f{i}", address=f"0x40100{i}")
+        for i in range(3)
+    ]
+
+    pack = retrieve_from_records(memories, entities, [], [], RetrievalQuery(text=""), max_memories=2, max_entities=2)
+
+    assert [m.id for m in pack.memories] == ["mem:3", "mem:2"]
+    assert [e.id for e in pack.entities] == ["func:0x401002", "func:0x401001"]

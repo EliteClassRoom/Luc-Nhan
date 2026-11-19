@@ -318,3 +318,94 @@ def test_research_note_function_relation_write_failure_is_logged(tmp_path: Path,
 
     assert log_error_mock.called
     assert len(store.list_memories()) == 1
+
+
+def _real_service(tmp_path: Path):
+    """A real service stack so the authority gate actually runs."""
+    from lucnhan.memory.authority import MemoryAuthorityIssuer
+    from lucnhan.memory.markdown import MemoryProjector
+    from lucnhan.memory.registry import MemoryRegistry
+    from lucnhan.memory.repository import SQLiteKnowledgeRepository
+    from lucnhan.memory.service import BinaryMemoryService
+    from lucnhan.memory.workspace import MemoryLocator, MemoryRunContext, new_memory_id
+    from lucnhan.memory.workspace_store import WorkspaceStore
+
+    locator = MemoryLocator(tmp_path / "memory")
+    registry = MemoryRegistry(locator.registry_database())
+    registry.initialize()
+    memory_id = new_memory_id()
+    context = MemoryRunContext(memory_id, "", 1, 0)
+    registry.create_workspace("binary", "test.i64", memory_id=memory_id)
+    paths = locator.binary(memory_id)
+    store = WorkspaceStore.create(paths, owner_memory_id=memory_id)
+    repo = SQLiteKnowledgeRepository(store, owner_memory_id=memory_id)
+    issuer = MemoryAuthorityIssuer()
+    service = BinaryMemoryService(
+        context=context,
+        paths=paths,
+        repository=repo,
+        store=store,
+        projector=MemoryProjector(),
+        authority_issuer=issuer,
+    )
+    return service, issuer, context
+
+
+def test_sqlite_write_needs_the_authority(tmp_path: Path, monkeypatch) -> None:
+    """Hardcoded ``None`` used to deny every central write, silently."""
+    monkeypatch.setattr(ingest, "_LEGACY_JSONL_DUAL_WRITE", False)
+    service, issuer, context = _real_service(tmp_path)
+    paths = _make_paths(tmp_path)
+
+    ingest.ingest_exploration_finding(
+        None,
+        paths,
+        category="finding",
+        summary="hash routine is custom",
+        address=0x401000,
+        relevance="high",
+        memory_service=service,
+        owner_authority=issuer.issue(context),
+    )
+
+    assert len(service.repository.list_memories()) == 1
+
+
+def test_sqlite_write_is_denied_without_the_authority(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(ingest, "_LEGACY_JSONL_DUAL_WRITE", False)
+    service, _issuer, _context = _real_service(tmp_path)
+    paths = _make_paths(tmp_path)
+
+    ingest.ingest_exploration_finding(
+        None,
+        paths,
+        category="finding",
+        summary="lost",
+        address=0x401000,
+        relevance="high",
+        memory_service=service,
+    )
+
+    assert len(service.repository.list_memories()) == 0
+
+
+def test_evidence_reaches_the_stored_content(tmp_path: Path, monkeypatch) -> None:
+    """The skills demand evidence; the SQLite row used to drop it."""
+    monkeypatch.setattr(ingest, "_LEGACY_JSONL_DUAL_WRITE", False)
+    service, issuer, context = _real_service(tmp_path)
+    paths = _make_paths(tmp_path)
+
+    ingest.ingest_exploration_finding(
+        None,
+        paths,
+        category="finding",
+        summary="decrypts with RC4",
+        address=0x401000,
+        relevance="high",
+        evidence="see sub_401050",
+        memory_service=service,
+        owner_authority=issuer.issue(context),
+    )
+
+    stored = service.repository.list_memories()[-1]
+    assert "see sub_401050" in stored.content

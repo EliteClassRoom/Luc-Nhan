@@ -63,6 +63,11 @@ class ResearchState:
 _MAX_SLUG_CHARS = 80
 
 
+#: Windows resolves "con.md", "aux.md", "com1.md"... to the device even with
+#: an extension, so the slug is suffixed instead.
+_WINDOWS_DEVICE_NAME_RE = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$")
+
+
 def _slugify(text: str) -> str:
     """Convert a title to a filesystem-safe slug."""
     # Normalize unicode, lowercase, replace spaces/special chars with hyphens
@@ -73,7 +78,10 @@ def _slugify(text: str) -> str:
     # The title comes from a tool call and can be a whole sentence; Windows
     # rejects a file name past 255 bytes and a long slug would raise
     # ENAMETOOLONG from the write.
-    return text.strip("-")[:_MAX_SLUG_CHARS].strip("-") or "untitled"
+    text = text.strip("-")[:_MAX_SLUG_CHARS].strip("-") or "untitled"
+    if _WINDOWS_DEVICE_NAME_RE.match(text):
+        text += "_"
+    return text
 
 
 def _write_text_atomic(path: str, text: str) -> None:
@@ -90,10 +98,13 @@ def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
+_PREVIEW_LINE_MAX_CHARS = 200
+
+
 def _preview_lines(content: str, n: int = 2) -> str:
-    """Return the first *n* non-empty lines as a preview."""
+    """Return the first *n* non-empty lines as a preview, each capped."""
     lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
-    return " | ".join(lines[:n])
+    return " | ".join(ln[:_PREVIEW_LINE_MAX_CHARS] for ln in lines[:n])
 
 
 def _safe_note_path(notes_dir: str, genre: str, title: str) -> str:
@@ -402,23 +413,52 @@ def write_and_review_note(
 # ---------------------------------------------------------------------------
 
 
+def _note_title(note_path: Path, fallback: str) -> str:
+    """Return the note's H1 title, else *fallback*."""
+    try:
+        for line in note_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("# "):
+                return line[2:].strip() or fallback
+    except OSError:
+        pass
+    return fallback
+
+
 def _generate_index(state: ResearchState, binary_name: str, goal: str) -> str:
-    """Generate notes/index.md — an Obsidian Map of Content."""
+    """Generate notes/index.md — an Obsidian Map of Content.
+
+    The index is built from what is on disk, not from ``notes_written``:
+    a resumed run starts with an empty list and would otherwise write an
+    index that hides every note written before the interruption.
+    """
     lines = [
         "# Research Index\n",
         f"> Binary: `{binary_name}` | Goal: {goal}\n",
     ]
 
-    # Group notes by genre
-    by_genre: dict[str, list[ResearchNote]] = {}
-    for note in state.notes_written:
-        by_genre.setdefault(note.genre, []).append(note)
+    known = {(n.genre, n.slug): n for n in state.notes_written}
+    entries: list[tuple[str, str, str, bool]] = []
+    for note_path in sorted(Path(state.notes_dir).glob("*/*.md")):
+        if note_path.name == "index.md":
+            continue
+        genre, slug = note_path.parent.name, note_path.stem
+        note = known.pop((genre, slug), None)
+        if note is not None:
+            entries.append((genre, slug, note.title, not note.review_passed))
+        else:
+            entries.append((genre, slug, _note_title(note_path, slug), True))
+    for (genre, slug), note in known.items():
+        entries.append((genre, slug, note.title, not note.review_passed))
+
+    by_genre: dict[str, list[tuple[str, str, bool]]] = {}
+    for genre, slug, title, needs_review in entries:
+        by_genre.setdefault(genre, []).append((slug, title, needs_review))
 
     for genre in sorted(by_genre):
         lines.append(f"\n## {genre.replace('-', ' ').title()}\n")
-        for note in by_genre[genre]:
-            status = "" if note.review_passed else " (needs review)"
-            lines.append(f"- [[{note.slug}]] — {note.title}{status}")
+        for slug, title, needs_review in by_genre[genre]:
+            status = " (needs review)" if needs_review else ""
+            lines.append(f"- [[{slug}]] — {title}{status}")
 
     lines.append("")
     return "\n".join(lines)

@@ -130,6 +130,9 @@ def dispatch_case_command(
         if case_id is None:
             return f"Case not found: {cmd.args[0]}"
         case = case_repository.get_case(case_id)
+        if case is None:
+            # Deleted by another tab between resolution and here.
+            return f"Case not found: {cmd.args[0]}"
         case_repository.soft_delete_case(case_id, expected_case_revision=case.revision)
         if manager.active_case_id == case_id:
             manager.clear_active_case()
