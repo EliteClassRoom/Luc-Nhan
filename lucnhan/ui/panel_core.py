@@ -3126,8 +3126,11 @@ class LucNhanPanelCore(QWidget):
         """Forward tool approval to the agent loop of *tab_id*."""
         tid = tab_id if tab_id is not None else self._ctrl.active_tab_id
         runner = self._ctrl.get_runner(tid)
-        if runner:
-            runner.agent_loop.submit_tool_approval(decision, tool_call_id)
+        # A rejected delivery means the loop has already moved on to a
+        # different request, so its gate must survive: clearing it would leave
+        # that request with no prompt and no answer.
+        if runner and not runner.agent_loop.submit_tool_approval(decision, tool_call_id):
+            return
         # Deciding releases THIS tab's gate only.  Allow once / Deny both
         # resume the turn (G4), so re-apply the presentation for the tab
         # on screen — another tab waiting on its own approval is untouched.
@@ -3145,15 +3148,17 @@ class LucNhanPanelCore(QWidget):
         if tid is None or not self._gate(tid).pending_answer:
             return
         gate_id = self._gate(tid).pending_question_id
+        runner = self._ctrl.get_runner(tid)
+        if runner and not runner.agent_loop.submit_user_answer(answer, gate_id or None):
+            # The loop is already waiting on a different question; keep this
+            # tab's gate so that question still has its prompt.
+            return
         self._clear_gate(tid)
         chat_view = self._chat_views.get(tid)
         if chat_view is not None:
             chat_view.add_user_message(answer)
         if tid == self._ctrl.active_tab_id:
             self._sync_composer_state()
-        runner = self._ctrl.get_runner(tid)
-        if runner:
-            runner.agent_loop.submit_user_answer(answer, gate_id or None)
 
     def _on_agent_finished(self, tab_id: str | None = None) -> None:
         if self._is_shutdown:

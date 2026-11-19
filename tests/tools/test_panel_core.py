@@ -712,6 +712,51 @@ class TestOnUndoRequested(unittest.TestCase):
         panel._ctrl.start_agent.assert_called_once_with("/undo 2", tab_id="t1")
 
 
+class TestDecisionDeliveryResult(unittest.TestCase):
+    """A rejected delivery must leave the gate alone.
+
+    ``submit_tool_approval``/``submit_user_answer`` return False when the
+    loop already waits on a different request. Clearing the gate anyway
+    would unlock the composer with no live prompt behind it.
+    """
+
+    def _gated_panel(self, accepted: bool) -> tuple:
+        panel = _make_panel()
+        runner = MagicMock()
+        runner.agent_loop.submit_tool_approval.return_value = accepted
+        runner.agent_loop.submit_user_answer.return_value = accepted
+        panel._ctrl.get_runner.return_value = runner
+        panel._ctrl.active_tab_id = "t1"
+        panel._gate("t1").button_only = True
+        panel._gate("t1").pending_answer = True
+        return panel, runner
+
+    def test_rejected_approval_keeps_the_gate(self) -> None:
+        panel, runner = self._gated_panel(accepted=False)
+
+        panel._on_tool_approval("call_1", "allow", tab_id="t1")
+
+        runner.agent_loop.submit_tool_approval.assert_called_once_with("allow", "call_1")
+        self.assertTrue(panel._tab_gates["t1"].button_only)
+
+    def test_delivered_approval_clears_the_gate(self) -> None:
+        panel, _runner = self._gated_panel(accepted=True)
+
+        panel._on_tool_approval("call_1", "allow", tab_id="t1")
+
+        self.assertFalse(panel._tab_gates["t1"].button_only)
+
+    def test_rejected_answer_keeps_the_gate(self) -> None:
+        panel, runner = self._gated_panel(accepted=False)
+        panel._gate("t1").pending_question_id = "q_1"
+        panel._chat_views["t1"] = MagicMock()
+
+        panel._on_user_answer_submitted("yes", tab_id="t1")
+
+        runner.agent_loop.submit_user_answer.assert_called_once_with("yes", "q_1")
+        self.assertTrue(panel._tab_gates["t1"].pending_answer)
+
+
 class TestOnOrchestraApproval(unittest.TestCase):
     """Regression tests for ``LucNhanPanelCore._on_orchestra_approval``.
 
