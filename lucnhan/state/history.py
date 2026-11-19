@@ -1077,8 +1077,11 @@ class SessionHistory:
         if path is None:
             return SessionDeleteOutcome(SessionDeleteStatus.NOT_FOUND)
 
-        # Validated by the ``None`` check above, so the raw join is safe here.
-        sidecar_path = os.path.join(self._dir, f"{session_id}{_SUMMARY_SUFFIX}")
+        # The sidecar follows the same effective id as the primary file: a
+        # raw id may carry characters (a NUL, a separator) that cannot be
+        # joined into a path.
+        effective_id = self._effective_session_id(session_id)
+        sidecar_path = os.path.join(self._dir, f"{effective_id}{_SUMMARY_SUFFIX}")
         with self._manifest_lock:
             data = self._read_manifest()
             entries = dict(data.get("entries", {}))
@@ -1086,7 +1089,12 @@ class SessionHistory:
 
             if not os.path.exists(path):
                 self._remove_file_if_present(sidecar_path, session_id=session_id)
-                entries.pop(session_id, None)
+                # Only rewrite when a row actually went away: deleting an id
+                # that never existed must not materialise a manifest.
+                removed_raw = entries.pop(session_id, None)
+                removed_effective = entries.pop(effective_id, None)
+                if removed_raw is None and removed_effective is None:
+                    return SessionDeleteOutcome(SessionDeleteStatus.NOT_FOUND)
                 try:
                     self._write_manifest(entries, last_full_scan=last_full_scan)
                 except OSError as exc:
@@ -1110,7 +1118,7 @@ class SessionHistory:
             # expected scope and the on-disk record agree on every
             # populated field — a single-field match is not enough when
             # the caller explicitly supplied the full scope.
-            if not isinstance(persisted, dict) or persisted.get("id") != session_id:
+            if not isinstance(persisted, dict) or persisted.get("id") not in (session_id, effective_id):
                 return SessionDeleteOutcome(SessionDeleteStatus.WRONG_IDB)
             persisted_idb_path = str(persisted.get("idb_path", ""))
             persisted_db_instance_id = str(persisted.get("db_instance_id", ""))
@@ -1144,6 +1152,7 @@ class SessionHistory:
 
             self._remove_file_if_present(sidecar_path, session_id=session_id)
             entries.pop(session_id, None)
+            entries.pop(effective_id, None)
             try:
                 self._write_manifest(entries, last_full_scan=last_full_scan)
             except OSError as exc:
