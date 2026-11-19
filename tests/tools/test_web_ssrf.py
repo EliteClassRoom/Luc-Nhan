@@ -190,6 +190,41 @@ class TestRedirectHopLifetime(unittest.TestCase):
         response.close.assert_called_once()
 
 
+class TestImageRedirectValidation(unittest.TestCase):
+    """understand_image must validate redirect hops like web_fetch does.
+
+    A bare ``requests.get`` follows a public https URL to
+    ``http://169.254.169.254/...`` without re-checking, so cloud credentials
+    could be pulled and forwarded to the provider.
+    """
+
+    @staticmethod
+    def _response(status: int, location: str | None = None) -> mock.MagicMock:
+        response = mock.MagicMock()
+        response.status_code = status
+        response.headers = {"content-type": "image/png"}
+        if location is not None:
+            response.headers["Location"] = location
+        return response
+
+    def test_redirect_to_metadata_is_rejected(self):
+        redirect = self._response(302, "http://169.254.169.254/latest/meta-data/")
+        with mock.patch("requests.get", return_value=redirect):
+            with self.assertRaises(ToolError) as cm:
+                web._process_image_source("https://example.com/img.png")
+        assert "Unsafe URL rejected" in str(cm.exception)
+
+    def test_https_redirect_is_followed(self):
+        redirect = self._response(302, "https://cdn.example.com/img.png")
+        final = self._response(200)
+        final.iter_content.return_value = iter([b"\x89PNG\r\n\x1a\n"])
+
+        with mock.patch("requests.get", side_effect=[redirect, final]):
+            result = web._process_image_source("https://example.com/img.png")
+
+        assert result.startswith("data:image/png;base64,")
+
+
 class TestUnderstandImageSSRFGuard(unittest.TestCase):
     """``understand_image`` must reject SSRF attempts in image URLs."""
 
@@ -281,3 +316,40 @@ class TestUnderstandImageSSRFGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWebFetchEncoding(unittest.TestCase):
+    """The charset must come from the bytes, not from an exhausted response.
+
+    ``response.apparent_encoding`` reads ``response.content``, which is already
+    consumed by the ``iter_content`` cap loop, so it sniffs nothing (a mock
+    hands back a MagicMock, which ``bytes.decode`` rejects with a TypeError).
+    """
+
+    def test_missing_charset_uses_the_read_bytes(self):
+        response = mock.MagicMock()
+        response.status_code = 200
+        response.headers = {"content-type": "text/plain"}
+        response.encoding = None
+        response.iter_content.return_value = iter(["caf\u00e9".encode("cp1252")])
+
+        with mock.patch.object(web_fetch, "_fetch_with_safe_redirects", return_value=response):
+            with mock.patch.object(web_fetch, "_apparent_encoding", return_value="cp1252"):
+                text = web_fetch.web_fetch("https://example.com/a.txt")
+
+        assert "caf\u00e9" in text
+        response.close.assert_called_once()
+
+    def test_declared_charset_wins(self):
+        response = mock.MagicMock()
+        response.status_code = 200
+        response.headers = {"content-type": "text/plain; charset=latin-1"}
+        response.encoding = "latin-1"
+        response.iter_content.return_value = iter(["caf\u00e9".encode("latin-1")])
+
+        with mock.patch.object(web_fetch, "_fetch_with_safe_redirects", return_value=response):
+            with mock.patch.object(web_fetch, "_apparent_encoding") as sniff:
+                text = web_fetch.web_fetch("https://example.com/a.txt")
+
+        assert "caf\u00e9" in text
+        sniff.assert_not_called()

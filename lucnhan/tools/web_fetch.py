@@ -160,6 +160,29 @@ def _fetch_with_safe_redirects(
     )
 
 
+def _apparent_encoding(raw: bytes) -> str | None:
+    """Best-effort charset sniff on already-read bytes.
+
+    ``requests`` ships ``charset_normalizer`` (or ``chardet`` on old installs);
+    either is optional here so a stripped-down environment still fetches.
+    """
+    if not raw:
+        return None
+    try:
+        from charset_normalizer import from_bytes
+
+        best = from_bytes(raw[:65536]).best()
+        return best.encoding if best is not None else None
+    except ImportError:
+        pass
+    try:
+        from chardet import detect
+
+        return detect(raw[:65536]).get("encoding")
+    except ImportError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # HTML → text conversion
 # ---------------------------------------------------------------------------
@@ -353,6 +376,10 @@ def web_fetch(
             f"Error reading response body: {e}",
             tool_name="web_fetch",
         ) from e
+    finally:
+        # The redirect helper closes the hops it followed but returns the final
+        # response open; without this the connection lingers until GC.
+        response.close()
 
     raw_content = b"".join(chunks)
 
@@ -360,8 +387,11 @@ def web_fetch(
     content_type = (response.headers.get("content-type", "")).lower()
     is_html = "text/html" in content_type or "application/xhtml+xml" in content_type
 
-    # Respect the server's declared encoding, falling back to apparent encoding then UTF-8
-    encoding = response.encoding or response.apparent_encoding or "utf-8"
+    # Respect the server's declared encoding, else sniff the bytes we already
+    # hold. ``response.apparent_encoding`` reads ``response.content``, and the
+    # raw socket is already consumed by ``iter_content`` above, so it can
+    # return nothing (or blow up on an exhausted raw) instead of sniffing.
+    encoding = response.encoding or _apparent_encoding(raw_content) or "utf-8"
     try:
         text = raw_content.decode(encoding, errors="replace")
     except (LookupError, UnicodeError):

@@ -36,16 +36,6 @@ DEFAULT_API_HOST = "https://api.minimax.io"
 _runtime_config: LucNhanConfig | None = None
 
 
-def _safe_url_host(url: str) -> str:
-    """Extract the hostname from *url* for SSRF DNS checks.
-
-    Tiny local helper — re-uses urllib.parse so we don't import it twice.
-    """
-    import urllib.parse
-
-    return (urllib.parse.urlparse(url).hostname or "").lower()
-
-
 def set_runtime_config(config: LucNhanConfig | None) -> None:
     """Provide the active in-memory config for web tools.
 
@@ -204,28 +194,22 @@ def _process_image_source(image_source: str) -> str:
         import requests
 
         # Reject URLs targeting private/internal networks before making
-        # the request.  This blocks SSRF attempts where the LLM is
-        # prompt-injected into fetching cloud metadata endpoints
-        # (169.254.169.254) or internal services on 127.0.0.1 / 10.x.
-        from .web_fetch import _is_safe_url, _resolve_hostsafe
-
-        safe, err = _is_safe_url(image_source)
-        if not safe:
-            raise ToolError(
-                f"Image URL rejected (SSRF guard): {err}",
-                tool_name="understand_image",
-            )
-        host_safe, host_err = _resolve_hostsafe(_safe_url_host(image_source))
-        if not host_safe:
-            raise ToolError(
-                f"Image URL rejected (SSRF guard): {host_err}",
-                tool_name="understand_image",
-            )
+        # the request, and re-validate every redirect hop: a bare
+        # ``requests.get`` follows a public https URL to
+        # ``http://169.254.169.254/...`` unvalidated, so cloud credentials
+        # could be pulled and uploaded to the provider. ``web_fetch`` already
+        # does the https-only + literal-IP + DNS check per hop.
+        from . import web_fetch
 
         img_response = None
         try:
-            img_response = requests.get(image_source, timeout=30, stream=True)
-            img_response.raise_for_status()
+            try:
+                img_response = web_fetch._fetch_with_safe_redirects(
+                    image_source,
+                    {"User-Agent": "LucNhan/1.0 (understand_image)", "Accept": "image/*"},
+                )
+            except ToolError as e:
+                raise ToolError(f"Image URL rejected (SSRF guard): {e}", tool_name="understand_image") from e
             chunks: list[bytes] = []
             total = 0
             for chunk in img_response.iter_content(chunk_size=8192):
