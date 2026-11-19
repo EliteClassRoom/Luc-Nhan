@@ -42,6 +42,19 @@ class SaveMemoryResult:
     warning: str
 
 
+def _flag_projection_dirty(store: WorkspaceStore) -> bool:
+    """Mark the projection dirty and report the flag, tolerating a sick store.
+
+    Runs inside an ``except`` block: the fact is already committed, so a
+    failure here must not turn a successful save into a raised error.
+    """
+    try:
+        store.mark_projection_dirty()
+        return store.projection_state().projection_dirty
+    except Exception:
+        return True
+
+
 class BinaryMemoryService:
     """Façade for one binary workspace's prompt/retrieval/write operations.
 
@@ -217,12 +230,11 @@ class BinaryMemoryService:
             from ..core.logging import log_error as _le
 
             _le(f"MEMORY.md projection failed: {exc!r}")
-            self.store.mark_projection_dirty()
             return SaveMemoryResult(
                 record_id=record.id,
                 revision=getattr(record, "revision", 1),
                 outcome=saved.outcome,
-                projection_dirty=self.store.projection_state().projection_dirty,
+                projection_dirty=_flag_projection_dirty(self.store),
                 warning=str(exc),
             )
 
@@ -328,12 +340,11 @@ class BinaryMemoryService:
             from ..core.logging import log_error as _le
 
             _le(f"MEMORY.md projection failed: {exc!r}")
-            self.store.mark_projection_dirty()
             return SaveMemoryResult(
                 record_id=record.id,
                 revision=getattr(record, "revision", 1),
                 outcome=saved.outcome,
-                projection_dirty=self.store.projection_state().projection_dirty,
+                projection_dirty=_flag_projection_dirty(self.store),
                 warning=str(exc),
             )
 

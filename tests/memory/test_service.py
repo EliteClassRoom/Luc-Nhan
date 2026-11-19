@@ -262,3 +262,22 @@ def test_manual_notes_context_strips_injection_markers(tmp_path: Path) -> None:
     assert "<|im_start|>" not in manual
     # Normal markdown content is preserved.
     assert "## Notes" in manual
+
+
+class TestProjectionDirtyFallback:
+    def test_a_sick_store_does_not_fail_the_save(self, tmp_path: Path) -> None:
+        """The fact is already committed, so the dirty-flag path must not raise."""
+        service, issuer, context = _create_service(tmp_path)
+        auth = issuer.issue(context)
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("MEMORY.md is unreadable")
+
+        service.projector.project = _boom  # type: ignore[method-assign]
+        service.store.mark_projection_dirty = _boom  # type: ignore[method-assign]
+
+        result = service.save_fact(auth, category="algorithm", fact="RC4 with a fixed key", source="test")
+
+        assert isinstance(result, SaveMemoryResult)
+        assert result.projection_dirty is True
+        assert "unreadable" in result.warning
