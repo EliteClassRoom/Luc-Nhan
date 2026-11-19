@@ -129,6 +129,16 @@ class TestMCPConfig(unittest.TestCase):
             leftovers = [n for n in os.listdir(tmpdir) if n.startswith(".mcp-config-")]
             self.assertEqual(leftovers, [])
 
+    def test_save_to_a_bare_filename_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            previous = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                save_mcp_config([MCPServerConfig(name="s", command="c")], "mcp.json")
+            finally:
+                os.chdir(previous)
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "mcp.json")))
+
     def test_save_and_reload(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "mcp.json")

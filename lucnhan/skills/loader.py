@@ -241,6 +241,12 @@ def _split_frontmatter(text: str) -> tuple:
     return (fm_text, body.lstrip("\n"))
 
 
+#: Frontmatter is small (a name, a description, tags). A file that opens a
+#: block and never closes it must not be buffered whole during discovery.
+_MAX_FRONTMATTER_LINES = 200
+_MAX_FRONTMATTER_CHARS = 64 * 1024
+
+
 def _read_frontmatter_only(md_path: str) -> str:
     """Read only the YAML frontmatter block (up to the closing ``---``) from *md_path*.
 
@@ -265,8 +271,13 @@ def _read_frontmatter_only(md_path: str) -> str:
             lines: list[str] = []
             for line in f:
                 if line.strip() == "---":
-                    return "\n".join(lines)
+                    break
                 lines.append(line.rstrip("\r\n"))
+                if len(lines) >= _MAX_FRONTMATTER_LINES:
+                    break
+                if sum(len(part) + 1 for part in lines) >= _MAX_FRONTMATTER_CHARS:
+                    break
+            return "\n".join(lines)
     except OSError as e:
         log_debug(f"Failed to read skill frontmatter {md_path}: {e}")
     return ""

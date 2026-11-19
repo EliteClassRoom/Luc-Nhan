@@ -110,10 +110,12 @@ def save_mcp_config(servers: list[MCPServerConfig], path: str = "") -> None:
 
     data = {"mcpServers": servers_dict}
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # A bare filename has no directory part; ``makedirs("")`` raises.
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
     # Replace instead of truncating: a crash mid-write would otherwise lose
     # every configured server.
-    fd, tmp = tempfile.mkstemp(prefix=".mcp-config-", dir=os.path.dirname(path) or ".")
+    fd, tmp = tempfile.mkstemp(prefix=".mcp-config-", dir=parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)

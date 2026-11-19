@@ -625,3 +625,23 @@ class TestIdaScriptingPayloadBudget(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFrontmatterCap(unittest.TestCase):
+    def test_runaway_frontmatter_is_truncated(self):
+        import tempfile
+
+        from lucnhan.skills.loader import _MAX_FRONTMATTER_LINES, _read_frontmatter_only
+
+        with tempfile.TemporaryDirectory() as base:
+            path = os.path.join(base, "SKILL.md")
+            body = ["---", "name: Huge", "description: d"]
+            body.extend(f"key{i}: value" for i in range(_MAX_FRONTMATTER_LINES + 50))
+            body.extend(["---", "", "body"])
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write("\n".join(body))
+
+            text = _read_frontmatter_only(path)
+
+        self.assertIn("name: Huge", text)
+        self.assertEqual(len(text.splitlines()), _MAX_FRONTMATTER_LINES)
