@@ -63,3 +63,23 @@ def test_offline_rollback_preserves_v1_without_reopening_v2(tmp_path) -> None:
     restore_v1_backup_offline(backup, paths, owner)
     with sqlite3.connect(paths.database) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+def test_offline_rollback_survives_a_stale_temp_file(tmp_path) -> None:
+    """A crash mid-restore leaves <db>.rollback.tmp; the retry must not raise."""
+    owner = new_memory_id()
+    locator = MemoryLocator(tmp_path / "memory")
+    paths = locator.binary(owner)
+    _create_v1_database(paths.database, owner)
+    store = open_workspace_for_write(paths, owner, locator.backups(owner))
+    store.close()
+    backup = next(locator.backups(owner).glob("memory_*.db"))
+
+    stale = paths.database.with_name(paths.database.name + ".rollback.tmp")
+    stale.write_bytes(b"garbage from a killed restore")
+
+    restore_v1_backup_offline(backup, paths, owner)
+
+    with sqlite3.connect(paths.database) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert not stale.exists()

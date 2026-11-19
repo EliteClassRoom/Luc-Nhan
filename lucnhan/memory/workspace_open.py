@@ -80,7 +80,17 @@ def _copy_to_sibling_then_replace(source: Path, target: Path) -> None:
     temp_path = target.with_name(target.name + ".rollback.tmp")
     fd: int | None = None
     try:
-        fd = os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            fd = os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            # Only a hard crash (kill, power loss) leaves the sibling behind;
+            # it is ours by name and rewritten wholesale, so drop it and take
+            # the name again rather than bricking every later rollback.
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+            fd = os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(fd, "wb", closefd=True) as dst:
             fd = None
             with source.open("rb") as src:
