@@ -252,7 +252,10 @@ class SubagentManager:
         cancellation event twice. The first call mutates the record and
         emits the failure event; subsequent calls are no-ops.
         """
-        if info.status == SubagentStatus.CANCELLED:
+        # A finished agent stays finished: ``cancel()`` reads the status
+        # outside the worker, so it can lose a race against the worker's own
+        # completion and would otherwise relabel a successful run as cancelled.
+        if info.status in (SubagentStatus.CANCELLED, SubagentStatus.COMPLETED, SubagentStatus.FAILED):
             return
         info.status = SubagentStatus.CANCELLED
         info.completed_at = time.time()

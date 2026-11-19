@@ -253,6 +253,19 @@ class TestCancel(unittest.TestCase):
         self.mgr.cancel(agent_id)
         assert self.mgr.get(agent_id).status == SubagentStatus.COMPLETED
 
+    def test_late_cancellation_does_not_relabel_a_finished_agent(self) -> None:
+        """cancel() reads the status outside the worker, so it can lose the
+        race against the worker's own completion — the finalizer must not
+        overwrite a terminal status."""
+        mgr = _make_manager()
+        agent_id = mgr.register(name="a", task="t")
+        mgr.poll_event()
+        info = mgr._agents[agent_id]
+        info.status = SubagentStatus.COMPLETED
+        mgr._finalize_cancellation(info)
+        assert info.status == SubagentStatus.COMPLETED
+        assert mgr.poll_event() is None
+
     def test_cancel_emits_failure_event(self) -> None:
         agent_id = self.mgr.register(name="a", task="t")
         # Drain spawn event
