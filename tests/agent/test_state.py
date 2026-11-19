@@ -433,6 +433,11 @@ class TestSessionHistory(unittest.TestCase):
         self.assertEqual(os.path.dirname(os.path.abspath(written)), os.path.abspath(history._dir))
         self.assertTrue(os.path.isfile(written))
         self.assertNotIn("/", os.path.basename(written))
+        # The effective id must be the one used everywhere, or the row is
+        # dropped from listings and a reload cannot find the file.
+        effective = os.path.basename(written)[: -len(".json")]
+        self.assertIn(effective, {row["id"] for row in history.list_sessions()})
+        self.assertIsNotNone(history.load_session(effective))
 
     def test_load_nonexistent(self):
         history = SessionHistory(self.config)

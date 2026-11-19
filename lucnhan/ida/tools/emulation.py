@@ -55,7 +55,7 @@ from typing import Annotated, Any
 
 from lucnhan.core.errors import ToolError
 from lucnhan.core.logging import log_debug
-from lucnhan.ida.tools.emulation_memory import SnapshotAborted, snapshot_memory
+from lucnhan.ida.tools.emulation_memory import MAX_TOTAL_BYTES, SnapshotAborted, snapshot_memory
 from lucnhan.ida.tools.emulation_output import (
     decode_string_candidates,
     extract_strings,
@@ -93,7 +93,9 @@ _PAGE_SIZE = 0x1000
 _STACK_SIZE = 1 * 1024 * 1024
 
 # Aggregate mapped bytes cap, stack included.
-_MAX_MAPPED_BYTES = 16 * 1024 * 1024
+# Mirrors the snapshot's authoritative aggregate cap so the early reject and
+# the real check cannot drift apart.
+_MAX_MAPPED_BYTES = MAX_TOTAL_BYTES
 
 # Default + hard cap on emulator instructions per call.
 _DEFAULT_INSTRUCTION_LIMIT = 100_000
@@ -503,14 +505,14 @@ def _normalize_memory_ranges(
 ) -> list[tuple[int, int]]:
     """``{address, size}`` -> ``[(address, size)]``.
 
-    ``cap_bytes`` bounds the declared total. IDB ranges are copied into the
-    emulator, so an unbounded request would make the host read that much
-    before the CPU phase; ``code_ranges`` are only matched against, so they
-    pass ``None``.
+    ``cap_bytes`` is an early reject: the authoritative bound is the
+    page-merged ``MAX_TOTAL_BYTES`` check in ``snapshot_memory``, which also
+    charges the stack, the captures and the scratch buffers. Overlapping
+    entries are merged here first so a redundant list is not rejected for a
+    total the snapshot would accept.
     """
 
     out: list[tuple[int, int]] = []
-    declared_total = 0
     for idx, item in enumerate(memory_ranges or ()):
         item = _unwrap_range_item(item)
         if not isinstance(item, Mapping):
@@ -525,21 +527,25 @@ def _normalize_memory_ranges(
                 f"{tool_name}: memory_ranges[{idx}].size must be a positive integer",
                 tool_name=tool_name,
             )
-        declared_total += size
-        if cap_bytes is not None and declared_total > cap_bytes:
+        out.append((addr, int(size)))
+    if cap_bytes is not None and out:
+        merged_total = sum(end - start for start, end in _merge_ranges(out))
+        if merged_total > cap_bytes:
             raise ToolError(
-                f"{tool_name}: memory_ranges declare {declared_total} bytes, over the "
-                f"{cap_bytes} aggregate mapping cap",
+                f"{tool_name}: ranges cover {merged_total:#x} bytes, over the {cap_bytes:#x} aggregate mapping cap",
                 tool_name=tool_name,
             )
-        out.append((addr, int(size)))
     return out
 
 
 def _normalize_code_ranges(code_ranges: Sequence[Any], *, tool_name: str) -> list[tuple[int, int]]:
-    """Explicit executable allowlist in the IDB: ``{address, size}``."""
+    """Explicit executable allowlist in the IDB: ``{address, size}``.
 
-    return _normalize_memory_ranges(code_ranges, tool_name=tool_name, cap_bytes=None)
+    Those IDB bytes are read like any other span and charged to the same
+    total, so the cap applies here too.
+    """
+
+    return _normalize_memory_ranges(code_ranges, tool_name=tool_name)
 
 
 def _normalize_buffers(

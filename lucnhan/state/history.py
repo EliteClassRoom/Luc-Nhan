@@ -318,19 +318,21 @@ class SessionHistory:
     def _manifest_path(self) -> str:
         return os.path.join(self._dir, MANIFEST_FILE)
 
-    def _writable_session_path(self, session_id: str) -> str:
-        """Path to write a session file to.
+    @staticmethod
+    def _effective_session_id(session_id: str) -> str:
+        """Return the id a session is stored, listed and reloaded under.
 
-        The validated form is preferred, but a session created before the
-        guard (or loaded from a foreign file) still has to persist, so an
-        unusable id is reduced to a safe stem instead of failing the save.
+        A valid id is used as-is. An unusable one (built in memory, or read
+        from a foreign file) is reduced to a safe stem, so the filename, the
+        persisted ``id`` and the manifest key can never disagree.
         """
-        # Validate through the guard, but keep the caller's casing: the guard
-        # returns a ``normcase``d path, which lowercases on Windows.
-        if self._session_path(session_id) is not None:
-            return os.path.join(self._dir, f"{session_id}.json")
-        stem = re.sub(r"[^A-Za-z0-9_-]", "_", str(session_id))[:32].strip("-") or "session"
-        return os.path.join(self._dir, f"{stem}.json")
+        if _validate_session_id(session_id):
+            return session_id
+        return re.sub(r"[^A-Za-z0-9_-]", "_", str(session_id))[:32].strip("-") or "session"
+
+    def _writable_session_path(self, session_id: str) -> str:
+        """Path to write a session file to (validated, else effective id)."""
+        return os.path.join(self._dir, f"{self._effective_session_id(session_id)}.json")
 
     def _session_path(self, session_id: str) -> str | None:
         """Resolve a safe absolute path for *session_id* inside ``self._dir``.
@@ -341,10 +343,12 @@ class SessionHistory:
         """
         if not _validate_session_id(session_id):
             return None
-        root = os.path.normcase(os.path.realpath(self._dir))
-        candidate = os.path.normcase(os.path.realpath(os.path.join(root, f"{session_id}.json")))
+        root = os.path.realpath(self._dir)
+        candidate = os.path.realpath(os.path.join(root, f"{session_id}.json"))
+        # Compare case-insensitively on Windows but hand back the caller's
+        # casing, so a saved path is not silently lowercased.
         try:
-            if os.path.commonpath((root, candidate)) != root:
+            if os.path.commonpath((os.path.normcase(root), os.path.normcase(candidate))) != os.path.normcase(root):
                 return None
         except ValueError:
             # Different drives on Windows, or otherwise incomparable paths.
@@ -417,6 +421,7 @@ class SessionHistory:
         """
         db_path = _normalize_db_path(session.idb_path)
         file_path = self._writable_session_path(session.id)
+
         try:
             st = os.stat(file_path)
             file_mtime = getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))
@@ -454,7 +459,7 @@ class SessionHistory:
                 data = self._read_manifest()
                 entries = data.get("entries", {})
                 last_full_scan = data.get("last_full_scan", 0.0)
-                entries[session.id] = self._build_manifest_entry(session, description)
+                entries[self._effective_session_id(session.id)] = self._build_manifest_entry(session, description)
                 try:
                     self._write_manifest(entries, last_full_scan=last_full_scan)
                 except OSError as write_err:
@@ -602,7 +607,7 @@ class SessionHistory:
         db_path = _normalize_db_path(session.idb_path)
         data = {
             "schema_version": SESSION_SCHEMA_VERSION,
-            "id": session.id,
+            "id": self._effective_session_id(session.id),
             "created_at": session.created_at,
             "provider_name": session.provider_name,
             "model_name": session.model_name,
