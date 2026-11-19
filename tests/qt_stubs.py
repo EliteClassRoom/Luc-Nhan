@@ -1501,6 +1501,10 @@ def ensure_pyside6_stubs() -> None:
     # qt_compat also references QMessageBox.StandardButton with the same
     # ``.value`` + callable pattern. Reuse the same stub class.
     _widget_stubs["QMessageBox"].StandardButton = _DialogStandardButton
+    # Static convenience dialogs block on an event loop the stub tests never
+    # run; make them recording no-ops so call sites are exercisable.
+    _widget_stubs["QMessageBox"].warning = staticmethod(lambda *a, **k: None)
+    _widget_stubs["QMessageBox"].information = staticmethod(lambda *a, **k: None)
     # QDialogButtonBox needs accepted/rejected/clicked signals for the
     # Ok/Cancel wiring in SettingsDialog.
     _widget_stubs["QDialogButtonBox"].accepted = _Signal()

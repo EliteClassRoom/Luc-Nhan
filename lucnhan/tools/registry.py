@@ -506,6 +506,15 @@ class ToolRegistry:
 
         return result_str
 
+    def invalidate_result_cache(self) -> None:
+        """Drop every cached tool result.
+
+        The cache is keyed by tool name and arguments only, so it outlives
+        an IDB switch: a ``decompile_function`` result from binary A would
+        be served for binary B. Callers that swap the database call this.
+        """
+        self._result_cache.invalidate()
+
     def execute_coerced(
         self, name: str, arguments: dict[str, Any], *, cancel_event: threading.Event | None = None
     ) -> str:

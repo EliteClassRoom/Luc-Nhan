@@ -298,6 +298,18 @@ class TestAddProviderDialogValidate(unittest.TestCase):
         dlg._error_label.show.assert_called()
         dlg.accept.assert_not_called()
 
+    def test_schemeless_base_shows_error(self):
+        dlg = _make_dialog("mynew", "api.example.com/v1")
+        dlg._validate()
+        dlg._error_label.show.assert_called()
+        dlg.accept.assert_not_called()
+
+    def test_ftp_base_shows_error(self):
+        dlg = _make_dialog("mynew", "ftp://example.com")
+        dlg._validate()
+        dlg._error_label.show.assert_called()
+        dlg.accept.assert_not_called()
+
     def test_valid_input_calls_accept(self):
         dlg = _make_dialog("mynew", "http://example.com")
         dlg._validate()

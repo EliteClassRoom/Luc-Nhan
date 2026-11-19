@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..constants import GLM_DEFAULT_MODEL
-from ..core.config import LucNhanConfig
+from ..core.config import LucNhanConfig, api_base_problem
 from ..core.glm_config import (
     GLM_DIALECT,
     GLM_ENDPOINT_BASE_URLS,
@@ -306,6 +306,11 @@ class _AddProviderDialog(QDialog):
         base = self._base_edit.text().strip()
         if not base:
             self._error_label.setText("API Base URL is required")
+            self._error_label.show()
+            return
+        problem = api_base_problem(base)
+        if problem:
+            self._error_label.setText(f"API Base URL {problem}")
             self._error_label.show()
             return
         self._name_edit.setText(name)
@@ -2658,7 +2663,6 @@ class SettingsDialog(QDialog):
     def _on_accept(self) -> None:
         # A base URL with a typo fails deep inside the SDK with an opaque
         # message, so refuse it here while the dialog is still open.
-        from ..core.config import api_base_problem
 
         base_problem = api_base_problem(self._api_base_edit.text())
         if base_problem is not None:

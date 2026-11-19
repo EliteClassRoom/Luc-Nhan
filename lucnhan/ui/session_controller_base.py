@@ -1327,6 +1327,9 @@ class SessionControllerBase:
             self._mutation_logs.clear()
         self._idb_path = _normalize_db_path(new_idb_path)
         self._db_instance_id = self._ensure_db_instance_id()
+        # Cached tool results are keyed by name+arguments only, so every hit
+        # from the previous binary is now wrong.
+        self._tool_registry.invalidate_result_cache()
         tab_id = self._create_session()
         self._active_tab_id = tab_id
 

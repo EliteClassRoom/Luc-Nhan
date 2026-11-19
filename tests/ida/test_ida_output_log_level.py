@@ -455,6 +455,31 @@ class TestSettingsDialogAcceptsNewCombo(unittest.TestCase):
         finally:
             dlg.done(0)
 
+    def test_invalid_api_base_keeps_the_dialog_open(self) -> None:
+        """A schemeless base must be reported, not silently saved."""
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
+
+        _ensure_qapplication()
+
+        config = LucNhanConfig()
+        dlg = SettingsDialog(config)
+        before = config.provider.api_base
+        try:
+            dlg._api_base_edit.setText("api.example.com/v1")
+            # The reject branch raises a modal warning; patched so it does
+            # not block on an event loop the test never runs.
+            with (
+                patch("lucnhan.ui.settings_dialog.QMessageBox.warning") as mock_warn,
+                patch.object(SettingsDialog, "accept") as mock_accept,
+            ):
+                dlg._on_accept()
+                mock_warn.assert_called_once()
+                mock_accept.assert_not_called()
+            self.assertEqual(config.provider.api_base, before)
+        finally:
+            dlg.done(0)
+
     def test_accept_applies_host_log_level_at_runtime(self) -> None:
         """Accepting the dialog with a new selection must call
         ``set_host_log_level`` so the change takes effect without an

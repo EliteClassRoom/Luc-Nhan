@@ -225,6 +225,17 @@ class TestSessionUndoStack(unittest.TestCase):
     def _undone_events(events: list[TurnEvent]) -> list[TurnEvent]:
         return [e for e in events if e.type == TurnEventType.MUTATION_UNDONE]
 
+    def test_reset_for_new_file_drops_cached_tool_results(self) -> None:
+        """The tool cache is keyed by name+args only, so it outlives an IDB."""
+        from unittest.mock import MagicMock
+
+        registry = MagicMock()
+        self.ctrl._tool_registry = registry
+
+        self.ctrl.reset_for_new_file("C:/tmp/other.i64")
+
+        registry.invalidate_result_cache.assert_called_once_with()
+
     # ------------------------------------------------------------------
     # Cross-run undo — the reproduced defect
     # ------------------------------------------------------------------
