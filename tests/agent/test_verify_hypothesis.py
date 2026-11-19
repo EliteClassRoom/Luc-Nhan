@@ -533,3 +533,23 @@ class TestVerifierReadOnlyToolView(unittest.TestCase):
         self.assertIn("decompile_function", set(reg.list_names()))
         view.set_capabilities({"fake_cap": True})
         self.assertNotIn("fake_cap", reg._capabilities)
+
+
+class TestBatchCap(TestVerifyHypothesesFlow):
+    def test_only_the_batch_cap_is_asked(self) -> None:
+        import lucnhan.agent.hypothesis_verification as hv
+
+        prompts: list[str] = []
+
+        class _R:
+            def run_task(self, prompt: str, max_turns: int = 8, silent: bool = True):
+                prompts.append(prompt)
+                return iter(())
+
+        loop = self._build_loop()
+        records = [_hypothesis(f"hyp-{i:02d}", f"claim {i}") for i in range(hv.MAX_VERIFY_BATCH + 10)]
+
+        hv.verify_hypotheses(loop, records, max_attempts=1, runner_factory=_R)
+
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(prompts[0].count("id: hyp-"), hv.MAX_VERIFY_BATCH)

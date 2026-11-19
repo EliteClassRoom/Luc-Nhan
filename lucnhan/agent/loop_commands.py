@@ -691,7 +691,7 @@ def _handle_verify_command(loop: AgentLoop, raw_id: str) -> Generator[TurnEvent,
 
     from ..memory.ingest import _now_iso
     from ..memory.schema import HypothesisStatus, KnowledgeMemory, KnowledgeObservation
-    from .hypothesis_verification import verify_hypotheses
+    from .hypothesis_verification import MAX_VERIFY_BATCH, verify_hypotheses
 
     store, paths, err_event = _open_knowledge_store(loop)
     if err_event is not None:
@@ -730,7 +730,12 @@ def _handle_verify_command(loop: AgentLoop, raw_id: str) -> Generator[TurnEvent,
         yield TurnEvent.text_done("No unverified hypotheses pending /verify.")
         return
 
-    yield TurnEvent.text_done(f"Verifying {len(candidates)} hypothesis(es) with an independent agent (read-only)…")
+    deferred = max(0, len(candidates) - MAX_VERIFY_BATCH)
+    candidates = candidates[:MAX_VERIFY_BATCH]
+    more = f" ({deferred} more left for the next /verify)" if deferred else ""
+    yield TurnEvent.text_done(
+        f"Verifying {len(candidates)} hypothesis(es) with an independent agent (read-only)…{more}"
+    )
     result = verify_hypotheses(loop, candidates, max_attempts=3)
     if not result.passed:
         unresolved = result.unresolved or {h.id: "verifier failed" for h in candidates}

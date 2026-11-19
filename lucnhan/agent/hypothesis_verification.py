@@ -56,6 +56,12 @@ class HypothesisVerdict:
     citations: tuple[str, ...]
 
 
+#: How many hypotheses one verifier run may carry. Every id has to come back
+#: in a single verdict object inside a fixed turn budget, so a larger backlog
+#: degrades into failed attempts.
+MAX_VERIFY_BATCH = 25
+
+
 @dataclass(frozen=True)
 class HypothesisVerificationResult:
     """Outcome of the bounded verifier loop.
@@ -275,6 +281,9 @@ def verify_hypotheses(
         raise ValueError("max_attempts must be >= 1")
     if not hypotheses:
         return HypothesisVerificationResult(passed=True, attempts=0)
+    # The verifier must return a verdict for every id in one JSON object
+    # within a fixed turn budget, so a long backlog is verified in batches.
+    hypotheses = hypotheses[:MAX_VERIFY_BATCH]
     expected = {h.id for h in hypotheses}
     factory = runner_factory or (lambda: _build_runner(loop))
 
