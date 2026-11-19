@@ -2948,3 +2948,73 @@ class TestToolsDisabledFlagIsHonoured(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCurrentTurnAdvance(unittest.TestCase):
+    """Every mode drives ``execute_single_turn``, so the counter lives there.
+
+    Only normal mode used to advance ``session.current_turn``; exploration and
+    plan ran with a frozen value, so reminder gap checks never elapsed and the
+    progress window never slid.
+    """
+
+    def test_each_turn_advances_the_session_counter(self):
+        config = LucNhanConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        provider = MockProvider(responses=[_text_response("one"), _text_response("two")])
+        loop = AgentLoop(provider=provider, tool_registry=ToolRegistry(), config=config, session=session)
+        assert session.current_turn == 0
+
+        _drain_generator_with_return(execute_single_turn(loop, "system", None))
+        assert session.current_turn == 1
+
+        _drain_generator_with_return(execute_single_turn(loop, "system", None))
+        assert session.current_turn == 2
+
+
+class TestErrorLadderReset(unittest.TestCase):
+    """The error ladder is per request, not per loop lifetime."""
+
+    def test_run_clears_the_error_state_of_the_previous_request(self):
+        config = LucNhanConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        provider = MockProvider(responses=[_text_response("done")])
+        loop = AgentLoop(provider=provider, tool_registry=ToolRegistry(), config=config, session=session)
+        loop._consecutive_errors = 4
+        loop._tools_disabled_for_turn = True
+
+        _drain_generator_with_return(loop.run("hi"))
+
+        assert loop._consecutive_errors == 0
+        assert loop._tools_disabled_for_turn is False
+        # The observable half: a flag that survived would strip the tool
+        # schema from the next request's very first turn.
+        assert provider.seen_tools and provider.seen_tools[0] is not None
+
+
+class TestEstimatedUsageOnAcceptedTurns(unittest.TestCase):
+    """A provider that reports no usage must still count completion tokens.
+
+    ``_finalize_stream_usage`` falls back to a prompt-only estimate, and that
+    object was what the accepted assistant message carried, so
+    ``completion_tokens`` stayed 0 for every such turn while the discarded
+    paths recorded the richer estimate.
+    """
+
+    def test_completion_is_estimated_when_the_provider_omits_usage(self):
+        config = LucNhanConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        provider = MockProvider(responses=[_text_response_no_usage("hello world, a fair amount of text")])
+        loop = AgentLoop(provider=provider, tool_registry=ToolRegistry(), config=config, session=session)
+
+        _drain_generator_with_return(execute_single_turn(loop, "system", None))
+
+        assistant = [m for m in session.messages if m.role == Role.ASSISTANT][-1]
+        assert assistant.token_usage is not None
+        assert assistant.token_usage.completion_tokens > 0
+        assert assistant.token_usage.total_tokens == (
+            assistant.token_usage.prompt_tokens + assistant.token_usage.completion_tokens
+        )

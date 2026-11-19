@@ -44,7 +44,6 @@ def run_normal_loop(
         if turn > max_turns:
             yield TurnEvent.error_event(f"Reached max turns limit ({max_turns}).")
             break
-        loop.session.current_turn = turn
         log_debug(f"Turn {turn} start")
         yield TurnEvent.turn_start(turn)
 

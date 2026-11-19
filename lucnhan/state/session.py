@@ -413,9 +413,14 @@ class SessionState:
             msg = messages[idx]
             # ``!=`` not ``is not``: tests/conftest.py purges stub modules,
             # so ``Role`` here can be a different class object than the caller's.
-            if msg.role != Role.TOOL or not msg.tool_results or idx >= cutoff:
+            if msg.role != Role.TOOL or not msg.tool_results:
                 out.append(msg)
                 continue
+            # Inside the keep-tail the content stays verbatim, but the target
+            # still has to be registered: those messages hold the NEWEST reads,
+            # and skipping the registration made every older read of the same
+            # target look current.
+            in_tail = idx >= cutoff
             new_results: list[ToolResult] = []
             changed = False
             for tr in msg.tool_results:
@@ -425,7 +430,9 @@ class SessionState:
                     continue
                 key = _stale_key(calls.get(tr.tool_call_id))
                 content_hash = _stale_hash(content)
-                if key is not None and key in seen_keys:
+                if in_tail:
+                    new_results.append(tr)
+                elif key is not None and key in seen_keys:
                     new_results.append(replace(tr, content=_STALE_SUPERSEDED))
                     changed = True
                 elif content_hash in seen_hashes:

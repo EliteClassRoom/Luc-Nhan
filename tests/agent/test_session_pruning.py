@@ -248,3 +248,30 @@ def test_same_read_with_reordered_arguments_still_supersedes() -> None:
     contents = _tool_contents(session.get_messages_for_provider(drop_stale=True))
     assert "fresh bytes" in contents
     assert "stale bytes" not in contents
+
+
+def test_newer_read_inside_the_keep_tail_still_supersedes() -> None:
+    """The keep-tail must protect the newer read, not stop it counting.
+
+    Skipping tail messages before registering their target meant the newest
+    read of a target never entered ``seen_keys``, so an earlier read of the
+    same address was never blanked — the common case the pruning exists for.
+    """
+    session = SessionState()
+    session.add_message(Message(role=Role.USER, content="analyze it"))
+    assistant, tool = _read_pair("t_1", "0x401000", "old pseudocode")
+    session.add_message(assistant)
+    session.add_message(tool)
+    for i in range(3):
+        a, t = _filler(i)
+        session.add_message(a)
+        session.add_message(t)
+    assistant, tool = _read_pair("t_2", "0x401000", "new pseudocode")
+    session.add_message(assistant)
+    session.add_message(tool)
+
+    contents = _tool_contents(session.get_messages_for_provider(drop_stale=True))
+
+    assert "new pseudocode" in contents, "the tail read itself is kept verbatim"
+    assert "[Superseded by later read]" in contents
+    assert "old pseudocode" not in contents

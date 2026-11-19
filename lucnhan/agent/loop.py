@@ -1935,7 +1935,11 @@ class AgentLoop:
             visible_text=assistant_text,
             reasoning_content=reasoning_content,
             tool_calls=tool_calls,
-            usage=last_usage,
+            # ``attempt_usage.usage`` is the authoritative payload when the
+            # provider reported one and the completed estimate otherwise;
+            # ``last_usage`` on its own is prompt-only (completion 0) when the
+            # provider stayed silent, which under-counted accepted turns.
+            usage=attempt_usage.usage,
             raw_parts=raw_parts,
             finish_reason=finish_reason,
             disposition=disposition,
@@ -3515,6 +3519,11 @@ class AgentLoop:
         self._progress.reset_user_turn()
         self._reminders.reset_run()
         self._blocked_tools.clear()
+        # The error ladder is per request too: a request that ended on four
+        # tool errors would otherwise hand its count (and a pending
+        # "tools disabled" flag) to the next request's first turn.
+        self._consecutive_errors = 0
+        self._tools_disabled_for_turn = False
         # Refresh the provider's stream stall budgets from the config so
         # a settings change takes effect on the next run.
         self.provider.stream_first_progress_timeout = float(self.config.stream_first_progress_timeout_seconds)
