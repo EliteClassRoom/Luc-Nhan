@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from ..core.sanitize import sanitize_tool_result
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -118,7 +120,13 @@ class KnowledgeBase:
         return "; ".join(gaps) if gaps else ""
 
     def to_summary(self) -> str:
-        """Generate a text summary of accumulated knowledge for the planning prompt."""
+        """Generate a text summary of accumulated knowledge for the planning prompt.
+
+        Findings are the model's own copy of binary-derived text, so the whole
+        summary is marker-stripped before it is re-injected as a user message:
+        a closing ``<tool_result>`` tag smuggled into a finding summary would
+        otherwise end the fence in the next prompt.
+        """
         parts = [f"## Exploration Summary\n\nGoal: {self.user_goal}\n"]
 
         if self.relevant_functions:
@@ -148,7 +156,9 @@ class KnowledgeBase:
                 addr_str = f"0x{f.address:x}" if f.address is not None else "N/A"
                 parts.append(f"- [{f.category}] {addr_str}: {f.summary}")
 
-        return "\n".join(parts)
+        # Fenced like any other binary-derived payload: the summary is the
+        # model's own copy of untrusted text re-entering the prompt.
+        return sanitize_tool_result("\n".join(parts), "exploration_summary")
 
 
 # ---------------------------------------------------------------------------
