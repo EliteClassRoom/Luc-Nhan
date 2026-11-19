@@ -345,7 +345,9 @@ class SubagentManager:
                         elapsed=elapsed,
                     )
                 )
-            else:
+            elif terminal:
+                # A bare "running" tick is not a failure; without the guard
+                # every progress update painted a red failed row.
                 self._event_queue.put(
                     TurnEvent.subagent_failed(
                         agent_id=agent_id,

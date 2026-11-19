@@ -299,6 +299,27 @@ class TestUpdateExternal(unittest.TestCase):
         self.mgr.update_external(agent_id, SubagentStatus.FAILED, summary="oops")
         assert self.mgr.get(agent_id).status == SubagentStatus.FAILED
 
+    def test_running_update_emits_no_failure_event(self) -> None:
+        """A progress tick is not a failure — bulk_renamer pushes "running"
+        before every batch, and each one used to paint a red failed row."""
+        agent_id = self.mgr.register(name="a", task="t")
+        self.mgr.poll_event()  # drain spawn event
+
+        self.mgr.update_external(agent_id, SubagentStatus.RUNNING, summary="2/5", turn_count=2)
+
+        assert self.mgr.poll_event() is None
+        assert self.mgr.get(agent_id).status == SubagentStatus.RUNNING
+
+    def test_terminal_update_still_emits(self) -> None:
+        agent_id = self.mgr.register(name="a", task="t")
+        self.mgr.poll_event()
+
+        self.mgr.update_external(agent_id, SubagentStatus.FAILED, summary="oops")
+
+        event = self.mgr.poll_event()
+        assert event is not None
+        assert event.type.value == "subagent_failed"
+
     def test_update_unknown_id_is_safe(self) -> None:
         """No exception if we update an agent that was never registered."""
         self.mgr.update_external("nope", SubagentStatus.COMPLETED)
