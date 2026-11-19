@@ -562,8 +562,11 @@ class TestBuiltinModelPopulation(unittest.TestCase):
             )
 
             # Save path — pressing OK must persist the empty model,
-            # NOT a stale built-in id from the previous provider.
-            dlg._on_accept()
+            # NOT a stale built-in id from the previous provider.  An empty
+            # model now also warns and stops before writing anything.
+            with patch("lucnhan.ui.settings_dialog.QMessageBox.warning") as warning:
+                dlg._on_accept()
+            self.assertGreaterEqual(warning.call_count, 1)
             self.assertEqual(config.provider.name, "openai_compat")
             self.assertEqual(
                 config.provider.model,
@@ -1775,6 +1778,8 @@ class TestKnowledgeEnabledSetting(unittest.TestCase):
 
         _ensure_qapplication()
         config = LucNhanConfig()
+        # ``_on_accept`` refuses a blank model, so put one in the combo.
+        config.provider.model = "claude-sonnet-4-20250514"
         dlg = SettingsDialog(config)
         try:
             dlg._knowledge_enabled_cb.setChecked(False)
@@ -2375,6 +2380,8 @@ class TestAntiLoopSettings(unittest.TestCase):
 
         _ensure_qapplication()
         config = LucNhanConfig()
+        # ``_on_accept`` refuses a blank model, so put one in the combo.
+        config.provider.model = "claude-sonnet-4-20250514"
         dlg = SettingsDialog(config)
         try:
             dlg._loop_guard_cb.setChecked(False)
@@ -2390,3 +2397,30 @@ class TestAntiLoopSettings(unittest.TestCase):
             self.assertEqual(config.loop_guard_profile, "full")
         finally:
             dlg.done(0)
+
+
+@requires_real_qt
+class TestSettingsDialogEmptyModel(unittest.TestCase):
+    """OK with no model selected must warn instead of saving a blank id."""
+
+    def test_empty_model_keeps_the_configured_model(self) -> None:
+        from unittest.mock import patch
+
+        from lucnhan.core.config import LucNhanConfig
+        from lucnhan.ui.settings_dialog import SettingsDialog
+
+        _ensure_qapplication()
+
+        config = LucNhanConfig()
+        config.provider.model = "claude-sonnet-4-20250514"
+        dlg = SettingsDialog(config)
+        try:
+            dlg._model_combo.clear()
+            dlg._model_combo.setEditText("")
+            with patch("lucnhan.ui.settings_dialog.QMessageBox.warning") as warning:
+                dlg._on_accept()
+        finally:
+            dlg.done(0)
+
+        self.assertGreaterEqual(warning.call_count, 1)
+        self.assertEqual(config.provider.model, "claude-sonnet-4-20250514")

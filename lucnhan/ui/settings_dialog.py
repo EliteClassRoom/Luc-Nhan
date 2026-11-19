@@ -2673,6 +2673,14 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "API base URL", base_problem)
             return
 
+        # An empty model reaches the provider as a blank name and fails with
+        # an opaque 400, so refuse it while the dialog is still open.  An
+        # untouched empty combo keeps the configured model instead.
+        model_id = self._get_selected_model_id() or self._config.provider.model.strip()
+        if not model_id:
+            QMessageBox.warning(self, "Model", "Pick a model, or type a model id.")
+            return
+
         api_key = self._api_key_edit.text().strip()
 
         # If the user pasted an OAuth token with the checkbox unchecked,
@@ -2691,7 +2699,7 @@ class SettingsDialog(QDialog):
                 return
 
         self._config.provider.name = self._provider_combo.currentText()
-        self._config.provider.model = self._get_selected_model_id()
+        self._config.provider.model = model_id
         # ONLY save what the user explicitly typed — never save auto-resolved OAuth tokens
         self._config.provider.api_key = self._api_key_edit.text().strip()
         self._config.provider.api_base = self._api_base_edit.text().strip()
