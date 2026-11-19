@@ -136,3 +136,27 @@ def test_delegate_external_task_include_context_defaults_false() -> None:
     """include_context should default to false so the LLM opts in explicitly."""
     props = DELEGATE_EXTERNAL_TASK_SCHEMA["function"]["parameters"]["properties"]
     assert props["include_context"]["default"] is False
+
+
+def test_ask_user_options_match_the_parser_caps() -> None:
+    """The advertised ceiling must equal what the parser actually keeps."""
+    from lucnhan.agent.loop import MAX_QUESTION_LABEL_CHARS, MAX_QUESTION_OPTIONS
+
+    options = ASK_USER_SCHEMA["function"]["parameters"]["properties"]["options"]
+
+    assert options["maxItems"] == MAX_QUESTION_OPTIONS
+    assert options["items"]["maxLength"] == MAX_QUESTION_LABEL_CHARS
+
+
+def test_ask_user_options_are_capped_and_trimmed() -> None:
+    from lucnhan.agent.loop import (
+        MAX_QUESTION_LABEL_CHARS,
+        MAX_QUESTION_OPTIONS,
+        _normalize_ask_user_options,
+    )
+
+    many = [f"o{i}" for i in range(MAX_QUESTION_OPTIONS + 4)]
+    assert len(_normalize_ask_user_options(many)) == MAX_QUESTION_OPTIONS
+
+    long_label = "x" * (MAX_QUESTION_LABEL_CHARS + 40)
+    assert len(_normalize_ask_user_options([long_label])[0]) == MAX_QUESTION_LABEL_CHARS

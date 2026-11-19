@@ -247,13 +247,16 @@ ASK_USER_SCHEMA: dict = {
                 },
                 "options": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "maxLength": 120},
+                    "maxItems": 6,
                     "description": (
-                        "Optional list of non-empty, distinct choices "
-                        "(e.g. ['Yes', 'No', 'Cancel']). Omit this field "
-                        "entirely for open-ended questions where the user "
-                        "should type a free-text answer. Never send empty "
-                        "strings — each option must be a meaningful choice."
+                        "Optional list of at most 6 non-empty, distinct "
+                        "choices (e.g. ['Yes', 'No', 'Cancel']). The parser "
+                        "keeps the first 6 and cuts each to 120 chars, so "
+                        "surplus choices disappear. Omit this field entirely "
+                        "for open-ended questions where the user should type "
+                        "a free-text answer. Never send empty strings — each "
+                        "option must be a meaningful choice."
                     ),
                 },
             },

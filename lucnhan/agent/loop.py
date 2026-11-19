@@ -489,6 +489,12 @@ def _extract_ask_user_option_label(item: object) -> str | None:
     return None
 
 
+#: The question card renders one button per option, so a runaway list must
+#: be cut. The schema advertises the same ceiling.
+MAX_QUESTION_OPTIONS = 6
+MAX_QUESTION_LABEL_CHARS = 120
+
+
 def _normalize_ask_user_options(raw: object) -> list[str]:
     """Coerce an ``ask_user`` ``options`` argument into a clean ``list[str]``.
 
@@ -580,7 +586,9 @@ def _normalize_ask_user_options(raw: object) -> list[str]:
         if key in seen:
             continue
         seen.add(key)
-        deduped.append(label)
+        deduped.append(label[:MAX_QUESTION_LABEL_CHARS])
+        if len(deduped) >= MAX_QUESTION_OPTIONS:
+            break
     return deduped
 
 
