@@ -24,7 +24,7 @@ from .schema import (
     KnowledgeObservation,
     KnowledgeRelation,
 )
-from .workspace_store import WorkspaceStore
+from .workspace_store import StaleRevisionError, WorkspaceStore
 
 
 @dataclass(frozen=True)
@@ -84,20 +84,30 @@ class SQLiteKnowledgeRepository:
     def upsert_memory(self, value: KnowledgeMemory) -> None:
         """Insert or update a memory as a fact record."""
         _validate_owner(value.binary_id, self.owner_memory_id)
-        # Determine the current revision (0 for new, current for update)
-        existing = self._store.get_fact(value.id)
-        expected_revision = existing.revision if existing else 0
-        self._store.put_fact(
-            value.id,
-            value.type,
-            value.title,
-            value.content,
-            value.confidence,
-            expected_revision=expected_revision,
-            status=value.status,
-            verdict_claim=value.verdict_claim,
-            verification_citations=list(value.verification_citations),
-        )
+        # The revision read below is a hint: it happens outside the write
+        # transaction, so a concurrent writer can move it between the read
+        # and the write. One retry with a fresh read is enough — otherwise
+        # the stale revision bubbles up and the caller drops the memory.
+        for attempt in (0, 1):
+            existing = self._store.get_fact(value.id)
+            expected_revision = existing.revision if existing else 0
+            try:
+                self._store.put_fact(
+                    value.id,
+                    value.type,
+                    value.title,
+                    value.content,
+                    value.confidence,
+                    expected_revision=expected_revision,
+                    status=value.status,
+                    verdict_claim=value.verdict_claim,
+                    verification_citations=list(value.verification_citations),
+                )
+            except StaleRevisionError:
+                if attempt:
+                    raise
+                continue
+            return
 
     def list_memories(self) -> list[KnowledgeMemory]:
         """List all current memories."""

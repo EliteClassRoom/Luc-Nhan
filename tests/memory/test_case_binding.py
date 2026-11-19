@@ -86,3 +86,43 @@ class TestSetActiveCase:
 
         with pytest.raises(ValueError, match="deleted"):
             manager.set_active_case(case.case_id)
+
+
+class TestUpsertRetry:
+    def test_one_stale_revision_is_retried(self, tmp_path: Path) -> None:
+        from lucnhan.memory.repository import SQLiteKnowledgeRepository
+        from lucnhan.memory.schema import KnowledgeMemory
+        from lucnhan.memory.workspace import MemoryLocator, new_memory_id, new_record_id
+        from lucnhan.memory.workspace_store import StaleRevisionError, WorkspaceStore
+
+        mid = new_memory_id()
+        paths = MemoryLocator(tmp_path).binary(mid)
+        store = WorkspaceStore.create(paths, owner_memory_id=mid)
+        try:
+            repo = SQLiteKnowledgeRepository(store, owner_memory_id=mid)
+            memory = KnowledgeMemory(
+                id=new_record_id("fact"),
+                binary_id=mid,
+                type="fact",
+                title="t",
+                content="c",
+                confidence=0.5,
+            )
+            repo.upsert_memory(memory)
+            memory.content = "c2"
+
+            real = store.put_fact
+            calls = {"n": 0}
+
+            def _stale_once(*a, **k):
+                if calls["n"] == 0:
+                    calls["n"] += 1
+                    raise StaleRevisionError("moved")
+                return real(*a, **k)
+
+            store.put_fact = _stale_once  # type: ignore[method-assign]
+            repo.upsert_memory(memory)
+
+            assert store.get_fact(memory.id).content == "c2"
+        finally:
+            store.close()
