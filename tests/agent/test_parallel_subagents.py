@@ -449,3 +449,42 @@ class TestJoinCancellation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPerTurnCallCap(unittest.TestCase):
+    """A turn that emits more calls than the cap must not run all of them."""
+
+    def _run(self, loop: AgentLoop, calls: list[ToolCall]) -> tuple[list, list]:
+        gen = loop._execute_tool_calls(calls)
+        events: list = []
+        results: list = []
+        try:
+            while True:
+                events.append(gen.send(None))
+        except StopIteration as stop:
+            results = stop.value
+        return events, results
+
+    def test_surplus_calls_are_answered_with_an_error_result(self) -> None:
+        loop = _make_loop()
+        cap = 40
+        calls = [ToolCall(id=f"c{i}", name="noop_tool", arguments={}) for i in range(cap + 5)]
+
+        events, results = self._run(loop, calls)
+
+        # One result per call, in order: the provider needs a match for each.
+        assert [tr.tool_call_id for tr in results] == [tc.id for tc in calls]
+        assert all(tr.is_error is False for tr in results[:cap])
+        assert all(tr.is_error is True for tr in results[cap:])
+        assert "per-turn limit is 40" in results[cap].content
+        # The UI still gets a closing result event for every call.
+        assert len([e for e in events if e.type == TurnEventType.TOOL_RESULT]) == len(calls)
+
+    def test_a_batch_under_the_cap_is_untouched(self) -> None:
+        loop = _make_loop()
+        calls = [ToolCall(id=f"c{i}", name="noop_tool", arguments={}) for i in range(3)]
+
+        _events, results = self._run(loop, calls)
+
+        assert [tr.tool_call_id for tr in results] == ["c0", "c1", "c2"]
+        assert all(tr.is_error is False for tr in results)

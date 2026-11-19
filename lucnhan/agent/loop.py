@@ -233,6 +233,9 @@ _ORCHESTRA_ENABLED = False
 #: full provider call, so 100 is already a very long autonomous run.
 _MAX_SUBAGENT_TURNS = 100
 
+#: Tool calls executed from a single assistant turn; the rest are refused.
+_MAX_TOOL_CALLS_PER_TURN = 40
+
 #: Longest tool name echoed into the audit trail / undo log.
 _MAX_AUDIT_TOOL_NAME = 64
 
@@ -3336,11 +3339,17 @@ class AgentLoop:
         tool-call order. That is what makes a batch of spawn calls
         concurrent rather than sequential.
         """
-        spawn_count = sum(1 for tc in tool_calls if tc.name == "spawn_subagent")
+        # A runaway model can emit hundreds of calls in one turn. Every call
+        # costs an execution and a history entry, so the surplus is answered
+        # with an error result instead of running (the provider still needs
+        # one result per call it saw).
+        capped = tool_calls[:_MAX_TOOL_CALLS_PER_TURN]
+        dropped = tool_calls[_MAX_TOOL_CALLS_PER_TURN:]
+        spawn_count = sum(1 for tc in capped if tc.name == "spawn_subagent")
         parallel = spawn_count > 1
         tool_results: list[ToolResult | None] = [None] * len(tool_calls)
         pending: list[tuple[int, ToolCall, str]] = []
-        for idx, tc in enumerate(tool_calls):
+        for idx, tc in enumerate(capped):
             self._check_cancelled()
             state = self._exploration_state
             persisted = self.session.metadata.get("active_mode", "")
@@ -3373,6 +3382,15 @@ class AgentLoop:
             tool_results[idx] = tr
         if pending:
             yield from self._join_subagents(pending, tool_results)
+        for idx, tc in enumerate(dropped, start=len(capped)):
+            content = (
+                f"Not executed: this turn emitted {len(tool_calls)} tool calls and the "
+                f"per-turn limit is {_MAX_TOOL_CALLS_PER_TURN}. Re-emit the work in a "
+                "later turn."
+            )
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            tool_results[idx] = tr
         # Every slot is filled by inline dispatch or the join; a leftover
         # None means a branch forgot to store its result, which would
         # misalign the provider's tool_result ids. Fail loudly.
