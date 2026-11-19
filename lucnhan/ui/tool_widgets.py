@@ -136,6 +136,7 @@ _TOOL_GROUP_LABELS: dict[str, tuple[str, str]] = {
     "search_functions": ("Searched", "function"),
     "search_functions_by_name": ("Searched", "function"),
     "read_file": ("Read", "file"),
+    "read_file_raw": ("Read raw", "file"),
 }
 
 

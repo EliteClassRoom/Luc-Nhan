@@ -548,19 +548,18 @@ class TestCapturePreState(unittest.TestCase):
 
     # ------------------------------------------------------------------
     # write_file capture — reads existing file content via the
-    # ``read_file`` tool. ``read_file`` returns a formatted string
-    # ``"Read <rel> (N chars, M bytes):\n<text>"``; capture_pre_state
-    # must parse out the body so the reverse record can restore it.
+    # ``read_file_raw`` tool, which returns the body verbatim (no header,
+    # no character cap) so the reverse record can restore it byte for byte.
     # ------------------------------------------------------------------
 
     def test_write_file_capture_existing_file(self):
-        """capture_pre_state reads old content via read_file and records existed=True."""
+        """capture_pre_state reads old content verbatim and records existed=True."""
         calls = []
 
         def mock_executor(name, args):
             calls.append((name, args))
-            if name == "read_file":
-                return "Read notes.txt (11 chars, 11 bytes):\nold content"
+            if name == "read_file_raw":
+                return "old content"
             return ""
 
         pre = capture_pre_state(
@@ -569,19 +568,59 @@ class TestCapturePreState(unittest.TestCase):
             mock_executor,
         )
         self.assertTrue(pre["existed"])
+        self.assertFalse(pre["truncated"])
         self.assertEqual(pre["old_content"], "old content")
         self.assertEqual(
             calls,
-            [("read_file", {"path": "notes.txt"})],
+            [("read_file_raw", {"path": "notes.txt"})],
         )
 
+    def test_write_file_capture_truncated_stays_non_reversible(self):
+        """A capture past the byte cap must not be replayed — it would cut the file down."""
+
+        def mock_executor(name, args):
+            if name == "read_file_raw":
+                return "Error: file is too large to read (2000000 bytes; max 1048576)"
+            return ""
+
+        pre = capture_pre_state(
+            "write_file",
+            {"path": "big.txt", "content": "new"},
+            mock_executor,
+        )
+        self.assertTrue(pre["existed"])
+        self.assertTrue(pre["truncated"])
+
+        rec = build_reverse_record("write_file", {"path": "big.txt"}, pre)
+        self.assertFalse(rec.reversible)
+        self.assertIn("1 MiB capture cap", rec.description)
+
+    def test_registry_truncated_capture_stays_non_reversible(self):
+        """Registry clipping (default 8000-char result cap) must not be replayed."""
+
+        def mock_executor(name, args):
+            if name == "read_file_raw":
+                return ("x" * 8000) + "\n... (truncated)"
+            return ""
+
+        pre = capture_pre_state(
+            "write_file",
+            {"path": "big.txt", "content": "new"},
+            mock_executor,
+        )
+        self.assertTrue(pre["truncated"])
+        self.assertEqual(len(pre["old_content"]), 8000)
+
+        rec = build_reverse_record("write_file", {"path": "big.txt"}, pre)
+        self.assertFalse(rec.reversible)
+
     def test_write_file_capture_new_file(self):
-        """When read_file reports file-not-found, capture existed=False and no old_content."""
+        """When the getter reports file-not-found, capture existed=False and no old_content."""
         calls = []
 
         def mock_executor(name, args):
             calls.append((name, args))
-            if name == "read_file":
+            if name == "read_file_raw":
                 return "Error: file not found: notes.txt"
             return ""
 
@@ -594,7 +633,7 @@ class TestCapturePreState(unittest.TestCase):
         self.assertNotIn("old_content", pre)
 
     def test_write_file_capture_read_failure(self):
-        """When read_file raises, capture_pre_state swallows the error (best-effort)."""
+        """When the getter raises, capture_pre_state swallows the error (best-effort)."""
 
         def mock_executor(name, args):
             raise RuntimeError("tool not available")

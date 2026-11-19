@@ -17,6 +17,7 @@ from ..core.errors import MCPConnectionError, MCPError, MCPTimeoutError
 from ..core.logging import log_debug, log_error, log_info
 from ..core.sanitize import sanitize_mcp_result
 from .config import MCPServerConfig
+from .protocol import MCPToolSchema
 
 _HAS_MCP: bool | None = None  # None = not yet probed
 
@@ -237,22 +238,6 @@ def _safe_errlog():
         # We return the file object (not subprocess.DEVNULL) because the
         # MCP SDK types errlog as TextIO.
         return open(os.devnull, "w")
-
-
-class MCPToolSchema:
-    """Schema for a tool exposed by an MCP server."""
-
-    __slots__ = ("description", "input_schema", "name")
-
-    def __init__(
-        self,
-        name: str = "",
-        description: str = "",
-        input_schema: dict[str, Any] | None = None,
-    ):
-        self.name = name
-        self.description = description
-        self.input_schema = input_schema or {}
 
 
 class MCPClient:
@@ -477,11 +462,14 @@ class MCPClient:
                     )
                     self._tools = []
                     for t in tools_result.tools:
+                        annotations = getattr(t, "annotations", None)
                         self._tools.append(
                             MCPToolSchema(
                                 name=t.name,
                                 description=t.description or "",
                                 input_schema=t.inputSchema if hasattr(t, "inputSchema") else {},
+                                read_only_hint=bool(getattr(annotations, "readOnlyHint", False)),
+                                destructive_hint=bool(getattr(annotations, "destructiveHint", True)),
                             )
                         )
                     log_info(f"MCP[{self.name}]: discovered {len(self._tools)} tools")

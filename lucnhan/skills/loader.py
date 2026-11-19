@@ -253,7 +253,7 @@ def _read_frontmatter_only(md_path: str) -> str:
     indented/commented frontmatter still parses correctly.
     """
     try:
-        with open(md_path, encoding="utf-8-sig") as f:
+        with open(md_path, encoding="utf-8-sig", errors="replace") as f:
             # Skip leading blank lines and BOM characters
             line = f.readline()
             while line and line.lstrip("\ufeff").strip() == "":
@@ -310,7 +310,10 @@ class SkillDefinition:
 def _load_body(md_path: str) -> str:
     """Read the body (everything after frontmatter) from a SKILL.md file."""
     try:
-        with open(md_path, encoding="utf-8-sig") as f:
+        # ``errors="replace"``: a single stray byte in a user-authored skill
+        # must not abort the whole turn (a UnicodeDecodeError here escapes to
+        # the turn-level handler).
+        with open(md_path, encoding="utf-8-sig", errors="replace") as f:
             text = f.read()
     except OSError as e:
         raise SkillError(f"Cannot read skill file {md_path}: {e}") from e
@@ -351,7 +354,7 @@ def _read_reference_order(directory: str) -> list[str]:
     """
     path = os.path.join(directory, _REFERENCE_INDEX_NAME)
     try:
-        with open(path, encoding="utf-8-sig") as f:
+        with open(path, encoding="utf-8-sig", errors="replace") as f:
             raw = f.read()
     except OSError:
         return []
@@ -402,7 +405,7 @@ def _load_references(skill_dir: str) -> str:
         for fname in _ordered_reference_names(directory):
             fpath = os.path.join(directory, fname)
             try:
-                with open(fpath, encoding="utf-8-sig") as f:
+                with open(fpath, encoding="utf-8-sig", errors="replace") as f:
                     content = f.read().strip()
                 if content:
                     parts.append(f"## Reference: {fname}\n{content}")

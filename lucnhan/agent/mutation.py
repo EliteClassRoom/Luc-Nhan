@@ -287,39 +287,43 @@ def _reverse_apply_type_to_variable(args: dict[str, Any], pre: dict[str, Any]) -
     )
 
 
-def _parse_read_file_output(raw: Any) -> tuple[bool, str]:
-    """Parse a ``read_file`` tool result into ``(existed, content)``.
+# ``read_file_raw`` reads verbatim up to a 1 MiB byte cap, so large dumps
+# round-trip intact instead of coming back clipped. Past the cap there is no
+# faithful pre-state and the capture is flagged truncated.
+_TOO_LARGE_MARKER = "Error: file is too large"
+# Registry result truncation appends this. ``read_file_raw`` bodies are only
+# clipped by it if the caller forgot ``UNDO_CAPTURE_RESULT_CAP``, so the
+# parser treats it as truncated rather than pretending the body is whole.
+_REGISTRY_TRUNCATION_MARKER = "\n... (truncated)"
+# Bigger than any body ``read_file_raw`` can return (its own cap is 1 MiB
+# bytes), so the capture never rides the default 8000-char registry limit.
+UNDO_CAPTURE_RESULT_CAP = 1_048_576 + 64
 
-    ``read_file`` returns a formatted string ``"Read <rel> (N chars, M
-    bytes):\\n<text>"`` on success, or an ``"Error: ..."`` line on
-    failure (including file-not-found). Returns:
 
-    * ``(True, <text>)``  — file exists; ``<text>`` is the decoded body.
-    * ``(False, "")``     — file does not exist or read failed; the
-      reverse record must be non-reversible since there is nothing to
-      restore.
+def _parse_read_file_output(raw: Any) -> tuple[bool, str, bool]:
+    """Parse a ``read_file_raw`` result into ``(existed, content, truncated)``.
+
+    ``read_file_raw`` returns the file body verbatim, or an ``"Error: ..."``
+    line on failure (missing file, symlink, invalid UTF-8, too large). Returns:
+
+    * ``(True, <text>, False)`` — file exists; ``<text>`` is the whole body.
+    * ``(True, "", True)``      — file exists but exceeded the byte cap, so
+      replaying a capture would truncate it; the reverse must not replay.
+    * ``(False, "", False)``    — file does not exist or read failed; the
+      reverse record must be non-reversible since there is nothing to restore.
     """
     if not isinstance(raw, str) or not raw:
-        return False, ""
-    # ``read_file`` emits ``"Error: ..."`` for any failure path
-    # (missing file, non-UTF-8, too large, path rejection). Any such
-    # result means there is no prior content to restore.
-    error_prefixes = (
-        "Error: file not found",
-        "Error: not a regular file",
-        "Error: refusing symlink",
-        "Error: file is too large",
-        "Error: file is not valid UTF-8",
-        "Error: failed to read file",
-    )
-    if raw.startswith(error_prefixes):
-        return False, ""
-    marker = ":\n"
-    idx = raw.find(marker)
-    if idx < 0:
-        # No header/body separator — treat as no content to restore.
-        return True, ""
-    return True, raw[idx + len(marker) :]
+        return False, "", False
+    if raw.startswith(_TOO_LARGE_MARKER):
+        return True, "", True
+    if raw.endswith(_REGISTRY_TRUNCATION_MARKER):
+        return True, raw[: -len(_REGISTRY_TRUNCATION_MARKER)], True
+    # Any other ``"Error: "`` line means there is no prior content to restore.
+    # A genuine body starting with ``Error: `` is misread as non-reversible,
+    # which is the safe direction.
+    if raw.startswith("Error: "):
+        return False, "", False
+    return True, raw, False
 
 
 def _reverse_write_file(args: dict[str, Any], pre: dict[str, Any]) -> MutationRecord:
@@ -339,6 +343,14 @@ def _reverse_write_file(args: dict[str, Any], pre: dict[str, Any]) -> MutationRe
     path = args.get("path", "")
     existed = pre.get("existed", False)
     old_content = pre.get("old_content")
+    if pre.get("truncated"):
+        # The capture could not hold the whole body; replaying it would
+        # silently cut the file down. Better to leave it to the user.
+        return _not_reversible(
+            "write_file",
+            args,
+            f"Write {path} — not reversible: the pre-write file exceeded the 1 MiB capture cap; restore it manually",
+        )
     if existed and isinstance(old_content, str):
         return MutationRecord(
             tool_name="write_file",
@@ -1077,16 +1089,17 @@ def capture_pre_state(
             if _has_value(func) and _has_value(var):
                 pre["old_type"] = tool_executor("get_variable_type", {"func_address": func, "var_name": var})
         elif tool_name == "write_file":
-            # Read prior content via the ``read_file`` getter so the
-            # reverse record can replay an overwrite. ``read_file``
-            # returns an ``"Error: ..."`` string when the file does not
-            # exist (or is unreadable); ``_parse_read_file_output``
-            # distinguishes the two cases.
+            # Read prior content verbatim via the ``read_file_raw`` getter so
+            # the reverse record replays the real bytes. ``read_file`` would
+            # hand back a formatted, truncated rendering. An ``"Error: ..."``
+            # string means the file does not exist or is unreadable;
+            # ``_parse_read_file_output`` separates that from the byte-cap case.
             path = arguments.get("path", "")
             if _has_value(path):
-                raw = tool_executor("read_file", {"path": path})
-                existed, old_content = _parse_read_file_output(raw)
+                raw = tool_executor("read_file_raw", {"path": path})
+                existed, old_content, truncated = _parse_read_file_output(raw)
                 pre["existed"] = existed
+                pre["truncated"] = truncated
                 if existed:
                     pre["old_content"] = old_content
         elif tool_name == "set_type":

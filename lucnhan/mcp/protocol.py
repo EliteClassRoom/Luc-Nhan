@@ -20,6 +20,11 @@ class MCPToolSchema:
     name: str
     description: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
+    # MCP ``annotations``, honoured for the approval gate. Defaults are the
+    # safe pair: a server that annotates nothing is treated as destructive
+    # (and therefore requires approval).
+    read_only_hint: bool = False
+    destructive_hint: bool = True
 
 
 def encode_jsonrpc_request(method: str, params: dict[str, Any] | None = None, id: int = 1) -> bytes:

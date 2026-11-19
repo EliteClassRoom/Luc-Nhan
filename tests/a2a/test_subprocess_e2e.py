@@ -124,6 +124,32 @@ class TestSubprocessE2E(unittest.TestCase):
         # The bridge should pull ``content`` out of the JSON.
         self.assertEqual(completed.text, "final answer")
 
+    def test_deep_stderr_does_not_stall_the_drain(self) -> None:
+        """A child writing far more stderr than a pipe holds must not deadlock.
+
+        Regression: stderr used to be piped but never read, so past ~64 KiB
+        the child blocked on its own stderr and the run died as a timeout.
+        """
+        task = _python_task(
+            "import json, sys\n"
+            "sys.stderr.write('e' * 200_000)\n"
+            "sys.stderr.flush()\n"
+            "print(json.dumps({'content': 'survived'}))\n"
+        )
+        start = time.time()
+        events = list(self.bridge.run_task(_python_agent(), task, timeout=10))
+        elapsed = time.time() - start
+        self.assertLess(elapsed, 8.0, f"stderr flood stalled the bridge for {elapsed:.1f}s")
+        completed = next(e for e in events if e.type == "completed")
+        self.assertEqual(completed.text, "survived")
+
+    def test_stderr_is_surfaced_when_stdout_is_empty(self) -> None:
+        """A failing child yields its stderr instead of an empty result."""
+        task = _python_task("import sys\nsys.stderr.write('boom: missing config\\n')\n")
+        events = list(self.bridge.run_task(_python_agent(), task, timeout=10))
+        completed = next(e for e in events if e.type == "completed")
+        self.assertIn("boom: missing config", completed.text)
+
     def test_subprocess_completed_text_is_raw_when_no_json(self) -> None:
         """Non-JSON last line → completed.text is the raw line.
 

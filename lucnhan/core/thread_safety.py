@@ -104,6 +104,12 @@ def idasync(func: F) -> F:
 
         if error_holder:
             raise error_holder[0]
+        if rc == -1 and not result_holder:
+            # rc == -1 means the thunk never ran (main thread busy / modal
+            # dialog). A silent None would look like an empty tool result.
+            from ..ida.dispatch import DispatcherTimeoutError
+
+            raise DispatcherTimeoutError(f"IDA main thread did not run '{fname}' (execute_sync returned -1)")
         return result_holder[0] if result_holder else None
 
     return wrapper  # type: ignore[return-value]

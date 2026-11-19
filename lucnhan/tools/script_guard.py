@@ -24,6 +24,19 @@ _BLOCKED_MODULES = frozenset(
         "pty",
         "commands",
         "multiprocessing",
+        # Native aliases of the modules above. Blocking `os` alone left the
+        # C-level twins reachable: `import nt; nt.system(...)` spawns a shell
+        # and `import _winapi` reaches the same Win32 APIs. The pure-data
+        # parts of these modules are not worth the hole.
+        "nt",
+        "posix",
+        "_winapi",
+        "_io",
+        "_socket",
+        "_ctypes",
+        "_imp",
+        "_pickle",
+        "msvcrt",
         # Filesystem / OS access (env vars, cwd, file IO via module attrs)
         "os",
         "sys",
@@ -149,6 +162,14 @@ _BLOCKED_CALLS = frozenset(
     }
 )
 
+# Module names that are the same module as `os` under a different spelling:
+# on Windows `import nt` is `os`; on POSIX `import posix` is. `_winapi` is the
+# raw Win32 layer underneath both. A blocklist keyed only on "os" is bypassed
+# by a one-word rename, so the call family is checked against all of them.
+_OS_FAMILY_MODULES = frozenset({"os", "nt", "posix", "_winapi"})
+# Shell-spawning calls whose name is not an exec*/spawn* prefix.
+_OS_SHELL_CALLS = frozenset({"system", "popen", "startfile", "kill"})
+
 # Attribute calls that must never appear (module.func patterns).
 #
 # `__builtins__` pairs block dict methods that could restore removed
@@ -176,6 +197,11 @@ _BLOCKED_ATTRS = frozenset(
         ("os", "spawnve"),
         ("os", "spawnvp"),
         ("os", "spawnvpe"),
+        ("os", "kill"),
+        # nt.* — Windows-only extras with no `os` spelling
+        ("nt", "startfile"),
+        # _winapi: capital-C spawner, so the lowercase startswith() rules miss it
+        ("_winapi", "CreateProcess"),
         # __builtins__.* — restore removed builtins via dict methods
         ("__builtins__", "get"),
         ("__builtins__", "pop"),
@@ -470,9 +496,13 @@ def _check_ast(code: str) -> str | None:
                     pair = (func.value.id, func.attr)
                     if pair in _BLOCKED_ATTRS:
                         return f"Blocked — call to disallowed '{pair[0]}.{pair[1]}()'"
-                    # Catch os.exec*/os.spawn* variants not explicitly listed
-                    if func.value.id == "os" and (func.attr.startswith("exec") or func.attr.startswith("spawn")):
-                        return f"Blocked — call to disallowed 'os.{func.attr}()'"
+                    # Catch os.exec*/os.spawn* variants not explicitly listed,
+                    # and the same family reached through an alias module
+                    # (`nt`/`posix`/`_winapi` are the C-level twins of `os`).
+                    if func.value.id in _OS_FAMILY_MODULES and (
+                        func.attr in _OS_SHELL_CALLS or func.attr.startswith("exec") or func.attr.startswith("spawn")
+                    ):
+                        return f"Blocked — call to disallowed '{func.value.id}.{func.attr}()'"
 
                 # Receiver-agnostic: any call whose attribute name is itself
                 # a blocked built-in (e.g. builtins.exec(...),

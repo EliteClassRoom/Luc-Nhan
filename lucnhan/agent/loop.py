@@ -93,7 +93,12 @@ from .modes.normal import run_normal_loop
 from .modes.orchestra import run_orchestra_mode
 from .modes.plan import run_plan_mode
 from .modes.research import run_research_mode
-from .mutation import MutationRecord, build_reverse_record, capture_pre_state
+from .mutation import (
+    UNDO_CAPTURE_RESULT_CAP,
+    MutationRecord,
+    build_reverse_record,
+    capture_pre_state,
+)
 from .progress import ProgressTracker, RepeatKind
 from .pseudo_tool_schemas import (
     ASK_USER_SCHEMA,
@@ -2347,7 +2352,7 @@ class AgentLoop:
             pre_state = capture_pre_state(
                 tc.name,
                 exec_args,
-                lambda name, args: self.tools.execute(name, args),
+                lambda name, args: self.tools.execute(name, args, max_result_chars=UNDO_CAPTURE_RESULT_CAP),
             )
 
         log_debug(f"Executing tool {tc.name}")

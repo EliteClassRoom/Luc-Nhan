@@ -16,6 +16,7 @@ collapse to an empty context.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -31,6 +32,14 @@ from .retrieve import (
 
 if TYPE_CHECKING:
     from ..core.config import LucNhanConfig
+
+# The fence closer is emitted in its already-neutralized spelling so a payload
+# inside the body cannot close the wrapper early. Kept as a constant because
+# the budget must reserve room for it.
+_KNOWLEDGE_CLOSER = "[/retrieved_knowledge]"
+# Tolerant match: a payload may write the closing tag with odd spacing, or in
+# another case, and still break the wrapper if we only match it verbatim.
+_CLOSING_TAG_RE = re.compile(r"</retrieved_knowledge\s*>", re.IGNORECASE)
 
 
 @dataclass
@@ -161,7 +170,7 @@ def sanitize_knowledge_context(text: str) -> str:
         return text
     text = strip_lone_surrogates(text)
     text = strip_injection_markers(text)
-    text = text.replace("</retrieved_knowledge>", "[/retrieved_knowledge]")
+    text = _CLOSING_TAG_RE.sub(_KNOWLEDGE_CLOSER, text)
     return text
 
 
@@ -298,15 +307,20 @@ def build_section_from_pack(
         parts.append("### Note Excerpts")
         parts.append(note_block)
 
-    parts.append("</retrieved_knowledge>")
-
+    # No closer here: the final append below is the single source of truth,
+    # so the budget can reserve room for it.
     text = "\n".join(parts).strip()
     text = sanitize_knowledge_context(text)
 
-    # Apply total char budget (rough — we don't tokenize).
-    if len(text) > effective.max_total_chars:
-        text = text[: effective.max_total_chars - 1].rstrip() + "…"
-    return text
+    # Budget the body only, then re-attach the closer: a tight budget used to
+    # truncate the tail, which is where the closing fence lives. The closer is
+    # emitted in its already-neutralized spelling (``[/…]``) so it is not
+    # rewritten by ``sanitize_knowledge_context`` and an injected payload
+    # cannot close the wrapper early.
+    room = effective.max_total_chars - len(_KNOWLEDGE_CLOSER) - 1
+    if len(text) > room:
+        text = text[: max(0, room - 1)].rstrip() + "…"
+    return f"{text}\n{_KNOWLEDGE_CLOSER}"
 
 
 def build_retrieval_metadata(pack: RetrievalPack | None) -> dict:

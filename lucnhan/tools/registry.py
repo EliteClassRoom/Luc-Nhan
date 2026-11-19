@@ -388,7 +388,22 @@ class ToolRegistry:
 
         return serialized
 
-    def execute(self, name: str, arguments: dict[str, Any], *, cancel_event: threading.Event | None = None) -> str:
+    def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        cancel_event: threading.Event | None = None,
+        max_result_chars: int | None = None,
+    ) -> str:
+        """Execute a tool by name.
+
+        ``max_result_chars`` overrides the result truncation limit for this
+        call. Callers that consume the full body (pre-write capture for undo)
+        pass a larger budget than ``TOOL_RESULT_TRUNCATE_LEN``; only
+        non-cacheable tools should rely on it, since cached results are stored
+        under the default cap.
+        """
         with self._lock:
             defn = self._tools.get(name)
             if defn is None:
@@ -409,10 +424,14 @@ class ToolRegistry:
 
         arguments = self._coerce_arguments(defn, arguments)
 
-        # Check cache for read-only tools
-        cached = self._result_cache.get(name, arguments)
-        if cached is not None:
-            return cached
+        # Check cache for read-only tools. A capped call must not read — or
+        # write — the cache: entries are stored under the default cap, so a
+        # clipped body would masquerade as the whole file.
+        use_cache = max_result_chars is None
+        if use_cache:
+            cached = self._result_cache.get(name, arguments)
+            if cached is not None:
+                return cached
 
         if dispatch_wrapper is not None and needs_host_dispatch:
             handler = dispatch_wrapper(handler)
@@ -471,11 +490,13 @@ class ToolRegistry:
             raise ToolError(f"Tool {name} failed: {e}", tool_name=name) from e
 
         result_str = self._format_result(result)
-        if len(result_str) > TOOL_RESULT_TRUNCATE_LEN:
-            result_str = result_str[:TOOL_RESULT_TRUNCATE_LEN] + "\n... (truncated)"
+        limit = TOOL_RESULT_TRUNCATE_LEN if max_result_chars is None else max_result_chars
+        if len(result_str) > limit:
+            result_str = result_str[:limit] + "\n... (truncated)"
 
         # Cache result for read-only tools; invalidate on mutating tools
-        self._result_cache.put(name, arguments, result_str)
+        if use_cache:
+            self._result_cache.put(name, arguments, result_str)
         if is_mutating:
             self._result_cache.invalidate()
             # Phase 5: notify host-specific caches (e.g. the IDA function

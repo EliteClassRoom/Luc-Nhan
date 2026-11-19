@@ -16,6 +16,8 @@ install_ida_mocks()
 
 from lucnhan.ida.tools.microcode_optim import compile_optimizer
 from lucnhan.tools.script_guard import (
+    _BLOCKED_ATTRS,
+    _BLOCKED_MODULES,
     _DENY_ATTR_NAMES,
     GuardViolation,
     SafeModule,
@@ -70,6 +72,31 @@ class TestCheckAst(unittest.TestCase):
 
     def test_allows_os_path(self):
         assert _check_ast("os.path.join('a', 'b')") is None
+
+    def test_blocks_c_level_module_aliases(self):
+        # `import nt; nt.system(...)` was the one-word sandbox escape.
+        for name in ("nt", "posix", "_winapi", "_io", "_socket", "_ctypes", "_imp", "_pickle"):
+            assert name in _BLOCKED_MODULES
+            assert _check_ast(f"import {name}") is not None
+
+    def test_alias_modules_block_the_whole_os_family(self):
+        """Every blocked os.* pair must also be blocked through its aliases.
+
+        Without this, adding an entry that names only `os` silently leaves the
+        C-level twins (`nt`/`posix`/`_winapi`) reachable.
+        """
+        os_attrs = sorted(attr for module, attr in _BLOCKED_ATTRS if module == "os")
+        assert os_attrs, "no os.* pairs registered"
+        for attr in os_attrs:
+            for alias in ("nt", "posix", "_winapi"):
+                assert _check_ast(f"{alias}.{attr}('x')") is not None, f"{alias}.{attr}() survived"
+
+    def test_blocks_windows_only_shell_exec(self):
+        assert _check_ast("nt.startfile('setup.exe')") is not None
+
+    def test_blocks_winapi_create_process(self):
+        # Capital-C spawner: not covered by the lowercase exec*/spawn* rule.
+        assert _check_ast("_winapi.CreateProcess(None, 'cmd.exe')") is not None
 
     def test_allows_re_compile(self):
         # re.compile is a documented data-plane idiom (string-decryption

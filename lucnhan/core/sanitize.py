@@ -415,7 +415,7 @@ def sanitize_skill_body(content: str, skill_name: str = "") -> str:
     """
     if not content:
         return content
-    text = strip_injection_markers(content)
+    text = strip_lone_surrogates(strip_injection_markers(content))
     if len(text) > SKILL_MAX_CHARS:
         text = text[:SKILL_MAX_CHARS] + "\n... [truncated]"
     text = _neutralize_closing_tag(text, "skill")

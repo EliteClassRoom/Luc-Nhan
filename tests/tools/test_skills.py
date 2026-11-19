@@ -183,6 +183,21 @@ class TestDiscoverSkills(unittest.TestCase):
             self.assertEqual(skills[0].tags, ["security"])
             self.assertIn("security auditor", skills[0].body)
 
+    def test_non_utf8_skill_bytes_do_not_raise(self):
+        """One stray Latin-1 byte must degrade, not abort the whole turn."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "latin1")
+            os.makedirs(skill_dir)
+            raw = b"---\nname: Latin1\ndescription: d\n---\ncaf\xe9 body\n"
+            with open(os.path.join(skill_dir, "SKILL.md"), "wb") as f:
+                f.write(raw)
+
+            skills = discover_skills(tmpdir)
+            self.assertEqual(len(skills), 1)
+            # Decoded with replacement, not dropped.
+            self.assertIn("body", skills[0].body)
+            self.assertIn("\ufffd", skills[0].body)
+
     def test_missing_directory(self):
         skills = discover_skills("/nonexistent/path")
         self.assertEqual(skills, [])

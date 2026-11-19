@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..constants import MCP_TOOL_PREFIX
 from ..core.logging import log_info
+from ..core.sanitize import strip_injection_markers
 from ..tools.base import ParameterSchema, ToolDefinition
 
 if TYPE_CHECKING:
@@ -103,10 +104,19 @@ def register_mcp_tools(client: MCPClient, registry: ToolRegistry, prefix: str = 
 
     for mcp_tool in tools:
         lucnhan_name = _registered_tool_name(prefix, mcp_tool.name, registry)
-        # Capped: the description rides along in every request's tool schema.
-        description = f"[MCP:{client.name}] {mcp_tool.description}"[:73]
+        # Server-supplied text: strip injection markers before it rides along
+        # in every request's tool schema. Capped because it is repeated per call.
+        clean_desc = " ".join(strip_injection_markers(mcp_tool.description).split())
+        description = f"[MCP:{client.name}] {clean_desc}"[:73]
         parameters = _mcp_schema_to_parameters(mcp_tool.input_schema)
         handler = _make_mcp_handler(client, mcp_tool.name, lucnhan_name)
+        # An MCP server is untrusted: its ``annotations`` are the only signal
+        # about what a tool does. Honour them, but default to gated — a tool
+        # only escapes approval when the server says it is read-only and not
+        # destructive. ``mutating`` also takes the registry mutation lock and
+        # drops the result cache, so it is not set for declared-read-only
+        # tools (which keeps subagents and headless from stalling).
+        gated = (not mcp_tool.read_only_hint) or mcp_tool.destructive_hint
 
         defn = ToolDefinition(
             name=lucnhan_name,
@@ -114,6 +124,8 @@ def register_mcp_tools(client: MCPClient, registry: ToolRegistry, prefix: str = 
             parameters=parameters,
             category=f"mcp:{client.name}",
             handler=handler,
+            mutating=gated,
+            requires_approval=gated,
         )
         registry.register(defn)
         count += 1

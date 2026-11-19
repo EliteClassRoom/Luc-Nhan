@@ -134,44 +134,71 @@ def _format_path_error(exc: _FileToolError) -> str:
     return f"Error: {exc}"
 
 
+def _read_text_target(path: str) -> tuple[str, str, str, int]:
+    """Resolve and read a UTF-8 text file under the root.
+
+    Returns ``(error, rel, text, size)``; ``error`` is an ``"Error: ..."``
+    string when the read failed. Shared by :func:`read_file` and
+    :func:`read_file_raw` so the containment/symlink/UTF-8 guards cannot
+    drift apart.
+    """
+    try:
+        parts = _normalize_relative_path(path)
+        candidate = _resolve_under_root(parts)
+    except _FileToolError as exc:
+        return _format_path_error(exc), "", "", 0
+
+    rel = "/".join(parts)
+    if not candidate.exists():
+        return f"Error: file not found: {rel}", rel, "", 0
+    if candidate.is_symlink():
+        return f"Error: refusing symlink: {rel}", rel, "", 0
+    if not candidate.is_file():
+        return f"Error: not a regular file: {rel}", rel, "", 0
+
+    root = _resolve_root()
+    try:
+        validate_regular_contained_path(candidate, root=root)
+    except StorageError as exc:
+        return f"Error: {exc}", rel, "", 0
+
+    size = candidate.stat().st_size
+    if size > _READ_MAX_BYTES:
+        return f"Error: file is too large to read ({size} bytes; max {_READ_MAX_BYTES})", rel, "", size
+
+    try:
+        with candidate.open("rb") as handle:
+            raw = handle.read()
+    except OSError as exc:
+        return f"Error: failed to read file: {exc}", rel, "", size
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return f"Error: file is not valid UTF-8 ({exc})", rel, "", size
+    return "", rel, text, size
+
+
+@tool(category="file_io")
+def read_file_raw(path: Annotated[str, "Path relative to the analyzed binary folder"]) -> str:
+    """Read a file verbatim: no header, no character cap (1 MiB byte cap).
+
+    Used where the exact bytes matter, e.g. capturing pre-write state for
+    undo, which must not be handed the truncated/formatted ``read_file``
+    rendering.
+    """
+    error, _rel, text, _size = _read_text_target(path)
+    return error or text
+
+
 @tool(category="file_io")
 def read_file(
     path: Annotated[str, "Path relative to the analyzed binary folder"],
     max_chars: Annotated[int, "Maximum characters to return (1-12000)"] = 4000,
 ) -> str:
     """Read a UTF-8 text file under the analyzed binary folder."""
-    try:
-        parts = _normalize_relative_path(path)
-        candidate = _resolve_under_root(parts)
-    except _FileToolError as exc:
-        return _format_path_error(exc)
-
-    if not candidate.exists():
-        return f"Error: file not found: {'/'.join(parts)}"
-    if candidate.is_symlink():
-        return f"Error: refusing symlink: {'/'.join(parts)}"
-    if not candidate.is_file():
-        return f"Error: not a regular file: {'/'.join(parts)}"
-
-    root = _resolve_root()
-    try:
-        validate_regular_contained_path(candidate, root=root)
-    except StorageError as exc:
-        return f"Error: {exc}"
-
-    size = candidate.stat().st_size
-    if size > _READ_MAX_BYTES:
-        return f"Error: file is too large to read ({size} bytes; max {_READ_MAX_BYTES})"
-
-    try:
-        with candidate.open("rb") as handle:
-            raw = handle.read()
-    except OSError as exc:
-        return f"Error: failed to read file: {exc}"
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        return f"Error: file is not valid UTF-8 ({exc})"
+    error, rel, text, size = _read_text_target(path)
+    if error:
+        return error
     # Clamp max_chars whenever it is provided, including 0 and
     # non-integer values. A non-None value always sets the limit;
     # out-of-range inputs fall back to the maximum.
@@ -185,7 +212,6 @@ def read_file(
         limit = _READ_MAX_CHARS_LIMIT
     if len(text) > limit:
         text = text[:limit].rstrip() + "\n…(truncated)…"
-    rel = "/".join(parts)
     return f"Read {rel} ({len(text)} chars, {size} bytes):\n{text}"
 
 
@@ -263,4 +289,4 @@ def write_file(
     return f"Wrote {rel} ({len(encoded)} bytes, {len(content)} chars)"
 
 
-__all__ = ["read_file", "write_file"]
+__all__ = ["read_file", "read_file_raw", "write_file"]

@@ -362,3 +362,41 @@ class TestHeadlessDispatcher(unittest.TestCase):
         wt.join(timeout=2.0)
         self.assertFalse(wt.is_alive(), "Worker still alive after shutdown")
         self.assertEqual(errors, ["shutdown"])
+
+
+class TestUiDispatcherReturnCode(unittest.TestCase):
+    """``IdaUiDispatcher.wrap`` must not report a refused dispatch as success."""
+
+    def _dispatcher(self, rc: int):
+        from lucnhan.ida.dispatch import IdaUiDispatcher
+
+        dispatcher = object.__new__(IdaUiDispatcher)  # bypass the IDA import
+
+        def fake_execute_sync(func, mff):
+            if rc != -1:
+                func()  # simulate IDA running the thunk
+            return rc
+
+        dispatcher._execute_sync = fake_execute_sync
+        dispatcher._mff = 0
+        return dispatcher
+
+    def test_refused_dispatch_raises(self):
+        from lucnhan.ida.dispatch import DispatcherTimeoutError
+
+        wrapped = self._dispatcher(-1).wrap(lambda: "value")
+        with self.assertRaises(DispatcherTimeoutError):
+            wrapped()
+
+    def test_normal_dispatch_returns_value(self):
+        wrapped = self._dispatcher(0).wrap(lambda: "value")
+        self.assertEqual(wrapped(), "value")
+
+    def test_thunk_exception_still_propagates(self):
+        wrapped = self._dispatcher(0).wrap(self._boom)
+        with self.assertRaises(ValueError):
+            wrapped()
+
+    @staticmethod
+    def _boom():
+        raise ValueError("boom")

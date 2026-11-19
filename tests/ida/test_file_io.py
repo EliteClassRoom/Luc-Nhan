@@ -13,7 +13,9 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
+from lucnhan.agent.mutation import UNDO_CAPTURE_RESULT_CAP, build_reverse_record, capture_pre_state
 from lucnhan.ida.tools import file_io
+from lucnhan.tools import cache as tool_cache
 from lucnhan.tools.registry import ToolRegistry
 
 
@@ -89,6 +91,22 @@ class TestReadFile(unittest.TestCase):
         with _with_root(self.tmp):
             result = file_io.read_file("notes/huge.md")
         self.assertIn("too large", result)
+
+    def test_raw_returns_body_without_header_or_cap(self):
+        # Undo captures with this: a >12000-char file must come back whole,
+        # with no "Read <rel> (N chars)" header and no truncation marker.
+        payload = "line\n" * 4000  # 20000 chars, past the 12000 char limit
+        with open(os.path.join(self.tmp, "notes", "big.md"), "w", encoding="utf-8", newline="") as f:
+            f.write(payload)
+        with _with_root(self.tmp):
+            raw = file_io.read_file_raw("notes/big.md")
+        self.assertEqual(raw, payload)
+
+    def test_raw_keeps_remaining_guards(self):
+        with _with_root(self.tmp):
+            self.assertIn("not found", file_io.read_file_raw("notes/missing.md"))
+            self.assertIn("traversal", file_io.read_file_raw("../escape.md"))
+            self.assertIn("Error", file_io.read_file_raw("notes"))
 
     def test_max_chars_zero_clamps_to_one(self):
         # Plan §3.31: max_chars is clamped to 1..12000. A 0 input
@@ -224,3 +242,62 @@ class TestWriteFile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUndoCaptureThroughRegistry(unittest.TestCase):
+    """Undo must capture real bytes, not the registry's clipped tool result."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        with open(os.path.join(self.tmp, "x.idb"), "w", encoding="utf-8") as f:
+            f.write("idb placeholder")
+        os.makedirs(os.path.join(self.tmp, "notes"), exist_ok=True)
+        self.registry = _build_registry()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_capture_ignores_a_cache_entry_clipped_at_the_default_cap(self):
+        """A plain read looks cached-but-clipped; the capped capture must not."""
+
+        payload = "line\n" * 4000  # 20000 chars
+        target = os.path.join(self.tmp, "notes", "cached.md")
+        with open(target, "w", encoding="utf-8", newline="") as f:
+            f.write(payload)
+
+        with _with_root(self.tmp), patch.object(tool_cache, "CACHEABLE_TOOLS", frozenset({"read_file_raw"})):
+            first = self.registry.execute("read_file_raw", {"path": "notes/cached.md"})
+            self.assertTrue(first.endswith("... (truncated)"))
+            self.assertEqual(self.registry._result_cache.size, 1)
+
+            pre = capture_pre_state(
+                "write_file",
+                {"path": "notes/cached.md", "content": "new"},
+                lambda name, args: self.registry.execute(name, args, max_result_chars=UNDO_CAPTURE_RESULT_CAP),
+            )
+
+        self.assertFalse(pre["truncated"])
+        self.assertEqual(pre["old_content"], payload)
+
+    def test_over_8000_chars_round_trips_through_the_real_registry(self):
+        payload = "".join(f"line {i}\n" for i in range(1500))  # ~13k chars
+        self.assertGreater(len(payload), 12000)
+        target = os.path.join(self.tmp, "notes", "dump.c")
+        with open(target, "w", encoding="utf-8", newline="") as f:
+            f.write(payload)
+
+        with _with_root(self.tmp):
+            pre = capture_pre_state(
+                "write_file",
+                {"path": "notes/dump.c", "content": "new"},
+                lambda name, args: self.registry.execute(name, args, max_result_chars=UNDO_CAPTURE_RESULT_CAP),
+            )
+
+        self.assertFalse(pre["truncated"])
+        self.assertEqual(pre["old_content"], payload)
+
+        rec = build_reverse_record("write_file", {"path": "notes/dump.c"}, pre)
+        self.assertTrue(rec.reversible)
+        self.assertEqual(rec.reverse_arguments["content"], payload)

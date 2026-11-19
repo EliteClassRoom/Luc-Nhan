@@ -130,9 +130,14 @@ class IdaUiDispatcher:
                     error.append(exc)
                 return 0
 
-            self._execute_sync(_call, self._mff)
+            rc = self._execute_sync(_call, self._mff)
             if error:
                 raise error[0]
+            if rc == -1 and not result:
+                # IDA refused/never ran the thunk (main thread busy or a modal
+                # dialog owns it). Returning None here would look like a
+                # successful tool call with an empty result.
+                raise DispatcherTimeoutError("IDA main thread did not run the call (execute_sync returned -1)")
             return result[0] if result else None
 
         return wrapper  # type: ignore[return-value]

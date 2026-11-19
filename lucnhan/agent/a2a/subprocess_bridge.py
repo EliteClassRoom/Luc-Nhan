@@ -9,8 +9,10 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
 from collections.abc import Generator
 from dataclasses import dataclass
+from typing import Any
 
 from ...core.logging import log_debug
 from .types import A2AEvent, ExternalAgentConfig
@@ -157,6 +159,23 @@ class SubprocessBridge:
         # even when the subprocess is blocked on I/O and never
         # produces a line.
         stdout_queue: queue.Queue[str | None] = queue.Queue()
+        # Bounded stderr collector: enough to explain a failure, never
+        # enough to grow without limit while a chatty CLI runs.
+        stderr_tail: deque[str] = deque(maxlen=256)
+        stderr_lock = threading.Lock()
+
+        def _stderr_text() -> str:
+            with stderr_lock:
+                return "".join(stderr_tail).strip()
+
+        def _drain_stderr(handle: Any) -> None:
+            """Drain stderr so the child never blocks on a full pipe."""
+            try:
+                for chunk in handle:
+                    with stderr_lock:
+                        stderr_tail.append(chunk)
+            except Exception as exc:
+                log_debug(f"A2A subprocess stderr drain ended: {exc}")
 
         # ``None`` is the sentinel: thread enqueues ``None`` after
         # stdout closes (process exited) to wake the main loop.
@@ -183,12 +202,15 @@ class SubprocessBridge:
                 env=_curate_subprocess_env(agent.env),
                 text=True,
                 encoding="utf-8",
+                errors="replace",
             )
 
-            # Spawn the drain thread. ``daemon=True`` so the test
+            # Spawn the drain threads. ``daemon=True`` so the test
             # process can exit even if the bridge hangs.
             reader_thread = threading.Thread(target=_drain_stdout, daemon=True)
             reader_thread.start()
+            if proc.stderr is not None:
+                threading.Thread(target=_drain_stderr, args=(proc.stderr,), daemon=True).start()
 
             deadline = time.monotonic() + timeout
             while True:
@@ -203,7 +225,11 @@ class SubprocessBridge:
                     if proc.poll() is None:
                         proc.kill()
                     cancelled = True  # treat timeout as cancellation
-                    yield A2AEvent(type="error", text=f"Timeout after {timeout}s")
+                    detail = _stderr_text()
+                    text = f"Timeout after {timeout}s"
+                    if detail:
+                        text = f"{text}\nstderr:\n{detail}"
+                    yield A2AEvent(type="error", text=text)
                     break
                 try:
                     line = stdout_queue.get(timeout=0.1)
@@ -253,6 +279,12 @@ class SubprocessBridge:
                     result = str(parsed)
             except json.JSONDecodeError:
                 result = line
+
+        if not result:
+            # No parseable stdout: stderr is usually the only explanation.
+            detail = _stderr_text()
+            if detail:
+                result = f"Agent produced no output.\nstderr:\n{detail}"
 
         yield A2AEvent(type="completed", text=result, done=True)
         return result
