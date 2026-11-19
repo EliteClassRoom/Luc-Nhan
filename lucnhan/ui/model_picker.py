@@ -111,6 +111,14 @@ class _Row:
     search_text: str = ""
 
 
+def _int_or(value: Any, default: int) -> int:
+    """Coerce a persisted number, falling back to *default*."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class ModelCatalogCache:
     """Per-connection model catalog cache owned by the panel/controller.
 
@@ -153,7 +161,15 @@ class ModelCatalogCache:
             if not isinstance(name, str) or not isinstance(models, list):
                 continue
             parsed = [
-                ModelInfo(id=m["id"], name=m.get("name", ""), provider=m.get("provider", ""))
+                ModelInfo(
+                    id=m["id"],
+                    name=m.get("name", ""),
+                    provider=m.get("provider", ""),
+                    context_window=_int_or(m.get("context_window"), 128000),
+                    max_output_tokens=_int_or(m.get("max_output_tokens"), 0),
+                    supports_tools=bool(m.get("supports_tools", True)),
+                    supports_vision=bool(m.get("supports_vision", False)),
+                )
                 for m in models
                 if isinstance(m, dict) and m.get("id")
             ]
@@ -171,6 +187,13 @@ class ModelCatalogCache:
                         "id": getattr(m, "id", ""),
                         "name": getattr(m, "name", ""),
                         "provider": getattr(m, "provider", ""),
+                        # Limits and capabilities ride along: a reloaded
+                        # catalog otherwise reads as the dataclass defaults
+                        # and the picker shows the wrong window/ceiling.
+                        "context_window": getattr(m, "context_window", 128000),
+                        "max_output_tokens": getattr(m, "max_output_tokens", 0),
+                        "supports_tools": getattr(m, "supports_tools", True),
+                        "supports_vision": getattr(m, "supports_vision", False),
                     }
                     for m in models
                     if getattr(m, "id", "")

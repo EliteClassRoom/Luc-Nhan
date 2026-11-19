@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from dataclasses import asdict
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -747,7 +748,51 @@ class TestModelCatalogPersistence(unittest.TestCase):
             first.store("openai", [_info("gpt-4o")])
 
             reloaded = ModelCatalogCache(path)
-            self.assertEqual(reloaded.get("openai"), [_info("gpt-4o")])
+            entries = reloaded.get("openai")
+            # Compare fields, not instances: a purge/re-import elsewhere in the
+            # suite hands this file a different ModelInfo class than the cache's.
+            self.assertIsNotNone(entries)
+            self.assertEqual(asdict(entries[0]), asdict(_info("gpt-4o")))
+
+    def test_limits_and_capabilities_survive_a_restart(self) -> None:
+        import tempfile
+
+        from lucnhan.ui.model_picker import ModelCatalogCache
+
+        with tempfile.TemporaryDirectory() as base:
+            path = os.path.join(base, "catalog.json")
+            rich = ModelInfo(
+                id="m",
+                name="m",
+                provider="p",
+                context_window=200000,
+                max_output_tokens=8192,
+                supports_tools=False,
+                supports_vision=True,
+            )
+            ModelCatalogCache(path).store("p", [rich])
+
+            entries = ModelCatalogCache(path).get("p")
+            self.assertIsNotNone(entries)
+            self.assertEqual(asdict(entries[0]), asdict(rich))
+
+    def test_a_junk_limit_falls_back_to_the_default(self) -> None:
+        import json
+        import tempfile
+
+        from lucnhan.ui.model_picker import ModelCatalogCache
+
+        with tempfile.TemporaryDirectory() as base:
+            path = os.path.join(base, "catalog.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"schema": 1, "connections": {"p": [{"id": "m", "context_window": "wide"}]}},
+                    f,
+                )
+
+            loaded = ModelCatalogCache(path).get("p")
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded[0].context_window, 128000)
 
     def test_oversized_catalog_does_not_raise(self) -> None:
         import tempfile
