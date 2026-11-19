@@ -942,6 +942,24 @@ class WorkspaceStore:
             tags=tags_list,
         )
 
+    def delete_entity(self, entity_id: str) -> bool:
+        """Delete an entity; returns whether anything went.
+
+        Compensation partner of `put_entity`, same as `delete_fact`.
+        """
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                cur = self._conn.execute("DELETE FROM entities WHERE entity_id = ?", (entity_id,))
+                deleted = cur.rowcount == 1
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+            if deleted:
+                self._note_write()
+        return deleted
+
     def get_entity(self, entity_id: str) -> EntityRecord | None:
         """Get an entity by ID."""
         with self._lock:

@@ -192,3 +192,31 @@ def test_a_failed_relation_write_still_closes_the_workspace(tmp_path: Path) -> N
                 cases.put_case_relation(case.case_id, mid_a, CaseRelationType.SAME_FAMILY_AS, mid_b)
 
     assert closed.call_count >= 1
+
+
+class TestRelationCompensation:
+    def test_failed_relation_write_leaves_no_endpoint_entities(self, tmp_path: Path) -> None:
+        from lucnhan.memory.workspace_open import open_workspace_for_write
+        from lucnhan.memory.workspace_store import WorkspaceStore
+
+        cases, _, mid_a, mid_b = _setup(tmp_path)
+        case = cases.list_cases()[0]
+
+        def _boom(*_args, **_kwargs):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        with patch.object(WorkspaceStore, "put_relation", _boom):
+            with pytest.raises(sqlite3.OperationalError):
+                cases.put_case_relation(
+                    case.case_id,
+                    mid_a,
+                    CaseRelationType.EMBEDS_OR_LOADS,
+                    mid_b,
+                )
+
+        paths = cases._locator.case(case.case_id)
+        store = open_workspace_for_write(paths, case.case_id, cases._locator.backups(case.case_id))
+        try:
+            assert store.list_entities() == []
+        finally:
+            store.close()

@@ -351,8 +351,15 @@ class CaseRepository:
         obj_entity = new_record_id("entity")
         try:
             store.put_entity(subj_entity, "binary_ref", subj, {"memory_id": subj, "artifact_ref": artifact_ref})
-            store.put_entity(obj_entity, "binary_ref", obj, {"memory_id": obj})
-            store.put_relation(relation_id, subj_entity, predicate.value, obj_entity, confidence)
+            try:
+                store.put_entity(obj_entity, "binary_ref", obj, {"memory_id": obj})
+                store.put_relation(relation_id, subj_entity, predicate.value, obj_entity, confidence)
+            except BaseException:
+                # Three separate transactions; drop what already landed so a
+                # failure cannot leave an endpoint pair without its relation.
+                store.delete_entity(obj_entity)
+                store.delete_entity(subj_entity)
+                raise
         finally:
             # Leaked handle pins memory.db on Windows against later replaces.
             store.close()
