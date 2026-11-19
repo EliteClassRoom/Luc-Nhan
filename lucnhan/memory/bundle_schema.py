@@ -111,6 +111,10 @@ def validate_manifest(manifest: MemoryBundleManifest, *, limits: BundleLimits | 
             raise ValueError(f"invalid sha256 for {f.name}: {f.sha256!r}")
         if f.uncompressed_size < 0:
             raise ValueError(f"negative size for {f.name}")
+        # A negative count would also subtract from the running total and
+        # hide a neighbour's overflow.
+        if f.record_count < 0:
+            raise ValueError(f"negative record count for {f.name}")
         total_uncompressed += f.uncompressed_size
         total_records += f.record_count
 

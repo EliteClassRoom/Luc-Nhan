@@ -85,3 +85,12 @@ class TestValidateManifest:
         )
         with pytest.raises(ValueError, match="uncompressed size"):
             validate_manifest(m)
+
+
+class TestManifestCounts:
+    def test_negative_record_count_rejected(self) -> None:
+        manifest = _valid_manifest(
+            files=(ManifestFile(name="records/facts.jsonl", sha256="b" * 64, uncompressed_size=5, record_count=-5),),
+        )
+        with pytest.raises(ValueError, match="negative record count"):
+            validate_manifest(manifest)
