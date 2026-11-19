@@ -370,6 +370,11 @@ class SessionState:
             # have completed a rebuild while we were sanitizing.
             current_revision = self._revision
             if current_revision == revision:
+                # Only the newest revision can be asked for again; older
+                # entries hold whole message lists and would accumulate for
+                # the life of the session.
+                for stale in [key for key in self._provider_cache if key[0] != revision]:
+                    del self._provider_cache[stale]
                 self._provider_cache[cache_key] = list(sanitized)
         return sanitized
 

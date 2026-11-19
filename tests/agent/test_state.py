@@ -160,6 +160,21 @@ class TestSessionState(unittest.TestCase):
         msgs.append(Message(role=Role.USER, content="c"))
         self.assertEqual(len(s.messages), 2)
 
+    def test_provider_cache_keeps_only_the_current_revision(self):
+        s = SessionState()
+        s.add_message(Message(role=Role.USER, content="a"))
+        s.get_messages_for_provider()
+        s.get_messages_for_provider(context_window=4096)
+        first_revision = s._revision
+        assert all(key[0] == first_revision for key in s._provider_cache)
+
+        s.add_message(Message(role=Role.ASSISTANT, content="b"))
+        s.get_messages_for_provider()
+        # Entries for the superseded revision are dropped, so a long session
+        # does not hoard a message list per revision.
+        assert all(key[0] == s._revision for key in s._provider_cache)
+        assert len(s._provider_cache) == 1
+
     def test_message_count(self):
         s = SessionState()
         self.assertEqual(s.message_count(), 0)
