@@ -31,7 +31,9 @@ def test_open_sqlite_enables_required_pragmas(tmp_path: Path) -> None:
     try:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+        # Bounded so the retry helper (which runs under the store lock) cannot
+        # park a Qt main-thread read for five seconds per attempt.
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 1000
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
     finally:
         conn.close()
@@ -129,3 +131,48 @@ def test_begin_immediate_raises_on_nested_transaction(tmp_path: Path) -> None:
         conn.rollback()
     finally:
         conn.close()
+
+
+def test_cancelled_write_does_not_wedge_the_connection(tmp_path: Path) -> None:
+    """A BaseException mid-write must still roll back.
+
+    ``except Exception`` misses ``KeyboardInterrupt``/``CancelledError``;
+    the transaction then stays open on the shared connection and every
+    later write dies with "cannot start a transaction within a transaction".
+    """
+    from lucnhan.memory.workspace import MemoryLocator, new_memory_id
+    from lucnhan.memory.workspace_store import WorkspaceStore
+
+    mid = new_memory_id()
+    paths = MemoryLocator(tmp_path / "memory").binary(mid)
+    store = WorkspaceStore.create(paths, owner_memory_id=mid)
+    try:
+
+        class _Boom:
+            def __conform__(self, protocol: object) -> str:
+                raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            store.set_meta("boom", _Boom())  # type: ignore[arg-type]
+        assert store._conn.in_transaction is False
+
+        store.set_meta("after", "value")
+        assert store.get_meta("after") == "value"
+    finally:
+        store.close()
+
+
+def test_failed_configuration_releases_the_handle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import lucnhan.memory.sqlite_backend as backend
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("pragma failed")
+
+    monkeypatch.setattr(backend, "_configure_connection_safe", _boom)
+    db = tmp_path / "memory.db"
+    with pytest.raises(RuntimeError):
+        open_sqlite(db, read_only=False, expected_version=1, migrations={1: _v1_migration}, allow_create=True)
+
+    # On Windows a leaked handle keeps the file locked.
+    db.unlink()
+    assert not db.exists()

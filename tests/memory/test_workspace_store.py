@@ -587,3 +587,51 @@ class TestListReadMemo:
             )
         assert calls["facts"] == 1
         assert len(store.list_facts()) == 1
+
+
+class TestCrossInstanceFreshness:
+    def test_second_instance_sees_another_writers_fact(self, tmp_path: Path) -> None:
+        """Two tabs share one database file, so the memo must not be per-instance.
+
+        A stale read here means the knowledge panel of the other tab shows a
+        snapshot from before the write, for the rest of the session.
+        """
+        memory_id = new_memory_id()
+        paths = MemoryLocator(tmp_path).binary(memory_id)
+        first = WorkspaceStore.create(paths, owner_memory_id=memory_id)
+        try:
+            second = WorkspaceStore.open(paths, owner_memory_id=memory_id)
+            try:
+                assert second.list_facts() == []
+
+                first.put_fact(new_record_id("fact"), "network", "Beacon", "beacons home", 0.9, expected_revision=0)
+
+                assert [f.title for f in second.list_facts()] == ["Beacon"]
+            finally:
+                second.close()
+        finally:
+            first.close()
+
+    def test_create_on_a_foreign_workspace_raises(self, tmp_path: Path) -> None:
+        memory_id = new_memory_id()
+        paths = MemoryLocator(tmp_path).binary(memory_id)
+        WorkspaceStore.create(paths, owner_memory_id=memory_id).close()
+
+        with pytest.raises(ValueError, match="owner mismatch"):
+            WorkspaceStore.create(paths, owner_memory_id=new_memory_id())
+
+
+class TestProjectionRow:
+    def test_missing_row_is_a_loud_failure(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        try:
+            store._conn.execute("DELETE FROM projection_state")
+            store._conn.commit()
+
+            state = store.projection_state()
+            assert state.projected_revision == 0
+
+            with pytest.raises(RuntimeError, match="projection_state row is missing"):
+                store.mark_projection_dirty()
+        finally:
+            store.close()

@@ -94,6 +94,7 @@ def open_sqlite(
             f"file:{uri_path}?mode=ro",
             uri=True,
             timeout=5.0,
+            isolation_level=None,
             check_same_thread=False,
         )
     else:
@@ -119,9 +120,37 @@ def open_sqlite(
                 check_same_thread=False,
             )
 
+    try:
+        _configure_connection_safe(
+            conn,
+            path,
+            read_only=read_only,
+            expected_version=expected_version,
+            migrations=migrations,
+        )
+    except BaseException:
+        # A half-configured connection would leak its handle (and, on
+        # Windows, keep the file locked) for the rest of the session.
+        conn.close()
+        raise
+    return conn
+
+
+def _configure_connection_safe(
+    conn: sqlite3.Connection,
+    path: Path,
+    *,
+    read_only: bool,
+    expected_version: int,
+    migrations: Mapping[int, Callable[[sqlite3.Connection], None]],
+) -> None:
+    """Apply pragmas, verify the schema, run migrations."""
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
+    # One attempt must not park the caller for five seconds: the retry
+    # helper below runs inside the store's lock, so the whole budget is
+    # what a Qt main-thread read waits for.
+    conn.execute("PRAGMA busy_timeout = 1000")
     if read_only:
         conn.execute("PRAGMA query_only = ON")
     else:
@@ -146,7 +175,4 @@ def open_sqlite(
             conn.commit()
         except BaseException:
             conn.rollback()
-            conn.close()
             raise
-
-    return conn

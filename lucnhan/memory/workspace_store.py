@@ -33,6 +33,16 @@ class StaleRevisionError(RuntimeError):
     """Raised when expected_revision does not match the current revision."""
 
 
+def _require_single_row(cursor: sqlite3.Cursor) -> None:
+    """Fail loudly when an ``UPDATE ... WHERE id = 1`` matched nothing.
+
+    The singleton projection row can be missing after a restore; a silent
+    no-op would leave ``projection_dirty`` clear and MEMORY.md stale.
+    """
+    if cursor.rowcount != 1:
+        raise RuntimeError("projection_state row is missing")
+
+
 def _ensure_column(conn: Any, table: str, column: str, ddl: str) -> None:
     """Add *column* to *table* only if it does not already exist.
 
@@ -262,10 +272,10 @@ def _migrate_v2(conn: Any) -> None:
         )
     # Do not use Connection.executescript() here: CPython sqlite3 may commit
     # the outer migration transaction before executing the script.
-    conn.execute("CREATE INDEX idx_facts_semantic ON facts(semantic_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_semantic ON facts(semantic_hash)")
     conn.execute(
         """
-        CREATE TRIGGER facts_semantic_hash_insert_guard
+        CREATE TRIGGER IF NOT EXISTS facts_semantic_hash_insert_guard
         BEFORE INSERT ON facts
         WHEN NEW.semantic_hash IS NULL
           OR length(NEW.semantic_hash) != 64
@@ -277,7 +287,7 @@ def _migrate_v2(conn: Any) -> None:
     )
     conn.execute(
         """
-        CREATE TRIGGER facts_semantic_hash_update_guard
+        CREATE TRIGGER IF NOT EXISTS facts_semantic_hash_update_guard
         BEFORE UPDATE OF semantic_hash ON facts
         WHEN NEW.semantic_hash IS NULL
           OR length(NEW.semantic_hash) != 64
@@ -331,9 +341,9 @@ def _migrate_v5(conn: Any) -> None:
     join is driven by the fact_revisions scan.  These indexes let the
     planner drive from the facts table in creation order instead.
     """
-    conn.execute("CREATE INDEX idx_facts_created_at ON facts(created_at)")
-    conn.execute("CREATE INDEX idx_entities_created_at ON entities(created_at)")
-    conn.execute("CREATE INDEX idx_relations_created_at ON relations(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_created_at ON facts(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_created_at ON entities(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_created_at ON relations(created_at)")
     if conn.execute("PRAGMA foreign_key_check").fetchall():
         raise RuntimeError("workspace v5 migration failed foreign key check")
 
@@ -376,7 +386,7 @@ class WorkspaceStore:
         # Each write bumps the generation so the memo is never stale; both
         # the counter and the cache live under ``self._lock``.
         self._write_generation: int = 0
-        self._list_cache: dict[str, tuple[int, object]] = {}
+        self._list_cache: dict[str, tuple[tuple[int, int], object]] = {}
 
     # -- Memory read-memo ---------------------------------------------------
 
@@ -384,13 +394,27 @@ class WorkspaceStore:
         """Invalidate memoized list reads after any committed write."""
         self._write_generation += 1
 
+    def _freshness_stamp(self) -> tuple[int, int]:
+        """Memo key that also moves when *another* connection commits.
+
+        ``_write_generation`` only sees this instance's writes, but the
+        database is shared (one store per tab, plus read-only stores in the
+        case repository and peer retrieval). ``PRAGMA data_version`` changes
+        when any other connection commits, which keeps those readers from
+        serving a stale snapshot forever.
+        """
+        row = self._conn.execute("PRAGMA data_version").fetchone()
+        version = int(row[0]) if row is not None else -1
+        return self._write_generation, version
+
     def _cached_list(self, key: str, loader: Callable[[], list[T]]) -> list[T]:
-        """Return *loader()* output, reusing the memo when generation matches."""
-        gen, cached = self._list_cache.get(key, (None, None))
-        if gen == self._write_generation and cached is not None:
+        """Return *loader()* output, reusing the memo when the stamp matches."""
+        stamp = self._freshness_stamp()
+        cached_stamp, cached = self._list_cache.get(key, (None, None))
+        if cached_stamp == stamp and cached is not None:
             return cast("list[T]", cached)
         records = loader()
-        self._list_cache[key] = (self._write_generation, records)
+        self._list_cache[key] = (stamp, records)
         return records
 
     # ------------------------------------------------------------------
@@ -413,16 +437,33 @@ class WorkspaceStore:
             migrations=_MIGRATIONS,
             allow_create=True,
         )
-        # Store owner metadata
-        conn.execute(
-            "INSERT OR REPLACE INTO workspace_meta(key, value) VALUES('owner_memory_id', ?)",
-            (owner_memory_id,),
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO workspace_meta(key, value) VALUES('workspace_kind', ?)",
-            (workspace_kind,),
-        )
-        conn.commit()
+        try:
+            # Both metadata rows go in one transaction: the connection is
+            # autocommit, so writing them one by one can leave an owner
+            # without a kind. The kind also says whether this file was
+            # already a workspace, so a bare ``INSERT`` lets an owner
+            # mismatch surface instead of being overwritten silently.
+            begin_immediate_with_retry(conn)
+            try:
+                existing = conn.execute("SELECT value FROM workspace_meta WHERE key = 'owner_memory_id'").fetchone()
+                owner = existing[0] if existing is not None else None
+                if owner is not None and owner != owner_memory_id:
+                    raise ValueError(f"workspace owner mismatch: expected {owner} for {paths.database.name}")
+                conn.execute(
+                    "INSERT OR REPLACE INTO workspace_meta(key, value) VALUES('owner_memory_id', ?)",
+                    (owner_memory_id,),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO workspace_meta(key, value) VALUES('workspace_kind', ?)",
+                    (workspace_kind,),
+                )
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        except BaseException:
+            conn.close()
+            raise
         return cls(conn, paths)
 
     @classmethod
@@ -583,7 +624,7 @@ class WorkspaceStore:
                 )
                 self._conn.commit()
                 self._note_write()
-            except Exception:
+            except BaseException:
                 self._conn.rollback()
                 raise
 
@@ -854,7 +895,7 @@ class WorkspaceStore:
                     )
                 self._conn.commit()
                 self._note_write()
-            except Exception:
+            except BaseException:
                 self._conn.rollback()
                 raise
 
@@ -968,7 +1009,7 @@ class WorkspaceStore:
                     )
                 self._conn.commit()
                 self._note_write()
-            except Exception:
+            except BaseException:
                 self._conn.rollback()
                 raise
 
@@ -1024,7 +1065,7 @@ class WorkspaceStore:
                     (observation_id, observation_type, content, now),
                 )
                 self._conn.commit()
-            except Exception:
+            except BaseException:
                 self._conn.rollback()
                 raise
 
@@ -1049,6 +1090,16 @@ class WorkspaceStore:
         """Return the current projection state."""
         with self._lock:
             row = self._conn.execute("SELECT * FROM projection_state WHERE id = 1").fetchone()
+            if row is None:
+                # A restored database can miss the singleton row; treat it
+                # as "nothing projected yet" instead of raising here.
+                return ProjectionState(
+                    managed_hash="",
+                    unmanaged_hash="",
+                    projection_dirty=False,
+                    projection_conflict=False,
+                    projected_revision=0,
+                )
             return ProjectionState(
                 managed_hash=row["managed_hash"],
                 unmanaged_hash=row["unmanaged_hash"],
@@ -1062,9 +1113,10 @@ class WorkspaceStore:
         with self._lock:
             begin_immediate_with_retry(self._conn)
             try:
-                self._conn.execute("UPDATE projection_state SET projection_dirty = 1 WHERE id = 1")
+                cur = self._conn.execute("UPDATE projection_state SET projection_dirty = 1 WHERE id = 1")
+                _require_single_row(cur)
                 self._conn.commit()
-            except Exception:
+            except BaseException:
                 self._conn.rollback()
                 raise
 
@@ -1079,14 +1131,15 @@ class WorkspaceStore:
         with self._lock:
             begin_immediate_with_retry(self._conn)
             try:
-                self._conn.execute(
+                cur = self._conn.execute(
                     "UPDATE projection_state SET projection_dirty = 0, projection_conflict = 0,"
                     " managed_hash = ?, unmanaged_hash = ?, projected_revision = ?"
                     " WHERE id = 1",
                     (managed_hash, unmanaged_hash, projected_revision),
                 )
+                _require_single_row(cur)
                 self._conn.commit()
-            except Exception:
+            except BaseException:
                 self._conn.rollback()
                 raise
 
@@ -1095,9 +1148,10 @@ class WorkspaceStore:
         with self._lock:
             begin_immediate_with_retry(self._conn)
             try:
-                self._conn.execute("UPDATE projection_state SET projection_conflict = 1 WHERE id = 1")
+                cur = self._conn.execute("UPDATE projection_state SET projection_conflict = 1 WHERE id = 1")
+                _require_single_row(cur)
                 self._conn.commit()
-            except Exception:
+            except BaseException:
                 self._conn.rollback()
                 raise
 
@@ -1124,6 +1178,6 @@ class WorkspaceStore:
                     (key, value),
                 )
                 self._conn.commit()
-            except Exception:
+            except BaseException:
                 self._conn.rollback()
                 raise
