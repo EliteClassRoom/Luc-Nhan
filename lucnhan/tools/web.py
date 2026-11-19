@@ -374,8 +374,8 @@ def understand_image(
         UNDERSTAND_IMAGE_TIMEOUT,
     )
 
-    content = data.get("content", "")
-    if not content:
+    content = data.get("content", "") if isinstance(data, dict) else ""
+    if not isinstance(content, str) or not content:
         return "(Image analysis returned no content.)"
 
     return content

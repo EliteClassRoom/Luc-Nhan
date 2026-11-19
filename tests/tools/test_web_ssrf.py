@@ -378,3 +378,11 @@ class TestWebSearchResponseShape(unittest.TestCase):
     def test_wrong_typed_containers_fall_back(self):
         out = self._call({"organic": {"a": 1}, "related_searches": "x", "base_resp": []})
         assert "No search results found" in out
+
+
+class TestUnderstandImageResponseShape(unittest.TestCase):
+    def test_non_string_content_is_tolerated(self):
+        with mock.patch.object(web, "_process_image_source", return_value="data:image/png;base64,AA"):
+            with mock.patch.object(web, "_call_minimax_api", return_value={"content": ["a", "b"]}):
+                out = web.understand_image("x.png", "what")
+        assert "no content" in out
