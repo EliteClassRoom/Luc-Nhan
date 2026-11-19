@@ -255,10 +255,14 @@ class SubagentManager:
         # A finished agent stays finished: ``cancel()`` reads the status
         # outside the worker, so it can lose a race against the worker's own
         # completion and would otherwise relabel a successful run as cancelled.
-        if info.status in (SubagentStatus.CANCELLED, SubagentStatus.COMPLETED, SubagentStatus.FAILED):
-            return
-        info.status = SubagentStatus.CANCELLED
-        info.completed_at = time.time()
+        # The check and the write both happen under the lock, and the worker's
+        # completion path takes the same lock, so exactly one of the two
+        # terminal events can be queued.
+        with self._lock:
+            if info.status in (SubagentStatus.CANCELLED, SubagentStatus.COMPLETED, SubagentStatus.FAILED):
+                return
+            info.status = SubagentStatus.CANCELLED
+            info.completed_at = time.time()
         self._done_event.set()
         self._event_queue.put(
             TurnEvent.subagent_failed(
@@ -567,16 +571,16 @@ class SubagentManager:
                     with self._lock:
                         info.token_usage = event.usage
 
-            # If a cancellation raced the worker to completion, the manager
-            # may already have transitioned this record to CANCELLED. Keep
-            # that state instead of overwriting it with COMPLETED.
-            if info.status == SubagentStatus.CANCELLED:
-                return
             if cancel.is_set():
                 self._finalize_cancellation(info)
                 return
 
+            # The CANCELLED check lives inside the lock: a cancel() landing
+            # between the check and the write would otherwise queue
+            # subagent_failed and let this path queue subagent_completed too.
             with self._lock:
+                if info.status == SubagentStatus.CANCELLED:
+                    return
                 info.summary = final_text
                 info.status = SubagentStatus.COMPLETED
                 info.completed_at = time.time()

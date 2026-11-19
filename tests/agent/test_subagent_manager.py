@@ -529,6 +529,42 @@ class TestManagerSpawnHandoff(unittest.TestCase):
         assert "subagent_completed" not in event_types
         assert event_types.count("subagent_failed") == 1
 
+    def test_cancel_landing_after_the_preflight_check_wins_the_lock(self) -> None:
+        """A cancel that arrives between the preflight check and the write
+        must still yield exactly one terminal event: the completion path
+        re-checks the status under the lock instead of overwriting."""
+        from lucnhan.agent.subagent import SubagentRunner
+
+        mgr = SubagentManager(
+            provider=_StubProvider(),
+            tool_registry=self._stub_tools(),
+            config=LucNhanConfig(),
+            host_name="test",
+        )
+
+        def fake_run_task(self, task, max_turns=20, system_addendum=""):
+            # The cancel event stays clear so the preflight check passes, then
+            # the manager finalizes cancellation before the loop runs.
+            mgr._finalize_cancellation(next(iter(mgr._agents.values())))
+            return iter([])
+
+        with patch.object(SubagentRunner, "run_task", fake_run_task):
+            agent_id = mgr.spawn(name="n", task="t")
+        for thread in [t for t in threading.enumerate() if t.name.startswith("lucnhan-subagent-")]:
+            thread.join(timeout=1.0)
+
+        info = mgr.get(agent_id)
+        assert info.status == SubagentStatus.CANCELLED
+        events = []
+        while True:
+            ev = mgr.poll_event()
+            if ev is None:
+                break
+            events.append(ev)
+        event_types = [e.type.value for e in events]
+        assert "subagent_completed" not in event_types
+        assert event_types.count("subagent_failed") == 1
+
     def test_cancellation_is_idempotent(self) -> None:
         """Multiple cancellation finalizations emit only one cancellation event."""
         mgr = _make_manager()
