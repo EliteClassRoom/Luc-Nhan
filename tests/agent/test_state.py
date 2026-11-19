@@ -36,6 +36,23 @@ class TestTrimToBudget(unittest.TestCase):
         # Floor: head + at least 3 tail messages.
         self.assertGreaterEqual(len(trimmed), 4)
 
+    def test_huge_user_paste_is_clamped_when_dropping_is_not_enough(self):
+        """One multi-megabyte paste used to overflow even at the message floor."""
+        msgs = [
+            Message(role=Role.SYSTEM, content="system"),
+            Message(role=Role.USER, content="p" * 400_000),
+            Message(role=Role.ASSISTANT, content="ok"),
+            Message(role=Role.USER, content="next"),
+        ]
+        trimmed = SessionState._trim_to_budget(msgs, context_window=8_000)
+        self.assertIn("(truncated)", trimmed[1].content)
+        self.assertLessEqual(sum(len(m.content or "") for m in trimmed), 8_000 * 3)
+
+    def test_small_messages_survive_untouched(self):
+        msgs = [Message(role=Role.USER, content="a" * 200), Message(role=Role.ASSISTANT, content="ok")]
+        trimmed = SessionState._trim_to_budget(msgs, context_window=200_000)
+        self.assertNotIn("(truncated)", trimmed[0].content)
+
     def test_trim_keeps_tool_pair_coherent(self):
         tc = ToolCall(id="c1", name="dec", arguments={})
         msgs = [

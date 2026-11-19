@@ -228,6 +228,10 @@ _FAILURE_SUBSTRINGS = (
 # Focused legacy tests may monkeypatch this constant to ``True`` only
 # inside the test process; production defaults remain disabled.
 _ORCHESTRA_ENABLED = False
+
+#: Ceiling for an LLM-chosen ``spawn_subagent`` turn budget. Each turn is a
+#: full provider call, so 100 is already a very long autonomous run.
+_MAX_SUBAGENT_TURNS = 100
 _ORCHESTRA_DISABLED_MESSAGE = (
     "Orchestra is temporarily disabled while its execution and context isolation contracts are being hardened."
 )
@@ -1300,7 +1304,24 @@ class AgentLoop:
                 )
             )
 
-    def _prepare_provider_messages(self, system_prompt: str) -> tuple[list, int, TokenUsage | None, str | None]:
+    @staticmethod
+    def _tool_schema_chars(tools: list[dict[str, Any]] | None) -> int:
+        """Serialized size of the tool schema that goes with every request."""
+        if not tools:
+            return 0
+        total = 0
+        for tool in tools:
+            total += len(str(tool.get("name", "")))
+            total += len(str(tool.get("description", "")))
+            try:
+                total += len(json.dumps(tool.get("parameters", {})))
+            except (TypeError, ValueError):
+                total += 200
+        return total
+
+    def _prepare_provider_messages(
+        self, system_prompt: str, tool_schema_chars: int = 0
+    ) -> tuple[list, int, TokenUsage | None, str | None]:
         """Estimate tokens, compact context if needed.
 
         Returns ``(provider_messages, estimated_tokens, estimated_usage,
@@ -1331,7 +1352,7 @@ class AgentLoop:
             # avoids a second full-history minify pass; the actual provider
             # messages below are still minified before being sent.
             full_messages = self.session.get_messages_for_provider(context_window=0, drop_stale=drop_stale)
-            full_prompt_tokens = self._estimate_prompt_tokens(full_messages, system_prompt)
+            full_prompt_tokens = self._estimate_prompt_tokens(full_messages, system_prompt, tool_schema_chars)
             if full_prompt_tokens > 0:
                 self._context_manager.update_usage(
                     TokenUsage(
@@ -1369,6 +1390,7 @@ class AgentLoop:
                 after = self._estimate_prompt_tokens(
                     self.session.get_messages_for_provider(context_window=0, drop_stale=drop_stale),
                     system_prompt,
+                    tool_schema_chars,
                 )
                 if before > 0 and after >= before * 0.9:
                     # Compaction reclaimed (almost) nothing — count it.
@@ -1391,7 +1413,7 @@ class AgentLoop:
                 drop_stale=drop_stale,
             )
         )
-        estimated_prompt_tokens = self._estimate_prompt_tokens(provider_messages, system_prompt)
+        estimated_prompt_tokens = self._estimate_prompt_tokens(provider_messages, system_prompt, tool_schema_chars)
         estimated_usage: TokenUsage | None = None
         if estimated_prompt_tokens > 0:
             estimated_usage = TokenUsage(
@@ -1548,7 +1570,7 @@ class AgentLoop:
         is_glm = _is_glm_provider(self.config, self.provider)
 
         provider_messages, estimated_prompt_tokens, estimated_usage, compaction_warning = (
-            self._prepare_provider_messages(system_prompt)
+            self._prepare_provider_messages(system_prompt, self._tool_schema_chars(tools_schema))
         )
         if compaction_warning is not None:
             yield TurnEvent.error_event(compaction_warning)
@@ -2082,17 +2104,22 @@ class AgentLoop:
         return tc_id in completed_ids
 
     @staticmethod
-    def _estimate_prompt_tokens(provider_messages: list[Message], system_prompt: str) -> int:
+    def _estimate_prompt_tokens(
+        provider_messages: list[Message], system_prompt: str, tool_schema_chars: int = 0
+    ) -> int:
         """Estimate prompt token usage from message content lengths.
 
-        Uses a lightweight character sum instead of JSON serialization.
+        Uses a lightweight UTF-8 byte sum instead of JSON serialization.
+        *tool_schema_chars* is the serialized tool schema, which the
+        provider sends on every request and which otherwise lands in no
+        budget at all.
         """
-        char_count = len(system_prompt)
+        char_count = len(system_prompt.encode("utf-8", "replace")) + tool_schema_chars
         for m in provider_messages:
-            char_count += len(m.content) if m.content else 0
+            char_count += len(m.content.encode("utf-8", "replace")) if m.content else 0
             if m.tool_calls:
                 for tc in m.tool_calls:
-                    char_count += len(str(tc.arguments)) if tc.arguments else 0
+                    char_count += len(str(tc.arguments).encode("utf-8", "replace")) if tc.arguments else 0
             # Tool results carry the conversation's largest payload (decompile
             # dumps, search hits...) but live exclusively in ``tool_results``,
             # never in ``m.content``.  Omitting them under-counts the context
@@ -2100,7 +2127,7 @@ class AgentLoop:
             # tool-heavy sessions and the provider rejects the request with a
             # ContextLengthError.  Same accounting as session._estimate_tokens.
             for tr in m.tool_results:
-                char_count += len(tr.content or "") + len(tr.name or "") + 20
+                char_count += len((tr.content or "").encode("utf-8", "replace")) + len(tr.name or "") + 20
         return ContextWindowManager.estimate_tokens_from_chars(char_count)
 
     @staticmethod
@@ -2813,10 +2840,15 @@ class AgentLoop:
         raw_max_turns = tc.arguments.get("max_turns", 20)
         if isinstance(raw_max_turns, bool) or not isinstance(raw_max_turns, int) or raw_max_turns < 1:
             max_turns: int | None = None  # fall through to default below
+        elif raw_max_turns > _MAX_SUBAGENT_TURNS:
+            # The model happily asks for 10**9 turns, and each one is a full
+            # LLM call; the ceiling keeps a typo from pinning a thread for
+            # hours.
+            max_turns = _MAX_SUBAGENT_TURNS
         else:
             max_turns = raw_max_turns
         if raw_max_turns != max_turns:
-            log_debug(f"spawn_subagent: invalid max_turns={raw_max_turns!r}, falling back to default")
+            log_debug(f"spawn_subagent: out-of-range max_turns={raw_max_turns!r}, using {max_turns!r}")
         if not task:
             content = "Error: 'task' is required."
             tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)

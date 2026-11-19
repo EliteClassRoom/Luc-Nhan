@@ -128,12 +128,15 @@ class ContextWindowManager:
         """
         if not text:
             return 0
-        return ContextWindowManager.estimate_tokens_from_chars(len(text))
+        return ContextWindowManager.estimate_tokens_from_chars(len(text.encode("utf-8", "replace")))
 
     @staticmethod
     def estimate_tokens_from_chars(char_count: int) -> int:
-        """Estimate token count from a character count (~3.5 chars/token)."""
+        """Estimate tokens from a UTF-8 byte count (~3 bytes/token).
+
+        Bytes rather than characters: 3.5 chars/token only holds for
+        ASCII, and CJK/Vietnamese text would be under-counted 2-3x.
+        """
         if char_count <= 0:
             return 0
-        # ~3.5 chars/token for English text; multiply by 10/35 to avoid float
-        return max(1, char_count * 10 // 35)
+        return max(1, char_count // 3)

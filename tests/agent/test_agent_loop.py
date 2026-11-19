@@ -46,6 +46,9 @@ class MockProvider(LLMProvider):
         super().__init__(api_key="test", model="mock-model")
         self._responses = responses or []
         self._call_count = 0
+        #: The ``tools`` argument of every stream call, so a test can assert
+        #: that the error ladder really withdrew the schema.
+        self.seen_tools: list = []
 
     @property
     def name(self) -> str:
@@ -98,6 +101,7 @@ class MockProvider(LLMProvider):
         request_context=None,
         **kwargs,
     ):
+        self.seen_tools.append(tools)
         if self._call_count < len(self._responses):
             chunks = self._responses[self._call_count]
             self._call_count += 1
@@ -2892,6 +2896,54 @@ class TestKnowledgeIngestErrorLogging(unittest.TestCase):
             list(loop._handle_research_note_tool(tc))
 
         self.assertTrue(log_error_mock.called)
+
+
+class TestToolsDisabledFlagIsHonoured(unittest.TestCase):
+    """The 5-error ladder must withdraw the schema in every mode.
+
+    ``execute_single_turn`` is shared by normal/exploration/research; the flag
+    used to be consumed in normal mode only, so the other two kept offering
+    tools the prompt had just told the model not to use.
+    """
+
+    def _loop(self) -> tuple[AgentLoop, MockProvider]:
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo_tool",
+                description="Echo the input",
+                parameters=[ParameterSchema(name="text", type="string", description="Text", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+        provider = MockProvider(responses=[_text_response("done"), _text_response("done again")])
+        config = LucNhanConfig()
+        config.auto_context = False
+        loop = AgentLoop(
+            provider=provider,
+            tool_registry=registry,
+            config=config,
+            session=SessionState(provider_name="mock", model_name="mock-model"),
+        )
+        return loop, provider
+
+    def test_helper_drops_the_schema_and_clears_the_flag(self):
+        """The shared turn helper is where the flag is consumed."""
+        loop, provider = self._loop()
+        loop._tools_disabled_for_turn = True
+
+        list(execute_single_turn(loop, "system", [{"name": "echo_tool", "description": "", "parameters": {}}]))
+
+        self.assertIsNone(provider.seen_tools[0])
+        self.assertFalse(loop._tools_disabled_for_turn)
+
+    def test_unflagged_turn_still_sends_the_schema(self):
+        loop, provider = self._loop()
+
+        list(loop.run("Hello"))
+
+        self.assertIsNotNone(provider.seen_tools[0])
 
 
 if __name__ == "__main__":

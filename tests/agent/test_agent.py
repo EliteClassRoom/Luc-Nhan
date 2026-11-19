@@ -148,6 +148,35 @@ class TestPromptTokenEstimate(unittest.TestCase):
     def test_plain_content_still_counts(self):
         self.assertGreater(self._estimate([Message(role=Role.USER, content="hello world")]), 0)
 
+    def test_tool_schema_is_counted(self):
+        """The schema rides on every request, so it must be in the estimate.
+
+        It used to be invisible to the budget: a session could sit at "30 % of
+        the window" in the UI and still be rejected for context length.
+        """
+        from lucnhan.agent.loop import AgentLoop
+
+        msgs = [Message(role=Role.USER, content="hello")]
+        plain = AgentLoop._estimate_prompt_tokens(msgs, "")
+        with_schema = AgentLoop._estimate_prompt_tokens(msgs, "", tool_schema_chars=14000)
+        self.assertGreater(with_schema, plain + 4000)
+
+    def test_tool_schema_chars_sums_names_descriptions_and_parameters(self):
+        from lucnhan.agent.loop import AgentLoop
+
+        chars = AgentLoop._tool_schema_chars(
+            [{"name": "abcdefghij", "description": "x" * 100, "parameters": {"type": "object"}}]
+        )
+        self.assertGreaterEqual(chars, 120)
+
+    def test_byte_heavy_text_estimates_higher_than_its_length(self):
+        """Vietnamese/CJK cost up to 3 units per char; a char count hid that."""
+        from lucnhan.agent.loop import AgentLoop
+
+        ascii_tokens = AgentLoop._estimate_prompt_tokens([Message(role=Role.USER, content="a" * 90)], "")
+        cjk_tokens = AgentLoop._estimate_prompt_tokens([Message(role=Role.USER, content="\u4e2d" * 90)], "")
+        self.assertGreater(cjk_tokens, ascii_tokens + 40)
+
 
 class TestSessionState(unittest.TestCase):
     def test_add_message(self):

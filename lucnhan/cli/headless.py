@@ -189,7 +189,7 @@ def _build_ida_args(
     args = [ida_exe, "-A"]
 
     if binary_lower.endswith((".i64", ".idb")):
-        # Open existing database in-place â€” no temp DB.
+        # Open existing database in-place — no temp DB.
         args.append(f"-S{s_path}")
         if extra_args:
             args.extend(extra_args)
@@ -212,7 +212,7 @@ def _build_ida_env(cfg_path: str) -> dict[str, str]:
     """Build environment dict for the IDA subprocess.
 
     Sets ``LUCNHAN_HEADLESS_BOOTSTRAP`` to point at the bootstrap JSON.
-    Does **not** inject system site-packages â€” the generated ``-S`` script
+    Does **not** inject system site-packages — the generated ``-S`` script
     only needs the repo parent on ``sys.path``.
     """
     env = os.environ.copy()
@@ -265,7 +265,7 @@ def _launch_ida_ask(
 
     _cleanup_temp_files(cfg_path, s_path, temp_db)
 
-    # Parse output â€” last JSON line on stdout is the result.
+    # Parse output — last JSON line on stdout is the result.
     stdout = proc.stdout or ""
     output_file = bootstrap_cfg.get("output_file")
     if output_file and os.path.isfile(output_file):
@@ -341,7 +341,7 @@ def _launch_ida_serve(
         env["LUCNHAN_HEADLESS_TOKEN"] = server_token
     args, temp_db = _build_ida_args(ida_exe, binary, s_path)
 
-    # For serve, redirect stdout/stderr to DEVNULL â€” never leave pipes
+    # For serve, redirect stdout/stderr to DEVNULL — never leave pipes
     # attached to a long-lived process.
     kwargs: dict[str, Any] = dict(
         args=args,
@@ -367,10 +367,10 @@ def _launch_ida_serve(
                 try:
                     with open(ready_file, encoding="utf-8") as rf:
                         parsed = json.load(rf)
-                    if "url" in parsed and "token" in parsed:
+                    if isinstance(parsed, dict) and "url" in parsed and "token" in parsed:
                         parsed["pid"] = proc.pid
                         # Clean temp bootstrap artifacts now that we're ready.
-                        # Do NOT delete temp_db â€” IDA is still using it.
+                        # Do NOT delete temp_db — IDA is still using it.
                         _safe_unlink(cfg_path)
                         _safe_unlink(s_path)
                         if internal_ready_file:
@@ -381,12 +381,12 @@ def _launch_ida_serve(
 
             rc = proc.poll()
             if rc is not None:
-                # IDA exited early â€” clean up and report.
+                # IDA exited early — clean up and report.
                 _cleanup_temp_files(cfg_path, s_path, None)
                 if internal_ready_file:
                     _safe_unlink(internal_ready_file)
                 if temp_db and os.path.isfile(temp_db):
-                    # Temp DB exists but IDA exited â€” safe to clean.
+                    # Temp DB exists but IDA exited — safe to clean.
                     _cleanup_temp_files(None, None, temp_db)
                 return {"error": True, "message": f"IDA process exited early with code {rc}"}
 

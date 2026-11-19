@@ -177,6 +177,43 @@ class TestCLIParser(unittest.TestCase):
         self.assertEqual(ns.prompt, "test prompt")
 
 
+class TestLaunchReadyFile(unittest.TestCase):
+    """A malformed ready file must not kill the server we just launched."""
+
+    def test_non_object_ready_file_keeps_polling(self):
+        import json
+        import tempfile
+        from unittest import mock
+
+        from lucnhan.cli import headless as cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ready = os.path.join(tmp, "ready.json")
+            with open(ready, "w", encoding="utf-8") as f:
+                # ``in`` is true on a list, ``parsed["token"]`` is not
+                json.dump(["url", "token"], f)
+
+            fake_proc = mock.Mock()
+            fake_proc.pid = 4242
+            fake_proc.poll.return_value = None
+            with (
+                mock.patch.object(cli.subprocess, "Popen", return_value=fake_proc),
+                mock.patch.object(cli, "_build_ida_args", return_value=(["ida"], None)),
+                mock.patch.object(cli, "_cleanup_temp_files"),
+            ):
+                result = cli._launch_ida_serve(
+                    "C:/ida/idat64.exe",
+                    "C:/bin/sample",
+                    {"provider": {}},
+                    ready,
+                    0.6,
+                )
+
+        self.assertTrue(result.get("error"))
+        self.assertIn("within timeout", result["message"])
+        fake_proc.kill.assert_called_once()
+
+
 class TestCLICommandHandlers(unittest.TestCase):
     """Integration-style tests for CLI command handlers."""
 

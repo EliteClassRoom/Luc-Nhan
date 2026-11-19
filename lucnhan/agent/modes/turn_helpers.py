@@ -205,6 +205,14 @@ def execute_single_turn(
     recorded once via :meth:`SessionState.record_usage` but its assistant
     message is never persisted.  No third attempt is ever made.
     """
+    # The error ladder asks the model for text only on the next turn; every
+    # mode funnels through here, so consume the flag centrally (normal mode
+    # used to be the only consumer, leaving exploration/research telling the
+    # model "tools are disabled" while still offering them).
+    if loop._tools_disabled_for_turn:
+        tools_schema = None
+        loop._tools_disabled_for_turn = False
+
     # Capture pre-turn message IDs + length so we can assert the
     # degenerated attempt left history untouched.
     pre_turn_ids = [m.id for m in loop.session.messages]

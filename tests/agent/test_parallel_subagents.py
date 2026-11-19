@@ -115,11 +115,13 @@ class _FakeManager(SubagentManager):
             host_name="test",
         )
         self.spawned: list[tuple[str, Any]] = []
+        self.turns_seen: list[Any] = []
         self._counter = 0
 
     def spawn(self, name: str, task: str, **kwargs) -> str:  # type: ignore[override]
         self._counter += 1
         self.spawned.append((task, kwargs.get("runner")))
+        self.turns_seen.append(kwargs.get("max_turns"))
         info = super().register(name=name, task=task, agent_type=kwargs.get("agent_type", "custom"))
         self.update_external(info, SubagentStatus.COMPLETED, summary=f"done-{self._counter}")
         return info
@@ -180,6 +182,31 @@ class TestParallelDispatchAndOrdering(unittest.TestCase):
 
         tool_results = [e for e in events if e.type == TurnEventType.TOOL_RESULT]
         assert [e.tool_call_id for e in tool_results] == ["c1", "c2"]
+
+    def test_absurd_max_turns_is_clamped_to_the_ceiling(self) -> None:
+        """A model asking for 10**9 turns must not pin a thread for hours."""
+        manager = _FakeManager()
+        loop = _make_loop(manager)
+        call = ToolCall(id="c1", name="spawn_subagent", arguments={"task": "t", "max_turns": 10**9})
+        gen = loop._execute_tool_calls([call])
+        try:
+            while True:
+                gen.send(None)
+        except StopIteration:
+            pass
+        assert manager.turns_seen == [100]
+
+    def test_small_max_turns_is_kept(self) -> None:
+        manager = _FakeManager()
+        loop = _make_loop(manager)
+        call = ToolCall(id="c1", name="spawn_subagent", arguments={"task": "t", "max_turns": 3})
+        gen = loop._execute_tool_calls([call])
+        try:
+            while True:
+                gen.send(None)
+        except StopIteration:
+            pass
+        assert manager.turns_seen == [3]
 
     def test_single_spawn_keeps_attended_child(self) -> None:
         """One spawn in a batch is not parallel — attended behaviour preserved."""

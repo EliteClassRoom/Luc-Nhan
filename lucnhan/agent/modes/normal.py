@@ -48,11 +48,9 @@ def run_normal_loop(
         log_debug(f"Turn {turn} start")
         yield TurnEvent.turn_start(turn)
 
-        # If tools were disabled due to consecutive errors, force text-only
-        turn_tools = None if loop._tools_disabled_for_turn else tools_schema
-        loop._tools_disabled_for_turn = False
-
-        result = yield from execute_single_turn(loop, system_prompt, turn_tools)
+        # Tools being disabled by the error ladder is handled inside
+        # execute_single_turn, which every mode shares.
+        result = yield from execute_single_turn(loop, system_prompt, tools_schema)
 
         if not result.ok:
             return

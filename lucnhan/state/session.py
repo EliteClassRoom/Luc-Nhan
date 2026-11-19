@@ -16,12 +16,23 @@ from ..core.types import Message, Role, TokenUsage, ToolCall, ToolResult
 
 # ---------- Token estimation ----------
 
-_CHARS_PER_TOKEN = 3.5
+#: Rough bytes per token. Counted in UTF-8 bytes (not characters) so a
+#: CJK or Vietnamese session is not under-counted by 2-3x, and kept in the
+#: same unit as ``agent/loop_guard.py``.
+_BYTES_PER_TOKEN = 3.0
 
 # Tool results older than this many messages from the end get truncated
 _OLD_RESULT_THRESHOLD = 8
 _OLD_RESULT_MAX_CHARS = 500
 _RECENT_RESULT_MAX_CHARS = 8000
+
+#: Tool results are capped above, but a pasted *user* message never was: one
+#: multi-megabyte paste pinned the whole budget, so dropping older messages
+#: down to the floor still could not fit and the provider rejected the
+#: request. Once the drop loop has nothing left to give, a single user
+#: message is clamped to this share of the budget instead.
+_MAX_USER_MESSAGE_SHARE = 0.35
+_USER_TRUNCATION_MARKER = "\n…(truncated)"
 
 # ---------- Stale tool-result elision ----------
 
@@ -66,18 +77,40 @@ def _stale_hash(content: str) -> str:
 
 
 def _estimate_tokens(msg: Message) -> int:
-    """Rough token count estimate from message text content."""
-    chars = len(msg.content or "")
+    """Rough token count estimate from message text content.
+
+    Sizes are UTF-8 byte counts: ASCII stays ~1 byte/char, while CJK and
+    Vietnamese text cost their real 2-3 bytes instead of being counted as
+    one character each.
+    """
+    total = len((msg.content or "").encode("utf-8", "replace"))
     for tc in msg.tool_calls:
-        chars += len(tc.name) + 50
+        total += len(tc.name) + 50
         if tc.arguments:
             try:
-                chars += len(json.dumps(tc.arguments))
+                total += len(json.dumps(tc.arguments).encode("utf-8", "replace"))
             except (TypeError, ValueError):
-                chars += 100
+                total += 100
     for tr in msg.tool_results:
-        chars += len(tr.content or "") + len(tr.name or "") + 20
-    return max(1, int(chars / _CHARS_PER_TOKEN))
+        total += len((tr.content or "").encode("utf-8", "replace")) + len(tr.name or "") + 20
+    return max(1, int(total / _BYTES_PER_TOKEN))
+
+
+def _clamp_user_messages(messages: list[Message], budget_tokens: int) -> int:
+    """Clip oversized user messages so one huge paste cannot pin the budget.
+
+    Only used when dropping messages down to the floor was not enough, i.e.
+    exactly the pathological case. Returns the re-estimated total.
+    """
+    limit_bytes = int(max(2_000, budget_tokens * _MAX_USER_MESSAGE_SHARE) * _BYTES_PER_TOKEN)
+    for idx, msg in enumerate(messages):
+        if msg.role is not Role.USER or not msg.content:
+            continue
+        encoded = msg.content.encode("utf-8", "replace")
+        if len(encoded) > limit_bytes:
+            clipped = encoded[:limit_bytes].decode("utf-8", "ignore") + _USER_TRUNCATION_MARKER
+            messages[idx] = Message(role=msg.role, content=clipped, id=msg.id)
+    return sum(_estimate_tokens(m) for m in messages)
 
 
 def _truncate_tool_result(tr: ToolResult, max_chars: int) -> ToolResult:
@@ -520,7 +553,14 @@ class SessionState:
         # Drop messages from the front of the tail, keeping ≥ 3 tail
         # messages (≥ 4 in total once the preserved head is prepended).
         total = _drop_over_budget(result, total, budget)
-        return head + result
+        combined = head + result
+        if total > budget:
+            # Everything droppable is gone and the tail still does not fit —
+            # the culprit is a single oversized user message (a paste). The
+            # helper rewrites the list it is given, so hand it the one we
+            # return.
+            _clamp_user_messages(combined, budget)
+        return combined
 
     def message_count(self) -> int:
         with self._lock:
