@@ -60,6 +60,10 @@ class ResearchState:
 # ---------------------------------------------------------------------------
 
 
+# Longest slug kept; well under the 255-byte file name ceiling.
+_MAX_SLUG_CHARS = 80
+
+
 def _slugify(text: str) -> str:
     """Convert a title to a filesystem-safe slug."""
     # Normalize unicode, lowercase, replace spaces/special chars with hyphens
@@ -67,7 +71,10 @@ def _slugify(text: str) -> str:
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[-\s]+", "-", text)
-    return text.strip("-") or "untitled"
+    # The title comes from a tool call and can be a whole sentence; Windows
+    # rejects a file name past 255 bytes and a long slug would raise
+    # ENAMETOOLONG from the write.
+    return text.strip("-")[:_MAX_SLUG_CHARS].strip("-") or "untitled"
 
 
 def _write_text_atomic(path: str, text: str) -> None:

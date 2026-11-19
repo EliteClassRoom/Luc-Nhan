@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -70,6 +71,19 @@ class TestSlugify(unittest.TestCase):
 
     def test_hyphens_collapsed(self):
         self.assertEqual(_slugify("foo - bar -- baz"), "foo-bar-baz")
+
+    def test_long_title_is_truncated(self):
+        slug = _slugify("word " * 120)
+        assert len(slug) <= 80
+        assert slug.startswith("word-word")
+
+    def test_long_title_can_still_be_written(self):
+        notes = tempfile.mkdtemp()
+        try:
+            path = _safe_note_path(notes, "api", "decompile " * 60)
+            assert len(os.path.basename(path)) < 200
+        finally:
+            shutil.rmtree(notes, ignore_errors=True)
 
 
 class TestResearchNote(unittest.TestCase):
