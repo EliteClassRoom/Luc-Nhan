@@ -488,6 +488,40 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestSafeErrlog(unittest.TestCase):
+    """The fallback must be a real fd AND able to take any decoded text."""
+
+    def test_falls_back_when_stderr_has_no_fileno(self):
+        from lucnhan.mcp.client import _safe_errlog
+
+        class _NoFileno:
+            def fileno(self):
+                raise OSError("no fd")
+
+        with unittest.mock.patch.object(sys, "stderr", _NoFileno()):
+            handle = _safe_errlog()
+            try:
+                self.assertEqual(handle.encoding.lower().replace("-", ""), "utf8")
+                # The locale default would be strict cp1252 on many Windows
+                # hosts; the fallback must never raise on decoded output.
+                self.assertEqual(handle.errors, "replace")
+                handle.write("\u2192 box \u25cb cafe\n")
+                handle.flush()
+            finally:
+                handle.close()
+
+    def test_passes_a_real_stderr_through(self):
+        from lucnhan.mcp.client import _safe_errlog
+
+        # StringIO has no real fd (its fileno() raises), so delegate to one.
+        stream = open(os.devnull, "w", encoding="utf-8")
+        try:
+            with unittest.mock.patch.object(sys, "stderr", stream):
+                self.assertIs(_safe_errlog(), stream)
+        finally:
+            stream.close()
+
+
 class TestMCPSafeNames:
     """Server-chosen names must survive provider function-name rules."""
 
