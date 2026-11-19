@@ -422,6 +422,18 @@ class TestSessionHistory(unittest.TestCase):
         self.assertEqual(os.path.dirname(os.path.abspath(written)), os.path.abspath(path))
         self.assertTrue(os.path.isfile(os.path.join(path, "abc123.json")))
 
+    def test_unusable_id_still_persists_under_a_safe_name(self):
+        """A session built in memory with a hostile id must not fail to save."""
+        history = SessionHistory(self.config)
+        session = SessionState(id="../x", provider_name="anthropic", model_name="claude")
+        session.add_message(Message(role=Role.USER, content="hi"))
+
+        written = history.save_session(session)
+
+        self.assertEqual(os.path.dirname(os.path.abspath(written)), os.path.abspath(history._dir))
+        self.assertTrue(os.path.isfile(written))
+        self.assertNotIn("/", os.path.basename(written))
+
     def test_load_nonexistent(self):
         history = SessionHistory(self.config)
         self.assertIsNone(history.load_session("nonexistent"))

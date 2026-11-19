@@ -119,6 +119,14 @@ class TestPureHelpers(unittest.TestCase):
             with self.assertRaises(ToolError):
                 emu._normalize_memory_ranges(bad, tool_name="emulate_code")
 
+    def test_memory_ranges_are_capped_in_aggregate(self) -> None:
+        """IDB ranges are copied into the emulator, so the total is bounded."""
+        over = emu._MAX_MAPPED_BYTES + 1
+        with self.assertRaises(ToolError):
+            emu._normalize_memory_ranges([{"address": 0x401000, "size": over}], tool_name="emulate_code")
+        # Code ranges are only matched against, never copied.
+        self.assertEqual(len(emu._normalize_code_ranges([{"address": 0x401000, "size": over}], tool_name="t")), 1)
+
     def test_opcode_scan_flags_far_control_anywhere(self) -> None:
         self.assertIsNone(emu._scan_forbidden(bytes.fromhex("83c00190")))
         self.assertIsNotNone(emu._scan_forbidden(bytes.fromhex("0f0590")))

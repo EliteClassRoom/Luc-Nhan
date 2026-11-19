@@ -318,6 +318,20 @@ class SessionHistory:
     def _manifest_path(self) -> str:
         return os.path.join(self._dir, MANIFEST_FILE)
 
+    def _writable_session_path(self, session_id: str) -> str:
+        """Path to write a session file to.
+
+        The validated form is preferred, but a session created before the
+        guard (or loaded from a foreign file) still has to persist, so an
+        unusable id is reduced to a safe stem instead of failing the save.
+        """
+        # Validate through the guard, but keep the caller's casing: the guard
+        # returns a ``normcase``d path, which lowercases on Windows.
+        if self._session_path(session_id) is not None:
+            return os.path.join(self._dir, f"{session_id}.json")
+        stem = re.sub(r"[^A-Za-z0-9_-]", "_", str(session_id))[:32].strip("-") or "session"
+        return os.path.join(self._dir, f"{stem}.json")
+
     def _session_path(self, session_id: str) -> str | None:
         """Resolve a safe absolute path for *session_id* inside ``self._dir``.
 
@@ -402,7 +416,7 @@ class SessionHistory:
         ``file_mtime_ns`` stays the validation anchor (spec §9.2).
         """
         db_path = _normalize_db_path(session.idb_path)
-        file_path = os.path.join(self._dir, f"{session.id}.json")
+        file_path = self._writable_session_path(session.id)
         try:
             st = os.stat(file_path)
             file_mtime = getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))
@@ -584,7 +598,7 @@ class SessionHistory:
         user message via :func:`derive_history_title` so legacy callers
         and new saves agree on a single derivation pipeline (spec §9.1).
         """
-        path = os.path.join(self._dir, f"{session.id}.json")
+        path = self._writable_session_path(session.id)
         db_path = _normalize_db_path(session.idb_path)
         data = {
             "schema_version": SESSION_SCHEMA_VERSION,

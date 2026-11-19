@@ -499,10 +499,18 @@ def _normalize_memory_ranges(
     memory_ranges: Sequence[Any],
     *,
     tool_name: str,
+    cap_bytes: int | None = _MAX_MAPPED_BYTES,
 ) -> list[tuple[int, int]]:
-    """``{address, size}`` -> ``[(address, size)]``."""
+    """``{address, size}`` -> ``[(address, size)]``.
+
+    ``cap_bytes`` bounds the declared total. IDB ranges are copied into the
+    emulator, so an unbounded request would make the host read that much
+    before the CPU phase; ``code_ranges`` are only matched against, so they
+    pass ``None``.
+    """
 
     out: list[tuple[int, int]] = []
+    declared_total = 0
     for idx, item in enumerate(memory_ranges or ()):
         item = _unwrap_range_item(item)
         if not isinstance(item, Mapping):
@@ -517,6 +525,13 @@ def _normalize_memory_ranges(
                 f"{tool_name}: memory_ranges[{idx}].size must be a positive integer",
                 tool_name=tool_name,
             )
+        declared_total += size
+        if cap_bytes is not None and declared_total > cap_bytes:
+            raise ToolError(
+                f"{tool_name}: memory_ranges declare {declared_total} bytes, over the "
+                f"{cap_bytes} aggregate mapping cap",
+                tool_name=tool_name,
+            )
         out.append((addr, int(size)))
     return out
 
@@ -524,7 +539,7 @@ def _normalize_memory_ranges(
 def _normalize_code_ranges(code_ranges: Sequence[Any], *, tool_name: str) -> list[tuple[int, int]]:
     """Explicit executable allowlist in the IDB: ``{address, size}``."""
 
-    return _normalize_memory_ranges(code_ranges, tool_name=tool_name)
+    return _normalize_memory_ranges(code_ranges, tool_name=tool_name, cap_bytes=None)
 
 
 def _normalize_buffers(
