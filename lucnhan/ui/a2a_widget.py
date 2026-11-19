@@ -39,6 +39,7 @@ from .qt_compat import (
     QCheckBox,
     QColor,
     QComboBox,
+    QDialog,
     QEvent,
     QFrame,
     QHBoxLayout,
@@ -220,12 +221,11 @@ class _A2ATaskRunner:
                     self._enqueue(_A2ARunnerEventType.OUTPUT, event.text or "")
                 elif event.type == TurnEventType.ERROR:
                     msg = event.error or "External agent error"
-                    # If the cancel event is set, the user cancelled
-                    # the task (the cancel button is the only writer
-                    # in normal operation). A timeout from the
-                    # dispatcher sets the event too, so we
-                    # conservatively classify it as cancelled as
-                    # well — the status text is what the user sees.
+                    # The cancel event is only ever set by the Cancel
+                    # button or by ``cancel_all``. The dispatcher reports a
+                    # timeout as an error without touching it, so a timeout
+                    # lands in the FAILED branch and the row keeps its
+                    # reason instead of reading "cancelled".
                     if self._cancel_event.is_set():
                         terminal_type = _A2ARunnerEventType.CANCELLED
                     else:
@@ -245,6 +245,32 @@ class _A2ATaskRunner:
             self._enqueue(terminal_type, terminal_text)
         else:
             self._enqueue(_A2ARunnerEventType.COMPLETED, result_text)
+
+
+class _OutputDialog(QDialog):
+    """Read-only, selectable view of one task's full output.
+
+    ``QMessageBox`` wraps long agent output into an unsized block; this keeps
+    the text scrollable, copyable and monospaced. Everything shown is
+    untrusted agent output, so the widget stays in plain-text mode.
+    """
+
+    def __init__(self, agent_name: str, task_excerpt: str, text: str | None, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{agent_name} — output")
+        self.resize(760, 520)
+        layout = QVBoxLayout(self)
+        header = QLabel(f"{agent_name}: {task_excerpt}")
+        header.setWordWrap(True)
+        header.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(header)
+        body = QPlainTextEdit()
+        body.setReadOnly(True)
+        body.setPlainText(text or "(no output)")
+        layout.addWidget(body, stretch=1)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
 
 
 # ---------------------------------------------------------------------------
@@ -777,25 +803,12 @@ class A2ABridgeWidget(QWidget):
         row = self._history.get(task_id)
         if row is None:
             return
-        # Try the rich dialog first; fall back to a plain message
-        # box. ``_OutputDialog`` lives in message_widgets and is the
-        # same widget the chat view uses for tool results, so output
-        # formatting is consistent across the app.
+        text = row.result_text or row.error_text
         try:
-            from .message_widgets import _OutputDialog  # local import to avoid cycle
-
-            dlg = _OutputDialog(row.agent_name, row.task_excerpt, row.result_text, self)
-            dlg.exec()
-            return
+            _OutputDialog(row.agent_name, row.task_excerpt, text, self).exec()
         except Exception as exc:
-            logger.debug("A2A output: _OutputDialog failed", exc_info=exc)
-        try:
-            box = QMessageBox(self)
-            box.setWindowTitle(f"{row.agent_name} — output")
-            box.setText(row.result_text or row.error_text or "(no output)")
-            box.exec()
-        except Exception as exc:
-            logger.debug("A2A output: QMessageBox fallback failed", exc_info=exc)
+            logger.debug("A2A output: dialog failed", exc_info=exc)
+            QMessageBox(self).setText(text or "(no output)") or None
 
     def _on_clear_history_clicked(self) -> None:
         """Drop completed/failed rows from the table. In-flight rows stay."""
