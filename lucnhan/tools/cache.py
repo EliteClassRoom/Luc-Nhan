@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import OrderedDict
 from typing import Any
 
 from ..core.logging import log_debug
@@ -41,6 +42,12 @@ CACHEABLE_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# Entries kept before the oldest is evicted.  A read-heavy session can
+# touch thousands of addresses and every ``decompile_function`` result is
+# kept whole, so the map needs a ceiling; 512 covers a long investigation
+# while staying well under a few megabytes.
+_DEFAULT_MAX_ENTRIES = 512
+
 # Cache key: (tool_name, frozen_args) → (timestamp, result_str)
 _CacheEntry = tuple[float, str]
 _CacheKey = tuple[str, tuple[tuple[str, Any], ...]]
@@ -49,9 +56,10 @@ _CacheKey = tuple[str, tuple[tuple[str, Any], ...]]
 class ToolResultCache:
     """Thread-safe cache for tool results, invalidated by mutating tools."""
 
-    def __init__(self, ttl: float | None = None):
-        self._store: dict[_CacheKey, _CacheEntry] = {}
+    def __init__(self, ttl: float | None = None, max_entries: int = _DEFAULT_MAX_ENTRIES):
+        self._store: OrderedDict[_CacheKey, _CacheEntry] = OrderedDict()
         self._ttl = ttl
+        self._max_entries = max(1, max_entries)
         self._lock = threading.Lock()
         self._hits = 0
         self._misses = 0
@@ -88,6 +96,7 @@ class ToolResultCache:
                 del self._store[key]
                 self._misses += 1
                 return None
+            self._store.move_to_end(key)
             self._hits += 1
             log_debug(f"Cache hit: {tool_name} (hits={self._hits})")
             return result
@@ -99,6 +108,9 @@ class ToolResultCache:
         key = self._make_key(tool_name, arguments)
         with self._lock:
             self._store[key] = (time.monotonic(), result)
+            self._store.move_to_end(key)
+            while len(self._store) > self._max_entries:
+                self._store.popitem(last=False)
 
     def invalidate(self) -> None:
         """Flush the entire cache (called after any mutating tool)."""

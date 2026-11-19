@@ -439,6 +439,37 @@ class TestSessionHistory(unittest.TestCase):
         self.assertIn(effective, {row["id"] for row in history.list_sessions()})
         self.assertIsNotNone(history.load_session(effective))
 
+    def test_unusable_ids_that_share_a_stem_keep_apart(self):
+        """``a b`` and ``a/b`` reduce to the same stem, so they must differ."""
+        history = SessionHistory(self.config)
+        first = SessionState(id="a b", provider_name="anthropic", model_name="claude")
+        second = SessionState(id="a/b", provider_name="anthropic", model_name="claude")
+        first.add_message(Message(role=Role.USER, content="one"))
+        second.add_message(Message(role=Role.USER, content="two"))
+
+        first_path = history.save_session(first)
+        second_path = history.save_session(second)
+
+        self.assertNotEqual(first_path, second_path)
+        ids = {row["id"] for row in history.list_sessions()}
+        self.assertEqual(len(ids), 2)
+
+    def test_id_that_strips_to_nothing_does_not_take_the_session_name(self):
+        """``---`` must not overwrite a session literally called ``session``."""
+        history = SessionHistory(self.config)
+        named = SessionState(id="session", provider_name="anthropic", model_name="claude")
+        hostile = SessionState(id="---", provider_name="anthropic", model_name="claude")
+        named.add_message(Message(role=Role.USER, content="keep me"))
+        hostile.add_message(Message(role=Role.USER, content="other"))
+
+        named_path = history.save_session(named)
+        history.save_session(hostile)
+
+        self.assertTrue(os.path.isfile(named_path))
+        restored = history.load_session("session")
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored.messages[0].content, "keep me")
+
     def test_load_nonexistent(self):
         history = SessionHistory(self.config)
         self.assertIsNone(history.load_session("nonexistent"))

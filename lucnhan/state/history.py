@@ -7,6 +7,7 @@ filtering without opening/parsing every session JSON.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -328,7 +329,13 @@ class SessionHistory:
         """
         if _validate_session_id(session_id):
             return session_id
-        return re.sub(r"[^A-Za-z0-9_-]", "_", str(session_id))[:32].strip("-") or "session"
+        # Two different unusable ids can reduce to the same stem (``a b`` and
+        # ``a/b``, or every id that strips to nothing), so the digest of the
+        # raw id keeps them apart — otherwise the second save overwrites the
+        # first session and its manifest row.
+        stem = re.sub(r"[^A-Za-z0-9_-]", "_", str(session_id))[:24].strip("-")
+        digest = hashlib.sha1(str(session_id).encode("utf-8", "replace")).hexdigest()[:6]
+        return f"{stem}-{digest}" if stem else f"session-{digest}"
 
     def _writable_session_path(self, session_id: str) -> str:
         """Path to write a session file to (validated, else effective id)."""
