@@ -23,6 +23,7 @@ from .qt_compat import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    Qt,
     QVBoxLayout,
     QWidget,
 )
@@ -74,6 +75,8 @@ class PlanStepWidget(QFrame):
         layout.addWidget(self._status_label)
 
         self._step_label = QLabel(f"{index + 1}. {text}")
+        # Step text is model-written and may carry markdown angle brackets.
+        self._step_label.setTextFormat(Qt.TextFormat.PlainText)
         self._step_label.setWordWrap(True)
         # The default colour matches the legacy fallback so a paint
         # that races the first theme emit still reads.  ``_apply_styles``
