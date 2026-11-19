@@ -128,6 +128,24 @@ class TestSubprocessRunTask(unittest.TestCase):
         # Final return value is the last completed-event text.
         self.assertEqual(result, "final result")
 
+    def test_partial_output_survives_a_bridge_error(self) -> None:
+        """An error must not discard what already streamed."""
+        d = A2ADispatcher()
+
+        def fake_run(*args, **kwargs):
+            yield A2AEvent(type="stdout", text="half the answer")
+            yield A2AEvent(type="error", text="boom")
+
+        with (
+            patch.object(SubprocessBridge, "discover", return_value=[_make_agent()]),
+            patch.object(SubprocessBridge, "run_task", new=fake_run),
+        ):
+            events, result = _drain_to_return(d.run_task("claude", "summarize"))
+
+        errors = [e for e in events if e.type == TurnEventType.ERROR]
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(result, "half the answer")
+
     def test_subprocess_surfaces_argv_injection_validation(self) -> None:
         """Tasks starting with '-' must raise ValueError → dispatcher yields error event."""
         d = A2ADispatcher()

@@ -205,9 +205,9 @@ class TestA2ADispatcherSubprocessFailure(unittest.TestCase):
 
     def test_error_after_stdout_still_yields_error(self) -> None:
         """The previous bug: stdout events set ``last_text`` and a
-        subsequent error event was swallowed, leaving ``last_text`` as
-        the return value. The fix yields the error event AND clears
-        the return value."""
+        subsequent error event was swallowed. The fix yields the error
+        event and hands the partial text back so the caller keeps the
+        work that already streamed."""
         bridge = _FakeSubprocessBridge(
             events=[
                 A2AEvent(type="stdout", text="partial output\n"),
@@ -230,9 +230,8 @@ class TestA2ADispatcherSubprocessFailure(unittest.TestCase):
         error_events = [e for e in events if e.type == TurnEventType.ERROR]
         self.assertEqual(len(error_events), 1, f"expected 1 ERROR, got {events}")
         self.assertEqual(error_events[0].error, "crashed")
-        # This is the exact regression: a stale stdout return value
-        # would be "partial output" — the bug. With the fix it is "".
-        self.assertEqual(result, "")
+        # The error is surfaced and the partial output is not thrown away.
+        self.assertEqual(result, "partial output\n")
 
     def test_stdout_then_completed_streams_both_and_returns_completed_text(
         self,

@@ -210,7 +210,10 @@ class A2ADispatcher:
                 # that hid subprocess failures from the caller.
                 if event.type == "error":
                     yield TurnEvent.error_event(event.text or "External agent error")
-                    return ""
+                    # Hand back whatever streamed before the failure: the
+                    # partial work is still useful to the caller and the
+                    # error event only reaches the UI.
+                    return self._truncate(last_text)
                 if event.type == "cancelled":
                     msg = event.text or "Task cancelled by user"
                     yield TurnEvent.error_event(msg)
