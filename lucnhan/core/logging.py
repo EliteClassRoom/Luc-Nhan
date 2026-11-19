@@ -21,6 +21,7 @@ import time
 
 from .log_sinks import (  # noqa: F401 — re-exported for tests
     STRUCTURED_EVENT_ALLOWLIST,
+    STRUCTURED_LOG_MAX_BYTES,
     HostOutputHandler,
     IDAHandler,
     JSONScalar,
@@ -117,7 +118,7 @@ def get_logger() -> logging.Logger:
     # Structured JSON log (JSONL format for machine parsing / analytics)
     try:
         json_path = os.path.join(os.path.dirname(_log_file_path()), "lucnhan_structured.jsonl")
-        json_handler = _FlushFileHandler(json_path, mode="a", encoding="utf-8")
+        json_handler = _FlushFileHandler(json_path, mode="a", encoding="utf-8", max_bytes=STRUCTURED_LOG_MAX_BYTES)
         json_handler.setLevel(logging.INFO)
         json_handler.setFormatter(_JSONFormatter())
         _logger.addHandler(json_handler)

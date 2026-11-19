@@ -914,3 +914,34 @@ def _make_minimal_loop():
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFileSinkRotation(unittest.TestCase):
+    """The diagnostic sinks must not grow without bound."""
+
+    def test_handler_rotates_past_its_ceiling(self) -> None:
+        import logging
+
+        from lucnhan.core.log_sinks import _FlushFileHandler
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "debug.log")
+            handler = _FlushFileHandler(path, max_bytes=200, backup_count=1)
+            logger = logging.getLogger(f"rot-{id(handler)}")
+            logger.setLevel(logging.DEBUG)
+            logger.addHandler(handler)
+            try:
+                for i in range(20):
+                    logger.debug("x" * 40 + str(i))
+            finally:
+                logger.removeHandler(handler)
+                handler.close()
+
+            self.assertTrue(os.path.exists(path))
+            self.assertTrue(os.path.exists(path + ".1"))
+            self.assertLess(os.path.getsize(path), 1000)
+
+    def test_jsonl_sink_uses_the_smaller_ceiling(self) -> None:
+        from lucnhan.core import log_sinks
+
+        self.assertLess(log_sinks.STRUCTURED_LOG_MAX_BYTES, log_sinks.LOG_MAX_BYTES)

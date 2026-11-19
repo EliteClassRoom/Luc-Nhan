@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable
+from logging.handlers import RotatingFileHandler
 
 from .host import get_user_config_base_dir
 
@@ -198,8 +199,32 @@ def _log_file_path() -> str:
     return os.path.join(d, "lucnhan_debug.log")
 
 
-class _FlushFileHandler(logging.FileHandler):
-    """FileHandler that flushes after every record for crash safety."""
+#: Rotation ceilings for the two diagnostic sinks.  Nothing else rotates
+#: them, so an install that runs for months would otherwise grow a single
+#: file without bound (the structured stream appends across runs forever).
+LOG_MAX_BYTES = 8 * 1024 * 1024
+STRUCTURED_LOG_MAX_BYTES = 4 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
+
+
+class _FlushFileHandler(RotatingFileHandler):
+    """Rotating FileHandler that flushes after every record for crash safety."""
+
+    def __init__(
+        self,
+        filename: str,
+        mode: str = "a",
+        encoding: str | None = None,
+        max_bytes: int = LOG_MAX_BYTES,
+        backup_count: int = LOG_BACKUP_COUNT,
+    ) -> None:
+        super().__init__(
+            filename,
+            mode=mode,
+            encoding=encoding,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+        )
 
     def emit(self, record: logging.LogRecord) -> None:
         super().emit(record)
