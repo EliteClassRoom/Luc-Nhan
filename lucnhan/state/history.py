@@ -1062,6 +1062,7 @@ class SessionHistory:
         if path is None:
             return SessionDeleteOutcome(SessionDeleteStatus.NOT_FOUND)
 
+        # Validated by the ``None`` check above, so the raw join is safe here.
         sidecar_path = os.path.join(self._dir, f"{session_id}{_SUMMARY_SUFFIX}")
         with self._manifest_lock:
             data = self._read_manifest()
