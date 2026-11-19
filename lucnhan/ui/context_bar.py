@@ -125,6 +125,8 @@ class ContextBar(QFrame):
         label.setObjectName("context_label")
         value = QLabel(initial)
         value.setObjectName("context_value")
+        # Values carry IDB-derived function names, which are attacker text.
+        value.setTextFormat(Qt.TextFormat.PlainText)
         # Make the value selectable so a user can copy an address, a long
         # function name, or a model id straight off the bar.
         value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)

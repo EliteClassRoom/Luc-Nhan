@@ -14,7 +14,7 @@ ensure_pyside6_stubs()
 # (e.g. ``tests/tools/test_panel_core.py``) left in ``sys.modules``
 # before we import the real lucnhan modules.  Without this purge
 # the ``ContextBar`` symbol here would be a ``MagicMock`` from a
-# previous test's stub, and ``object.__new__(ContextBar)`` would
+# previous test's stub, and ``ContextBar.__new__(ContextBar)`` would
 # raise ``TypeError``.
 from tests import purge_lucnhan_stubs
 
@@ -78,7 +78,7 @@ def teardown_module(module=None):
 
 
 def _make_bar() -> ContextBar:
-    bar = object.__new__(ContextBar)
+    bar = ContextBar.__new__(ContextBar)
     bar._stopped = False
     # Mock label pairs
     bar._address_label = (MagicMock(), MagicMock())

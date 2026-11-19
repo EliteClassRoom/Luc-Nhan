@@ -123,6 +123,8 @@ class AgentTreeWidget(QWidget):
         # table, with a thin border and no nested card.  The heading
         # names the selected agent so the region is never ambiguous.
         self._preview_title = QLabel("Selected agent output")
+        # The title carries the agent name, which the model writes.
+        self._preview_title.setTextFormat(Qt.TextFormat.PlainText)
         self._preview_title.setStyleSheet(get_agent_status_label_style())
         main_layout.addWidget(self._preview_title)
 
