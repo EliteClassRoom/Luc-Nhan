@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -159,6 +160,13 @@ def verify_backup(result: BackupResult, owner_memory_id: str) -> None:
         conn.close()
 
 
+def _preserve_for_restore(database: Path) -> Path:
+    """Copy *database* to ``<name>.pre-restore.bak`` (single rolling slot)."""
+    keep = database.with_name(database.name + ".pre-restore.bak")
+    shutil.copy2(database, keep)
+    return keep
+
+
 def restore_from_backup(
     backup_path: Path,
     target_paths: WorkspacePaths,
@@ -187,6 +195,11 @@ def restore_from_backup(
         raise ValueError(f"backup is not a valid workspace database: {backup_path}") from None
     finally:
         test_conn.close()
+
+    # A restore destroys whatever the target holds, and nothing else keeps a
+    # copy of it, so park the current database beside the target first.
+    if target_paths.database.exists():
+        _preserve_for_restore(target_paths.database)
 
     # Create target workspace and copy data
     target_store = WorkspaceStore.create(target_paths, owner_memory_id=owner_memory_id)

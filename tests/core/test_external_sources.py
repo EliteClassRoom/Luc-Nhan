@@ -157,6 +157,14 @@ class TestMCPDiscoveryJSON(unittest.TestCase):
             servers = _load_mcp_json(mcp_path)
             self.assertEqual(servers, [])
 
+    def test_load_non_object_json_returns_empty(self):
+        """A JSON array, or a non-object ``mcpServers``, must not raise."""
+        for payload in ([1, 2], {"mcpServers": ["nope"]}):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                mcp_path = Path(tmpdir) / "mcp.json"
+                mcp_path.write_text(json.dumps(payload), encoding="utf-8")
+                self.assertEqual(_load_mcp_json(mcp_path), [])
+
     def test_load_no_command_skipped(self):
         """Servers without a command are skipped."""
         with tempfile.TemporaryDirectory() as tmpdir:

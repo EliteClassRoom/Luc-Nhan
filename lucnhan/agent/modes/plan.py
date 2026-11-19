@@ -180,6 +180,9 @@ def run_plan_mode(
     decision = parse_approval(loop._wait_for_queue(loop._user_answer_queue))
     while decision.decision != UserDecision.APPROVE:
         loop._check_cancelled()
+        # A click on the rejected plan's buttons may already be queued; it
+        # answers the old prompt, so drop it before publishing the next one.
+        loop._drain_queue(loop._user_answer_queue)
         yield TurnEvent.user_question(
             "Plan rejected. Would you like to regenerate it, or type feedback for a revised plan?",
             ["Regenerate", "Cancel"],
@@ -206,6 +209,7 @@ def run_plan_mode(
             yield TurnEvent.error_event("Failed to generate a valid plan.")
             return
 
+        loop._drain_queue(loop._user_answer_queue)
         yield TurnEvent.plan_generated(steps)
         decision = parse_approval(loop._wait_for_queue(loop._user_answer_queue))
 

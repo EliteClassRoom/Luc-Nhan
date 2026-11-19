@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 
 from ..constants import CONFIG_DIR_NAME, MCP_CONFIG_FILE
@@ -54,7 +56,14 @@ def load_mcp_config(path: str = "") -> list[MCPServerConfig]:
         log_error(f"Failed to load MCP config: {e}")
         return []
 
+    if not isinstance(data, dict):
+        log_error(f"MCP config is not a JSON object ({type(data).__name__}), ignoring it")
+        return []
+
     servers_dict = data.get("mcpServers", {})
+    if not isinstance(servers_dict, dict):
+        log_error("MCP config 'mcpServers' is not an object, ignoring it")
+        return []
     servers: list[MCPServerConfig] = []
 
     for name, cfg in servers_dict.items():
@@ -102,5 +111,14 @@ def save_mcp_config(servers: list[MCPServerConfig], path: str = "") -> None:
     data = {"mcpServers": servers_dict}
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    # Replace instead of truncating: a crash mid-write would otherwise lose
+    # every configured server.
+    fd, tmp = tempfile.mkstemp(prefix=".mcp-config-", dir=os.path.dirname(path) or ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise

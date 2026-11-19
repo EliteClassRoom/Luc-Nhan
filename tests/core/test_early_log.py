@@ -81,6 +81,32 @@ class TestEarlyLogPath(unittest.TestCase):
 
 
 class TestEarlyLogCrash(unittest.TestCase):
+    def test_oversized_log_is_rotated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "lucnhan.log")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("x" * 64)
+
+            handle = el._open_file(path, limit=32)
+
+            assert handle is not None
+            handle.close()
+            assert os.path.getsize(path + ".1") == 64
+            assert os.path.getsize(path) == 0
+
+    def test_small_log_is_not_rotated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "lucnhan.log")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("x" * 8)
+
+            handle = el._open_file(path, limit=32)
+
+            assert handle is not None
+            handle.close()
+            assert not os.path.exists(path + ".1")
+            assert os.path.getsize(path) == 8
+
     def test_crash_file_contains_traceback(self) -> None:
         el._reset_for_tests()
         # Redirect both paths into a temp dir so we don't touch $HOME.

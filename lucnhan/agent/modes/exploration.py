@@ -498,6 +498,8 @@ def _run_phase2_plan(
     decision = parse_approval(loop._wait_for_queue(loop._user_answer_queue))
     while decision.decision != UserDecision.APPROVE:
         loop._check_cancelled()
+        # See plan.py: a click queued against the rejected plan is stale.
+        loop._drain_queue(loop._user_answer_queue)
         yield TurnEvent.user_question(
             "Modification plan rejected. Would you like to regenerate it, or type feedback for a revised plan?",
             ["Regenerate", "Cancel"],
@@ -525,6 +527,7 @@ def _run_phase2_plan(
             return None
 
         _build_mod_plan(plan_text, steps)
+        loop._drain_queue(loop._user_answer_queue)
         yield TurnEvent.plan_generated(steps)
         decision = parse_approval(loop._wait_for_queue(loop._user_answer_queue))
 

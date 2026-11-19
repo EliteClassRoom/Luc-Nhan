@@ -70,7 +70,13 @@ class KnowledgeRawStore:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _read_jsonl(path: str) -> list[dict[str, Any]]:
+    def _read_jsonl(path: str, strict: bool = False) -> list[dict[str, Any]]:
+        """Read a JSONL file.
+
+        A read-modify-write must not treat an unreadable file as empty --
+        the whole file would be replaced by just the new record -- so the
+        write paths ask for *strict* and get the OSError re-raised.
+        """
         if not os.path.isfile(path):
             return []
         records: list[dict[str, Any]] = []
@@ -87,6 +93,8 @@ class KnowledgeRawStore:
                         log_debug(f"Skipping malformed JSONL in {path}:{ln}: {e}")
         except OSError as e:
             log_error(f"Failed to read {path}: {e}")
+            if strict:
+                raise
         return records
 
     @staticmethod
@@ -179,7 +187,7 @@ class KnowledgeRawStore:
         updates).
         """
         with _lock_for(path):
-            existing = self._read_jsonl(path)
+            existing = self._read_jsonl(path, strict=True)
             merged = self._upsert_by_id(existing, record)
             self._write_jsonl_atomic(path, merged)
 
@@ -276,8 +284,8 @@ class KnowledgeRawStore:
         # Deterministic lock order to avoid deadlocks with other writers.
         with _lock_for(mem_path), _lock_for(obs_path):
             # Snapshot both files as raw dicts so we can restore on failure.
-            snapshot_memories = list(self._read_jsonl(mem_path))
-            snapshot_observations = list(self._read_jsonl(obs_path))
+            snapshot_memories = list(self._read_jsonl(mem_path, strict=True))
+            snapshot_observations = list(self._read_jsonl(obs_path, strict=True))
 
             new_memory_ids = set(updated_memories.keys())
             merged_memories: list[dict[str, Any]] = []

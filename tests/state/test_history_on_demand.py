@@ -160,6 +160,14 @@ def test_rebuild_and_list_skip_tampered_ids(tmp_path: Path) -> None:
     assert history.list_sessions(idb_path="C:/sample.i64") == []
 
 
+def test_session_json_that_is_not_an_object_is_survivable(tmp_path: Path) -> None:
+    history = _history(tmp_path)
+    (Path(history._dir) / "list-bust.json").write_text("[1, 2]", encoding="utf-8")
+
+    assert history.list_sessions(idb_path="C:/sample.i64") == []
+    assert history.load_session("list-bust") is None
+
+
 def test_load_rejects_traversal_even_when_escape_file_exists(tmp_path: Path) -> None:
     history = _history(tmp_path)
     escape_path = Path(history._dir).parent / "escape.json"

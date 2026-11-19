@@ -63,6 +63,19 @@ class TestMCPConfig(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_non_object_config_is_ignored(self):
+        import json
+        import tempfile
+
+        for payload in ([{"name": "x"}], {"mcpServers": ["nope"]}):
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(payload, f)
+                path = f.name
+            try:
+                self.assertEqual(load_mcp_config(path), [])
+            finally:
+                os.unlink(path)
+
     def test_one_bad_entry_does_not_drop_the_others(self):
         """A malformed ``timeout`` must cost only its own server."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -95,6 +108,24 @@ class TestMCPConfig(unittest.TestCase):
             self.assertEqual(servers, [])
         finally:
             os.unlink(path)
+
+    def test_save_leaves_no_temp_file_and_keeps_the_old_copy_on_failure(self):
+        import json
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "mcp.json")
+            save_mcp_config([MCPServerConfig(name="keep", command="c")], path)
+            before = open(path, encoding="utf-8").read()
+
+            with patch("lucnhan.mcp.config.json.dump", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    save_mcp_config([MCPServerConfig(name="new", command="c")], path)
+
+            self.assertEqual(open(path, encoding="utf-8").read(), before)
+            self.assertEqual(json.loads(before)["mcpServers"]["keep"]["command"], "c")
+            leftovers = [n for n in os.listdir(tmpdir) if n.startswith(".mcp-config-")]
+            self.assertEqual(leftovers, [])
 
     def test_save_and_reload(self):
         with tempfile.TemporaryDirectory() as tmpdir:

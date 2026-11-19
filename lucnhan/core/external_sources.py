@@ -125,7 +125,14 @@ def _load_mcp_json(path: Path) -> list[MCPServerConfig]:
         log_debug(f"Failed to load external MCP config {path}: {e}")
         return []
 
+    if not isinstance(data, dict):
+        log_debug(f"External MCP config is not a JSON object, ignoring {path}")
+        return []
+
     servers_dict = data.get("mcpServers", {})
+    if not isinstance(servers_dict, dict):
+        log_debug(f"External MCP config 'mcpServers' is not an object, ignoring {path}")
+        return []
     servers: list[MCPServerConfig] = []
 
     for name, cfg in servers_dict.items():

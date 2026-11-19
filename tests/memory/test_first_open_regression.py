@@ -8,8 +8,11 @@ when a user enabled central memory for the first time.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from lucnhan.core.config import LucNhanConfig
+from lucnhan.memory import workspace_open
+from lucnhan.memory.backup import list_backups
 from lucnhan.memory.manager import MemoryWorkspaceManager
 from lucnhan.memory.workspace import (
     FilesystemIdentity,
@@ -20,6 +23,28 @@ from lucnhan.memory.workspace import (
 )
 from lucnhan.memory.workspace_open import open_workspace_for_write
 from lucnhan.memory.workspace_store import WorkspaceStore
+
+
+class TestBackupBeforeMigration:
+    """Every upgrade step is destructive, not just v1."""
+
+    def test_upgrade_other_than_v1_is_backed_up(self, tmp_path: Path) -> None:
+        config = LucNhanConfig()
+        config._config_dir = str(tmp_path)
+        locator = MemoryLocator(config.memory_dir)
+        mid = new_memory_id()
+        paths = locator.binary(mid)
+        store = WorkspaceStore.create(paths, owner_memory_id=mid)
+        store.close()
+        backup_dir = locator.backups(mid)
+
+        # Pretend the binary is newer than the file: the gate must still
+        # snapshot before touching it.
+        with patch.object(workspace_open, "MEMORY_WORKSPACE_SCHEMA_VERSION", 6):
+            store = open_workspace_for_write(paths, mid, backup_dir)
+        store.close()
+
+        assert list_backups(backup_dir)
 
 
 class TestFirstOpenCreatesDb:

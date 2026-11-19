@@ -512,6 +512,9 @@ class SessionHistory:
             except (json.JSONDecodeError, OSError) as exc:
                 log_debug(f"Skipping corrupt session JSON {fname}: {exc}")
                 continue
+            if not isinstance(data, dict):
+                log_debug(f"Skipping session JSON that is not an object: {fname}")
+                continue
             sid = data.get("id", fname[:-5])
             if not _validate_session_id(sid):
                 log_warning(f"Skipping session file with invalid id: {fname}")
@@ -711,6 +714,10 @@ class SessionHistory:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as exc:
             log_debug(f"Failed to load session {session_id}: {exc}")
+            return None
+
+        if not isinstance(data, dict):
+            log_debug(f"Session {session_id} is not a JSON object")
             return None
 
         # Sanitize metadata — particularly ``active_goal`` which the
@@ -1073,7 +1080,7 @@ class SessionHistory:
             # expected scope and the on-disk record agree on every
             # populated field — a single-field match is not enough when
             # the caller explicitly supplied the full scope.
-            if persisted.get("id") != session_id:
+            if not isinstance(persisted, dict) or persisted.get("id") != session_id:
                 return SessionDeleteOutcome(SessionDeleteStatus.WRONG_IDB)
             persisted_idb_path = str(persisted.get("idb_path", ""))
             persisted_db_instance_id = str(persisted.get("db_instance_id", ""))

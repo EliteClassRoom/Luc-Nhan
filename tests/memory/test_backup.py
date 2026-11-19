@@ -83,6 +83,26 @@ class TestBackup:
         assert "Hello backup" in facts[0].content
         restored.close()
 
+    def test_restore_keeps_the_overwritten_database(self, tmp_path: Path) -> None:
+        """A restore is destructive: the replaced database must survive."""
+        store, paths, mid = _create_workspace(tmp_path)
+        backup_dir = tmp_path / "backups"
+        result = create_backup(paths, mid, backup_dir)
+        store.close()
+
+        restored = restore_from_backup(result.backup_path, paths, mid, migration_backup_dir=backup_dir)
+        restored.close()
+
+        keep = paths.database.with_name(paths.database.name + ".pre-restore.bak")
+        assert keep.exists()
+        import sqlite3
+
+        conn = sqlite3.connect(str(keep))
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0] == 1
+        finally:
+            conn.close()
+
     def test_backup_missing_db_raises(self, tmp_path: Path) -> None:
         mid = new_memory_id()
         locator = MemoryLocator(tmp_path / "memory")

@@ -1,9 +1,9 @@
 """Backup-aware writable open and offline rollback.
 
-The migration gate inside ``WorkspaceStore.open`` runs schema v1 -> v2
-in-place. If it ever fails on a production database the original v1
+The migration gate inside ``WorkspaceStore.open`` upgrades the schema
+in place. If it ever fails on a production database the pre-upgrade
 content is lost. This module intermediates every production writable
-open so that a v1 database is first snapshotted into a verified
+open so that an older database is first snapshotted into a verified
 backup. ``restore_v1_backup_offline`` is the matching tool for
 returning a v2-migrated database back to its v1 state without ever
 calling ``WorkspaceStore.open`` (which would re-trigger migration).
@@ -18,6 +18,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
+from ..constants import MEMORY_WORKSPACE_SCHEMA_VERSION
 from .backup import (
     BackupResult,
     create_backup,
@@ -49,17 +50,19 @@ def open_workspace_for_write(
     owner_memory_id: str,
     backup_dir: Path,
 ) -> WorkspaceStore:
-    """Open *paths* for writing, backing up a v1 database first.
+    """Open *paths* for writing, backing up any pending migration first.
 
-    v1 databases are snapshotted into *backup_dir* and the snapshot is
-    verified before :meth:`WorkspaceStore.open` runs the migration to
-    v2. v2 (or higher) databases pass through directly — they have
-    already been migrated. Any verification failure aborts the open
-    so the caller never touches a partially-migrated database without
-    a working rollback point.
+    A database older than the current schema is snapshotted into
+    *backup_dir* and the snapshot is verified before
+    :meth:`WorkspaceStore.open` runs the upgrade. Current databases pass
+    through directly. Any verification failure aborts the open so the
+    caller never touches a partially-migrated database without a working
+    rollback point.
     """
     version = inspect_workspace_version(paths)
-    if version == 1:
+    # Every upgrade step is destructive, not just the first one. Back up
+    # whenever anything below the current schema has to run.
+    if version < MEMORY_WORKSPACE_SCHEMA_VERSION:
         result = create_backup(paths, owner_memory_id, backup_dir)
         verify_backup(result, owner_memory_id)
     return WorkspaceStore.open(paths, owner_memory_id=owner_memory_id)

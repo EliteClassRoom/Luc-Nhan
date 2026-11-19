@@ -152,6 +152,22 @@ class TestMalformedJsonl(unittest.TestCase):
         self.assertEqual(len(mems), 1)
         self.assertEqual(mems[0].id, "mem:ok")
 
+    def test_unreadable_file_does_not_clobber_the_others(self):
+        """A read-modify-write must fail, not rewrite the file from empty."""
+        self.store.upsert_memory(make_mem(mem_id="mem:first"))
+        real_open = open
+
+        def boom(path, *args, **kwargs):
+            if str(path) == str(self.paths.memories_path):
+                raise PermissionError("locked")
+            return real_open(path, *args, **kwargs)
+
+        with patch("builtins.open", boom):
+            with self.assertRaises(PermissionError):
+                self.store.upsert_memory(make_mem(mem_id="mem:second"))
+
+        self.assertEqual([m.id for m in self.store.list_memories()], ["mem:first"])
+
     def test_missing_files_returns_empty(self):
         # Delete one file's parent to confirm readers don't crash.
         self.assertEqual(self.store.list_memories(), [])

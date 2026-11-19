@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
+import tempfile
 import unicodedata
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
@@ -66,6 +68,23 @@ def _slugify(text: str) -> str:
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[-\s]+", "-", text)
     return text.strip("-") or "untitled"
+
+
+def _write_text_atomic(path: str, text: str) -> None:
+    """Write *text* to *path* via a sibling temp file.
+
+    Notes are read back by later phases, so a crash during the write must
+    not leave a half-written note for them to consume.
+    """
+    fd, tmp = tempfile.mkstemp(prefix=".research-", dir=os.path.dirname(path) or ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _ensure_dir(path: str) -> None:
@@ -248,8 +267,7 @@ def write_and_review_note(
     _ensure_dir(genre_dir)
 
     # Write draft
-    with open(note_path, "w", encoding="utf-8") as f:
-        f.write(content)
+    _write_text_atomic(note_path, content)
 
     note = ResearchNote(
         genre=genre,
@@ -354,8 +372,7 @@ def write_and_review_note(
         approved = doublecheck_result.strip().upper().startswith("APPROVED")
         note.review_passed = approved
         note.content = current_content
-        with open(note_path, "w", encoding="utf-8") as f:
-            f.write(current_content)
+        _write_text_atomic(note_path, current_content)
 
         if not approved:
             log_info(f"Research note '{title}' not approved by orchestrator: {doublecheck_result[:120]}")
@@ -545,8 +562,7 @@ def run_research_mode(
     if research_state.notes_written:
         index_content = _generate_index(research_state, binary_name, user_message)
         index_path = os.path.join(notes_dir, "index.md")
-        with open(index_path, "w", encoding="utf-8") as f:
-            f.write(index_content)
+        _write_text_atomic(index_path, index_content)
         log_info(f"Research mode: index written to {index_path}")
 
         yield TurnEvent.research_note_saved(

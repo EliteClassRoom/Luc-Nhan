@@ -47,6 +47,12 @@ import typing
 # even after a crash loop.
 _BUFFER_MAXLEN = 50
 
+#: Rotate the log once it passes this size (one previous generation kept).
+_MAX_LOG_BYTES = 8 * 1024 * 1024
+
+#: Crash reports are forensics: keep the last 4 MiB, larger than one report.
+_MAX_CRASH_BYTES = 4 * 1024 * 1024
+
 # Level strings accepted by :func:`_early_log`. "DEBUG" is intentionally
 # omitted from user-facing messages but kept here so internal callers
 # (e.g. before/after _ensure_import_guard()) can log guard state without
@@ -140,11 +146,28 @@ def _format_line(level: str, msg: str) -> str:
     return f"{ts} [{level:<5}] {safe}"
 
 
-def _open_file(path: str) -> io.TextIOBase | None:
+def _rotate_if_large(path: str, limit: int) -> None:
+    """Move ``path`` aside once it exceeds *limit* bytes; never raises.
+
+    The log is append-only and one line is written per turn, so without
+    this an install that runs for months grows it without bound. One
+    previous generation is kept.
+    """
+    try:
+        if os.path.getsize(path) <= limit:
+            return
+        os.replace(path, path + ".1")
+    except OSError:
+        pass
+
+
+def _open_file(path: str, limit: int = _MAX_LOG_BYTES) -> io.TextIOBase | None:
     """Open ``path`` in append+text mode with UTF-8 encoding; never raises.
 
-    Returns ``None`` if the file cannot be opened.
+    Rotates first when the file got too large. Returns ``None`` if the
+    file cannot be opened.
     """
+    _rotate_if_large(path, limit)
     try:
         # buffering=1 (line-buffered) is the stdlib default for text mode,
         # but we restate it explicitly to make the intent grep-able.
@@ -278,7 +301,7 @@ def _early_log_crash(exc: BaseException) -> None:
         body_lines.extend(tb_lines)
         body = "".join(line if line.endswith("\n") else line + "\n" for line in body_lines)
 
-        fh = _open_file(_crash_path)
+        fh = _open_file(_crash_path, limit=_MAX_CRASH_BYTES)
         if fh is None:
             return
         try:
