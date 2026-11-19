@@ -46,6 +46,10 @@ from .theme.applicator import bind_theme, disconnect_theme
 #: Coalesce a typing burst into one table rebuild.
 _FILTER_DEBOUNCE_MS = 150
 
+#: Rows actually turned into table items. The counts label reports the
+#: truncation so a filtered-out record is not silently invisible.
+_MAX_RENDERED_ROWS = 500
+
 _TYPE_FILTERS = ("All", "Memories", "Entities", "Relations", "Notes")
 
 
@@ -372,10 +376,15 @@ class KnowledgePanel(QWidget):
             visible.append(r)
 
         # Index kept alongside the table so a selection can be resolved
-        # without stuffing the whole raw record into a cell.
-        self._visible_rows = visible
-        self._table.setRowCount(len(visible))
-        for row, item in enumerate(visible):
+        # without stuffing the whole raw record into a cell. Bounded: a large
+        # corpus otherwise allocates one QTableWidgetItem per record on every
+        # refresh, on the UI thread.
+        total = len(visible)
+        self._visible_rows = visible[:_MAX_RENDERED_ROWS]
+        self._table.setRowCount(len(self._visible_rows))
+        if total > _MAX_RENDERED_ROWS:
+            self._counts_label.setText(f"showing {_MAX_RENDERED_ROWS} of {total} — narrow the filter to see more")
+        for row, item in enumerate(self._visible_rows):
             kind_cell = QTableWidgetItem(item.kind)
             id_cell = QTableWidgetItem(f"{item.id}\n{item.title}")
             id_cell.setToolTip(item.id)

@@ -227,3 +227,29 @@ class TestDetailTitleIsPlainText(unittest.TestCase):
             panel._detail_title.setTextFormat.call_args[0][0],
             Qt.TextFormat.PlainText,
         )
+
+
+@requires_real_qt
+class TestRenderedRowCap(unittest.TestCase):
+    def test_a_large_corpus_renders_only_the_cap(self):
+        """Every visible row costs six table items on the UI thread."""
+        from lucnhan.ui.knowledge_panel import _MAX_RENDERED_ROWS, _Row
+
+        w = _make_widget()
+        mems = [
+            KnowledgeMemory(
+                id=f"mem:crypto:0x{i:x}:h{i}",
+                binary_id="x",
+                type="crypto",
+                title=f"title {i}",
+                content="c",
+                tags=[],
+                confidence=0.5,
+            )
+            for i in range(_MAX_RENDERED_ROWS + 100)
+        ]
+        w.populate(mems, [], [], [])
+
+        self.assertEqual(w._table.rowCount(), _MAX_RENDERED_ROWS)
+        self.assertIn(f"of {_MAX_RENDERED_ROWS + 100}", w._counts_label.text())
+        self.assertIsInstance(w._visible_rows[0], _Row)
