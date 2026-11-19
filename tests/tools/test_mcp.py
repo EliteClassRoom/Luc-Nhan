@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -21,6 +22,7 @@ from lucnhan.mcp.protocol import (
     MCPToolSchema,
     decode_jsonrpc_response,
     encode_jsonrpc_request,
+    parse_content_length_frame,
 )
 from lucnhan.tools.base import ToolDefinition
 from lucnhan.tools.registry import ToolRegistry
@@ -183,6 +185,18 @@ class TestMCPProtocol(unittest.TestCase):
     def test_decode_invalid(self):
         resp = decode_jsonrpc_response("not json")
         self.assertIn("error", resp)
+
+    def test_oversized_frame_is_read_truncated(self):
+        stream = io.BytesIO(b'Content-Length: 999999999\r\n\r\n{"x":1}')
+        body = parse_content_length_frame(stream)
+        assert body is not None
+        assert body.startswith('{"x":1}')
+
+    def test_frame_round_trip(self):
+        frame = encode_jsonrpc_request("tools/list", id=3)
+        body = parse_content_length_frame(io.BytesIO(frame))
+        assert body is not None
+        assert json.loads(body)["method"] == "tools/list"
 
     def test_tool_schema_dataclass(self):
         ts = MCPToolSchema(

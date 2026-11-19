@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # JSON-RPC 2.0 standard error codes
+# Ceiling for one framed body; larger bodies are read truncated.
+_MAX_FRAME_BYTES = 32 * 1024 * 1024
 _JSONRPC_PARSE_ERROR = -32700
 
 # Truncate parse-error previews so error messages stay bounded.
@@ -82,8 +84,14 @@ def parse_content_length_frame(stream) -> str | None:
         if not sep:
             return None
 
+        # A server may claim any length; read at most the cap so one frame
+        # cannot ask for gigabytes of buffer. An oversized body comes back
+        # truncated, which surfaces as a parse error.
+        capped = content_length > _MAX_FRAME_BYTES
+        if capped:
+            content_length = _MAX_FRAME_BYTES
         content_data = stream.read(content_length)
-        if len(content_data) < content_length:
+        if not capped and len(content_data) < content_length:
             return None  # Truncated read (EOF mid-message)
         return content_data.decode("utf-8", errors="replace")
 
