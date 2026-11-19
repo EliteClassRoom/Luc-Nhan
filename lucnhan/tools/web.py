@@ -147,8 +147,12 @@ def _call_minimax_api(endpoint: str, payload: dict, timeout: float) -> dict:
             tool_name="web_search",
         ) from e
 
-    # Check for API-level errors
-    base_resp = data.get("base_resp", {})
+    # The reply is untrusted JSON: any level can be the wrong type.
+    if not isinstance(data, dict):
+        raise ToolError(f"MiniMax API returned {type(data).__name__}, not an object", tool_name="web_search")
+    base_resp = data.get("base_resp")
+    if not isinstance(base_resp, dict):
+        base_resp = {}
     status_code = base_resp.get("status_code", 0)
     if status_code != 0:
         status_msg = base_resp.get("status_msg", "unknown error")
@@ -305,8 +309,10 @@ def web_search(query: Annotated[str, "The search query to find information"]) ->
     data = _call_minimax_api("/v1/coding_plan/search", {"q": query}, WEB_SEARCH_TIMEOUT)
 
     # Format results for the LLM to consume
-    organic = data.get("organic", [])
-    related = data.get("related_searches", [])
+    organic = data.get("organic")
+    related = data.get("related_searches")
+    organic = [r for r in organic if isinstance(r, dict)] if isinstance(organic, list) else []
+    related = [r for r in related if isinstance(r, dict)] if isinstance(related, list) else []
 
     if not organic:
         return "(No search results found.)"

@@ -353,3 +353,28 @@ class TestWebFetchEncoding(unittest.TestCase):
 
         assert "caf\u00e9" in text
         sniff.assert_not_called()
+
+
+class TestWebSearchResponseShape(unittest.TestCase):
+    """The API reply is untrusted JSON; wrong types must not raise AttributeError."""
+
+    def _call(self, payload: object) -> str:
+        with mock.patch.object(web, "_call_minimax_api", return_value=payload):
+            return web.web_search("q")
+
+    def test_non_object_reply_is_a_tool_error(self):
+        with self.assertRaises(ToolError):
+            self._call(["not", "an", "object"])
+
+    def test_non_dict_entries_are_skipped(self):
+        payload = {
+            "organic": [{"title": "T", "link": "https://x", "snippet": "s"}, "junk"],
+            "related_searches": [{"query": "q2"}, 7],
+        }
+        out = self._call(payload)
+        assert "T" in out
+        assert "q2" in out
+
+    def test_wrong_typed_containers_fall_back(self):
+        out = self._call({"organic": {"a": 1}, "related_searches": "x", "base_resp": []})
+        assert "No search results found" in out
