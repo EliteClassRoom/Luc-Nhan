@@ -296,3 +296,26 @@ class TestPositiveInt(unittest.TestCase):
     def test_zero_negative_and_junk_fall_back(self):
         for value in (0, -1, "junk", None, [1]):
             assert CodexProvider._positive_int(value) is None
+
+
+class TestCodexDeviceInterval(unittest.TestCase):
+    """A server-chosen poll interval must not stall the login."""
+
+    def _interval_for(self, value) -> int:
+        from lucnhan.providers.codex_provider import request_codex_device_code
+
+        with patch(
+            "lucnhan.providers.codex_provider._request_json",
+            return_value={"user_code": "u", "device_auth_id": "d", "interval": value},
+        ):
+            return request_codex_device_code().interval
+
+    def test_absurd_interval_is_capped(self) -> None:
+        self.assertEqual(self._interval_for(3600), 30)
+
+    def test_zero_and_junk_fall_back_to_one(self) -> None:
+        self.assertEqual(self._interval_for(0), 1)
+        self.assertEqual(self._interval_for("soon"), 5)
+
+    def test_normal_interval_is_kept(self) -> None:
+        self.assertEqual(self._interval_for(5), 5)

@@ -182,7 +182,9 @@ def request_codex_device_code() -> CodexDeviceCode:
         verification_url=f"{base}/codex/device",
         user_code=str(resp.get("user_code") or resp.get("usercode") or ""),
         device_auth_id=str(resp.get("device_auth_id") or ""),
-        interval=max(1, interval),
+        # A server-chosen interval of an hour would block the login with the
+        # deadline barely consulted (the loop only sleeps once per attempt).
+        interval=min(max(1, interval), 30),
     )
 
 
