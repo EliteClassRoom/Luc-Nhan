@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..core.sanitize import strip_injection_markers
+
 
 def _func_label(ctx: dict[str, Any]) -> tuple[str, int]:
     """Return (display_name, effective_address) from context."""
-    name = ctx["func_name"] or f"sub_{ctx['ea']:x}"
+    name = strip_injection_markers(ctx["func_name"] or f"sub_{ctx['ea']:x}")
     ea = ctx["func_ea"] or ctx["ea"]
     return name, ea
 
@@ -22,8 +24,8 @@ def _func_label(ctx: dict[str, Any]) -> tuple[str, int]:
 def handle_send_to(ctx: dict[str, Any]) -> str:
     sel = ctx["selected_text"]
     if sel:
-        return sel
-    name = ctx["func_name"]
+        return strip_injection_markers(sel)
+    name = strip_injection_markers(ctx["func_name"] or "")
     ea = ctx["ea"]
     if name:
         return f"Analyze the function {name} at 0x{ea:x}"
