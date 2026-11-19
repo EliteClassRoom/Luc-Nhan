@@ -130,6 +130,23 @@ class TestMemoryProjector:
         assert state.managed_hash != ""
         store.close()
 
+    def test_project_tolerates_non_utf8_notes(self, tmp_path: Path) -> None:
+        """A hand edit saved as cp1252 must not break the projection."""
+        memory_id = new_memory_id()
+        paths = MemoryLocator(tmp_path).binary(memory_id)
+        store = WorkspaceStore.create(paths, owner_memory_id=memory_id)
+        store.put_fact(new_record_id("fact"), "algorithm", "RC4", "Uses RC4", 0.8, expected_revision=0)
+
+        paths.markdown.write_bytes("# Memory\n\n## Notes\n\nCaf\xe9 owner.\n".encode("latin-1"))
+
+        projector = MemoryProjector()
+        projector.project(paths, store)
+
+        content = paths.markdown.read_text(encoding="utf-8")
+        assert "Uses RC4" in content
+        assert "Caf" in content
+        store.close()
+
     def test_project_preserves_unmanaged_edits(self, tmp_path: Path) -> None:
         memory_id = new_memory_id()
         paths = MemoryLocator(tmp_path).binary(memory_id)

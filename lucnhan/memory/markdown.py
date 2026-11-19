@@ -180,7 +180,9 @@ def _read_bounded_regular_utf8(path: Path, *, default: str = "# Memory\n") -> st
     stat = path.stat()
     if stat.st_size > MEMORY_MARKDOWN_MAX_BYTES:
         raise ManagedRegionError(f"MEMORY.md exceeds {MEMORY_MARKDOWN_MAX_BYTES} bytes: {stat.st_size}")
-    return path.read_text(encoding="utf-8")
+    # MEMORY.md is hand-edited too, and a legacy Windows editor writes
+    # cp1252 — one accented byte must not break every projection.
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def _atomic_replace_regular_file(path: Path, content: str) -> None:
