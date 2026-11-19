@@ -199,3 +199,31 @@ class TestDetailTitleToleratesAMissingCell(unittest.TestCase):
 
         panel._detail_title.setText.assert_called_once()
         self.assertIn("Selected record", panel._detail_title.setText.call_args[0][0])
+
+
+class TestDetailTitleIsPlainText(unittest.TestCase):
+    def test_a_markup_title_is_not_rendered(self):
+        """A record title is agent/binary text, not HTML."""
+        from unittest.mock import MagicMock
+
+        from lucnhan.ui.knowledge_panel import KnowledgePanel
+        from lucnhan.ui.qt_compat import Qt
+
+        panel = KnowledgePanel.__new__(KnowledgePanel)
+        panel._table = MagicMock()
+        panel._table.selectionModel.return_value.selectedRows.return_value = [MagicMock(**{"row.return_value": 0})]
+        row = MagicMock()
+        row.raw = {"id": "x"}
+        panel._visible_rows = [row]
+        cell = MagicMock()
+        cell.text.return_value = "<b>bold title</b>"
+        panel._table.item.side_effect = lambda _row, col: MagicMock() if col == 0 else cell
+        panel._detail = MagicMock()
+        panel._detail_title = MagicMock()
+
+        panel._on_row_selected()
+
+        self.assertEqual(
+            panel._detail_title.setTextFormat.call_args[0][0],
+            Qt.TextFormat.PlainText,
+        )

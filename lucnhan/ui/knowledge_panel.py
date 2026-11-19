@@ -164,6 +164,8 @@ class KnowledgePanel(QWidget):
 
         # Detail pane — thin border, below the table (G8).
         self._detail_title = QLabel("Selected record")
+        # Record titles come from the agent/binary: do not parse markup.
+        self._detail_title.setTextFormat(Qt.TextFormat.PlainText)
         self._detail_title.setObjectName("tools_section_title")
         main_layout.addWidget(self._detail_title)
 

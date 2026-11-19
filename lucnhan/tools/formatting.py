@@ -12,6 +12,27 @@ host copies.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import TypeVar
+
+_T = TypeVar("_T")
+
+#: Names listed inline in a one-line summary (the rest are counted).
+_MAX_INLINE_NAMES = 40
+
+#: Names listed one per line by :func:`format_callers_callees`.
+_MAX_LISTED_NAMES = 200
+
+
+def _capped(items: list[_T], limit: int) -> tuple[list[_T], int]:
+    """Return the first *limit* items plus the number omitted."""
+    return items[:limit], max(0, len(items) - limit)
+
+
+def _inline(items: list[str], limit: int = _MAX_INLINE_NAMES) -> str:
+    """Join *items* for one line, summarising the overflow."""
+    shown, hidden = _capped(items, limit)
+    text = ", ".join(shown)
+    return f"{text}, ... and {hidden} more" if hidden else text
 
 
 def format_function_summary(
@@ -33,9 +54,9 @@ def format_function_summary(
         f"Instructions: {instrs}",
     ]
     if callers:
-        parts.append(f"Callers ({len(callers)}): {', '.join(callers)}")
+        parts.append(f"Callers ({len(callers)}): {_inline(callers)}")
     if callees:
-        parts.append(f"Callees ({len(callees)}): {', '.join(callees)}")
+        parts.append(f"Callees ({len(callees)}): {_inline(callees)}")
     return "\n".join(parts)
 
 
@@ -46,13 +67,13 @@ def format_callers_callees(
     callees: Iterable[str],
 ) -> str:
     """Format a function callers/callees summary shared by xref tools."""
-    callers = sorted(callers)
-    callees = sorted(callees)
+    caller_list = sorted(callers)
+    callee_list = sorted(callees)
     parts = [f"Function: {fname} (0x{start:x})"]
-    parts.append(f"\nCallers ({len(callers)}):")
-    for c in callers:
-        parts.append(f"  {c}")
-    parts.append(f"\nCallees ({len(callees)}):")
-    for c in callees:
-        parts.append(f"  {c}")
+    for label, names in (("Callers", caller_list), ("Callees", callee_list)):
+        shown, hidden = _capped(names, _MAX_LISTED_NAMES)
+        parts.append(f"\n{label} ({len(names)}):")
+        parts.extend(f"  {name}" for name in shown)
+        if hidden:
+            parts.append(f"  ... and {hidden} more")
     return "\n".join(parts)
