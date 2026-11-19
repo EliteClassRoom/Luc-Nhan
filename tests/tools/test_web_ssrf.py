@@ -202,6 +202,40 @@ class TestUnderstandImageSSRFGuard(unittest.TestCase):
         finally:
             os.unlink(tmp_path)
 
+    def test_oversized_local_image_is_rejected(self):
+        """Images are base64-inflated and sent in one request — cap them."""
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(b"\x89PNG\r\n\x1a\n")
+            f.seek(web._IMAGE_MAX_BYTES + 1)
+            f.write(b"\x00")
+            tmp_path = f.name
+        try:
+            with self.assertRaises(ToolError) as cm:
+                web._process_image_source(tmp_path)
+            assert "too large" in str(cm.exception)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_oversized_download_is_aborted_mid_stream(self):
+        """A huge URL body must not be buffered whole."""
+        response = mock.MagicMock()
+        response.headers = {"content-type": "image/png"}
+        oversized = b"x" * (web._IMAGE_MAX_BYTES + 1)
+        response.iter_content.return_value = iter([oversized])
+
+        with (
+            mock.patch.object(web_fetch, "_is_safe_url", return_value=(True, "")),
+            mock.patch.object(web_fetch, "_resolve_hostsafe", return_value=(True, "")),
+            mock.patch("requests.get", return_value=response),
+        ):
+            with self.assertRaises(ToolError) as cm:
+                web._process_image_source("https://example.com/big.png")
+        assert "too large" in str(cm.exception)
+        response.close.assert_called_once()
+
     def test_data_url_passthrough(self):
         # Base64 data URLs must not be URL-validated.
         data_url = "data:image/png;base64,iVBORw0KGgo="

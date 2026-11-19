@@ -176,6 +176,11 @@ def _call_minimax_api(endpoint: str, payload: dict, timeout: float) -> dict:
     return data
 
 
+#: Images are base64-inflated (x1.37) and shipped to the provider in one
+#: request, so an unbounded download is a memory and payload hazard.
+_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+
+
 def _process_image_source(image_source: str) -> str:
     """Convert an image source to a base64 data URL for the MiniMax API.
 
@@ -217,17 +222,32 @@ def _process_image_source(image_source: str) -> str:
                 tool_name="understand_image",
             )
 
+        img_response = None
         try:
-            img_response = requests.get(image_source, timeout=30)
+            img_response = requests.get(image_source, timeout=30, stream=True)
             img_response.raise_for_status()
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in img_response.iter_content(chunk_size=8192):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > _IMAGE_MAX_BYTES:
+                    raise ToolError(
+                        f"Image too large (>{_IMAGE_MAX_BYTES // 1024 // 1024} MB): {image_source}",
+                        tool_name="understand_image",
+                    )
+                chunks.append(chunk)
+            image_data = b"".join(chunks)
+            content_type = (img_response.headers.get("content-type") or "").lower()
         except requests.RequestException as e:
             raise ToolError(
                 f"Failed to download image from URL: {e}",
                 tool_name="understand_image",
             ) from e
-
-        image_data = img_response.content
-        content_type = img_response.headers.get("content-type", "").lower()
+        finally:
+            if img_response is not None:
+                img_response.close()
         if "jpeg" in content_type or "jpg" in content_type:
             fmt = "jpeg"
         elif "png" in content_type:
@@ -248,6 +268,12 @@ def _process_image_source(image_source: str) -> str:
         )
 
     try:
+        size = os.path.getsize(image_source)
+        if size > _IMAGE_MAX_BYTES:
+            raise ToolError(
+                f"Image too large (>{_IMAGE_MAX_BYTES // 1024 // 1024} MB): {image_source}",
+                tool_name="understand_image",
+            )
         with open(image_source, "rb") as f:
             image_data = f.read()
     except OSError as e:
