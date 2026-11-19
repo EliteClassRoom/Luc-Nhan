@@ -374,6 +374,22 @@ class TestSessionHistory(unittest.TestCase):
         self.assertEqual(loaded.provider_name, "anthropic")
         self.assertEqual(len(loaded.messages), 2)
 
+    def test_hostile_persisted_id_does_not_escape_the_directory(self):
+        """A session file can carry an id that is not a valid file name."""
+        history = SessionHistory(self.config)
+        path = history._dir  # <checkpoints_dir>/sessions
+        hostile = os.path.join(path, "abc123.json")
+        with open(hostile, "w", encoding="utf-8") as f:
+            json.dump({"schema_version": 1, "id": "../../evil", "messages": []}, f)
+
+        loaded = history.load_session("abc123")
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded.id, "abc123")
+
+        written = history.save_session(loaded)
+        self.assertEqual(os.path.dirname(os.path.abspath(written)), os.path.abspath(path))
+        self.assertTrue(os.path.isfile(os.path.join(path, "abc123.json")))
+
     def test_load_nonexistent(self):
         history = SessionHistory(self.config)
         self.assertIsNone(history.load_session("nonexistent"))

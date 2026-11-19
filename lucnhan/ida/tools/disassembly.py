@@ -16,6 +16,9 @@ except ImportError:
     ida_funcs = idautils = idc = None  # IDA not present — tools unavailable in non-IDA context
 
 
+_MAX_DISASSEMBLY_INSNS = 500
+
+
 @tool(category="disassembly")
 def read_disassembly(
     address: Annotated[str, "Start address (hex string)"],
@@ -24,6 +27,9 @@ def read_disassembly(
     """Read disassembly listing starting at the given address."""
 
     ea = parse_addr(address)
+    # Unclamped, a large *count* keeps issuing IDA calls long after the
+    # registry has already truncated the text.
+    count = max(1, min(count, _MAX_DISASSEMBLY_INSNS))
     lines = []
     for _ in range(count):
         mnem = idc.print_insn_mnem(ea)

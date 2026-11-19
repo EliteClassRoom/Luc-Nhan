@@ -11,8 +11,11 @@ notifies clients blocked in ``/events`` or the shutdown waiter.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import secrets
+import tempfile
 import threading
 import time
 import uuid
@@ -31,6 +34,7 @@ from .protocol import (
 logger = get_logger()
 
 if TYPE_CHECKING:
+    from ..agent.loop import BackgroundAgentRunner
     from ..ida.headless_controller import HeadlessSessionController
 
 # ---------------------------------------------------------------------------
@@ -77,6 +81,9 @@ class RunState:
         self.exit_code: int = 0
         # Broker thread reference (for shutdown / stop)
         self.broker: EventBroker | None = None
+        #: ``/cancel`` arrived before the runner was installed, so the run
+        #: must be cancelled as soon as it exists.
+        self.cancel_requested: bool = False
 
 
 class ControlServerState:
@@ -147,9 +154,13 @@ class EventBroker:
         self,
         state: ControlServerState,
         controller: HeadlessSessionController,
+        run: RunState | None = None,
     ) -> None:
         self._state = state
         self._controller = controller
+        #: The run this broker belongs to. ``state.run`` is reassigned by the
+        #: next ``/run``, so it must not be consulted per event.
+        self._run = run
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -192,7 +203,10 @@ class EventBroker:
 
                 ev_dict = event.to_dict()
                 with self._state.lock:
-                    run = self._state.run
+                    # The broker's OWN run: ``state.run`` may already be a
+                    # replacement run, which would receive these events under
+                    # its own sequence numbers.
+                    run = self._run if self._run is not None else self._state.run
                     if run is None:
                         break  # run was cancelled externally
                     ev_dict["seq"] = run.next_seq
@@ -356,7 +370,10 @@ class ControlHandler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
             return False
-        return secrets.compare_digest(auth[7:], self._token)
+        # Headers decode as latin-1, so a non-ASCII token would make
+        # compile_digest raise TypeError and kill the handler thread with no
+        # reply at all. Compare bytes, which never raises.
+        return secrets.compare_digest(auth[7:].encode("utf-8", "replace"), self._token.encode())
 
     def _require_auth(self) -> bool:
         if not self._is_authenticated():
@@ -401,7 +418,17 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._send(*err)
             return {}, err
 
-        raw = self.rfile.read(length)
+        # ``read(n)`` may return short on a socket; loop until the announced
+        # length arrives so a valid body is not reported as malformed JSON.
+        chunks: list[bytes] = []
+        received = 0
+        while received < length:
+            chunk = self.rfile.read(length - received)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            received += len(chunk)
+        raw = b"".join(chunks)
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
@@ -533,7 +560,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             run_state = RunState(run_id=run_id)
             # Publish the broker reference under the lock BEFORE publishing
             # run_state, so that concurrent /shutdown always sees the broker (P2-2).
-            broker = EventBroker(self._state, self._controller)
+            broker = EventBroker(self._state, self._controller, run_state)
             run_state.broker = broker
             self._state.run = run_state
 
@@ -551,6 +578,12 @@ class ControlHandler(BaseHTTPRequestHandler):
         # Start the event broker now that the runner exists — outside lock (P0-1).
         broker.start()
 
+        # A /cancel that landed while start_agent was still building the
+        # provider found no runner and silently did nothing; replay it now
+        # that the runner exists.
+        if run_state.cancel_requested:
+            self._controller.cancel()
+
         self._send(
             *make_json_response(
                 {
@@ -564,13 +597,15 @@ class ControlHandler(BaseHTTPRequestHandler):
 
     def _resolve_run(
         self, run_id: str | None = None, required: bool = True
-    ) -> tuple[RunState | None, tuple[int, dict, str] | None]:
-        """Validate *run_id* against the active run.
+    ) -> tuple[RunState | None, BackgroundAgentRunner | None, tuple[int, dict, str] | None]:
+        """Validate *run_id* against the active run and capture its runner.
 
-        Returns ``(run, error)`` — exactly one is non-None.
+        Returns ``(run, runner, error)``.  The runner is resolved under the
+        same lock as the run, so a decision cannot land on a runner that
+        replaced the one it was validated against.
         When *required* is True (default), a missing / mismatched /
         finished run is treated as an error (404 / 409).  When False,
-        a missing run returns ``(None, None)`` without error.
+        a missing run returns ``(None, None, None)`` without error.
         """
         with self._state.lock:
             run = self._state.run
@@ -578,28 +613,33 @@ class ControlHandler(BaseHTTPRequestHandler):
                 if required:
                     return (
                         None,
+                        None,
                         make_error_json("No active run", status=404),
                     )
-                return (None, None)
+                return (None, None, None)
 
             if run_id is not None and run.run_id != run_id:
                 if required:
                     return (
+                        None,
                         None,
                         make_error_json(
                             f"Run ID mismatch — requested {run_id}, active is {run.run_id}",
                             status=404,
                         ),
                     )
-                return (None, None)
+                return (None, None, None)
 
             if required and run.finished:
                 return (
                     None,
+                    None,
                     make_error_json("Run has already finished", status=409),
                 )
 
-        return (run, None)
+            runner = self._controller.get_runner()
+
+        return (run, runner, None)
 
     # -- answer / approval / cancel ----------------------------------------
 
@@ -614,21 +654,31 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._send(*make_error_json("Missing 'run_id' field", status=400))
             return
 
-        _run, err = self._resolve_run(run_id=body["run_id"])
+        _run, runner, err = self._resolve_run(run_id=body["run_id"])
         if err is not None:
             self._send(*err)
             return
 
-        runner = self._controller.get_runner()
         if runner is None:
             self._send(*make_error_json("No active runner", status=404))
             return
 
+        # Optional: the question id from the USER_QUESTION event. A stale id
+        # is rejected instead of answering whatever asks next.
+        question_id = body.get("question_id")
+        if question_id is not None and not isinstance(question_id, str):
+            self._send(*make_error_json("'question_id' must be a string", status=400))
+            return
+
         try:
-            runner.agent_loop.submit_user_answer(body["answer"])
+            delivered = runner.agent_loop.submit_user_answer(body["answer"], question_id)
         except Exception:
             logger.exception("submit_user_answer RPC failed")
             self._send(*make_error_json("Failed to submit answer", status=500))
+            return
+
+        if not delivered:
+            self._send(*make_error_json("No matching pending question for that question_id", status=409))
             return
 
         self._send(*make_json_response({"status": "ok"}))
@@ -683,21 +733,30 @@ class ControlHandler(BaseHTTPRequestHandler):
             )
             return
 
-        _run, err = self._resolve_run(run_id=body["run_id"])
+        _run, runner, err = self._resolve_run(run_id=body["run_id"])
         if err is not None:
             self._send(*err)
             return
 
-        runner = self._controller.get_runner()
         if runner is None:
             self._send(*make_error_json("No active runner", status=404))
             return
 
+        # Optional: the tool_call_id from the TOOL_APPROVAL_REQUEST event.
+        # A stale id is rejected instead of approving whatever asks next.
+        tool_call_id = body.get("tool_call_id")
         try:
-            runner.agent_loop.submit_tool_approval(decision)
+            if tool_call_id is not None and not isinstance(tool_call_id, str):
+                self._send(*make_error_json("'tool_call_id' must be a string", status=400))
+                return
+            delivered = runner.agent_loop.submit_tool_approval(decision, tool_call_id)
         except Exception:
             logger.exception("submit_tool_approval RPC failed")
             self._send(*make_error_json("Failed to submit tool approval", status=500))
+            return
+
+        if not delivered:
+            self._send(*make_error_json("No matching pending approval for that tool_call_id", status=409))
             return
 
         self._send(*make_json_response({"status": "ok"}))
@@ -751,12 +810,11 @@ class ControlHandler(BaseHTTPRequestHandler):
             )
             return
 
-        _run, err = self._resolve_run(run_id=body["run_id"])
+        _run, runner, err = self._resolve_run(run_id=body["run_id"])
         if err is not None:
             self._send(*err)
             return
 
-        runner = self._controller.get_runner()
         if runner is None:
             self._send(*make_error_json("No active runner", status=404))
             return
@@ -769,7 +827,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             # parse_save_decision (save) resolve to the intended outcome:
             # "yes" -> APPROVE/SAVE, "no" -> CANCEL/DISCARD.
             answer = "yes" if decision == "approve" else "no"
-            runner.agent_loop.submit_user_answer(answer)
+            runner.agent_loop.submit_user_answer(answer, body.get("question_id"))
         except Exception:
             logger.exception("submit_user_answer RPC failed")
             self._send(*make_error_json("Failed to submit approval", status=500))
@@ -785,13 +843,21 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._send(*make_error_json("Missing 'run_id' field", status=400))
             return
 
-        _run, err = self._resolve_run(run_id=body["run_id"])
+        _run, runner, err = self._resolve_run(run_id=body["run_id"])
         if err is not None:
             self._send(*err)
             return
 
         # run is not None here because _resolve_run with required=True
-        # guarantees it when err is None.
+        # guarantees it when err is None. ``runner`` was resolved under the
+        # same lock, so a just-started run is not mistaken for an absent one.
+        if runner is None:
+            # start_agent has not installed the runner yet; ``cancel()`` would
+            # no-op and the agent would keep running after a 200 "cancelled".
+            with self._state.lock:
+                run = self._state.run
+                if run is not None:
+                    run.cancel_requested = True
         self._controller.cancel()
         self._send(*make_json_response({"status": "cancelled"}))
 
@@ -814,7 +880,7 @@ class ControlHandler(BaseHTTPRequestHandler):
 
         # Validate run_id if provided.
         if requested_run_id is not None:
-            run, err = self._resolve_run(run_id=requested_run_id, required=False)
+            run, _runner, err = self._resolve_run(run_id=requested_run_id, required=False)
             if err is not None:
                 self._send(*err)
                 return
@@ -1036,8 +1102,19 @@ class ControlServer:
             "port": self.port,
             "token": self._token,
         }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(ready, f)
+        # 0o600: on POSIX the default umask would leave the bearer token
+        # world-readable. mkstemp rather than open() so an existing file is
+        # not silently widened.
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".ready-", text=True)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(ready, f)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
 
     def start(self) -> None:
         """Start the HTTP server on a background thread.

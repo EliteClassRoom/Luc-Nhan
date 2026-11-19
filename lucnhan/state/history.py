@@ -115,6 +115,12 @@ class SessionDeleteOutcome:
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 
+def _safe_session_id(value: object) -> str:
+    """Return *value* when it is a valid session id, else ``""``."""
+    text = _safe_persisted_identifier(value)
+    return text if _validate_session_id(text) else ""
+
+
 def _validate_session_id(session_id: object) -> bool:
     """Return True iff *session_id* is a safe filesystem identifier.
 
@@ -762,7 +768,10 @@ class SessionHistory:
             )
 
         session = SessionState(
-            id=_safe_persisted_identifier(data.get("id")) or session_id,
+            # The id doubles as the file name on the next save, so a hostile
+            # one (``"../../evil"``) must not survive the load: fall back to
+            # the file stem, which came from the directory listing.
+            id=_safe_session_id(data.get("id")) or session_id,
             created_at=data.get("created_at", 0),
             provider_name=_safe_persisted_identifier(data.get("provider_name", "")),
             model_name=_safe_persisted_identifier(data.get("model_name", "")),

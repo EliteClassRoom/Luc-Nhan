@@ -112,6 +112,7 @@ def search_imports(
     """
 
     q = query.lower()
+    limit = max(1, limit)
     matches: list[tuple[str, int, str]] = []  # (module, ea, display)
 
     def _cb(ea: int, name: str | None, ordinal: int) -> bool:
@@ -187,7 +188,7 @@ def imports_by_module(
         return f"Module '{found_name}' has no imports"
 
     lines = [f"Imports from {found_name} ({len(entries)} entries):"]
-    lines.extend(entries[:limit])
+    lines.extend(entries[: max(1, limit)])
     if len(entries) > limit:
         lines.append(f"    ... and {len(entries) - limit} more")
     return "\n".join(lines)
@@ -277,9 +278,9 @@ def read_bytes(
 
     _MAX_READ_BYTES = 1024
     ea = parse_addr(address)
-    size = parse_addr(str(size))
-    if size > _MAX_READ_BYTES:
-        size = _MAX_READ_BYTES
+    # A wild size (0, negative, absurdly large) would otherwise reach
+    # ``get_bytes`` unchanged and produce an empty or enormous dump.
+    size = max(1, min(parse_addr(str(size)), _MAX_READ_BYTES))
 
     lines = []
     for off in range(0, size, 16):

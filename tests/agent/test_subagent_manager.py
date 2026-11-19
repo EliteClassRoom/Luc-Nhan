@@ -15,7 +15,7 @@ from lucnhan.agent.subagent_manager import (
     SubagentManager,
     SubagentStatus,
 )
-from lucnhan.agent.turn import TurnEvent
+from lucnhan.agent.turn import TurnEvent, TurnEventType
 from lucnhan.core.config import LucNhanConfig
 from lucnhan.providers.base import LLMProvider, ModelInfo, ProviderCapabilities
 from lucnhan.tools.registry import ToolRegistry
@@ -587,6 +587,30 @@ class TestPrebuiltRunnerSpawn(unittest.TestCase):
         types = [e.type.value for e in events]
         assert "subagent_spawned" in types
         assert "subagent_completed" in types
+
+    def test_interactive_child_events_reach_the_ui_queue(self) -> None:
+        """An attended child blocks on approval; the UI must see the request.
+
+        The child's stream is consumed by the worker, so an approval or a
+        question that is not re-emitted is invisible and hangs the child
+        forever (it waits on the parent's single-slot queue).
+        """
+        mgr = self._manager()
+
+        class _Runner:
+            last_session = None
+
+            def run_task(self, task, max_turns=20, system_addendum=""):
+                yield TurnEvent.tool_approval_request("call_1", "execute_python", "{}", "Call")
+                yield TurnEvent.user_question("which?", [], "q_1")
+                yield TurnEvent.text_done("done")
+
+        mgr.spawn(name="pre", task="do it", agent_type="custom", runner=_Runner())
+        self._join_subagent_threads()
+
+        types = [e.type for e in self._drain(mgr)]
+        assert TurnEventType.TOOL_APPROVAL_REQUEST in types
+        assert TurnEventType.USER_QUESTION in types
 
     def test_prebuilt_runner_cancel_event_is_registered(self) -> None:
         """A caller-supplied cancel event reaches ``cancel(agent_id)``."""

@@ -532,6 +532,14 @@ class SubagentManager:
                     self._finalize_cancellation(info)
                     return
 
+                # Interactive events must reach the UI even though this worker
+                # keeps the rest of the child's stream to itself: an approval
+                # or a question that nobody sees stalls the child forever (the
+                # child shares the parent's single-slot queues). Single-spawn
+                # children are attended, so they really do wait.
+                if event.type in SubagentRunner._INTERACTIVE_EVENTS:
+                    self._event_queue.put(event)
+
                 if event.type.value == "turn_end":
                     turn_count += 1
                     with self._lock:

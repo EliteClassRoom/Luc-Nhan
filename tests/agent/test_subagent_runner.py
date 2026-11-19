@@ -399,6 +399,7 @@ class TestRunnerInheritsCentralMemory(unittest.TestCase):
         # Queues the real AgentLoop constructor inherits from parent_loop.
         for attr in ("_user_answer_queue", "_tool_approval_queue", "_approval_queue"):
             setattr(parent, attr, queue.Queue(maxsize=1))
+        parent._tool_approval_lock = threading.Lock()
         parent._always_allow_scripts = False
         parent._always_allow_tools = False
         parent.memory_service = object() if wired else None

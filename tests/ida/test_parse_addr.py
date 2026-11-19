@@ -53,6 +53,13 @@ class TestParseAddr(unittest.TestCase):
     def test_symbol_name_resolves_to_address(self):
         self.assertEqual(parse_addr(_SYMBOL), _SYMBOL_EA)
 
+    def test_negative_number_is_rejected(self):
+        """IDA answers 0 for everything past BADADDR, so -5 used to look valid."""
+        for bad in ("-5", -5):
+            with self.assertRaises(ValueError) as ctx:
+                parse_addr(bad)
+            self.assertIn("non-negative", str(ctx.exception))
+
     def test_unknown_name_raises_actionable_error(self):
         with self.assertRaises(ValueError) as ctx:
             parse_addr("no_such_symbol")

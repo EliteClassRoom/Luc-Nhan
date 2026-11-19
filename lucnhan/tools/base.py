@@ -27,11 +27,23 @@ def parse_addr(value: Any) -> int:
     the ~40 address-taking tools, the mutation pre-state capture and the
     microcode target parsing — working without touching each call site.
     """
+    ea = _parse_addr_or_none(value)
+    if ea is None:
+        raise ValueError(f"Unknown address or name: {value}")
+    if ea < 0:
+        # No caller wants a negative EA: IDA answers 0 for every read past
+        # BADADDR, so a "-5" used to look like a valid empty result.
+        raise ValueError(f"Address or size must be non-negative: {ea}")
+    return ea
+
+
+def _parse_addr_or_none(value: Any) -> int | None:
     if isinstance(value, int):
         return value
-
     text = value if isinstance(value, str) else str(value)
     try:
+        # ``int`` accepts "-5", which is never a valid IDB address: every
+        # caller would then read garbage past BADADDR instead of erroring.
         return int(text, 0)
     except ValueError:
         pass
@@ -39,11 +51,7 @@ def parse_addr(value: Any) -> int:
     # Decimal without a base prefix: ``int(text, 0)`` rejects "1234".
     if text.isdigit():
         return int(text)
-
-    ea = resolve_symbol(text)
-    if ea is not None:
-        return ea
-    raise ValueError(f"Unknown address or name: {value}")
+    return resolve_symbol(text)
 
 
 # Python type -> JSON Schema type

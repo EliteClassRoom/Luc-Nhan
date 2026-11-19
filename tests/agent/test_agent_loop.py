@@ -765,6 +765,69 @@ class TestAgentLoop(unittest.TestCase):
             next(gate)
         self.assertTrue(done.exception.value)
 
+    def test_concurrent_approval_requests_are_serialized(self):
+        """Two loops sharing a parent must not both wait on the one queue.
+
+        The decision is not tagged with a tool-call id, so two outstanding
+        requests let the wrong thread consume the answer.
+        """
+        import time
+
+        parent = self._make_loop(MockProvider(responses=[]))
+        child = self._make_loop(MockProvider(responses=[]), parent_loop=parent)
+        seen: list[str] = []
+        results: dict[str, bool] = {}
+
+        def drive(loop: AgentLoop, tag: str) -> None:
+            gen = loop._wait_for_approval(ToolCall(id=tag, name="set_comment", arguments={}))
+            next(gen)
+            seen.append(tag)
+            try:
+                next(gen)
+            except StopIteration as done:
+                results[tag] = bool(done.value)
+
+        first = threading.Thread(target=drive, args=(parent, "a"), daemon=True)
+        second = threading.Thread(target=drive, args=(child, "b"), daemon=True)
+        first.start()
+        deadline = time.monotonic() + 5
+        while len(seen) < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        second.start()
+        time.sleep(0.3)
+        self.assertEqual(len(seen), 1, "second request must wait for the first decision")
+
+        parent.submit_tool_approval("allow")
+        while len(seen) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        parent.submit_tool_approval("allow")
+        first.join(5)
+        second.join(5)
+        self.assertEqual(results, {"a": True, "b": True})
+
+    def test_stale_tool_call_id_is_not_applied_to_the_next_request(self):
+        loop = self._make_loop(MockProvider(responses=[]))
+        gen = loop._wait_for_approval(ToolCall(id="current", name="set_comment", arguments={}))
+        next(gen)
+
+        self.assertFalse(loop.submit_tool_approval("deny", "stale"))
+        self.assertTrue(loop._tool_approval_queue.empty())  # nothing queued for it
+
+        self.assertTrue(loop.submit_tool_approval("allow", "current"))
+        with self.assertRaises(StopIteration) as done:
+            next(gen)
+        self.assertTrue(done.exception.value)
+
+    def test_allow_all_only_flips_the_matching_flag(self):
+        loop = self._make_loop(MockProvider(responses=[]))
+        gen = loop._wait_for_approval(ToolCall(id="x", name="set_comment", arguments={}))
+        next(gen)
+        loop.submit_tool_approval("allow_all")
+        with self.assertRaises(StopIteration):
+            next(gen)
+        self.assertTrue(loop._always_allow_tools)
+        self.assertFalse(loop._always_allow_scripts)
+
     def _collect_question_options(self, loop: AgentLoop, arguments: dict[str, Any]) -> list[str]:
         """Drive _handle_ask_user_tool up to the USER_QUESTION event.
 

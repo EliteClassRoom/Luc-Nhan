@@ -412,3 +412,38 @@ def test_switch_provider_preserves_nested_extra_without_aliasing():
     assert cfg.provider.extra["thinking"]["enabled"] is True
     cfg.provider.extra["thinking"]["enabled"] = False
     assert cfg.providers["glm"]["extra"]["thinking"]["enabled"] is True
+
+
+class TestApiBaseValidation:
+    """A tampered bootstrap file must not redirect the API key anywhere."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "https://api.example.com/v1",
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:8080/v1",
+        ],
+    )
+    def test_accepts_plain_base_urls(self, value):
+        from lucnhan.ida.headless_bootstrap import _validate_api_base
+
+        assert _validate_api_base(value) is None
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("ftp://host/v1", "http://"),
+            ("api.example.com/v1", "http://"),
+            ("https://user:pw@evil.test/v1", "user:pass"),
+            ("https:///v1", "no host"),
+            ("https://a.test/v 1", "whitespace"),
+            ("", "not a string"),
+        ],
+    )
+    def test_rejects_credential_and_scheme_smuggling(self, value, expected):
+        from lucnhan.ida.headless_bootstrap import _validate_api_base
+
+        error = _validate_api_base(value)
+        assert error is not None
+        assert expected in error

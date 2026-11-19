@@ -43,6 +43,29 @@ class BundleImportResult:
 
 RecordType = Literal["fact", "entity", "relation"]
 
+#: The manifest is read whole before any of its own limits can apply, so it
+#: needs a cap of its own — otherwise a zip bomb in ``manifest.json`` is
+#: decompressed into RAM unchecked.
+MANIFEST_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _read_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
+    """Read and parse the bundle manifest with errors normalized to ValueError."""
+    try:
+        with zf.open("manifest.json", "r") as member:
+            raw = member.read(MANIFEST_MAX_BYTES + 1)
+    except KeyError:
+        raise ValueError("bundle has no manifest.json") from None
+    if len(raw) > MANIFEST_MAX_BYTES:
+        raise ValueError(f"manifest.json exceeds {MANIFEST_MAX_BYTES} bytes")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"manifest.json is not valid JSON: {e}") from None
+    if not isinstance(data, dict):
+        raise ValueError("manifest.json is not a JSON object")
+    return data
+
 
 def import_workspace_bundle(
     bundle_path: Path,
@@ -73,30 +96,49 @@ def import_workspace_bundle(
     lim = limits or BundleLimits()
     target_mid = repository.owner_memory_id
 
+    try:
+        archive_bytes = bundle_path.stat().st_size
+    except OSError as e:
+        raise ValueError(f"cannot read bundle: {e}") from None
+    if archive_bytes > lim.max_compressed_bytes:
+        raise ValueError(f"bundle is {archive_bytes} bytes, over the {lim.max_compressed_bytes} limit")
+
     # Read and validate the bundle
     with zipfile.ZipFile(bundle_path, "r") as zf:
-        manifest_data = json.loads(zf.read("manifest.json"))
+        manifest_data = _read_manifest(zf)
 
         # Build manifest object
         from .bundle_schema import ManifestFile, MemoryBundleManifest
 
-        files = tuple(
-            ManifestFile(
-                name=f["name"],
-                sha256=f["sha256"],
-                uncompressed_size=f["uncompressed_size"],
-                record_count=f.get("record_count", 0),
+        files_data = manifest_data.get("files", [])
+        if not isinstance(files_data, list):
+            raise ValueError("manifest.json: files is not a list")
+        try:
+            files = tuple(
+                ManifestFile(
+                    name=f["name"],
+                    sha256=f["sha256"],
+                    uncompressed_size=f["uncompressed_size"],
+                    record_count=f.get("record_count", 0),
+                )
+                for f in files_data
             )
-            for f in manifest_data.get("files", [])
-        )
+            schema_version = manifest_data["schema_version"]
+        except (KeyError, TypeError, AttributeError) as e:
+            raise ValueError(f"manifest.json: malformed entry ({e})") from None
+        if not isinstance(schema_version, int):
+            raise ValueError("manifest.json: schema_version is not an integer")
+        record_counts = manifest_data.get("record_counts", {})
+        if not isinstance(record_counts, dict):
+            raise ValueError("manifest.json: record_counts is not an object")
         manifest = MemoryBundleManifest(
-            schema_version=manifest_data["schema_version"],
+            schema_version=schema_version,
             scope=manifest_data.get("scope", "binary"),
             export_mode=manifest_data.get("export_mode", "portable"),
             origin_memory_id=manifest_data.get("origin_memory_id", ""),
             exported_at=manifest_data.get("exported_at", ""),
             files=files,
-            record_counts=manifest_data.get("record_counts", {}),
+            record_counts=record_counts,
         )
         validate_manifest(manifest, limits=lim)
 
@@ -127,6 +169,10 @@ def import_workspace_bundle(
             lines_buf: list[str] = []
             with zf.open(file_info.name, "r") as member:
                 for raw in member:
+                    if len(raw) > lim.max_jsonl_line_bytes:
+                        raise ValueError(
+                            f"{file_info.name}: line of {len(raw)} bytes exceeds {lim.max_jsonl_line_bytes}"
+                        )
                     consumed += len(raw)
                     if declared_size >= 0 and consumed > declared_size:
                         raise ValueError(

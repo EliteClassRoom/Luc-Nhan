@@ -135,6 +135,14 @@ class TestKnowledgePaths(unittest.TestCase):
         bid = derive_binary_id("/whatever", db_instance_id="abc123")
         self.assertEqual(bid, "abc123")
 
+    def test_derive_binary_id_sanitizes_a_traversal_shaped_instance_id(self):
+        # The id comes out of an IDB netnode; a shared .i64 can carry "../../x".
+        hostile = derive_binary_id("/whatever", db_instance_id="../../evil")
+        self.assertEqual(hostile, "_.._evil")  # leading dots stripped
+        self.assertEqual(derive_binary_id("/whatever", db_instance_id="a b:c"), "a_b_c")
+        # ``///`` sanitizes to underscores, which is still a usable id.
+        self.assertEqual(derive_binary_id("/whatever", db_instance_id="///"), "___")
+
     def test_derive_binary_id_path_normalized(self):
         # Redundant separators and relative-vs-absolute must collapse on
         # every host — ``abspath`` + ``normpath`` cover both.

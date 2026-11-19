@@ -503,7 +503,49 @@ class TestControlHandler(unittest.TestCase):
             body={"run_id": "test-run", "answer": "yes"},
         )
         handler.do_POST()
-        agent_loop.submit_user_answer.assert_called_with("yes")
+        agent_loop.submit_user_answer.assert_called_with("yes", None)
+
+    def test_short_socket_read_still_parses_the_body(self):
+        """``read(n)`` may return short; a split body must not read as bad JSON."""
+        from lucnhan.control.server import RunState
+
+        agent_loop = MagicMock()
+        runner = MagicMock()
+        runner.agent_loop = agent_loop
+        self.controller.get_runner.return_value = runner
+        with self.state.lock:
+            self.state.run = RunState(run_id="test-run")
+
+        handler, _wfile = self._rh.request(
+            "POST",
+            "/answer",
+            body={"run_id": "test-run", "answer": "yes"},
+        )
+        real_read = handler.rfile.read
+        handler.rfile.read = lambda n=-1: real_read(max(1, n // 3))  # dribble
+
+        handler.do_POST()
+
+        agent_loop.submit_user_answer.assert_called_with("yes", None)
+
+    def test_answer_for_stale_question_id_is_409(self):
+        from lucnhan.control.server import RunState
+
+        agent_loop = MagicMock()
+        agent_loop.submit_user_answer.return_value = False
+        runner = MagicMock()
+        runner.agent_loop = agent_loop
+        self.controller.get_runner.return_value = runner
+        with self.state.lock:
+            self.state.run = RunState(run_id="test-run")
+
+        handler, _wfile = self._rh.request(
+            "POST",
+            "/answer",
+            body={"run_id": "test-run", "answer": "stale", "question_id": "gone"},
+        )
+        handler.do_POST()
+        self.assertEqual(handler.send_response.call_args.args[0], 409)
 
     def test_answer_with_run_id_mismatch(self):
         from lucnhan.control.server import RunState
@@ -577,7 +619,44 @@ class TestControlHandler(unittest.TestCase):
             body={"run_id": "test-run", "approved": True},
         )
         handler.do_POST()
-        agent_loop.submit_tool_approval.assert_called_with("allow")
+        agent_loop.submit_tool_approval.assert_called_with("allow", None)
+
+    def test_tool_approval_forwards_the_tool_call_id(self):
+        from lucnhan.control.server import RunState
+
+        agent_loop = MagicMock()
+        runner = MagicMock()
+        runner.agent_loop = agent_loop
+        self.controller.get_runner.return_value = runner
+        with self.state.lock:
+            self.state.run = RunState(run_id="test-run")
+
+        handler, _wfile = self._rh.request(
+            "POST",
+            "/tool-approval",
+            body={"run_id": "test-run", "decision": "deny", "tool_call_id": "call_7"},
+        )
+        handler.do_POST()
+        agent_loop.submit_tool_approval.assert_called_with("deny", "call_7")
+
+    def test_tool_approval_for_unknown_tool_call_id_is_409(self):
+        from lucnhan.control.server import RunState
+
+        agent_loop = MagicMock()
+        agent_loop.submit_tool_approval.return_value = False
+        runner = MagicMock()
+        runner.agent_loop = agent_loop
+        self.controller.get_runner.return_value = runner
+        with self.state.lock:
+            self.state.run = RunState(run_id="test-run")
+
+        handler, _wfile = self._rh.request(
+            "POST",
+            "/tool-approval",
+            body={"run_id": "test-run", "approved": True, "tool_call_id": "stale"},
+        )
+        handler.do_POST()
+        self.assertEqual(handler.send_response.call_args.args[0], 409)
 
     def test_tool_approval_missing_run_id(self):
         handler, _wfile = self._rh.request("POST", "/tool-approval", body={"approved": True})
@@ -623,7 +702,7 @@ class TestControlHandler(unittest.TestCase):
         # /approval serves plan/exploration approval: routes to the user-answer queue
         # ("yes" -> APPROVE/SAVE), not the orchestra `submit_approval` channel.
         agent_loop.submit_approval.assert_not_called()
-        agent_loop.submit_user_answer.assert_called_with("yes")
+        agent_loop.submit_user_answer.assert_called_with("yes", None)
 
     def test_approval_missing_run_id(self):
         handler, _wfile = self._rh.request("POST", "/approval", body={"approved": True})
@@ -1108,7 +1187,7 @@ class TestControlHandler(unittest.TestCase):
         # /approval serves plan/exploration approval: routes to the user-answer queue
         # ("yes" -> APPROVE/SAVE), not the orchestra `submit_approval` channel.
         agent_loop.submit_approval.assert_not_called()
-        agent_loop.submit_user_answer.assert_called_with("yes")
+        agent_loop.submit_user_answer.assert_called_with("yes", None)
 
     def test_approval_rejects_invalid_decision(self):
         """POST /approval with invalid decision returns 400."""

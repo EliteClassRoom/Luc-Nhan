@@ -45,6 +45,18 @@ from .types import (
 # Default timeout for A2A requests (seconds)
 _DEFAULT_TIMEOUT = 300
 
+# Cap on a response body. The endpoint is external and untrusted, and
+# ``resp.read()`` without a size reads whatever it is given.
+_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+
+def _read_json(resp: Any) -> Any:
+    """Decode a JSON response body, refusing an oversized one."""
+    body = resp.read(_MAX_RESPONSE_BYTES + 1)
+    if len(body) > _MAX_RESPONSE_BYTES:
+        raise ValueError(f"A2A response exceeds {_MAX_RESPONSE_BYTES} bytes")
+    return json.loads(body.decode("utf-8"))
+
 
 @dataclass
 class A2AClientConfig:
@@ -78,7 +90,7 @@ class A2AClient:
                 headers={"User-Agent": "LucNhan-A2A/1.0"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+                data = _read_json(resp)
             return ExternalAgentConfig(
                 name=data.get("name", "unknown"),
                 transport="a2a",
@@ -224,7 +236,7 @@ class _A2ASession:
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=self._config.timeout) as resp:
-                    response_data = json.loads(resp.read().decode("utf-8"))
+                    response_data = _read_json(resp)
 
                 if "result" in response_data:
                     result: Any = response_data["result"]

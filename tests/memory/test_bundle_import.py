@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import re
+import zipfile
 from pathlib import Path
 
 import pytest
 
+from lucnhan.memory import bundle_import
 from lucnhan.memory.bundle_export import export_workspace
 from lucnhan.memory.bundle_import import (
     BundleImportConflictError,
     import_workspace_bundle,
 )
+from lucnhan.memory.bundle_schema import BundleLimits
 from lucnhan.memory.repository import SQLiteKnowledgeRepository
 from lucnhan.memory.schema import (
     KnowledgeEntity,
@@ -330,3 +333,52 @@ class TestBundleImport:
             import_workspace_bundle(doctored_path, target_repo)
         target_store.close()
         target_store.close()
+
+
+class TestBundleLimits:
+    """Hostile/oversized archives must fail with a ValueError, not eat RAM."""
+
+    def test_oversized_archive_is_rejected_before_unzip(self, tmp_path: Path) -> None:
+        bundle = _seed_and_export(tmp_path)
+        _, repo, _ = _open_target(tmp_path, "cap-archive")
+
+        with pytest.raises(ValueError, match="over the"):
+            import_workspace_bundle(bundle, repo, limits=BundleLimits(max_compressed_bytes=16))
+
+    def test_oversized_manifest_is_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        bundle = _seed_and_export(tmp_path)
+        _, repo, _ = _open_target(tmp_path, "cap-manifest")
+        monkeypatch.setattr(bundle_import, "MANIFEST_MAX_BYTES", 32)
+
+        with pytest.raises(ValueError, match=r"manifest\.json exceeds"):
+            import_workspace_bundle(bundle, repo)
+
+    def test_missing_manifest_is_a_value_error(self, tmp_path: Path) -> None:
+        bundle = _seed_and_export(tmp_path)
+        rewritten = tmp_path / "no-manifest.zip"
+        with zipfile.ZipFile(bundle) as src, zipfile.ZipFile(rewritten, "w") as dst:
+            for item in src.namelist():
+                if item != "manifest.json":
+                    dst.writestr(item, src.read(item))
+        _, repo, _ = _open_target(tmp_path, "cap-missing")
+
+        with pytest.raises(ValueError, match=r"no manifest\.json"):
+            import_workspace_bundle(rewritten, repo)
+
+    def test_garbage_manifest_is_a_value_error(self, tmp_path: Path) -> None:
+        bundle = _seed_and_export(tmp_path)
+        rewritten = tmp_path / "garbage.zip"
+        with zipfile.ZipFile(bundle) as src, zipfile.ZipFile(rewritten, "w") as dst:
+            for item in src.namelist():
+                dst.writestr(item, b"{not json" if item == "manifest.json" else src.read(item))
+        _, repo, _ = _open_target(tmp_path, "cap-garbage")
+
+        with pytest.raises(ValueError, match="not valid JSON"):
+            import_workspace_bundle(rewritten, repo)
+
+    def test_oversized_record_line_is_rejected(self, tmp_path: Path) -> None:
+        bundle = _seed_and_export(tmp_path)
+        _, repo, _ = _open_target(tmp_path, "cap-line")
+
+        with pytest.raises(ValueError, match="exceeds"):
+            import_workspace_bundle(bundle, repo, limits=BundleLimits(max_jsonl_line_bytes=8))

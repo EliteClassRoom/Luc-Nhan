@@ -415,6 +415,15 @@ class TestMdToHtmlHtmlInjection(unittest.TestCase):
         result = md_to_html("[click](javascript:alert(1))")
         self.assertNotIn('href="javascript:', result)
 
+    def test_quote_in_url_cannot_inject_markup(self):
+        # A crafted symbol name/comment reaches the renderer as a URL; an
+        # unescaped quote closes the attribute and Qt would then parse (and
+        # potentially fetch) whatever markup followed.
+        result = md_to_html('[x](http://h/a"b)<img src="http://e/p.png>)')
+        href = result.split('href="', 1)[1].split('"', 1)[0]
+        # Either escaping or percent-encoding is fine; a raw quote is not.
+        self.assertIn(href, ("http://h/a&quot;b", "http://h/a%22b"))
+
 
 class TestMdToHtmlIntegration(unittest.TestCase):
     def test_mixed_content(self):

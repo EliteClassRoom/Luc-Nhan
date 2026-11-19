@@ -173,6 +173,9 @@ class _TabGateState:
 
     pending_answer: bool = False
     button_only: bool = False
+    #: ``tool_call_id`` of the question awaiting an answer, so a late answer
+    #: is not applied to whatever asks next.
+    pending_question_id: str = ""
 
 
 @dataclass
@@ -2865,7 +2868,7 @@ class LucNhanPanelCore(QWidget):
             self._sync_composer_state()
             runner = self._ctrl.get_runner(self._ctrl.active_tab_id)
             if runner:
-                runner.agent_loop.submit_user_answer(text)
+                runner.agent_loop.submit_user_answer(text, gate.pending_question_id or None)
             return True
         active = self._ctrl.active_tab_id
         # B3: queue only if THIS tab's agent is already running — not when
@@ -3086,6 +3089,8 @@ class LucNhanPanelCore(QWidget):
             # derived from the active tab.
             gate = self._gate(tid)
             gate.pending_answer = True
+            if event.type == TurnEventType.USER_QUESTION:
+                gate.pending_question_id = event.tool_call_id or ""
             # Plan approvals, save approvals, and any question with
             # predefined options MUST be answered via buttons only.
             # Disable text input so free-text ("continue", "redo", etc.)
@@ -3122,7 +3127,7 @@ class LucNhanPanelCore(QWidget):
         tid = tab_id if tab_id is not None else self._ctrl.active_tab_id
         runner = self._ctrl.get_runner(tid)
         if runner:
-            runner.agent_loop.submit_tool_approval(decision)
+            runner.agent_loop.submit_tool_approval(decision, tool_call_id)
         # Deciding releases THIS tab's gate only.  Allow once / Deny both
         # resume the turn (G4), so re-apply the presentation for the tab
         # on screen — another tab waiting on its own approval is untouched.
@@ -3139,6 +3144,7 @@ class LucNhanPanelCore(QWidget):
         tid = tab_id if tab_id is not None else self._ctrl.active_tab_id
         if tid is None or not self._gate(tid).pending_answer:
             return
+        gate_id = self._gate(tid).pending_question_id
         self._clear_gate(tid)
         chat_view = self._chat_views.get(tid)
         if chat_view is not None:
@@ -3147,7 +3153,7 @@ class LucNhanPanelCore(QWidget):
             self._sync_composer_state()
         runner = self._ctrl.get_runner(tid)
         if runner:
-            runner.agent_loop.submit_user_answer(answer)
+            runner.agent_loop.submit_user_answer(answer, gate_id or None)
 
     def _on_agent_finished(self, tab_id: str | None = None) -> None:
         if self._is_shutdown:
@@ -4998,6 +5004,15 @@ class LucNhanPanelCore(QWidget):
                         chat_view = self._active_chat_view()
                         if chat_view is not None:
                             chat_view.handle_event(event)
+                elif event.type in (
+                    TurnEventType.TOOL_APPROVAL_REQUEST,
+                    TurnEventType.USER_QUESTION,
+                ):
+                    # A child asked something and is blocked on the shared
+                    # queue: it needs the gate flags too, not just rendering,
+                    # so route through the full handler and to the tab that
+                    # owns the running agent.
+                    self._on_event(event, event.metadata.get("tab_id") or self._ctrl.active_tab_id)
 
             # Refresh elapsed time for all RUNNING agents (~1 Hz, not every tick)
             now = time.time()

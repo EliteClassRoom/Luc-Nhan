@@ -34,6 +34,7 @@ import sys
 import threading
 import traceback
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from lucnhan.memory.workspace import IdentityRequest
@@ -147,6 +148,26 @@ def validate_bootstrap_memory_source(value: object) -> IdentityRequest | None:
     )
 
 
+def _validate_api_base(value: object) -> str | None:
+    """Return an error string when *value* is not a usable base URL.
+
+    Bootstrap config is untrusted input: an ``http://user:pass@evil`` base
+    ships the API key to an arbitrary host over plaintext.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return f"bootstrap api_base is not a string: {value!r}"
+    if any(ch.isspace() for ch in value):
+        return f"bootstrap api_base contains whitespace: {value!r}"
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https"):
+        return f"bootstrap api_base must start with http:// or https://: {value!r}"
+    if not parsed.hostname:
+        return f"bootstrap api_base has no host: {value!r}"
+    if parsed.username or parsed.password:
+        return f"bootstrap api_base must not carry user:pass credentials: {value!r}"
+    return None
+
+
 def _apply_provider_overrides(config, bootstrap_cfg: dict) -> None:
     """Apply provider/model/api_base overrides from the bootstrap config.
 
@@ -173,6 +194,11 @@ def _apply_provider_overrides(config, bootstrap_cfg: dict) -> None:
         config.provider.model = model_override
 
     if api_base_override:
+        # A bootstrap file is plain JSON any same-user process can rewrite;
+        # the value decides where the prompt (and the API key) is sent.
+        api_base_error = _validate_api_base(api_base_override)
+        if api_base_error:
+            _clean_exit_ida(2, api_base_error)
         config.provider.api_base = api_base_override
 
     # If the model is still empty (fresh provider or user didn't specify),

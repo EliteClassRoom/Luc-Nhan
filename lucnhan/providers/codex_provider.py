@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import json
 import os
+import tempfile
 import threading
 import time
 import urllib.error
@@ -184,6 +186,36 @@ def request_codex_device_code() -> CodexDeviceCode:
     )
 
 
+def _write_auth_file(auth: dict[str, Any]) -> None:
+    """Persist ``auth.json`` atomically, preserving keys we do not own.
+
+    The file is shared with the Codex CLI, whose versions may add fields we
+    know nothing about — so the existing JSON is merged, not replaced. The
+    write goes through a temp file + ``os.replace`` because a crash mid-write
+    used to leave invalid JSON behind and log the user out.
+    """
+    path = _auth_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    merged = auth
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(existing, dict):
+            merged = {**existing, **auth}
+            if isinstance(existing.get("tokens"), dict):
+                merged["tokens"] = {**existing["tokens"], **auth["tokens"]}
+    except (OSError, ValueError):
+        pass
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".auth-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(merged, f, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def _save_codex_auth(id_token: str, access_token: str, refresh_token: str) -> None:
     token_info = _id_token_info(id_token)
     account_id = token_info.get("chatgpt_account_id")
@@ -199,12 +231,7 @@ def _save_codex_auth(id_token: str, access_token: str, refresh_token: str) -> No
         "last_refresh": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "agent_identity": None,
     }
-    path = _auth_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    fd = os.open(path, flags, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(auth, f, indent=2)
+    _write_auth_file(auth)
 
 
 def complete_codex_device_code_login(device_code: CodexDeviceCode, timeout_seconds: int = 15 * 60) -> None:

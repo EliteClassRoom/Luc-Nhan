@@ -336,7 +336,11 @@ def _render_link(link_style: str, label: str, url: str) -> str:
         scheme = ""  # fragment — safe
     if scheme not in _SAFE_URL_SCHEMES:
         return label  # unsafe scheme — render as plain text, no anchor
-    return f'<a style="{link_style}" href="{url}">{label}</a>'
+    # The URL itself is attacker-influenced (a symbol name, a comment, the
+    # assistant's prose). Escaped with quotes so a ``"`` in it cannot close the
+    # attribute and inject markup — a raw ``"><img src=...>`` would otherwise
+    # make Qt fetch a remote resource while rendering.
+    return f'<a style="{link_style}" href="{_html.escape(url, quote=True)}">{label}</a>'
 
 
 def _legacy_inline_formatting(text: str, link_style: str | None = None) -> str:

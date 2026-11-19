@@ -108,8 +108,12 @@ def derive_binary_id(idb_path: str, db_instance_id: str = "") -> str:
     the normalized path so headless / non-IDA contexts still get a
     deterministic value.
     """
-    if db_instance_id:
-        return db_instance_id
+    # The host id comes out of an IDB netnode, so a shared .i64 can carry
+    # anything. Sanitize it the same way ``derive_cache_key`` does: this value
+    # is an identity key today and may become a path component tomorrow.
+    safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", db_instance_id).strip(".")[:96]
+    if safe_id:
+        return safe_id
     # Normalize BOTH case and separator style so paths from different
     # working directories or mixed slashes collapse to the same key.
     norm = os.path.normcase(os.path.normpath(os.path.abspath(idb_path)))

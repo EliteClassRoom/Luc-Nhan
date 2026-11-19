@@ -217,7 +217,7 @@ def search_function_names(query: str, limit: int) -> list[FunctionEntry]:
         return []
     q = query.lower()
     matches = [entry for name, entry in idx.name_lower if q in name]
-    return matches[:limit]
+    return matches if limit <= 0 else matches[:limit]
 
 
 def list_function_entries(offset: int, limit: int) -> tuple[list[FunctionEntry], int]:
@@ -229,6 +229,7 @@ def list_function_entries(offset: int, limit: int) -> tuple[list[FunctionEntry],
     """
     idx = get_function_index()
     total = len(idx.entries)
+    offset = max(0, offset)
     if limit <= 0:
         return idx.entries[offset:], total
     return idx.entries[offset : offset + limit], total

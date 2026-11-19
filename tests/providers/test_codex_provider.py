@@ -36,6 +36,28 @@ def _write_auth(home: Path, tokens: dict, auth_mode: str = "chatgpt") -> None:
     )
 
 
+class TestCodexAuthWrite(unittest.TestCase):
+    def test_save_merges_foreign_keys_and_replaces_atomically(self):
+        from lucnhan.providers.codex_provider import _save_codex_auth
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"CODEX_HOME": tmp}, clear=False):
+            home = Path(tmp)
+            _write_auth(home, {"access_token": "old", "refresh_token": "r"})
+            data = json.loads((home / "auth.json").read_text())
+            data["cli_only_setting"] = {"keep": True}
+            (home / "auth.json").write_text(json.dumps(data))
+
+            _save_codex_auth(_jwt({"chatgpt_account_id": "acct"}), "new", "refresh")
+
+            written = json.loads((home / "auth.json").read_text())
+            # Fields another tool owns survive; ours are updated in place.
+            self.assertEqual(written["cli_only_setting"], {"keep": True})
+            self.assertEqual(written["tokens"]["access_token"], "new")
+            self.assertEqual(written["tokens"]["account_id"], "acct")
+            # No temp files left behind.
+            self.assertEqual([p.name for p in home.iterdir() if p.name.startswith(".auth-")], [])
+
+
 class TestCodexAuthFile(unittest.TestCase):
     def test_status_requires_managed_chatgpt_tokens_with_refresh(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"CODEX_HOME": tmp}, clear=False):

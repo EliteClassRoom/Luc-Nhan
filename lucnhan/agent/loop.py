@@ -623,6 +623,18 @@ class AgentLoop:
         self._tool_approval_queue: queue.Queue[str] = (
             parent_loop._tool_approval_queue if parent_loop else queue.Queue(maxsize=1)
         )
+        # One decision at a time: the queue holds a single item and the
+        # decision is not tagged with a tool-call id, so two concurrent
+        # requests (parallel subagents) would otherwise let the wrong thread
+        # consume the answer — and "allow for this chat" would then flip the
+        # script flag instead of the plain-tool flag.
+        self._tool_approval_lock: threading.Lock = parent_loop._tool_approval_lock if parent_loop else threading.Lock()
+        #: Id of the tool call currently waiting for a decision. A click that
+        #: lands after the request is gone must not approve the NEXT call.
+        self._pending_approval_id: str | None = None
+        #: Same guard for ``ask_user``: an answer typed after the prompt is
+        #: gone must not answer the next question.
+        self._pending_question_id: str | None = None
         self._approval_queue: queue.Queue[str] = parent_loop._approval_queue if parent_loop else queue.Queue(maxsize=1)
         self._always_allow_scripts: bool = parent_loop._always_allow_scripts if parent_loop else False
         # "Always allow" for non-script tools. Kept apart from the script
@@ -815,15 +827,31 @@ class AgentLoop:
             except queue.Empty:
                 break
 
-    def submit_user_answer(self, answer: str) -> None:
-        """Submit an answer to an ask_user question (called from UI thread)."""
+    def submit_user_answer(self, answer: str, question_id: str | None = None) -> bool:
+        """Submit an answer to an ask_user question (called from UI thread).
+
+        With *question_id*, the answer is dropped when a different question is
+        the one waiting (a late click on a stale prompt).  Returns whether the
+        answer was delivered.
+        """
+        if question_id is not None and self._pending_question_id not in (None, question_id):
+            return False
         self._drain_queue(self._user_answer_queue)
         self._user_answer_queue.put(answer)
+        return True
 
-    def submit_tool_approval(self, decision: str) -> None:
-        """Submit tool approval decision: 'allow', 'allow_all', or 'deny'."""
+    def submit_tool_approval(self, decision: str, tool_call_id: str | None = None) -> bool:
+        """Submit tool approval decision: 'allow', 'allow_all', or 'deny'.
+
+        With *tool_call_id*, the decision is dropped when a different call is
+        the one waiting (a late click on a stale button). Returns whether the
+        decision was delivered.
+        """
+        if tool_call_id is not None and self._pending_approval_id not in (None, tool_call_id):
+            return False
         self._drain_queue(self._tool_approval_queue)
         self._tool_approval_queue.put(decision)
+        return True
 
     def submit_approval(self, decision: str) -> None:
         """Submit orchestra delegation approval decision: 'approve' or 'deny'."""
@@ -2092,18 +2120,33 @@ class AgentLoop:
         if self._always_allow_scripts if is_script else self._always_allow_tools:
             return True
 
-        args_str = json.dumps(tc.arguments, indent=2)
-        description = self._describe_tool_call(tc.name, tc.arguments)
-        yield TurnEvent.tool_approval_request(tc.id, tc.name, args_str, description)
+        while not self._tool_approval_lock.acquire(timeout=0.5):
+            self._check_cancelled()
+        try:
+            # Re-check under the lock: another thread may have answered
+            # "allow all" while this one was waiting its turn.
+            if self._always_allow_scripts if is_script else self._always_allow_tools:
+                return True
+            args_str = json.dumps(tc.arguments, indent=2)
+            description = self._describe_tool_call(tc.name, tc.arguments)
+            self._pending_approval_id = tc.id
+            yield TurnEvent.tool_approval_request(tc.id, tc.name, args_str, description)
 
-        decision = self._wait_for_queue(self._tool_approval_queue).lower()
-        if decision == "allow_all":
-            if is_script:
-                self._always_allow_scripts = True
-            else:
-                self._always_allow_tools = True
-            return True
-        return decision == "allow"
+            decision = self._wait_for_queue(self._tool_approval_queue).lower()
+            if decision == "allow_all":
+                if is_script:
+                    self._always_allow_scripts = True
+                else:
+                    self._always_allow_tools = True
+                return True
+            return decision == "allow"
+        finally:
+            # Drain before releasing so a decision that arrived without a
+            # waiter (late click on a stale button) cannot be handed to the
+            # next request as if the user had just approved it.
+            self._pending_approval_id = None
+            self._drain_queue(self._tool_approval_queue)
+            self._tool_approval_lock.release()
 
     # ------------------------------------------------------------------
     # IDAPython docs-review gate (post-error variant)
@@ -2890,8 +2933,13 @@ class AgentLoop:
         # the panel locks the text input. See ``_normalize_ask_user_options``
         # for the full rationale.
         options = _normalize_ask_user_options(raw_options)
-        yield TurnEvent.user_question(question, options, tc.id)
-        answer = self._wait_for_queue(self._user_answer_queue)
+        self._pending_question_id = tc.id
+        try:
+            yield TurnEvent.user_question(question, options, tc.id)
+            answer = self._wait_for_queue(self._user_answer_queue)
+        finally:
+            self._pending_question_id = None
+            self._drain_queue(self._user_answer_queue)
         content = f"User answered: {answer}"
         tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=False)
         yield TurnEvent.tool_result_event(tc.id, tc.name, content, False)

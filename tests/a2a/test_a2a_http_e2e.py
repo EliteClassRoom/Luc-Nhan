@@ -31,7 +31,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from lucnhan.agent.a2a.client import A2AClient, A2AClientConfig
+from lucnhan.agent.a2a.client import _MAX_RESPONSE_BYTES, A2AClient, A2AClientConfig
 from lucnhan.agent.a2a.types import A2ATaskStatus, ExternalAgentConfig
 
 # ---------------------------------------------------------------------------
@@ -383,3 +383,52 @@ class TestCancel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestResponseSizeCap(unittest.TestCase):
+    """An external endpoint must not be able to exhaust memory."""
+
+    class _Resp:
+        def __init__(self, n: int) -> None:
+            self.n = n
+            self.asked = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, size: int = -1) -> bytes:
+            self.asked = size
+            return b'{"ok": true}' + b" " * max(0, min(self.n, size) - 12)
+
+    def _call(self, n: int):
+
+        from lucnhan.agent.a2a import client as client_mod
+
+        resp = self._Resp(n)
+        original = client_mod.urllib.request.urlopen
+        client_mod.urllib.request.urlopen = lambda *_a, **_k: resp
+        try:
+            return client_mod._read_json(resp)
+        finally:
+            client_mod.urllib.request.urlopen = original
+
+    def test_reads_with_a_bound(self):
+        resp = self._Resp(20)
+        from lucnhan.agent.a2a import client as client_mod
+
+        self.assertEqual(client_mod._read_json(resp), {"ok": True})
+        self.assertEqual(resp.asked, _MAX_RESPONSE_BYTES + 1)
+
+    def test_oversized_body_is_rejected(self):
+        from lucnhan.agent.a2a import client as client_mod
+
+        class _Huge:
+            def read(self, size: int = -1) -> bytes:
+                return b"x" * (size if size > 0 else _MAX_RESPONSE_BYTES)
+
+        with self.assertRaises(ValueError) as ctx:
+            client_mod._read_json(_Huge())
+        self.assertIn("exceeds", str(ctx.exception))
