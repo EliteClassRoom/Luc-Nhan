@@ -13,9 +13,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from ..core.logging import log_warning
 from ..core.sanitize import strip_injection_markers, strip_lone_surrogates
 from .authority import MemoryAuthorityIssuer, MemoryWriteAuthority
-from .markdown import MemoryProjector, extract_unmanaged_markdown
+from .markdown import (
+    ManagedRegionError,
+    MemoryProjector,
+    _read_bounded_regular_utf8,
+    extract_unmanaged_markdown,
+)
 from .repository import SQLiteKnowledgeRepository
 from .workspace import MemoryRunContext, WorkspacePaths
 from .workspace_store import WorkspaceStore
@@ -155,7 +161,12 @@ class BinaryMemoryService:
         with self._manual_notes_lock:
             if self._manual_notes_cache is not None and self._manual_notes_cache[0] == sig:
                 return self._manual_notes_cache[1]
-        content = markdown.read_text(encoding="utf-8")
+        try:
+            content = _read_bounded_regular_utf8(markdown, default="")
+        except ManagedRegionError as exc:
+            # A symlinked or oversized MEMORY.md must not kill the prompt.
+            log_warning(f"manual notes unavailable: {exc}")
+            return ""
         unmanaged = extract_unmanaged_markdown(content)
         sanitized = _sanitize_manual_notes(unmanaged)
         result = sanitized.strip()

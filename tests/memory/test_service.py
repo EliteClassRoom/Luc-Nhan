@@ -34,6 +34,32 @@ def _create_service(tmp_path: Path) -> tuple[BinaryMemoryService, MemoryAuthorit
     return service, issuer, context
 
 
+class TestManualNotesRead:
+    def test_cp1252_notes_still_reach_the_prompt(self, tmp_path: Path) -> None:
+        """A legacy-editor save must degrade, not kill the system prompt."""
+        service, _, _ = _create_service(tmp_path)
+        service.paths.markdown.write_bytes(b"# Memory\n\n## Notes\n\nCaf\xe9 owner.\n")
+
+        assert "Caf" in service.manual_notes_context()
+
+    def test_symlinked_memory_file_degrades_instead_of_raising(self, tmp_path: Path) -> None:
+        """The bounded reader rejects symlinks; the prompt must survive."""
+        import os
+
+        service, _, _ = _create_service(tmp_path)
+        real = service.paths.markdown
+        real.write_text("# Memory\n\n## Notes\n\nfrom a link\n", encoding="utf-8")
+        moved = real.parent / "memory-source.md"
+        os.replace(real, moved)
+        try:
+            os.symlink(moved, real)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable")
+        service._manual_notes_cache = None
+
+        assert service.manual_notes_context() == ""
+
+
 class TestPromptSourceSeparation:
     def test_structured_context_contains_sqlite_facts_not_markdown(self, tmp_path: Path) -> None:
         service, issuer, context = _create_service(tmp_path)
