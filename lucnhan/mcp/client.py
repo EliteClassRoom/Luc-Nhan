@@ -21,6 +21,10 @@ from .protocol import MCPToolSchema
 
 _HAS_MCP: bool | None = None  # None = not yet probed
 
+#: Upper bound for joining a stopped server thread. ``stop_all`` shares
+#: one deadline across every server so N wedged servers cannot cost N x 5 s.
+_STOP_JOIN_SECONDS = 5.0
+
 
 def _check_mcp_sdk() -> bool:
     """Probe for the official ``mcp`` SDK. Cached after first check."""
@@ -315,8 +319,13 @@ class MCPClient:
         self._started = True
         log_info(f"MCP[{self.name}]: started OK, {len(self._tools)} tools registered")
 
-    def stop(self) -> None:
-        """Shut down the MCP server process."""
+    def stop(self, timeout: float = _STOP_JOIN_SECONDS) -> None:
+        """Shut down the MCP server process.
+
+        *timeout* bounds the join; ``stop_all`` shrinks it as its shared
+        deadline runs out so one wedged server cannot add five seconds per
+        server to a shutdown that runs on the UI thread.
+        """
         log_debug(f"MCP[{self.name}]: stopping")
         self._running = False
         self._started = False
@@ -326,7 +335,7 @@ class MCPClient:
             self._loop.call_soon_threadsafe(self._shutdown_event.set)
 
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=max(0.0, timeout))
             self._kill_leftovers_if_stuck()
 
         self._session = None

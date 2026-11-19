@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -437,12 +438,13 @@ class TestMCPStartTimeout(unittest.TestCase):
         class FakeClient:
             def __init__(self, cfg):
                 seen["cfg"] = cfg
+                self.name = cfg.name
 
             def start(self, timeout):
                 seen["timeout"] = timeout
 
-            def stop(self):
-                pass
+            def stop(self, timeout=0.0):
+                seen["stop_timeout"] = timeout
 
         try:
             with (
@@ -729,3 +731,32 @@ class TestMCPReloadIsSerialized(unittest.TestCase):
             mgr.reload(registry)
 
         self.assertEqual(start.call_count, 2)
+
+
+class TestStopAllBudgetsTheJoin(unittest.TestCase):
+    def test_the_second_server_gets_what_the_first_left(self):
+        """`stop_all` runs on the UI thread, so one wedged server must not
+        add its full join timeout per server."""
+        from lucnhan.mcp.manager import _STOP_ALL_BUDGET_SECONDS
+
+        mgr = MCPManager()
+        seen: list[float] = []
+
+        class _Client:
+            def __init__(self, name: str, delay: float) -> None:
+                self.name = name
+                self._delay = delay
+
+            def stop(self, timeout: float = 5.0) -> None:
+                seen.append(timeout)
+                time.sleep(self._delay)
+
+        mgr._clients = {  # type: ignore[assignment]
+            "a": _Client("a", 0.3),
+            "b": _Client("b", 0.0),
+        }
+        mgr.stop_all()
+
+        self.assertEqual(len(seen), 2)
+        self.assertAlmostEqual(seen[0], _STOP_ALL_BUDGET_SECONDS, places=1)
+        self.assertLess(seen[1], seen[0])

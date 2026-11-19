@@ -11,6 +11,9 @@ from ..constants import MCP_TOOL_PREFIX
 from ..core.logging import log_debug, log_error, log_info, log_warning
 from .config import MCPServerConfig, load_mcp_config
 
+#: Total time an ``stop_all`` may spend joining servers.
+_STOP_ALL_BUDGET_SECONDS = 6.0
+
 if TYPE_CHECKING:
     from ..tools.registry import ToolRegistry
     from .client import MCPClient
@@ -206,9 +209,13 @@ class MCPManager:
             clients = list(self._clients.values())
             self._clients.clear()
 
+        # One shared deadline: this runs on the UI thread (tab close, panel
+        # shutdown) and a wedged server would otherwise add its full join
+        # timeout per server.
+        deadline = time.monotonic() + _STOP_ALL_BUDGET_SECONDS
         for client in clients:
             try:
-                client.stop()
+                client.stop(timeout=deadline - time.monotonic())
             except Exception as e:
                 log_error(f"MCP[{client.name}]: stop error: {e}")
 
