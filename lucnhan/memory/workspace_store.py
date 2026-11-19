@@ -885,8 +885,14 @@ class WorkspaceStore:
         metadata: dict[str, Any] | None = None,
         *,
         tags: list[str] | None = None,
+        expected_revision: int | None = None,
     ) -> EntityRecord:
-        """Insert or update an entity."""
+        """Insert or update an entity.
+
+        ``expected_revision`` is optional: pass the revision the caller read
+        when it merged the record first, so a concurrent write raises instead
+        of being silently overwritten.
+        """
         validate_record_id("entity", entity_id)
         meta_json = json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True)
         tags_list = list(tags) if tags is not None else []
@@ -900,7 +906,10 @@ class WorkspaceStore:
                     "SELECT current_revision FROM entities WHERE entity_id = ?",
                     (entity_id,),
                 ).fetchone()
-                revision = (int(row["current_revision"]) if row else 0) + 1
+                current = int(row["current_revision"]) if row else 0
+                if expected_revision is not None and expected_revision != current:
+                    raise StaleRevisionError(f"entity {entity_id} moved from revision {expected_revision} to {current}")
+                revision = current + 1
 
                 if row is None:
                     self._conn.execute(

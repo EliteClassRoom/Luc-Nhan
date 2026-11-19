@@ -136,21 +136,29 @@ class SQLiteKnowledgeRepository:
     def upsert_entity(self, value: KnowledgeEntity) -> None:
         """Insert or update an entity."""
         _validate_owner(value.binary_id, self.owner_memory_id)
-        existing = self._store.get_entity(value.id)
-        metadata = {
-            "display_name": value.display_name,
-            "address": value.address,
-        }
-        if existing:
-            # Merge with existing metadata
-            metadata = {**existing.metadata, **metadata}
-        self._store.put_entity(
-            value.id,
-            value.type,
-            value.name,
-            metadata,
-            tags=list(value.tags),
-        )
+        for attempt in (0, 1):
+            existing = self._store.get_entity(value.id)
+            metadata = {
+                "display_name": value.display_name,
+                "address": value.address,
+            }
+            if existing:
+                # Merge with existing metadata
+                metadata = {**existing.metadata, **metadata}
+            try:
+                self._store.put_entity(
+                    value.id,
+                    value.type,
+                    value.name,
+                    metadata,
+                    tags=list(value.tags),
+                    expected_revision=existing.revision if existing else 0,
+                )
+            except StaleRevisionError:
+                if attempt:
+                    raise
+                continue
+            return
 
     def list_entities(self) -> list[KnowledgeEntity]:
         """List all current entities."""

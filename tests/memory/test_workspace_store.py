@@ -635,3 +635,15 @@ class TestProjectionRow:
                 store.mark_projection_dirty()
         finally:
             store.close()
+
+    def test_entity_expected_revision_is_enforced(self, tmp_path: Path) -> None:
+        store, _ = _create_store(tmp_path)
+        try:
+            eid = new_record_id("entity")
+            store.put_entity(eid, "function", "sub_1", {"a": 1}, expected_revision=0)
+            with pytest.raises(StaleRevisionError):
+                store.put_entity(eid, "function", "sub_1", {"b": 2}, expected_revision=0)
+            store.put_entity(eid, "function", "sub_1", {"a": 1, "b": 2}, expected_revision=1)
+            assert store.get_entity(eid).metadata == {"a": 1, "b": 2}
+        finally:
+            store.close()
