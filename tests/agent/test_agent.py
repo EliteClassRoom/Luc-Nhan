@@ -50,6 +50,18 @@ END_PLAN"""
         self.assertEqual(len(steps), 4)
         self.assertEqual(steps[0], "Analyze the function at 0x1000")
 
+    def test_absurd_numbering_run_is_cut(self):
+        from lucnhan.agent.plan_mode import _MAX_PLAN_STEPS
+
+        text = "\n".join(f"{i}. step {i}" for i in range(1, 501))
+        self.assertEqual(len(parse_plan(text)), _MAX_PLAN_STEPS)
+
+    def test_runaway_step_line_is_cut(self):
+        from lucnhan.agent.plan_mode import _MAX_PLAN_STEP_CHARS
+
+        steps = parse_plan("1. " + "x" * 2000)
+        self.assertEqual(len(steps[0]), _MAX_PLAN_STEP_CHARS)
+
     def test_create_plan(self):
         text = "1. Step one\n2. Step two\n3. Step three\nEND_PLAN"
         plan = create_plan_from_text(text)

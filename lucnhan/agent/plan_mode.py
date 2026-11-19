@@ -43,15 +43,25 @@ class Plan:
             self.current_step += 1
 
 
+#: A plan is executed step by step, one turn each, so a runaway numbering
+#: run (or a model that numbers every line of prose) must not produce 500.
+_MAX_PLAN_STEPS = 40
+
+#: Longest description echoed into the UI, the memory record and the prompt.
+_MAX_PLAN_STEP_CHARS = 500
+
+
 def parse_plan(text: str) -> list[str]:
     """Parse a numbered plan from LLM output."""
-    steps = []
+    steps: list[str] = []
     # Match lines like "1. ...", "2. ...", etc.
     for line in text.split("\n"):
         line = line.strip()
         m = re.match(r"^\d+[\.\)]\s*(.+)$", line)
         if m:
-            steps.append(m.group(1).strip())
+            steps.append(m.group(1).strip()[:_MAX_PLAN_STEP_CHARS])
+            if len(steps) >= _MAX_PLAN_STEPS:
+                break
         if line.upper() == "END_PLAN":
             break
     return steps
