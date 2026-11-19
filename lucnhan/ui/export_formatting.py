@@ -77,13 +77,23 @@ def _export_detect_lang(text: str, tool_name: str = "", arg_key: str = "") -> st
     return ""
 
 
+def _code_block(content: str, lang: str) -> str:
+    """Fence *content*, widening the fence when it already holds one.
+
+    Tool output routinely contains markdown fences of its own; a plain
+    ``` opener would be closed by the first one inside the payload.
+    """
+    fence = "````" if "```" in content else "```"
+    return f"{fence}{lang}\n{content}\n{fence}"
+
+
 def _export_format_tool_args(tc) -> str:
     """Format tool call arguments as markdown with per-argument code blocks."""
     parts = []
     for k, v in tc.arguments.items():
         if isinstance(v, str) and ("\n" in v or len(v) > 80):
             lang = _export_detect_lang(v, tc.name, k)
-            parts.append(f"  - `{k}`:\n\n```{lang}\n{v}\n```\n")
+            parts.append(f"  - `{k}`:\n\n{_code_block(v, lang)}\n")
         else:
             parts.append(f"  - `{k}`: `{v!r}`")
     return "\n".join(parts)
@@ -95,7 +105,7 @@ def _export_format_tool_result(tr) -> str:
     if len(content) > _TOOL_RESULT_TRUNCATE_CHARS:
         content = content[:_TOOL_RESULT_TRUNCATE_CHARS] + "\n... (truncated)"
     lang = _export_detect_lang(content, tr.name)
-    return f"```{lang}\n{content}\n```"
+    return _code_block(content, lang)
 
 
 def _export_format_subagent_log(messages) -> str:

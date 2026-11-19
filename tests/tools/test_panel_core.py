@@ -5082,3 +5082,27 @@ class TestExportWritesAtomically:
         assert writer.call_args.args[0] == str(target)
         assert "hello" in writer.call_args.args[1]
         assert target.read_text(encoding="utf-8") == "previous export"
+
+
+class TestExportFenceWidening:
+    def test_payload_with_a_fence_gets_a_wider_one(self):
+        from lucnhan.ui.export_formatting import _code_block
+
+        block = _code_block("```python\nprint(1)\n```", "text")
+
+        assert block.startswith("````text\n")
+        assert block.endswith("\n````")
+
+    def test_plain_payload_keeps_the_short_fence(self):
+        from lucnhan.ui.export_formatting import _code_block
+
+        assert _code_block("plain", "") == "```\nplain\n```"
+
+    def test_tool_result_containing_a_fence_survives_export(self) -> None:
+        from lucnhan.state.session import ToolResult
+        from lucnhan.ui.export_formatting import _export_format_tool_result
+
+        body = _export_format_tool_result(ToolResult(tool_call_id="tc1", name="read_file", content="```js\nx\n```"))
+
+        assert body.startswith("````")
+        assert body.count("````") == 2
