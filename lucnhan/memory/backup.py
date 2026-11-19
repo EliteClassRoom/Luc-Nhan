@@ -91,6 +91,13 @@ def create_backup(
     dest = sqlite3.connect(str(backup_path))
     try:
         source.backup(dest)
+    except Exception:
+        dest.close()
+        source.close()
+        # A half-written snapshot would otherwise be listed as a usable
+        # backup and only fail at restore time.
+        backup_path.unlink(missing_ok=True)
+        raise
     finally:
         dest.close()
         source.close()

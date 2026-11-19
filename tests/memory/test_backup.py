@@ -166,3 +166,20 @@ class TestBackup:
         with pytest.raises(BackupVerificationError, match="missing or empty"):
             verify_backup(result, mid)
         store.close()
+
+
+class TestFailedBackup:
+    def test_a_failed_snapshot_leaves_no_file(self, tmp_path: Path) -> None:
+        import sqlite3
+
+        store, paths, mid = _create_workspace(tmp_path)
+        store.close()
+        # A file that is not a database: the read-only open succeeds, the
+        # backup step is what fails.
+        paths.database.write_bytes(b"not a database at all")
+
+        backup_dir = tmp_path / "backups"
+        with pytest.raises(sqlite3.DatabaseError):
+            create_backup(paths, mid, backup_dir)
+
+        assert list(backup_dir.iterdir()) == []
