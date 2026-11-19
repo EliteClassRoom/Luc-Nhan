@@ -1151,7 +1151,7 @@ class ChatView(QScrollArea):
                 existing_tw.set_arguments(event.tool_args)
         elif etype == TurnEventType.TOOL_RESULT:
             self._reset_tool_run()
-            existing_tw = self._tool_widgets.get(event.tool_call_id)
+            existing_tw = self._tool_widgets.pop(event.tool_call_id, None)
             if existing_tw is not None:
                 existing_tw.set_result(event.tool_result, event.tool_is_error)
             group = self._group_map.get(event.tool_call_id)
@@ -1176,7 +1176,12 @@ class ChatView(QScrollArea):
                 # clue that action is pending.
                 self._promote_widget_out_of_group(event.tool_call_id)
                 existing.show_approval_buttons()
-                existing.approved.connect(self._on_tool_approval)
+                # The widget outlives one request, so connect once: a second
+                # connection would submit every click twice and leave a stale
+                # decision in the queue for the next tool call.
+                if not getattr(existing, "_approval_connected", False):
+                    existing.approved.connect(self._on_tool_approval)
+                    existing._approval_connected = True
             else:
                 widget = ToolApprovalWidget(
                     event.tool_call_id,
@@ -1611,6 +1616,9 @@ class ChatView(QScrollArea):
             item = self._layout.takeAt(0)
             widget = item.widget() if item else None
             if widget is not None:
+                # Page slides re-render the same rows; without the release the
+                # ThemeManager singleton keeps every dropped widget alive.
+                self._shutdown_message_widget(widget)
                 widget.deleteLater()
         self._current_assistant = None
         self._message_thinking = None
@@ -1955,8 +1963,8 @@ class ChatView(QScrollArea):
         # render so the chat view is in a clean state for the next
         # live event.  We intentionally do NOT clear ``self._tool_widgets``
         # here: those entries are needed for routing tool results to
-        # the rendered tool-call widgets, and the dict is cleaned up
-        # when the corresponding widgets are torn down.
+        # the rendered tool-call widgets; each entry is popped when its
+        # result arrives, and the dict is cleared on a page slide.
         self._current_assistant = None
         self._message_thinking = None
         self._reset_tool_run()

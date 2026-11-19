@@ -202,6 +202,10 @@ class _DetailFrame(QFrame):
     and its radius aligned with the active theme.
     """
 
+    def shutdown(self) -> None:
+        """Detach the theme subscription so teardown does not warn."""
+        disconnect_theme(self)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("tool_detail")
@@ -1240,6 +1244,10 @@ class ToolCallWidget(_HeaderClickToggle, QFrame):
 
     _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
+    def shutdown(self) -> None:
+        """Detach the theme subscription so teardown does not warn."""
+        disconnect_theme(self)
+
     def __init__(self, tool_name: str, tool_call_id: str, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("message_tool")
@@ -1598,6 +1606,10 @@ class ToolBatchWidget(_HeaderClickToggle, QFrame):
     ordering and batching semantics — only the presentation changed.
     """
 
+    def shutdown(self) -> None:
+        """Detach the theme subscription so teardown does not warn."""
+        disconnect_theme(self)
+
     def __init__(self, tool_name: str, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("message_tool")
@@ -1832,6 +1844,10 @@ class ToolGroupWidget(_HeaderClickToggle, QFrame):
     One row like every other tool surface (G2/G4): chevron, status icon,
     group label, and a right-hand count of real completed/error calls.
     """
+
+    def shutdown(self) -> None:
+        """Detach the theme subscription so teardown does not warn."""
+        disconnect_theme(self)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -2968,6 +2984,12 @@ class ExecutePythonWidget(QFrame):
         if not self._status_visible or not self._status_text.startswith("✗"):
             # Keep buttons hidden if currently hard-blocked by docs gate.
             self._buttons_visible = True
+            # A second request for the same call would otherwise arrive with
+            # the gate latched shut (``_disable_buttons`` set ``_decided``
+            # and nothing clears it) and never be answerable.
+            self._decided = False
+            for btn in (self._allow_btn, self._always_btn, self._deny_btn):
+                btn.setEnabled(True)
             # G4 pins the literal ``Approval required`` next to the real operation
             # name, matching ToolApprovalWidget's header, so the review
             # target is never guesswork from the row alone.

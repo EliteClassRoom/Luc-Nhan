@@ -357,3 +357,28 @@ class TestApprovalHeaderText(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestToolWidgetsReleaseTheirThemeSubscription(unittest.TestCase):
+    """ThemeManager is a process singleton and holds a bound method.
+
+    Without ``shutdown()`` every tool row ever created stays referenced (and
+    repainted on every theme change) for the whole IDA session.
+    """
+
+    def test_leaking_classes_expose_shutdown(self):
+        from lucnhan.ui import tool_widgets as tw
+
+        for name in ("_DetailFrame", "ToolCallWidget", "ToolBatchWidget", "ToolGroupWidget"):
+            cls = getattr(tw, name)
+            self.assertTrue(callable(getattr(cls, "shutdown", None)), name)
+
+    def test_shutdown_disconnects(self):
+        from unittest.mock import patch
+
+        from lucnhan.ui.tool_widgets import ToolCallWidget
+
+        with patch("lucnhan.ui.tool_widgets.disconnect_theme") as disconnect:
+            ToolCallWidget("rename_function", "tc1").shutdown()
+
+        disconnect.assert_called_once()

@@ -226,3 +226,24 @@ class TestAlwaysVisible(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGateReopens(unittest.TestCase):
+    def test_second_request_reopens_the_answered_gate(self):
+        """The widget is reused for a second request on the same call.
+
+        ``_disable_buttons`` latches ``_decided`` and nothing used to clear
+        it, so a re-published gate stayed invisible and unclickable.
+        """
+        w = ExecutePythonWidget("tc1")
+        w.set_arguments(json.dumps({"code": "print(1)"}))
+        w.show_approval_buttons()
+        w._disable_buttons()
+        self.assertTrue(w._decided)
+        self.assertFalse(w._gate_pending())
+
+        w.show_approval_buttons()
+
+        self.assertFalse(w._decided)
+        self.assertTrue(w._gate_pending())
+        self.assertTrue(w._allow_btn.isEnabled())

@@ -333,3 +333,63 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDoubleGate(unittest.TestCase):
+    """A tool gated for approval AND for mutation must be asked once.
+
+    ``execute_python`` is approval-gated and marked ``mutating``; with
+    ``approve_mutations`` on, the loop used to emit a second request for the
+    same call. The UI widget latches ``_decided`` on the first click and the
+    second request had no answerable controls, so the turn hung until cancel.
+    """
+
+    def _make_loop(self, tools: ToolRegistry) -> AgentLoop:
+        config = LucNhanConfig()
+        config.auto_context = False
+        config.approve_mutations = True
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        return AgentLoop(provider=_NullProvider(), tool_registry=tools, config=config, session=session)
+
+    @staticmethod
+    def _registry(executed: list[str], *, requires_approval: bool) -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="gated_tool",
+                description="gated",
+                parameters=[ParameterSchema(name="code", type="string", description="c", required=True)],
+                handler=lambda code: (executed.append(code), f"ran {code}")[1],
+                requires_approval=requires_approval,
+                mutating=True,
+            )
+        )
+        return registry
+
+    def test_approval_plus_mutation_asks_once(self):
+        executed: list[str] = []
+        loop = self._make_loop(self._registry(executed, requires_approval=True))
+        tc = ToolCall(id="call_double_1", name="gated_tool", arguments={"code": "x"})
+
+        events, tr = _drain_generator_with_return(
+            loop._execute_single_tool(tc), on_first_yield=lambda: loop._tool_approval_queue.put("allow")
+        )
+
+        approvals = [e for e in events if e.type == TurnEventType.TOOL_APPROVAL_REQUEST]
+        self.assertEqual(len(approvals), 1, "the same call must not be approved twice")
+        self.assertEqual(executed, ["x"])
+        self.assertFalse(tr.is_error)
+
+    def test_mutation_only_tool_is_still_asked_once(self):
+        executed: list[str] = []
+        loop = self._make_loop(self._registry(executed, requires_approval=False))
+        tc = ToolCall(id="call_double_2", name="gated_tool", arguments={"code": "y"})
+
+        events, tr = _drain_generator_with_return(
+            loop._execute_single_tool(tc), on_first_yield=lambda: loop._tool_approval_queue.put("deny")
+        )
+
+        approvals = [e for e in events if e.type == TurnEventType.TOOL_APPROVAL_REQUEST]
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(executed, [])
+        self.assertIn("Mutation denied", tr.content)

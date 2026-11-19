@@ -644,6 +644,10 @@ class AgentLoop:
         # "Always allow" for non-script tools. Kept apart from the script
         # flag so allowing one never silently allows the other.
         self._always_allow_tools: bool = parent_loop._always_allow_tools if parent_loop else False
+        # True while a prompt for the current call was really shown
+        # (always-allow and unattended paths never show one), so a tool
+        # gated twice in one call is not asked twice.
+        self._approval_prompted: bool = False
         # Unattended loops run without an attached UI: nobody answers
         # approval/question queues, so interactive gates must be removed from
         # the tool surface and rejected at dispatch (see _build_tools_schema
@@ -2178,6 +2182,7 @@ class AgentLoop:
         Handles 'allow_all' to skip future approval prompts for this session.
         """
         is_script = tc.name == constants.EXECUTE_PYTHON_TOOL_NAME
+        self._approval_prompted = False
         # Skip prompt if the user previously chose to allow this kind for the chat.
         if self._always_allow_scripts if is_script else self._always_allow_tools:
             return True
@@ -2195,6 +2200,7 @@ class AgentLoop:
             # Drop anything queued by a widget from an earlier turn BEFORE the
             # request exists; after the yield a decision is fresh.
             self._drain_queue(self._tool_approval_queue)
+            self._approval_prompted = True
             yield TurnEvent.tool_approval_request(tc.id, tc.name, args_str, description)
 
             decision = self._wait_for_queue(self._tool_approval_queue).lower()
@@ -2445,7 +2451,10 @@ class AgentLoop:
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return tr
 
-        if is_mutating and self.config.approve_mutations:
+        # A tool can be gated twice (approval + mutation). A second prompt for
+        # the same call is unanswerable in the UI: the widget flips ``_decided``
+        # on the first click and never clears it, so it would hang.
+        if is_mutating and self.config.approve_mutations and not self._approval_prompted:
             approved = yield from self._wait_for_approval(tc)
             if not approved:
                 content = "Mutation denied by user."

@@ -340,6 +340,32 @@ class TestExecutePythonRouting(unittest.TestCase):
         view.handle_event(ev)
         self.assertEqual(view._tool_widgets, {})
 
+    # ------------------------------------------------------------------
+    # tool widget map / approval connection lifetime
+
+    # ------------------------------------------------------------------
+
+    def test_tool_result_drops_the_map_entry(self):
+        """The dict must not keep every widget of the session alive."""
+        view = self._make_view()
+        view._handle_tool_event(self.TurnEvent.tool_call_start("tc9", "rename_function"))
+        view._handle_tool_event(self.TurnEvent.tool_result_event("tc9", "rename_function", "done"))
+
+        self.assertNotIn("tc9", view._tool_widgets)
+
+    def test_second_approval_does_not_connect_twice(self):
+        """A duplicate connection would submit every click twice."""
+        view = self._make_view()
+        view._handle_tool_event(self.TurnEvent.tool_call_start("tc8", self.EXEC_PY))
+        ev = self.TurnEvent.tool_approval_request("tc8", self.EXEC_PY, '{"code":"x"}', "")
+        view._handle_tool_event(ev)
+        widget = view._tool_widgets["tc8"]
+        widget.approved = MagicMock()
+
+        view._handle_tool_event(ev)
+
+        widget.approved.connect.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
