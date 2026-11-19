@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from tests.qt_stubs import ensure_pyside6_stubs
 
@@ -36,6 +36,7 @@ def _make_panel():
     # (``test_panel_core.py`` and ``test_settings_dialog.py``).
     panel = MutationLogPanel.__new__(MutationLogPanel)
     panel._entries = []
+    panel._reversible_count = 0
     panel._count_label = MagicMock()
     panel._undo_btn = MagicMock()
     panel._entries_layout = MagicMock()
@@ -62,16 +63,19 @@ class TestUpdateCount(unittest.TestCase):
 
     def test_one_entry_singular(self):
         self.panel._entries = [self._make_entry(True)]
+        self.panel._reversible_count = 1
         self.panel._update_count()
         self.panel._count_label.setText.assert_called_with("1 mutation")
 
     def test_two_entries_plural(self):
         self.panel._entries = [self._make_entry(True), self._make_entry(True)]
+        self.panel._reversible_count = 2
         self.panel._update_count()
         self.panel._count_label.setText.assert_called_with("2 mutations")
 
     def test_three_entries_plural(self):
         self.panel._entries = [self._make_entry(True)] * 3
+        self.panel._reversible_count = 3
         self.panel._update_count()
         self.panel._count_label.setText.assert_called_with("3 mutations")
 
@@ -81,6 +85,7 @@ class TestUpdateCount(unittest.TestCase):
 
     def test_undo_enabled_when_reversible_entry(self):
         self.panel._entries = [self._make_entry(True)]
+        self.panel._reversible_count = 1
         self.panel._update_count()
         self.panel._undo_btn.setEnabled.assert_called_with(True)
 
@@ -91,6 +96,7 @@ class TestUpdateCount(unittest.TestCase):
 
     def test_undo_enabled_when_mixed_reversibility(self):
         self.panel._entries = [self._make_entry(False), self._make_entry(True)]
+        self.panel._reversible_count = 1
         self.panel._update_count()
         self.panel._undo_btn.setEnabled.assert_called_with(True)
 
@@ -199,3 +205,56 @@ class TestClearAll(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReversibleCounter(unittest.TestCase):
+    """The undo state is maintained incrementally, not rescanned."""
+
+    def setUp(self):
+        self.panel = _make_panel()
+
+    def _entry(self, reversible: bool):
+        entry = MagicMock()
+        entry.record = _make_record(reversible=reversible)
+        return entry
+
+    def test_removing_an_irreversible_entry_keeps_the_count(self):
+        self.panel._entries = [self._entry(True), self._entry(False)]
+        self.panel._reversible_count = 1
+
+        self.panel.remove_last(1)
+
+        self.assertEqual(self.panel._reversible_count, 1)
+
+    def test_removing_a_reversible_entry_decrements(self):
+        self.panel._entries = [self._entry(True)]
+        self.panel._reversible_count = 1
+
+        self.panel.remove_last(1)
+
+        self.assertEqual(self.panel._reversible_count, 0)
+        self.panel._undo_btn.setEnabled.assert_called_with(False)
+
+    def test_clear_all_resets_the_counter(self):
+        self.panel._entries = [self._entry(True), self._entry(True)]
+        self.panel._reversible_count = 2
+
+        self.panel.clear_all()
+
+        self.assertEqual(self.panel._reversible_count, 0)
+
+
+class TestToolBadgeIsPlainText(unittest.TestCase):
+    def test_badge_does_not_parse_markup(self):
+        """Tool names can come from an MCP server, so ``<b>x`` must not
+        render as bold."""
+        from lucnhan.ui.mutation_log_view import MutationEntryWidget
+
+        record = _make_record(reversible=True, tool_name="<b>rename</b>")
+
+        with patch("lucnhan.ui.mutation_log_view.QLabel") as label_cls:
+            MutationEntryWidget(0, record)
+
+        # desc, meta and the badge: no label in the row may parse markup.
+        badge = label_cls.return_value
+        self.assertEqual(badge.setTextFormat.call_count, 3)

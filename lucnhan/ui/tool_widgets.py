@@ -1254,7 +1254,9 @@ class ToolCallWidget(_HeaderClickToggle, QFrame):
         self.setMinimumHeight(_TOOL_ROW_MIN_HEIGHT)
         self._tool_name = tool_name
         self._tool_call_id = tool_call_id
-        self._args_text = ""
+        # Streamed deltas are buffered, not concatenated: ``+=`` copies the
+        # whole buffer per delta (quadratic for a long argument stream).
+        self._args_parts: list[str] = [""]
         self._result_text = ""
         self._is_error = False
         self._expanded = False
@@ -1522,8 +1524,12 @@ class ToolCallWidget(_HeaderClickToggle, QFrame):
     # Public API
     # ------------------------------------------------------------------
 
+    @property
+    def _args_text(self) -> str:
+        return "".join(self._args_parts)
+
     def set_arguments(self, args_text: str) -> None:
-        self._args_text = args_text
+        self._args_parts = [args_text]
         # G4: the column shows the elided one-line summary, the tooltip
         # carries the FULL argument text (not the 80-char summary slice),
         # so nothing the user might need to audit is lost to truncation.
@@ -1535,7 +1541,7 @@ class ToolCallWidget(_HeaderClickToggle, QFrame):
             self._render_detail_text()
 
     def append_args_delta(self, delta: str) -> None:
-        self._args_text += delta
+        self._args_parts.append(delta)
         # Don't update the target column during streaming — wait for
         # ``set_arguments`` when the JSON is complete (a half-parsed
         # value would render as a truncated or wrong target).

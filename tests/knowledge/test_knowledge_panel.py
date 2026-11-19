@@ -103,11 +103,14 @@ class TestKnowledgePanel(unittest.TestCase):
             confidence=0.7,
         )
         self.w.populate([mem], [], [])
-        # Search by id substring
+        # Search by id substring. The rebuild is debounced, so drive it
+        # directly instead of waiting for the timer.
         self.w._search.setText("0x401000")
+        self.w._render_table()
         # After filter, the row should be hidden
         self.assertEqual(self.w._table.rowCount(), 1)
         self.w._search.setText("nope")
+        self.w._render_table()
         self.assertEqual(self.w._table.rowCount(), 0)
         self.w._search.setText("")  # reset
 
@@ -163,3 +166,36 @@ class TestKnowledgePanel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFilterDebounce(unittest.TestCase):
+    @requires_real_qt
+    def test_typing_only_arms_the_timer(self):
+        from lucnhan.ui.knowledge_panel import KnowledgePanel
+
+        panel = KnowledgePanel()
+        panel._search.setText("abc")
+        # ``_apply_filter`` must not rebuild synchronously per keystroke.
+        self.assertTrue(panel._filter_timer.isActive())
+
+
+class TestDetailTitleToleratesAMissingCell(unittest.TestCase):
+    def test_missing_title_cell_does_not_raise(self):
+        from unittest.mock import MagicMock
+
+        from lucnhan.ui.knowledge_panel import KnowledgePanel
+
+        panel = KnowledgePanel.__new__(KnowledgePanel)
+        panel._table = MagicMock()
+        panel._table.selectionModel.return_value.selectedRows.return_value = [MagicMock(**{"row.return_value": 0})]
+        row = MagicMock()
+        row.raw = {"id": "x"}
+        panel._visible_rows = [row]
+        panel._table.item.side_effect = lambda _row, col: MagicMock() if col == 0 else None
+        panel._detail = MagicMock()
+        panel._detail_title = MagicMock()
+
+        panel._on_row_selected()
+
+        panel._detail_title.setText.assert_called_once()
+        self.assertIn("Selected record", panel._detail_title.setText.call_args[0][0])

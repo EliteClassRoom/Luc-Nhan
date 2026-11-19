@@ -18,6 +18,7 @@ from .qt_compat import (
     QWidget,
 )
 from .styles import build_input_area_stylesheet
+from .theme.applicator import bind_theme, disconnect_theme
 from .theme.manager import ThemeManager
 
 logger = get_logger()
@@ -251,11 +252,14 @@ class InputArea(QPlainTextEdit):
         # always match the user-selected palette.  Without this, the
         # host's default Qt palette (often dark) bleeds through and
         # paints a black box around the editor in Luc Nhan Light mode.
-        self.apply_theme()
-        try:
-            ThemeManager.instance().themeChanged.connect(self.apply_theme)
-        except Exception as exc:
-            logger.debug("InputArea themeChanged connect failed", exc_info=exc)
+        # ``bind_theme`` records the wrapper so ``disconnect_theme`` can
+        # release the process-lifetime ThemeManager's reference to the
+        # editor when the tab closes.
+        bind_theme(self, self.apply_theme)
+
+    def shutdown(self) -> None:
+        """Detach the theme subscription so the editor can be collected."""
+        disconnect_theme(self)
 
     def apply_theme(self) -> None:
         """Refresh the editor (and skill popup) QSS and palette for the current theme.
@@ -431,7 +435,9 @@ class InputArea(QPlainTextEdit):
 
     def _show_popup(self, slugs: list[str]) -> None:
         if self._popup is None:
-            self._popup = _SkillPopup()
+            # Parented so the popup dies with the editor instead of
+            # lingering as a top-level window.
+            self._popup = _SkillPopup(self)
         self._popup.set_items(slugs)
 
         # Position above the input area

@@ -34,12 +34,16 @@ from .qt_compat import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTimer,
     QVBoxLayout,
     QWidget,
     Signal,
 )
 from .styles import get_placeholder_style
 from .theme.applicator import bind_theme, disconnect_theme
+
+#: Coalesce a typing burst into one table rebuild.
+_FILTER_DEBOUNCE_MS = 150
 
 _TYPE_FILTERS = ("All", "Memories", "Entities", "Relations", "Notes")
 
@@ -100,6 +104,12 @@ class KnowledgePanel(QWidget):
 
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search… (hex, function name, tag, free text)")
+        # Typing used to rebuild the whole table on every character; the
+        # debounce coalesces a burst into one rebuild.
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(_FILTER_DEBOUNCE_MS)
+        self._filter_timer.timeout.connect(self._render_table)
         self._search.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self._search, 1)
 
@@ -164,6 +174,7 @@ class KnowledgePanel(QWidget):
 
         # Internal state
         self._rows: list[_Row] = []
+        self._visible_rows: list[_Row] = []
         self._disabled: bool = False
 
         # Subscribe to theme changes so the counts label and the
@@ -339,7 +350,7 @@ class KnowledgePanel(QWidget):
     # ------------------------------------------------------------------
 
     def _apply_filter(self) -> None:
-        self._render_table()
+        self._filter_timer.start()
 
     def _render_table(self) -> None:
         type_filter = self._filter_combo.currentText() or "All"
@@ -357,6 +368,9 @@ class KnowledgePanel(QWidget):
                     continue
             visible.append(r)
 
+        # Index kept alongside the table so a selection can be resolved
+        # without stuffing the whole raw record into a cell.
+        self._visible_rows = visible
         self._table.setRowCount(len(visible))
         for row, item in enumerate(visible):
             kind_cell = QTableWidgetItem(item.kind)
@@ -374,7 +388,6 @@ class KnowledgePanel(QWidget):
             self._table.setItem(row, 3, status_cell)
             self._table.setItem(row, 4, conf_cell)
             self._table.setItem(row, 5, updated_cell)
-            kind_cell.setData(0x0100, item.raw)
 
     def _on_row_selected(self) -> None:
         rows = self._table.selectionModel().selectedRows()
@@ -383,17 +396,17 @@ class KnowledgePanel(QWidget):
             self._detail_title.setText("Selected record")
             return
         idx = rows[0].row()
-        cell = self._table.item(idx, 0)
-        if cell is None:
+        if idx >= len(self._visible_rows):
             return
-        raw = cell.data(0x0100)
+        raw = self._visible_rows[idx].raw
         if raw is None:
             return
         try:
             self._detail.setPlainText(json.dumps(raw, indent=2, ensure_ascii=False, default=str))
         except Exception:
             self._detail.setPlainText(str(raw))
-        self._detail_title.setText(f"Selected record — {self._table.item(idx, 1).text()}")
+        title_cell = self._table.item(idx, 1)
+        self._detail_title.setText(f"Selected record — {title_cell.text() if title_cell is not None else ''}")
 
 
 def _getattr(obj, name: str, default=None):

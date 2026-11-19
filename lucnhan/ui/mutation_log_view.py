@@ -43,8 +43,6 @@ class MutationEntryWidget(QFrame):
     Undo stays the explicit button in the pane header.
     """
 
-    undo_clicked = Signal(int)  # emits the entry index
-
     def __init__(self, index: int, record: MutationRecord, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("mutation_entry")
@@ -88,6 +86,11 @@ class MutationEntryWidget(QFrame):
 
         # Tool name badge
         self._tool_badge = QLabel(record.tool_name)
+        # Tool names come from the registry and MCP servers, so an
+        # HTML-looking name must not be parsed as markup.
+        self._tool_badge.setTextFormat(Qt.TextFormat.PlainText)
+        # Tool names come from the registry and MCP servers, so an
+        # HTML-looking name must not be parsed as markup.
         self._tool_badge.setStyleSheet(get_mutation_badge_style())
         layout.addWidget(self._tool_badge)
 
@@ -205,6 +208,9 @@ class MutationLogPanel(QFrame):
         main_layout.addWidget(self._action_row)
 
         self._entries: list[MutationEntryWidget] = []
+        # Maintained incrementally: recomputing it meant an O(n) scan per
+        # mutation (O(n^2) over a session) on the UI thread.
+        self._reversible_count = 0
 
         # Subscribe to theme changes now that every visual element is
         # built.  ``bind_theme`` runs the callback synchronously so the
@@ -227,6 +233,8 @@ class MutationLogPanel(QFrame):
         # Insert before the stretch
         self._entries_layout.insertWidget(self._entries_layout.count() - 1, entry)
         self._entries.append(entry)
+        if record.reversible:
+            self._reversible_count += 1
         self._update_count()
 
     def entry_count(self) -> int:
@@ -237,6 +245,8 @@ class MutationLogPanel(QFrame):
         """Remove the last N entries (after undo)."""
         for _ in range(min(count, len(self._entries))):
             entry = self._entries.pop()
+            if entry.record.reversible:
+                self._reversible_count -= 1
             self._entries_layout.removeWidget(entry)
             entry.deleteLater()
         self._update_count()
@@ -247,12 +257,13 @@ class MutationLogPanel(QFrame):
             self._entries_layout.removeWidget(entry)
             entry.deleteLater()
         self._entries.clear()
+        self._reversible_count = 0
         self._update_count()
 
     def _update_count(self) -> None:
         n = len(self._entries)
         self._count_label.setText(f"{n} mutation{'s' if n != 1 else ''}")
-        self._undo_btn.setEnabled(n > 0 and any(e.record.reversible for e in self._entries))
+        self._undo_btn.setEnabled(self._reversible_count > 0)
 
     def _apply_styles(self, _tokens: object = None) -> None:
         """Refresh panel chrome (title / count / undo button) and walk entries.

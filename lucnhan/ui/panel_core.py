@@ -2697,6 +2697,20 @@ class LucNhanPanelCore(QWidget):
                     history_panel.shutdown()
                 except Exception as e:  # defensive — never block teardown
                     log_debug(f"history panel shutdown skipped: {e}")
+            # Same for the mutation log (it binds the theme) and the
+            # composer (it binds the theme and owns the skill popup).
+            mutation_panel = getattr(self, "_mutation_panel", None)
+            if mutation_panel is not None and hasattr(mutation_panel, "shutdown"):
+                try:
+                    mutation_panel.shutdown()
+                except Exception as e:  # defensive — never block teardown
+                    log_debug(f"mutation panel shutdown skipped: {e}")
+            input_area = getattr(self, "_input_area", None)
+            if input_area is not None and hasattr(input_area, "shutdown"):
+                try:
+                    input_area.shutdown()
+                except Exception as e:  # defensive — never block teardown
+                    log_debug(f"input area shutdown skipped: {e}")
             # Stop the token-display debounce timer so a late flush
             # cannot touch the context bar after teardown.
             token_timer = getattr(self, "_token_display_timer", None)
