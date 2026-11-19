@@ -971,7 +971,9 @@ class SessionControllerBase:
     def cancel_all(self) -> None:
         """Cancel every running agent across all tabs."""
         self._pending_messages.clear()
-        for runner in self._runners.values():
+        # Snapshot: an agent thread pops its own runner from ``_runners`` as
+        # it finishes, and iterating the live dict then raises.
+        for runner in tuple(self._runners.values()):
             runner.cancel()
 
     def queue_message(self, text: str) -> None:

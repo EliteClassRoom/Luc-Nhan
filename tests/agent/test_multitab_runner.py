@@ -193,6 +193,28 @@ class TestMultiTabRunner(unittest.TestCase):
         self.ctrl.cancel_all()
         self.assertEqual(sorted(cancelled), ["tab-0", "tab-1", "tab-2"])
 
+    def test_cancel_all_survives_runners_leaving_the_map(self):
+        """Agents pop their own runner when they finish, mid-iteration."""
+        cancelled: list[str] = []
+        ctrl = self.ctrl
+
+        def _make_fake(name: str):
+            class _FakeRunner:
+                def cancel(self) -> None:
+                    cancelled.append(name)
+                    ctrl._runners.pop(name, None)
+
+            return _FakeRunner()
+
+        for i in range(3):
+            tid = f"tab-{i}"
+            ctrl._sessions[tid] = ctrl.session  # type: ignore[index]
+            ctrl._runners[tid] = _make_fake(tid)  # type: ignore[assignment]
+
+        ctrl.cancel_all()
+
+        self.assertEqual(len(cancelled), 3)
+
     def test_shutdown_cancels_all_runners(self):
         cancelled = []
 
