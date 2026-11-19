@@ -7,6 +7,7 @@ import tempfile
 import textwrap
 import unittest
 
+from lucnhan.memory import notes
 from lucnhan.memory.notes import (
     extract_inline_addresses,
     extract_inline_tags,
@@ -135,6 +136,18 @@ class TestListNotes(unittest.TestCase):
             titles = {n.title for n in notes}
             self.assertIn("Index", titles)
             self.assertIn("handler", titles)
+
+    def test_oversized_note_is_read_partially(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "big.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("# big\n\n## Summary\n")
+                f.write("x" * (notes._NOTE_MAX_CHARS + 5000))
+
+            notes_list = list_notes(tmp)
+
+            assert len(notes_list) == 1
+            assert len(notes_list[0].body) <= notes._NOTE_MAX_CHARS
 
 
 if __name__ == "__main__":

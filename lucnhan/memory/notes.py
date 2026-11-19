@@ -237,6 +237,10 @@ def _genre_from_path(path: str) -> str:
     return parent
 
 
+# Characters read from one note during a listing (~2 MiB of ASCII).
+_NOTE_MAX_CHARS = 2 * 1024 * 1024
+
+
 def list_notes(notes_dir: str) -> list[ParsedNote]:
     """Walk *notes_dir* and parse every ``*.md`` file (one level deep).
 
@@ -256,7 +260,10 @@ def list_notes(notes_dir: str) -> list[ParsedNote]:
             full = os.path.join(root, fn)
             try:
                 with open(full, encoding="utf-8", errors="replace") as f:
-                    text = f.read()
+                    # Frontmatter and the leading sections are what parsing
+                    # uses; a runaway note should not be read whole into
+                    # memory on every listing.
+                    text = f.read(_NOTE_MAX_CHARS)
             except OSError:
                 continue
             parsed = parse_note(text, path=full)
