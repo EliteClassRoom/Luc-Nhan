@@ -213,7 +213,9 @@ def test_manifest_list_skips_invalid_existing_key(tmp_path: Path) -> None:
 
 def test_valid_current_id_shape_remains_accepted(tmp_path: Path) -> None:
     history = _history(tmp_path)
-    expected = os.path.normcase(os.path.realpath(str(Path(history._dir) / "abc123def456.json")))
+    # The guard hands back the caller-visible path; only the containment
+    # comparison is case-insensitive.
+    expected = os.path.realpath(str(Path(history._dir) / "abc123def456.json"))
     assert history._session_path("abc123def456") == expected
     assert isinstance(HISTORY_TITLE_MAX_CHARS, int)
 
