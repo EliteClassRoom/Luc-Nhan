@@ -438,6 +438,8 @@ class TestSessionHistory(unittest.TestCase):
         effective = os.path.basename(written)[: -len(".json")]
         self.assertIn(effective, {row["id"] for row in history.list_sessions()})
         self.assertIsNotNone(history.load_session(effective))
+        # Loading by the id still held in memory must find the same file.
+        self.assertIsNotNone(history.load_session("../x"))
 
     def test_unusable_ids_that_share_a_stem_keep_apart(self):
         """``a b`` and ``a/b`` reduce to the same stem, so they must differ."""

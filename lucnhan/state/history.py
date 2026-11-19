@@ -344,14 +344,15 @@ class SessionHistory:
     def _session_path(self, session_id: str) -> str | None:
         """Resolve a safe absolute path for *session_id* inside ``self._dir``.
 
-        Returns ``None`` when the id fails validation or when the resolved
-        path would escape ``self._dir``. Every public boundary that touches
-        a session file must call this first (spec §11.1).
+        Returns ``None`` when the resolved path would escape ``self._dir``.
+        Every public boundary that touches a session file must call this
+        first (spec §11.1). The id goes through :meth:`_effective_session_id`
+        like :meth:`_writable_session_path` does, so load and delete find the
+        file a hostile/foreign id was saved under instead of returning None.
         """
-        if not _validate_session_id(session_id):
-            return None
+        effective = self._effective_session_id(session_id)
         root = os.path.realpath(self._dir)
-        candidate = os.path.realpath(os.path.join(root, f"{session_id}.json"))
+        candidate = os.path.realpath(os.path.join(root, f"{effective}.json"))
         # Compare case-insensitively on Windows but hand back the caller's
         # casing, so a saved path is not silently lowercased.
         try:
@@ -725,10 +726,12 @@ class SessionHistory:
           * Sanitizes ``metadata`` string values (including ``active_goal``)
             before constructing the ``SessionState``.
           * Sanitizes subagent log keys.
-          * Validates ``session_id`` at the storage boundary (spec §11.1):
-            rejects empty, ``.``, ``..``, path separators, NUL, or any
-            string outside ``[A-Za-z0-9_-]{1,32}`` before constructing
-            a path. Returns ``None`` without touching the filesystem.
+          * Resolves ``session_id`` at the storage boundary (spec §11.1)
+            through :meth:`_writable_session_path`, the same rule
+            :meth:`save_session` writes with: a valid id is used verbatim
+            and an unusable one falls back to its sanitized file stem.
+            Both halves of a save/load pair must agree, otherwise a
+            hostile persisted id reads one file and writes another.
         """
         path = self._session_path(session_id)
         if path is None:
