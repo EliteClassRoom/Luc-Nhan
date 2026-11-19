@@ -32,6 +32,7 @@ from .qt_compat import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    Qt,
     QTableWidget,
     QTableWidgetItem,
     QTimer,
@@ -406,6 +407,7 @@ class KnowledgePanel(QWidget):
         except Exception:
             self._detail.setPlainText(str(raw))
         title_cell = self._table.item(idx, 1)
+        self._detail_title.setTextFormat(Qt.TextFormat.PlainText)
         self._detail_title.setText(f"Selected record — {title_cell.text() if title_cell is not None else ''}")
 
 

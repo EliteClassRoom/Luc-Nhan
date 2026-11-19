@@ -284,6 +284,8 @@ class _AddProviderDialog(QDialog):
         layout.addLayout(form)
 
         self._error_label = QLabel()
+        # The messages quote the typed provider name.
+        self._error_label.setTextFormat(Qt.TextFormat.PlainText)
         self._error_label.setStyleSheet(get_error_label_style())
         self._error_label.hide()
         layout.addWidget(self._error_label)

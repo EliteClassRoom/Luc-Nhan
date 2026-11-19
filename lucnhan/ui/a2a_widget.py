@@ -625,6 +625,7 @@ class A2ABridgeWidget(QWidget):
             self._agent_count_label.setText("0 agents")
             self._send_btn.setEnabled(False)
             if status is not None:
+                status.setTextFormat(Qt.TextFormat.PlainText)
                 status.setText(f"Discovery failed: {exc}")
             return
         finally:

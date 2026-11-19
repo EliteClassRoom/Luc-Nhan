@@ -340,6 +340,7 @@ class CollapsibleSection(QFrame):
 
         self._title_label = QLabel(title)
         self._title_label.setObjectName("tool_header")
+        self._title_label.setTextFormat(Qt.TextFormat.PlainText)
         header.addWidget(self._toggle_btn)
         header.addWidget(self._title_label, 1)
         layout.addLayout(header)
@@ -1507,6 +1508,7 @@ class ResearchNoteWidget(QFrame):
         # Header row
         header = QHBoxLayout()
         self._title_label = QLabel(title)
+        self._title_label.setTextFormat(Qt.TextFormat.PlainText)
         header.addWidget(self._title_label)
 
         self._genre_label = QLabel(f"#{genre}")
