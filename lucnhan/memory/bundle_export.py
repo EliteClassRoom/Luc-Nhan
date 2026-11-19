@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC
@@ -175,7 +176,12 @@ def export_workspace(
 
     # Write ZIP
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    # Write beside the target and move it into place: exporting over an
+    # earlier bundle used to truncate it before the first record was
+    # serialized, so a failure left neither the old nor a usable new file.
+    temp_path = output_path.with_name(f"{output_path.name}.tmp")
+    temp_path.unlink(missing_ok=True)
+    with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
         # Write manifest first
         manifest_json = json.dumps(
             {
@@ -208,6 +214,8 @@ def export_workspace(
         # Write MEMORY.md
         if paths.markdown.exists():
             zf.writestr("MEMORY.md", paths.markdown.read_bytes())
+
+    os.replace(temp_path, output_path)
 
     return BundleExportResult(
         bundle_path=output_path,

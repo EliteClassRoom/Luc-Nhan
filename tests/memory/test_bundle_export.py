@@ -6,6 +6,8 @@ import re
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from lucnhan.memory.bundle_export import export_workspace
 from lucnhan.memory.bundle_import import import_workspace_bundle
 from lucnhan.memory.repository import SQLiteKnowledgeRepository
@@ -58,6 +60,36 @@ class TestExport:
             assert "manifest.json" in names
             assert "records/facts.jsonl" in names
             assert "records/entities.jsonl" in names
+
+    def test_a_failed_reexport_leaves_the_previous_bundle_usable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _store, repo, locator, mid = _seed_workspace(tmp_path)
+        repo.upsert_memory(
+            KnowledgeMemory(
+                id=new_record_id("fact"),
+                binary_id=mid,
+                type="algorithm",
+                title="RC4",
+                content="Uses RC4",
+                confidence=0.8,
+            )
+        )
+        output = tmp_path / "bundle.zip"
+        export_workspace(locator.binary(mid), repo, output)
+        before = output.read_bytes()
+
+        def _explode(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("lucnhan.memory.bundle_export.zipfile.ZipFile.writestr", _explode)
+
+        with pytest.raises(OSError):
+            export_workspace(locator.binary(mid), repo, output)
+
+        assert output.read_bytes() == before
+        with zipfile.ZipFile(output) as zf:
+            assert "manifest.json" in zf.namelist()
 
     def test_export_manifest_has_correct_counts(self, tmp_path: Path) -> None:
         _store, repo, locator, mid = _seed_workspace(tmp_path)
