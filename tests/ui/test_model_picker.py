@@ -733,3 +733,32 @@ class TestModelPickerNative(unittest.TestCase):
         target = self.app.focusWidget() or self.picker
         self.app.sendEvent(target, self._key_event(self._key("Key_Escape")))
         self.app.processEvents()
+
+
+class TestModelCatalogPersistence(unittest.TestCase):
+    def test_catalog_survives_a_restart(self) -> None:
+        import tempfile
+
+        from lucnhan.ui.model_picker import ModelCatalogCache
+
+        with tempfile.TemporaryDirectory() as base:
+            path = os.path.join(base, "catalog.json")
+            first = ModelCatalogCache(path)
+            first.store("openai", [_info("gpt-4o")])
+
+            reloaded = ModelCatalogCache(path)
+            self.assertEqual(reloaded.get("openai"), [_info("gpt-4o")])
+
+    def test_oversized_catalog_does_not_raise(self) -> None:
+        import tempfile
+
+        from lucnhan.ui.model_picker import ModelCatalogCache
+
+        with tempfile.TemporaryDirectory() as base:
+            path = os.path.join(base, "catalog.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"schema": 1, "connections": {"openai": [')
+                f.write(" " * (ModelCatalogCache._MAX_BYTES + 100))
+                f.write("]}}")
+
+            self.assertIsNone(ModelCatalogCache(path).get("openai"))

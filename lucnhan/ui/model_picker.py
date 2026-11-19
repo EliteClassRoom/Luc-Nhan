@@ -126,6 +126,11 @@ class ModelCatalogCache:
 
     _SCHEMA = 1
 
+    #: Read cap for the persisted catalog (a runaway file must not stall
+    #: plugin start). A truncated file fails the JSON parse and the cache
+    #: starts empty, which a Refresh refills.
+    _MAX_BYTES = 2 * 1024 * 1024
+
     def __init__(self, persist_path: str | None = None) -> None:
         self._by_connection: dict[str, list[Any]] = {}
         self._persist_path = persist_path
@@ -139,7 +144,7 @@ class ModelCatalogCache:
             return
         try:
             with open(self._persist_path, encoding="utf-8") as f:
-                data = json.load(f)
+                data = json.loads(f.read(self._MAX_BYTES))
         except (OSError, ValueError):
             return
         if not isinstance(data, dict) or data.get("schema") != self._SCHEMA:
