@@ -1087,6 +1087,8 @@ class SettingsDialog(QDialog):
         model_layout.addWidget(self._fetch_btn)
 
         self._model_status = QLabel()
+        # Carries a provider error body on a failed model fetch.
+        self._model_status.setTextFormat(Qt.TextFormat.PlainText)
         self._model_status.setStyleSheet(get_hint_status_style())
         self._model_status.setWordWrap(True)
         # Share the row's extra space with the combo: at narrow widths

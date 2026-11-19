@@ -528,6 +528,8 @@ class HistoryPanel(QFrame):
         status_layout.addStretch(1)
 
         self._status_label = QLabel()
+        # Status text may quote an exception message.
+        self._status_label.setTextFormat(Qt.TextFormat.PlainText)
         # Plain-text only — the status message is derived from internal
         # state ("No saved chats…", "Loading chats…", the error string
         # from ``set_error``) so it never carries user-supplied HTML.
