@@ -421,6 +421,7 @@ def _handle_report_command(loop: AgentLoop, raw_scope: str) -> Generator[TurnEve
         f"event={len(draft_event_text)} sha={_report_draft_fingerprint(report_md)}"
     )
     yield TurnEvent.text_done(draft_event_text)
+    loop._drain_queue(loop._user_answer_queue)  # drop stale clicks first
     yield TurnEvent.user_question(
         "Write the verified report to disk?",
         ["Write report", "Cancel"],

@@ -13,7 +13,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from lucnhan.mcp.bridge import _mcp_schema_to_parameters, register_mcp_tools
+from lucnhan.mcp.bridge import _mcp_schema_to_parameters, register_mcp_tools, safe_server_name
 from lucnhan.mcp.client import MCPClient
 from lucnhan.mcp.config import MCPServerConfig, load_mcp_config, save_mcp_config
 from lucnhan.mcp.manager import MCPManager
@@ -62,6 +62,25 @@ class TestMCPConfig(unittest.TestCase):
             self.assertTrue(test_srv.enabled)
         finally:
             os.unlink(path)
+
+    def test_one_bad_entry_does_not_drop_the_others(self):
+        """A malformed ``timeout`` must cost only its own server."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(
+                {
+                    "mcpServers": {
+                        "good": {"command": "python"},
+                        "bad": {"command": "python", "timeout": "30s"},
+                    }
+                },
+                f,
+            )
+            path = f.name
+        try:
+            servers = load_mcp_config(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual([s.name for s in servers], ["good"])
 
     def test_load_missing_file(self):
         servers = load_mcp_config("/nonexistent/mcp.json")
@@ -119,6 +138,11 @@ class TestMCPProtocol(unittest.TestCase):
         self.assertIn('"method": "initialize"', text)
         self.assertIn('"id": 42', text)
         self.assertIn('"foo": "bar"', text)
+
+    def test_content_length_counts_utf8_bytes(self):
+        data = encode_jsonrpc_request("tools/call", {"name": "réad"}, id=7)
+        header, _sep, body = data.partition(b"\r\n\r\n")
+        self.assertEqual(header.decode(), f"Content-Length: {len(body)}")
 
     def test_decode_response(self):
         resp = decode_jsonrpc_response('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}')
@@ -237,11 +261,12 @@ class TestMCPBridge(unittest.TestCase):
         self.assertEqual(count, 2)
 
         names = registry.list_names()
-        self.assertIn("mcp_test_server_read_data", names)
-        self.assertIn("mcp_test_server_write_data", names)
+        prefix = f"mcp_{safe_server_name('test-server')}_"
+        self.assertIn(prefix + "read_data", names)
+        self.assertIn(prefix + "write_data", names)
 
         # Check tool definitions are properly formed
-        read_tool = registry.get("mcp_test_server_read_data")
+        read_tool = registry.get(prefix + "read_data")
         self.assertIsNotNone(read_tool)
         self.assertIn("[MCP:test-server]", read_tool.description)
         self.assertEqual(read_tool.category, "mcp:test-server")
@@ -273,12 +298,13 @@ class TestMCPBridge(unittest.TestCase):
         registry = ToolRegistry()
         register_mcp_tools(mock_client, registry)
 
-        defn = registry.get("mcp_srv_peek")
+        name = f"mcp_{safe_server_name('srv')}_peek"
+        defn = registry.get(name)
         self.assertIsNotNone(defn)
         self.assertFalse(defn.mutating)
         self.assertFalse(defn.requires_approval)
         # It must survive the filter unattended subagents use.
-        self.assertIsNotNone(registry.without_approval_gated_tools().get("mcp_srv_peek"))
+        self.assertIsNotNone(registry.without_approval_gated_tools().get(name))
 
     def test_register_mcp_tools_strips_markers_from_description(self):
         """Server-supplied description text must not smuggle role markers."""
@@ -297,7 +323,7 @@ class TestMCPBridge(unittest.TestCase):
         registry = ToolRegistry()
         register_mcp_tools(mock_client, registry)
 
-        desc = registry.get("mcp_srv_tool1").description
+        desc = registry.get(f"mcp_{safe_server_name('srv')}_tool1").description
         self.assertNotIn("<system>", desc)
         self.assertNotIn("  ", desc)  # whitespace collapsed
 
@@ -381,7 +407,10 @@ class TestMCPStartTimeout(unittest.TestCase):
 
         mgr = MCPManager()
         registry = ToolRegistry()
-        registry.register(ToolDefinition(name="mcp_stale_old", description="", parameters=[], handler=lambda **_: "x"))
+        stale_prefix = f"mcp_{safe_server_name('stale')}_"
+        registry.register(
+            ToolDefinition(name=stale_prefix + "old", description="", parameters=[], handler=lambda **_: "x")
+        )
         config = MCPServerConfig(name="stale", command="whatever")
 
         class FakeClient:
@@ -405,7 +434,7 @@ class TestMCPStartTimeout(unittest.TestCase):
                 patch("lucnhan.mcp.bridge.register_mcp_tools", lambda client, registry, prefix="": 0),
             ):
                 mgr._start_one(config, registry, None, generation=mgr._generation)
-            self.assertIsNone(registry.get("mcp_stale_old"))
+            self.assertIsNone(registry.get(stale_prefix + "old"))
         finally:
             mgr.stop_all()
 
@@ -433,24 +462,24 @@ class TestMCPSafeNames:
     def test_space_in_tool_name_is_underscored(self) -> None:
         registry = ToolRegistry()
         register_mcp_tools(self._client("my server", ["read file"]), registry)
-        assert registry.list_names() == ["mcp_my_server_read_file"]
+        assert registry.list_names() == [f"mcp_{safe_server_name('my server')}_read_file"]
 
     def test_long_name_is_capped_at_the_provider_limit(self) -> None:
         registry = ToolRegistry()
         register_mcp_tools(self._client("srv", ["x" * 90]), registry)
         (name,) = registry.list_names()
         assert len(name) == 64
-        assert name.startswith("mcp_srv_x")
+        assert name.startswith(f"mcp_{safe_server_name('srv')}_x")
 
     def test_all_non_ascii_name_gets_a_placeholder(self) -> None:
         registry = ToolRegistry()
         register_mcp_tools(self._client("srv", ["读取文件"]), registry)
-        assert registry.list_names() == ["mcp_srv_tool"]
+        assert registry.list_names() == [f"mcp_{safe_server_name('srv')}_tool"]
 
     def test_partially_non_ascii_name_keeps_its_ascii_letters(self) -> None:
         registry = ToolRegistry()
         register_mcp_tools(self._client("srv", ["đọc tệp"]), registry)
-        assert registry.list_names() == ["mcp_srv_c_t_p"]
+        assert registry.list_names() == [f"mcp_{safe_server_name('srv')}_c_t_p"]
 
     def test_long_prefix_leaves_room_for_the_tool(self) -> None:
         registry = ToolRegistry()
@@ -465,21 +494,36 @@ class TestMCPSafeNames:
         client = self._client("srv", ["t"])
         client.get_tools.return_value[0].description = "d" * 500
         register_mcp_tools(client, registry)
-        assert len(registry.get("mcp_srv_t").description) <= 73
+        assert len(registry.get(f"mcp_{safe_server_name('srv')}_t").description) <= 73
+
+    def test_colliding_server_names_get_distinct_prefixes(self) -> None:
+        """``a-b`` and ``a.b`` must not share a tool prefix."""
+        assert safe_server_name("a-b") != safe_server_name("a.b")
+        # Readable part is preserved for both.
+        assert safe_server_name("a-b").startswith("a_b_")
+        assert safe_server_name("a.b").startswith("a_b_")
 
     def test_duplicate_names_are_disambiguated(self) -> None:
         registry = ToolRegistry()
         register_mcp_tools(self._client("srv", ["dup", "dup"]), registry)
-        assert sorted(registry.list_names()) == ["mcp_srv_dup", "mcp_srv_dup_2"]
+        prefix = f"mcp_{safe_server_name('srv')}_"
+        assert sorted(registry.list_names()) == [prefix + "dup", prefix + "dup_2"]
 
     def test_existing_registry_entry_is_not_overwritten(self) -> None:
         registry = ToolRegistry()
+        prefix = f"mcp_{safe_server_name('srv')}_"
         registry.register(
-            ToolDefinition(name="mcp_srv_dup", category="native", description="n", parameters=[], handler=lambda: "n")
+            ToolDefinition(
+                name=f"mcp_{safe_server_name('srv')}_dup",
+                category="native",
+                description="n",
+                parameters=[],
+                handler=lambda: "n",
+            )
         )
         register_mcp_tools(self._client("srv", ["dup"]), registry)
-        assert registry.get("mcp_srv_dup").category == "native"
-        assert registry.get("mcp_srv_dup_2") is not None
+        assert registry.get(prefix + "dup").category == "native"
+        assert registry.get(prefix + "dup_2") is not None
 
 
 class TestKillLeftovers:

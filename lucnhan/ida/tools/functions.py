@@ -211,11 +211,14 @@ def search_functions(
     # No IDA → fall back to direct enumeration so the contract is preserved.
     results = []
     q = query.lower()
+    # ``search_function_names`` treats a non-positive limit as unlimited; the
+    # fallback must agree or the same query returns one row instead of all.
+    cap = limit if limit > 0 else 0
     for ea in idautils.Functions():
         name = ida_name.get_name(ea)
         if q in name.lower():
             results.append(f"  0x{ea:x}  {name}")
-            if len(results) >= limit:
+            if cap and len(results) >= cap:
                 break
 
     if not results:

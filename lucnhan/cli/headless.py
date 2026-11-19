@@ -745,7 +745,11 @@ def cmd_prompt_remote(args: argparse.Namespace) -> None:
 def cmd_answer(args: argparse.Namespace) -> None:
     """Send an answer to a running server."""
     url = f"{args.server}/answer"
-    result = _http_post(url, args.token, {"run_id": args.run_id, "answer": args.answer})
+    payload: dict[str, object] = {"run_id": args.run_id, "answer": args.answer}
+    question_id = getattr(args, "question_id", None)
+    if isinstance(question_id, str) and question_id:
+        payload["question_id"] = question_id
+    result = _http_post(url, args.token, payload)
     _die_on_error(result, "answer")
     print(json.dumps(result))
 
@@ -761,11 +765,11 @@ def cmd_tool_approval_remote(args: argparse.Namespace) -> None:
     }
     decision = _canonical.get(args.decision, args.decision)
     url = f"{args.server}/tool-approval"
-    result = _http_post(
-        url,
-        args.token,
-        {"run_id": args.run_id, "decision": decision},
-    )
+    payload: dict[str, object] = {"run_id": args.run_id, "decision": decision}
+    tool_call_id = getattr(args, "tool_call_id", None)
+    if isinstance(tool_call_id, str) and tool_call_id:
+        payload["tool_call_id"] = tool_call_id
+    result = _http_post(url, args.token, payload)
     _die_on_error(result, "tool-approval")
     print(json.dumps(result))
 
@@ -873,6 +877,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_answer.add_argument("--token", help="Bearer auth token")
     p_answer.add_argument("--answer", required=True, help="Your answer")
     p_answer.add_argument("--run-id", required=True, help="The run_id to answer for")
+    p_answer.add_argument(
+        "--question-id",
+        help="Pin the answer to one question event (stale answers get 409)",
+    )
     p_answer.set_defaults(func=cmd_answer)
 
     # tool-approval
@@ -884,6 +892,10 @@ def build_parser() -> argparse.ArgumentParser:
         "decision",
         choices=["allow", "allow_all", "deny", "approve"],
         help="Decision: allow, allow_all, deny, or approve (alias for allow)",
+    )
+    p_ta.add_argument(
+        "--tool-call-id",
+        help="Pin the decision to one tool-call event (stale decisions get 409)",
     )
     p_ta.set_defaults(func=cmd_tool_approval_remote)
 

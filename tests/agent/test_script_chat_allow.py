@@ -11,14 +11,15 @@ from tests.agent.test_idapython_docs_gate import _make_loop
 
 def _drive(loop, tool_name: str, decision: str | None):
     """Run the approval gate; return (approved, prompt_count)."""
-    if decision is not None:
-        loop._tool_approval_queue.put(decision)
     gen = loop._wait_for_approval(ToolCall(id="t", name=tool_name, arguments={}))
     prompts = 0
     try:
         while True:
             next(gen)
             prompts += 1
+            if decision is not None:
+                loop._tool_approval_queue.put(decision)
+                decision = None
     except StopIteration as stop:
         return stop.value, prompts
 

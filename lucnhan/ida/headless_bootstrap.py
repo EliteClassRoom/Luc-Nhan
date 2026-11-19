@@ -103,12 +103,19 @@ def _load_bootstrap_config() -> dict | None:
         return None
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
     except FileNotFoundError:
         _clean_exit_ida(3, f"Bootstrap config file not found: {path}")
+    except OSError as e:
+        _clean_exit_ida(3, f"Bootstrap config unreadable: {e}")
     except json.JSONDecodeError as e:
         _clean_exit_ida(3, f"Invalid bootstrap config JSON: {e}")
-    return None
+    # A valid non-object (``[]``/``"x"``/``42``) would reach ``config.get``
+    # outside main()'s try and die with a bare AttributeError — no JSON
+    # error line and no clean IDA exit.
+    if not isinstance(data, dict):
+        _clean_exit_ida(3, "Bootstrap config must be a JSON object")
+    return data
 
 
 def validate_bootstrap_memory_source(value: object) -> IdentityRequest | None:

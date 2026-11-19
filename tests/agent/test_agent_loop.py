@@ -818,6 +818,45 @@ class TestAgentLoop(unittest.TestCase):
             next(gen)
         self.assertTrue(done.exception.value)
 
+    def test_stale_question_id_is_not_applied_to_the_next_request(self):
+        loop = self._make_loop(MockProvider(responses=[]))
+        gen = loop._handle_ask_user_tool(ToolCall(id="current", name="ask_user", arguments={"question": "q"}))
+        next(gen)
+
+        self.assertFalse(loop.submit_user_answer("stale", "stale"))
+        self.assertTrue(loop._user_answer_queue.empty())
+
+        self.assertTrue(loop.submit_user_answer("real", "current"))
+        results: list[str] = []
+        with self.assertRaises(StopIteration):
+            while True:
+                event = next(gen)
+                if event.tool_result is not None:
+                    results.append(event.tool_result)
+        self.assertIn("real", "".join(results))
+
+    def test_a_decision_queued_before_the_request_starts_is_stale(self):
+        """A click on a dead widget must not auto-answer the next prompt."""
+        loop = self._make_loop(MockProvider(responses=[]))
+        loop.submit_tool_approval("deny")  # widget from a cancelled turn
+        gen = loop._wait_for_approval(ToolCall(id="current", name="set_comment", arguments={}))
+
+        next(gen)  # publishes the request; the stale deny is dropped
+        self.assertTrue(loop._tool_approval_queue.empty())
+
+        loop.submit_tool_approval("allow", "current")
+        with self.assertRaises(StopIteration) as done:
+            while True:
+                next(gen)
+        self.assertTrue(done.exception.value)  # allow won, the deny was stale
+
+    def test_cancel_drains_leftover_decisions(self):
+        loop = self._make_loop(MockProvider(responses=[]))
+        loop.submit_tool_approval("deny")
+        loop.cancel()
+        self.assertTrue(loop._tool_approval_queue.empty())
+        self.assertTrue(loop._user_answer_queue.empty())
+
     def test_allow_all_only_flips_the_matching_flag(self):
         loop = self._make_loop(MockProvider(responses=[]))
         gen = loop._wait_for_approval(ToolCall(id="x", name="set_comment", arguments={}))
@@ -835,9 +874,9 @@ class TestAgentLoop(unittest.TestCase):
         Returns the normalized ``options`` list from the event metadata.
         """
         tc = ToolCall(id="call_ask_user_test", name="ask_user", arguments=arguments)
-        loop.submit_user_answer("")  # unblock the _wait_for_queue() call
         gen = loop._handle_ask_user_tool(tc)
         question_event = next(gen)
+        loop.submit_user_answer("")  # unblock the _wait_for_queue() call
         # Drain remaining events (TOOL_RESULT) so the generator closes cleanly
         try:
             while True:
@@ -1613,6 +1652,44 @@ def run_glm_stream(
     generator = loop._stream_llm_turn_inner("system", _glm_tool_schema(tools))
     events, outcome = _drain_generator_with_return(generator)
     return outcome, events
+
+
+class TestUnterminatedToolCallIsFlushed(unittest.TestCase):
+    """A tool call the provider never closed must not be dropped.
+
+    Text-protocol providers assemble the call server-side; when the stream
+    ends before the closing tag the call used to vanish (no ``tool_call_done``,
+    no entry in ``tool_calls``) and the turn silently lost the work.
+    """
+
+    def test_stream_end_closes_an_open_tool_call(self) -> None:
+        chunks = [
+            StreamChunk(tool_call_id="call_open", tool_name="read_bytes", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_open", tool_name="read_bytes", tool_args_delta='{"address": 4096}'),
+            StreamChunk(finish_reason="stop"),
+        ]
+        loop = _make_glm_loop([chunks], tools=_echo_registry())
+        events, outcome = _drain_generator_with_return(
+            loop._stream_llm_turn_inner("system", _glm_tool_schema(_echo_registry()))
+        )
+        self.assertEqual([call.id for call in outcome.tool_calls], ["call_open"])
+        self.assertEqual(outcome.tool_calls[0].arguments, {"address": 4096})
+        self.assertIn("call_open", [e.tool_call_id for e in events if e.type == TurnEventType.TOOL_CALL_DONE])
+
+    def test_truncated_arguments_still_reach_the_malformed_path(self) -> None:
+        chunks = [
+            StreamChunk(tool_call_id="call_cut", tool_name="read_bytes", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_cut", tool_name="read_bytes", tool_args_delta='{"address":'),
+            StreamChunk(finish_reason="length"),
+        ]
+        loop = _make_glm_loop([chunks], tools=_echo_registry())
+        events, outcome = _drain_generator_with_return(
+            loop._stream_llm_turn_inner("system", _glm_tool_schema(_echo_registry()))
+        )
+        # GLM strict: the cut call is discarded with a reason, not executed
+        # with empty arguments.
+        self.assertEqual(outcome.tool_calls, [])
+        self.assertIn("call_cut", [e.tool_call_id for e in events if e.type == TurnEventType.TOOL_CALL_DISCARDED])
 
 
 def _echo_registry() -> ToolRegistry:

@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
@@ -48,6 +49,18 @@ _DEFAULT_TIMEOUT = 300
 # Cap on a response body. The endpoint is external and untrusted, and
 # ``resp.read()`` without a size reads whatever it is given.
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+# Statuses worth another attempt: 429/5xx mean the server did not complete the
+# work, 4xx means it rejected the request outright. ``tasks.send`` is not
+# idempotent, so a retry re-runs the task under the same id — accepted cost.
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+def _may_retry(error: Exception) -> bool:
+    """True when *error* is worth another attempt."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in _RETRYABLE_STATUS
+    return isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError))
 
 
 def _read_json(resp: Any) -> Any:
@@ -74,6 +87,10 @@ class A2AClient:
     """
 
     def __init__(self, config: A2AClientConfig | None = None) -> None:
+        # A bare endpoint string is a frequent mistake: it satisfies the
+        # signature at runtime but every ``main_retries`` read then raises.
+        if isinstance(config, str):
+            raise TypeError(f"A2AClient expects A2AClientConfig, got str {config!r}")
         self._config = config or A2AClientConfig()
         self._sessions: dict[str, _A2ASession] = {}
 
@@ -195,6 +212,32 @@ class _A2ASession:
         if self._callback:
             self._callback(event)
 
+    def _pick_response(self, data: Any) -> dict[str, Any] | None:
+        """Return the JSON-RPC envelope that answers this task, if any.
+
+        A server may answer with a batch (a list) and, since the same task id
+        is resent on every attempt, may answer with an envelope for an older
+        attempt. Only a matching id — or an envelope carrying no id at all —
+        is accepted; anything else must not be reported as this task's result.
+        """
+        envelope: dict[str, Any] | None
+        if isinstance(data, dict):
+            envelope = data
+        elif isinstance(data, list):
+            envelope = None
+            for item in data:
+                if isinstance(item, dict) and item.get("id") == self.task.id:
+                    envelope = item
+                    break
+            if envelope is None:
+                return None
+        else:
+            return None
+        response_id = envelope.get("id")
+        if response_id is not None and response_id != self.task.id:
+            return None
+        return envelope
+
     def _run(self) -> None:
         """Execute the A2A task via JSON-RPC over HTTPS."""
         self._emit(
@@ -238,17 +281,44 @@ class _A2ASession:
                 with urllib.request.urlopen(req, timeout=self._config.timeout) as resp:
                     response_data = _read_json(resp)
 
-                if "result" in response_data:
-                    result: Any = response_data["result"]
+                envelope = self._pick_response(response_data)
+                if envelope is None:
+                    last_error = f"Response did not answer task {self.task.id}"
+                    self.task.error = last_error
+                    self.task.status = A2ATaskStatus.FAILED
+                    self._emit(
+                        A2AEvent(
+                            type=A2AEventType.TASK_FAILED,
+                            task_id=self.task.id,
+                            error=last_error,
+                        )
+                    )
+                    return
+
+                if "result" in envelope:
+                    result: Any = envelope["result"]
                     if isinstance(result, dict):
                         self.task.result = str(result.get("text", result.get("result", "")))
-                        self.task.status = A2ATaskStatus.COMPLETED
                     else:
                         self.task.result = str(result)
-                        self.task.status = A2ATaskStatus.COMPLETED
-                elif "error" in response_data:
-                    err = response_data["error"]
+                    self.task.status = A2ATaskStatus.COMPLETED
+                elif "error" in envelope:
+                    err = envelope["error"]
                     last_error = err.get("message", str(err))
+                    self.task.error = last_error
+                    self.task.status = A2ATaskStatus.FAILED
+                    self._emit(
+                        A2AEvent(
+                            type=A2AEventType.TASK_FAILED,
+                            task_id=self.task.id,
+                            error=last_error,
+                        )
+                    )
+                    return
+                else:
+                    # A reply that is neither result nor error must not be
+                    # reported as a success — the task never finished.
+                    last_error = "Response carried neither result nor error"
                     self.task.error = last_error
                     self.task.status = A2ATaskStatus.FAILED
                     self._emit(
@@ -275,8 +345,14 @@ class _A2ASession:
             except Exception as e:
                 last_error = str(e)
                 log_debug(f"A2A attempt {attempt + 1} failed for task {self.task.id}: {e}")
-                if attempt < self._config.max_retries - 1:
-                    time.sleep(self._config.retry_backoff * (attempt + 1))
+                if attempt >= self._config.max_retries - 1 or not _may_retry(e):
+                    break
+                # ``wait`` returns early on cancel, so a stop during the
+                # backoff is not delayed by a full sleep.
+                # ponytail: an idempotency risk stays — a request that reached
+                # the server re-runs the task under the same id. Only
+                # transport failures and explicit "retry me" statuses qualify.
+                self._cancel.wait(self._config.retry_backoff * (attempt + 1))
 
         # All retries exhausted
         self.task.status = A2ATaskStatus.FAILED

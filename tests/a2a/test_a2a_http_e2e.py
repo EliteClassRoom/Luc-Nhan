@@ -32,7 +32,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 install_ida_mocks()
 
 from lucnhan.agent.a2a.client import _MAX_RESPONSE_BYTES, A2AClient, A2AClientConfig
-from lucnhan.agent.a2a.types import A2ATaskStatus, ExternalAgentConfig
+from lucnhan.agent.a2a.types import A2AEvent, A2AEventType, A2ATask, A2ATaskStatus, ExternalAgentConfig
 
 # ---------------------------------------------------------------------------
 # Test fixtures: a thread-local HTTP server with a configurable handler
@@ -285,6 +285,103 @@ class TestSendTask(unittest.TestCase):
         # FAILED with some mention of 500.
         self.assertEqual(task.status, A2ATaskStatus.FAILED)
         self.assertIn("500", task.error)
+
+
+class TestClientConstruction(unittest.TestCase):
+    def test_bare_endpoint_string_is_rejected(self) -> None:
+        with self.assertRaises(TypeError):
+            A2AClient("http://127.0.0.1:1")  # type: ignore[arg-type]
+
+    def test_config_is_accepted(self) -> None:
+        client = A2AClient(A2AClientConfig(timeout=5))
+        self.assertEqual(client._config.timeout, 5)
+
+
+class TestResponseCorrelation(unittest.TestCase):
+    """A reply must answer THIS task, or it is not a success."""
+
+    @staticmethod
+    def _drain(client: A2AClient, agent: ExternalAgentConfig, events: list[A2AEvent]) -> A2ATask:
+        task = client.send_task(agent, "correlate me", event_callback=events.append)
+        deadline = time.time() + 5.0
+        while task.status in (A2ATaskStatus.PENDING, A2ATaskStatus.RUNNING):
+            if time.time() > deadline:
+                break
+            time.sleep(0.02)
+        return task
+
+    def test_batch_reply_with_matching_id_completes(self) -> None:
+        with _MockA2AServer() as server:
+            client = A2AClient(A2AClientConfig(timeout=5, max_retries=1))
+            agent = ExternalAgentConfig(name="x", transport="a2a", endpoint=server.url)
+            # The batch cannot know the id in advance, so build it from the
+            # task: answer with a foreign id FIRST and the right one second.
+            _A2AServerHandler.behavior = [
+                {"status_code": 200, "body": [{"id": "other", "result": {"text": "wrong"}}]},
+            ]
+            task = self._drain(client, agent, [])
+            client.close()
+        # A foreign-only batch is not this task's answer.
+        self.assertEqual(task.status, A2ATaskStatus.FAILED)
+        self.assertIn("did not answer task", task.error)
+
+    def test_reply_without_result_or_error_fails(self) -> None:
+        with _MockA2AServer() as server:
+            _A2AServerHandler.behavior = [{"status_code": 200, "body": {"jsonrpc": "2.0"}}]
+            client = A2AClient(A2AClientConfig(timeout=5, max_retries=1))
+            agent = ExternalAgentConfig(name="x", transport="a2a", endpoint=server.url)
+            events: list[A2AEvent] = []
+            task = self._drain(client, agent, events)
+            client.close()
+        self.assertEqual(task.status, A2ATaskStatus.FAILED)
+        self.assertIsNotNone(task.error)
+        self.assertNotIn(A2AEventType.TASK_COMPLETED, [e.type for e in events])
+
+    def test_rejected_status_is_not_retried(self) -> None:
+        with _MockA2AServer() as server:
+            _A2AServerHandler.behavior = [{"status_code": 400, "body": {"error": {"message": "bad"}}}]
+            client = A2AClient(A2AClientConfig(timeout=5, max_retries=3, retry_backoff=0.01))
+            agent = ExternalAgentConfig(name="x", transport="a2a", endpoint=server.url)
+            task = self._drain(client, agent, [])
+            posts = _A2AServerHandler.call_count
+            client.close()
+        self.assertEqual(task.status, A2ATaskStatus.FAILED)
+        self.assertEqual(posts, 1, "a rejected request is not worth a retry")
+
+    def test_retryable_status_is_retried(self) -> None:
+        with _MockA2AServer() as server:
+            _A2AServerHandler.behavior = [
+                {"status_code": 503, "body": {"error": {"message": "busy"}}},
+                {"status_code": 200, "body": {"result": {"text": "done"}}},
+            ]
+            client = A2AClient(A2AClientConfig(timeout=5, max_retries=3, retry_backoff=0.01))
+            agent = ExternalAgentConfig(name="x", transport="a2a", endpoint=server.url)
+            task = self._drain(client, agent, [])
+            client.close()
+        self.assertEqual(task.status, A2ATaskStatus.COMPLETED)
+        self.assertEqual(task.result, "done")
+
+    def test_cancel_interrupts_the_retry_backoff(self) -> None:
+        with _MockA2AServer() as server:
+            _A2AServerHandler.behavior = [
+                {"status_code": 503, "body": {"error": {"message": "busy"}}},
+                {"status_code": 200, "body": {"result": {"text": "late"}}},
+            ]
+            client = A2AClient(A2AClientConfig(timeout=5, max_retries=4, retry_backoff=5.0))
+            agent = ExternalAgentConfig(name="x", transport="a2a", endpoint=server.url)
+            task = client.send_task(agent, "slow")
+            deadline = time.time() + 5.0
+            while _A2AServerHandler.call_count < 1 and time.time() < deadline:
+                time.sleep(0.02)
+            started = time.time()
+            client.cancel_task(task.id)
+            while task.status in (A2ATaskStatus.PENDING, A2ATaskStatus.RUNNING):
+                if time.time() - started > 4.0:
+                    break
+                time.sleep(0.02)
+            client.close()
+        self.assertEqual(task.status, A2ATaskStatus.CANCELLED)
+        self.assertLess(time.time() - started, 4.0, "cancel must not wait out the 5s backoff")
 
 
 class TestCleanup(unittest.TestCase):

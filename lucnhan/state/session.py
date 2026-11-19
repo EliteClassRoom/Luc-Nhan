@@ -373,7 +373,9 @@ class SessionState:
         out: list[Message] = []
         for idx in range(len(messages) - 1, -1, -1):
             msg = messages[idx]
-            if msg.role is not Role.TOOL or not msg.tool_results or idx >= cutoff:
+            # ``!=`` not ``is not``: tests/conftest.py purges stub modules,
+            # so ``Role`` here can be a different class object than the caller's.
+            if msg.role != Role.TOOL or not msg.tool_results or idx >= cutoff:
                 out.append(msg)
                 continue
             new_results: list[ToolResult] = []

@@ -589,11 +589,15 @@ class SessionControllerBase:
         return getattr(loop, "memory_service", None)
 
     def iter_runners(self):
-        """Yield ``(tab_id, runner)`` for every live runner."""
-        return iter(self._runners.items())
+        """Yield ``(tab_id, runner)`` for every live runner.
+
+        Snapshotted: agent threads pop from ``_runners`` when they finish, and
+        a live view raises ``RuntimeError`` if that happens mid-iteration.
+        """
+        return iter(list(self._runners.items()))
 
     def _running_count(self) -> int:
-        return sum(1 for r in self._runners.values() if r.agent_loop.is_running)
+        return sum(1 for r in list(self._runners.values()) if r.agent_loop.is_running)
 
     def has_free_slot(self) -> bool:
         """True if a new agent can start without exceeding the concurrency cap."""

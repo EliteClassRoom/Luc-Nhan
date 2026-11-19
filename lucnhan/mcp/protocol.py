@@ -38,7 +38,9 @@ def encode_jsonrpc_request(method: str, params: dict[str, Any] | None = None, id
         body["params"] = params
 
     payload = json.dumps(body)
-    frame = f"Content-Length: {len(payload)}\r\n\r\n{payload}"
+    # The header counts BYTES, not characters: a non-ASCII symbol name makes
+    # the two differ and a strict reader then waits for the wrong amount.
+    frame = f"Content-Length: {len(payload.encode('utf-8'))}\r\n\r\n{payload}"
     return frame.encode("utf-8")
 
 

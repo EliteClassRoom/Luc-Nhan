@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from collections.abc import Callable
 from collections.abc import Generator as GeneratorType
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -78,12 +79,22 @@ class _NullProvider(LLMProvider):
         yield from ()
 
 
-def _drain_generator_with_return(generator: GeneratorType) -> tuple[list, Any]:
-    """Drain a generator, returning events and return value."""
+def _drain_generator_with_return(
+    generator: GeneratorType,
+    on_first_yield: Callable[[], None] | None = None,
+) -> tuple[list, Any]:
+    """Drain a generator, returning events and return value.
+
+    *on_first_yield* runs after the first event, i.e. after the request was
+    published — answering earlier would be a stale click.
+    """
     events: list = []
     while True:
         try:
             events.append(next(generator))
+            if on_first_yield is not None:
+                on_first_yield()
+                on_first_yield = None
         except StopIteration as stopped:
             return events, stopped.value
 
@@ -140,8 +151,9 @@ class TestApprovalGateBehavior(unittest.TestCase):
         loop = self._make_loop(self._guarded_registry(executed))
         tc = ToolCall(id="call_gate_1", name="guarded_tool", arguments={"code": "boom"})
 
-        loop._tool_approval_queue.put("deny")
-        events, tr = _drain_generator_with_return(loop._execute_single_tool(tc))
+        events, tr = _drain_generator_with_return(
+            loop._execute_single_tool(tc), on_first_yield=lambda: loop._tool_approval_queue.put("deny")
+        )
 
         approval_events = [e for e in events if e.type == TurnEventType.TOOL_APPROVAL_REQUEST]
         self.assertEqual(len(approval_events), 1)
@@ -155,8 +167,9 @@ class TestApprovalGateBehavior(unittest.TestCase):
         loop = self._make_loop(self._guarded_registry(executed))
         tc = ToolCall(id="call_gate_2", name="guarded_tool", arguments={"code": "ok"})
 
-        loop._tool_approval_queue.put("allow")
-        _events, tr = _drain_generator_with_return(loop._execute_single_tool(tc))
+        _events, tr = _drain_generator_with_return(
+            loop._execute_single_tool(tc), on_first_yield=lambda: loop._tool_approval_queue.put("allow")
+        )
 
         self.assertEqual(executed, ["ok"])
         self.assertFalse(tr.is_error)
@@ -216,8 +229,10 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
             yield TurnEvent.text_delta("payload")
 
         with patch("lucnhan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
-            loop._tool_approval_queue.put("deny")
-            events, tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
+            events, tr = _drain_generator_with_return(
+                loop._handle_delegate_external_task_tool(tc),
+                on_first_yield=lambda: loop._tool_approval_queue.put("deny"),
+            )
 
         approval_events = [e for e in events if e.type == TurnEventType.TOOL_APPROVAL_REQUEST]
         self.assertEqual(len(approval_events), 1)
@@ -236,8 +251,10 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
             yield TurnEvent.text_delta("external answer")
 
         with patch("lucnhan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
-            loop._tool_approval_queue.put("allow")
-            _events, tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
+            _events, tr = _drain_generator_with_return(
+                loop._handle_delegate_external_task_tool(tc),
+                on_first_yield=lambda: loop._tool_approval_queue.put("allow"),
+            )
 
         self.assertEqual(
             dispatched,
@@ -255,8 +272,10 @@ class TestDelegateExternalTaskGate(unittest.TestCase):
             yield TurnEvent.text_delta("ok")
 
         with patch("lucnhan.agent.a2a.dispatcher.A2ADispatcher.run_task", new=fake_run):
-            loop._tool_approval_queue.put("allow")
-            events, _tr = _drain_generator_with_return(loop._handle_delegate_external_task_tool(tc))
+            events, _tr = _drain_generator_with_return(
+                loop._handle_delegate_external_task_tool(tc),
+                on_first_yield=lambda: loop._tool_approval_queue.put("allow"),
+            )
 
         approval = next(e for e in events if e.type == TurnEventType.TOOL_APPROVAL_REQUEST)
         self.assertIn("claude", approval.text)

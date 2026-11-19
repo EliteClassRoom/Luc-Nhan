@@ -430,7 +430,9 @@ class MCPClient:
         server_params = StdioServerParameters(
             command=self.config.command,
             args=self.config.args,
-            env=self.config.env if self.config.env else None,
+            # Merge with the inherited environment: passing only the configured
+            # mapping drops PATH/SYSTEMROOT, so ``command`` no longer resolves.
+            env={**os.environ, **self.config.env} if self.config.env else None,
         )
 
         # Handshake is bounded by the per-server configured timeout — the

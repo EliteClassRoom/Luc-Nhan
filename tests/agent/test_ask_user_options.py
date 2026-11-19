@@ -104,7 +104,6 @@ def _make_loop() -> AgentLoop:
     loop._unattended = False
     loop._cancelled = _threading.Event()
     loop._user_answer_queue = _queue.Queue(maxsize=1)
-    loop._user_answer_queue.put("")
     return loop
 
 
@@ -117,6 +116,9 @@ def _collect_event(loop: AgentLoop, arguments: dict[str, Any]) -> TurnEvent:
     tc = ToolCall(id="call_ask_user_regression", name="ask_user", arguments=arguments)
     gen = loop._handle_ask_user_tool(tc)
     event = next(gen)
+    # Answer only after the question is published: anything queued earlier is
+    # treated as a stale click from a previous turn and drained.
+    loop._user_answer_queue.put("")
     # Drain the rest of the generator cleanly so the queue item is consumed.
     try:
         while True:

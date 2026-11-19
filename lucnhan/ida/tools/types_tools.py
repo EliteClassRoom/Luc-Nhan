@@ -312,7 +312,13 @@ def _modify_struct_ida9(
         udm = ida_typeinf.udm_t()
         udm.name = f"_padding_{current:x}"
         udm.type = pad_tif
-        tif.add_udm(udm)
+        # ``add_udm`` reports failure; without checking it the tool claimed a
+        # resize even when the field was rejected and the size never moved.
+        if not tif.add_udm(udm):
+            return f"Failed to resize '{name}' from {current} to {new_size}"
+        actual = tif.get_size()
+        if actual != new_size:
+            return f"Resized '{name}' from {current} to {actual} (requested {new_size})"
         return f"Resized '{name}' from {current} to {new_size}"
 
     return f"Unknown action: {action}"

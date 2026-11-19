@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -53,6 +54,21 @@ _UNSAFE_NAME_CHARS_RE = re.compile(r"[^a-zA-Z0-9_]")
 _MAX_TOOL_NAME = 64
 # Used when a tool name is entirely non-ASCII and sanitizes to nothing.
 _TOOL_NAME_PLACEHOLDER = "tool"
+# Longest readable part of a server-derived tool prefix.
+_MAX_SERVER_NAME = 24
+
+
+def safe_server_name(name: str) -> str:
+    """Return the provider-safe, unique prefix segment for a server name.
+
+    Two servers may normalize to the same readable part (``a-b`` and ``a.b``
+    both become ``a_b``); the hash suffix keeps their tool prefixes distinct,
+    so one server's cleanup can never unregister the other's tools.  The
+    manager and this module must use this single function — a second
+    normalizer is what produced the mismatch this replaces.
+    """
+    safe = _UNSAFE_NAME_CHARS_RE.sub("_", name)[:_MAX_SERVER_NAME].strip("_") or "server"
+    return f"{safe}_{hashlib.sha1(name.encode('utf-8')).hexdigest()[:6]}"
 
 
 def _make_mcp_handler(client: MCPClient, tool_name: str, registered_name: str) -> Callable:
@@ -95,9 +111,7 @@ def register_mcp_tools(client: MCPClient, registry: ToolRegistry, prefix: str = 
     Returns the number of tools registered.
     """
     if not prefix:
-        # Sanitize server name for use in tool names
-        safe_name = _UNSAFE_NAME_CHARS_RE.sub("_", client.name)[:24]
-        prefix = f"{MCP_TOOL_PREFIX}{safe_name}_"
+        prefix = f"{MCP_TOOL_PREFIX}{safe_server_name(client.name)}_"
 
     tools = client.get_tools()
     count = 0

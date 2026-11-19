@@ -172,6 +172,7 @@ def run_plan_mode(
         yield TurnEvent.error_event("Failed to generate a valid plan.")
         return
 
+    loop._drain_queue(loop._user_answer_queue)  # drop stale clicks first
     yield TurnEvent.plan_generated(steps)
 
     # Phase 2: Wait for user approval — PlanView buttons handle the UI.

@@ -187,10 +187,13 @@ def imports_by_module(
     if not entries:
         return f"Module '{found_name}' has no imports"
 
+    # Normalize once: the tail count must subtract what is actually shown,
+    # otherwise a non-positive limit over-reports the hidden entries.
+    shown = max(1, limit)
     lines = [f"Imports from {found_name} ({len(entries)} entries):"]
-    lines.extend(entries[: max(1, limit)])
-    if len(entries) > limit:
-        lines.append(f"    ... and {len(entries) - limit} more")
+    lines.extend(entries[:shown])
+    if len(entries) > shown:
+        lines.append(f"    ... and {len(entries) - shown} more")
     return "\n".join(lines)
 
 

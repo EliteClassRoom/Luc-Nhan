@@ -31,7 +31,7 @@ except ModuleNotFoundError:
     except ModuleNotFoundError:
         tomllib = None  # type: ignore[assignment]
 
-from ..core.logging import log_debug, log_info
+from ..core.logging import log_debug, log_error, log_info
 from ..mcp.config import MCPServerConfig
 from ..skills.loader import SkillDefinition, discover_skills
 
@@ -134,14 +134,19 @@ def _load_mcp_json(path: Path) -> list[MCPServerConfig]:
         command = cfg.get("command", "")
         if not command:
             continue
-        server = MCPServerConfig(
-            name=name,
-            command=command,
-            args=cfg.get("args", []),
-            env=cfg.get("env", {}),
-            enabled=True,
-            timeout=float(cfg.get("timeout", 30.0)),
-        )
+        try:
+            server = MCPServerConfig(
+                name=name,
+                command=command,
+                args=cfg.get("args", []),
+                env=cfg.get("env", {}),
+                enabled=True,
+                timeout=float(cfg.get("timeout", 30.0)),
+            )
+        except (TypeError, ValueError) as e:
+            # One bad entry must not cost the user every other server.
+            log_error(f"External MCP server {name}: invalid config ({e}), skipping")
+            continue
         servers.append(server)
         log_debug(f"External MCP server: {name} cmd={command}")
 

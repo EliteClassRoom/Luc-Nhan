@@ -241,7 +241,8 @@ def derive_history_title(
     if max_chars < 0:
         max_chars = 0
     for message in messages:
-        if message.role is not Role.USER:
+        # ``!=`` not ``is not`` — see the note in ``state/session.py``.
+        if message.role != Role.USER:
             continue
         text = _safe_persisted_identifier(message.content)
         text = " ".join(text.split())

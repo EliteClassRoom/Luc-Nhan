@@ -29,7 +29,7 @@ install_ida_mocks()
 from lucnhan.agent.loop import _EMPTY_RESPONSE_SUFFIX, AgentLoop
 from lucnhan.agent.modes.turn_helpers import execute_single_turn
 from lucnhan.core.config import LucNhanConfig
-from lucnhan.core.errors import ProviderError
+from lucnhan.core.errors import ProviderError, RateLimitError
 from lucnhan.core.types import (
     Message,
     ModelInfo,
@@ -189,6 +189,25 @@ def test_backoff_is_jittered_and_capped() -> None:
     # Jitter: repeated calls must not all return the same delay.
     delays = {default_loop._retry_backoff(4) for _ in range(20)}
     assert len(delays) > 1
+
+
+def test_absurd_retry_after_is_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server-supplied ``Retry-After`` cannot stall the turn for hours."""
+    provider = ScriptedProvider(
+        [
+            RateLimitError("slow down", retry_after=9999.0),
+            [StreamChunk(text="ok"), StreamChunk(finish_reason="stop")],
+        ]
+    )
+    loop = _make_loop(provider)
+    delays: list[float] = []
+    monkeypatch.setattr(loop, "_sleep_with_cancel", delays.append)
+
+    events, result = _drain(execute_single_turn(loop, "system", None))
+
+    assert delays == [120.0]
+    assert any("Retrying in 120s" in str(getattr(e, "error", "")) for e in events)
+    assert result.error is None
 
 
 # ---------------------------------------------------------------------------

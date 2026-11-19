@@ -75,6 +75,23 @@ def test_superseded_read_is_blanked_and_the_newer_one_kept() -> None:
     assert "old pseudocode" not in contents
 
 
+def test_prune_tolerates_a_reimported_role_class() -> None:
+    """Pruning must not depend on ``Role`` class identity.
+
+    ``tests/conftest.py`` purges stub modules between tests, so a test that
+    imported ``lucnhan.core.types`` before the purge holds a different
+    ``Role`` object than ``session.py`` does. ``is`` comparisons would then
+    silently skip every tool message.
+    """
+    session = _build_session()
+    for msg in session.messages:
+        msg.role = str(getattr(msg.role, "value", msg.role))
+
+    messages = session.get_messages_for_provider(drop_stale=True)
+
+    assert "[Superseded by later read]" in _tool_contents(messages)
+
+
 def test_tool_call_pairing_survives_elision() -> None:
     session = _build_session()
     messages = session.get_messages_for_provider(drop_stale=True)
@@ -83,7 +100,9 @@ def test_tool_call_pairing_survives_elision() -> None:
     for msg in messages:
         for tc in msg.tool_calls:
             requested.add(tc.id)
-    answered = {tr.tool_call_id for msg in messages if msg.role is Role.TOOL for tr in msg.tool_results}
+    # ``==`` not ``is``: ``lucnhan.core.types`` is purged between tests, so a
+    # re-imported ``Role`` is a different class object than ours.
+    answered = {tr.tool_call_id for msg in messages if msg.role == Role.TOOL for tr in msg.tool_results}
 
     assert requested == answered
 

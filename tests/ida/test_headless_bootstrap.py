@@ -106,6 +106,44 @@ class TestBootstrapMainErrorPaths(unittest.TestCase):
         os.unlink(cfg_path)
 
 
+class TestBootstrapConfigShape(unittest.TestCase):
+    """A bootstrap file that parses but is not an object must exit cleanly."""
+
+    def test_non_object_json_exits_3_with_json_line(self):
+        import tempfile
+
+        fd, path = tempfile.mkstemp(suffix=".json", prefix="bstrap_")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("42")
+        try:
+            with (
+                patch.dict(os.environ, {"LUCNHAN_HEADLESS_BOOTSTRAP": path}),
+                patch("sys.stdout", new_callable=io.StringIO) as out,
+            ):
+                from lucnhan.ida.headless_bootstrap import main
+
+                with self.assertRaises(SystemExit) as ctx:
+                    main()
+            self.assertEqual(ctx.exception.code, 3)
+            self.assertIn("must be a JSON object", out.getvalue())
+        finally:
+            os.unlink(path)
+
+    def test_unreadable_file_exits_3_instead_of_raising(self):
+        """PermissionError is an OSError, not a FileNotFoundError."""
+        with (
+            patch.dict(os.environ, {"LUCNHAN_HEADLESS_BOOTSTRAP": "C:/locked.json"}),
+            patch("sys.stdout", new_callable=io.StringIO) as out,
+            patch("builtins.open", side_effect=PermissionError(13, "denied")),
+        ):
+            from lucnhan.ida.headless_bootstrap import main
+
+            with self.assertRaises(SystemExit) as ctx:
+                main()
+        self.assertEqual(ctx.exception.code, 3)
+        self.assertIn("unreadable", out.getvalue())
+
+
 class TestBootstrapImports(unittest.TestCase):
     """P1-9: Verify headless_bootstrap.py is importable."""
 

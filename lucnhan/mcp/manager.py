@@ -146,11 +146,13 @@ class MCPManager:
         """
         hard = config.resolve_timeout(_HARD_TIMEOUT)
         client = None
-        safe_name = config.name.replace("-", "_").replace(".", "_")
-        prefix = f"{MCP_TOOL_PREFIX}{safe_name}_"
         try:
-            from .bridge import register_mcp_tools
+            from .bridge import register_mcp_tools, safe_server_name
             from .client import MCPClient
+
+            # One normalizer for the prefix — the unregister calls below must
+            # match exactly what was registered.
+            prefix = f"{MCP_TOOL_PREFIX}{safe_server_name(config.name)}_"
 
             client = MCPClient(config)
             t0 = time.monotonic()

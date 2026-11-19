@@ -490,6 +490,7 @@ def _run_phase2_plan(
         yield TurnEvent.error_event("Failed to generate a valid modification plan from exploration findings.")
         return None
 
+    loop._drain_queue(loop._user_answer_queue)  # drop stale clicks first
     yield TurnEvent.plan_generated(steps)
     _build_mod_plan(plan_text, steps)
 
@@ -605,6 +606,7 @@ def _run_phase4_save(
         }
         for p in state.patches_applied
     ]
+    loop._drain_queue(loop._user_answer_queue)  # drop stale clicks first
     yield TurnEvent.save_approval_request(
         patch_count=len(state.patches_applied),
         total_bytes=summary.total_bytes_modified,

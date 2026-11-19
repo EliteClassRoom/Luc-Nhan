@@ -372,6 +372,45 @@ class TestCLICommandHandlers(unittest.TestCase):
             _, _, body = mock_post.call_args[0]
             self.assertEqual(body["answer"], "my answer")
             self.assertEqual(body["run_id"], "abc123")
+            # A Mock without the attr must not leak into the payload.
+            self.assertNotIn("question_id", body)
+
+    def test_cmd_answer_forwarders_the_pinned_question_id(self):
+        from unittest import mock
+
+        from lucnhan.cli.headless import cmd_answer
+
+        args = mock.Mock()
+        args.server = "http://127.0.0.1:8765"
+        args.token = "test-token"
+        args.run_id = "abc123"
+        args.answer = "my answer"
+        args.question_id = "call-9"
+
+        with mock.patch("lucnhan.cli.headless._http_post") as mock_post:
+            mock_post.return_value = {"status": "ok"}
+            cmd_answer(args)
+            _, _, body = mock_post.call_args[0]
+            self.assertEqual(body["question_id"], "call-9")
+
+    def test_tool_approval_forwarders_the_pinned_tool_call_id(self):
+        from unittest import mock
+
+        from lucnhan.cli.headless import cmd_tool_approval_remote
+
+        args = mock.Mock()
+        args.server = "http://127.0.0.1:8765"
+        args.token = "test-token"
+        args.run_id = "abc123"
+        args.decision = "approve"
+        args.tool_call_id = "call-7"
+
+        with mock.patch("lucnhan.cli.headless._http_post") as mock_post:
+            mock_post.return_value = {"status": "ok"}
+            cmd_tool_approval_remote(args)
+            _, _, body = mock_post.call_args[0]
+            self.assertEqual(body["decision"], "allow")
+            self.assertEqual(body["tool_call_id"], "call-7")
 
 
 if __name__ == "__main__":

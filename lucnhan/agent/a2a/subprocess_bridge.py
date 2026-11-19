@@ -153,6 +153,7 @@ class SubprocessBridge:
         proc: subprocess.Popen[str] | None = None
         result_lines: list[str] = []
         cancelled = False
+        timed_out = False
         # Background thread that drains the subprocess's stdout
         # into ``stdout_queue``. The main thread polls the queue
         # AND the cancel_event, so cancellation is responsive
@@ -218,13 +219,12 @@ class SubprocessBridge:
                     cancelled = True
                     break
                 if time.monotonic() >= deadline:
-                    # Surface a timeout by killing the process;
-                    # the bridge doesn't currently have a separate
-                    # timeout-error event path (the kill itself
-                    # is the recovery).
+                    # Surface a timeout by killing the process; the
+                    # timeout is its own outcome, not a user cancel,
+                    # so callers can tell the two apart.
                     if proc.poll() is None:
                         proc.kill()
-                    cancelled = True  # treat timeout as cancellation
+                    timed_out = True
                     detail = _stderr_text()
                     text = f"Timeout after {timeout}s"
                     if detail:
@@ -267,6 +267,11 @@ class SubprocessBridge:
             )
             return ""
 
+        if timed_out:
+            # The error event was already emitted; don't mislabel this as a
+            # user cancellation.
+            return ""
+
         # Try to parse last line as JSON
         result = ""
         for line in result_lines:
@@ -278,7 +283,10 @@ class SubprocessBridge:
                 else:
                     result = str(parsed)
             except json.JSONDecodeError:
-                result = line
+                # A trailing log line must not clobber a parsed result; keep
+                # the first raw line only as a last resort.
+                if not result:
+                    result = line
 
         if not result:
             # No parseable stdout: stderr is usually the only explanation.

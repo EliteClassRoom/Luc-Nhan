@@ -816,8 +816,16 @@ class AgentLoop:
         return self._exploration_state
 
     def cancel(self) -> None:
-        """Cancel the current run."""
+        """Cancel the current run and drop any decision it left queued.
+
+        Nothing disables an approval widget when a turn is cancelled, so a
+        click that lands after the waiter unwound would otherwise be consumed
+        by the NEXT request without a prompt.
+        """
         self._cancelled.set()
+        self._drain_queue(self._tool_approval_queue)
+        self._drain_queue(self._user_answer_queue)
+        self._drain_queue(self._approval_queue)
 
     def _drain_queue(self, q: queue.Queue[str]) -> None:
         """Remove any stale item from a maxsize=1 queue (non-blocking)."""
@@ -867,7 +875,11 @@ class AgentLoop:
             raise CancellationError("Agent run cancelled")
 
     def _wait_for_queue(self, q: queue.Queue[str]) -> str:
-        """Block until a value arrives on `q`, checking for cancellation."""
+        """Block until a value arrives on `q`, checking for cancellation.
+
+        The drain of stale decisions happens at the publish site, not here: a
+        decision can legitimately arrive between the yield and this call.
+        """
         while True:
             self._check_cancelled()
             try:
@@ -1184,7 +1196,11 @@ class AgentLoop:
                 log_error(f"Retryable error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     if is_rate_limit:
-                        backoff = e.retry_after if e.retry_after > 0 else self._retry_backoff(attempt)
+                        # A hostile or confused server can send an absurd
+                        # Retry-After; clamp so the turn keeps moving.
+                        backoff = (
+                            min(e.retry_after, _RETRY_AFTER_MAX) if e.retry_after > 0 else self._retry_backoff(attempt)
+                        )
                     else:
                         backoff = self._retry_backoff(attempt)
                     if silent_mode:
@@ -1570,6 +1586,60 @@ class AgentLoop:
         # (vs estimated_usage from pre-stream estimation). This is needed
         # to set the correct provenance on AttemptUsage.
         provider_emitted_usage: bool = False
+
+        def _close_tool_call(tc_id: str, fallback_name: str) -> Generator[TurnEvent, None, None]:
+            """Finalize one tool call: parse its args and record it.
+
+            Kept as a closure so the end-of-stream flush can reuse the exact
+            same path as a provider-emitted ``tool_call_end`` (text-protocol
+            providers can end the stream mid-call).
+            """
+            if AgentLoop._is_duplicate_tool_call_end(tc_id, completed_tool_call_ids):
+                log_debug(f"AgentLoop: ignoring duplicate tool_call_end for {tc_id!r}")
+                return
+            completed_tool_call_ids.add(tc_id)
+            tc_name = current_tool_names.get(tc_id, fallback_name)
+            raw_args = "".join(current_tool_arg_parts.get(tc_id, []))
+            try:
+                args = json.loads(raw_args) if raw_args else {}
+            except json.JSONDecodeError as je:
+                if is_glm:
+                    # GLM strict mode: do NOT fall back to {}.
+                    # Record the parse error and skip appending
+                    # to tool_calls.  The contiguous-safe-prefix
+                    # logic at finalisation will discard this
+                    # state and all later states.
+                    log_error(
+                        f"GLM malformed tool arguments for {tc_name} "
+                        f"(id={tc_id}): {je}. Raw: {raw_args[:200]}. "
+                        "Call will be discarded."
+                    )
+                    idx = tool_state_index.get(tc_id)
+                    if idx is not None:
+                        st = tool_states[idx]
+                        st.ended = True
+                        st.parse_error = str(je)
+                    # Do NOT append to tool_calls.
+                    # Do NOT emit tool_call_done -- the call is
+                    # discarded at finalisation with TOOL_CALL_DISCARDED.
+                    return
+                # Non-GLM: preserve the existing {} fallback + warning.
+                log_error(f"Malformed tool arguments for {tc_name} (id={tc_id}): {je}. Raw: {raw_args[:200]}")
+                args = {}
+                yield TurnEvent.error_event(
+                    f"Warning: malformed arguments for tool '{tc_name}'. "
+                    "The tool call will proceed with empty arguments."
+                )
+            # Record successful parse on the state.
+            idx = tool_state_index.get(tc_id)
+            if idx is not None:
+                st = tool_states[idx]
+                st.ended = True
+                st.parsed_arguments = args
+                st.raw_args = list(current_tool_arg_parts.get(tc_id, []))
+            tool_calls.append(ToolCall(id=tc_id, name=tc_name, arguments=args))
+            yield TurnEvent.tool_call_done(tc_id, tc_name, raw_args)
+
         try:
             for chunk in stream:
                 self._check_cancelled()
@@ -1618,52 +1688,7 @@ class AgentLoop:
                         yield TurnEvent.tool_call_args_delta(chunk.tool_call_id, chunk.tool_args_delta)
 
                 if chunk.is_tool_call_end and chunk.tool_call_id:
-                    tc_id = chunk.tool_call_id
-                    if AgentLoop._is_duplicate_tool_call_end(tc_id, completed_tool_call_ids):
-                        log_debug(f"AgentLoop: ignoring duplicate tool_call_end for {tc_id!r}")
-                        continue
-                    completed_tool_call_ids.add(tc_id)
-                    tc_name = current_tool_names.get(tc_id, chunk.tool_name or "")
-                    raw_args = "".join(current_tool_arg_parts.get(tc_id, []))
-                    try:
-                        args = json.loads(raw_args) if raw_args else {}
-                    except json.JSONDecodeError as je:
-                        if is_glm:
-                            # GLM strict mode: do NOT fall back to {}.
-                            # Record the parse error and skip appending
-                            # to tool_calls.  The contiguous-safe-prefix
-                            # logic at finalisation will discard this
-                            # state and all later states.
-                            log_error(
-                                f"GLM malformed tool arguments for {tc_name} "
-                                f"(id={tc_id}): {je}. Raw: {raw_args[:200]}. "
-                                "Call will be discarded."
-                            )
-                            idx = tool_state_index.get(tc_id)
-                            if idx is not None:
-                                st = tool_states[idx]
-                                st.ended = True
-                                st.parse_error = str(je)
-                            # Do NOT append to tool_calls.
-                            # Do NOT emit tool_call_done -- the call is
-                            # discarded at finalisation with TOOL_CALL_DISCARDED.
-                            continue
-                        # Non-GLM: preserve the existing {} fallback + warning.
-                        log_error(f"Malformed tool arguments for {tc_name} (id={tc_id}): {je}. Raw: {raw_args[:200]}")
-                        args = {}
-                        yield TurnEvent.error_event(
-                            f"Warning: malformed arguments for tool '{tc_name}'. "
-                            "The tool call will proceed with empty arguments."
-                        )
-                    # Record successful parse on the state.
-                    idx = tool_state_index.get(tc_id)
-                    if idx is not None:
-                        st = tool_states[idx]
-                        st.ended = True
-                        st.parsed_arguments = args
-                        st.raw_args = list(current_tool_arg_parts.get(tc_id, []))
-                    tool_calls.append(ToolCall(id=tc_id, name=tc_name, arguments=args))
-                    yield TurnEvent.tool_call_done(tc_id, tc_name, raw_args)
+                    yield from _close_tool_call(chunk.tool_call_id, chunk.tool_name or "")
 
                 if chunk.usage:
                     last_usage = self._accumulate_chunk_usage(last_usage, chunk.usage)
@@ -1737,6 +1762,16 @@ class AgentLoop:
             guard.flush()
             if guard.should_abort():
                 guard_triggered = True
+        # Close tool calls the provider never terminated. A text-protocol
+        # provider buffers the whole call server-side and a stream that ends
+        # (or breaks) mid-call otherwise drops it: no ``tool_call_done``, no
+        # entry in ``tool_calls``. Parsing what arrived keeps the keys that
+        # made it through; a truncated object falls into the existing
+        # malformed-argument path instead of vanishing.
+        for open_state in tool_states:
+            if open_state.ended or open_state.parse_error:
+                continue
+            yield from _close_tool_call(open_state.id, open_state.name)
         last_usage, need_usage_update = self._finalize_stream_usage(
             last_usage, estimated_usage, estimated_prompt_tokens
         )
@@ -2130,6 +2165,9 @@ class AgentLoop:
             args_str = json.dumps(tc.arguments, indent=2)
             description = self._describe_tool_call(tc.name, tc.arguments)
             self._pending_approval_id = tc.id
+            # Drop anything queued by a widget from an earlier turn BEFORE the
+            # request exists; after the yield a decision is fresh.
+            self._drain_queue(self._tool_approval_queue)
             yield TurnEvent.tool_approval_request(tc.id, tc.name, args_str, description)
 
             decision = self._wait_for_queue(self._tool_approval_queue).lower()
@@ -2935,6 +2973,7 @@ class AgentLoop:
         options = _normalize_ask_user_options(raw_options)
         self._pending_question_id = tc.id
         try:
+            self._drain_queue(self._user_answer_queue)
             yield TurnEvent.user_question(question, options, tc.id)
             answer = self._wait_for_queue(self._user_answer_queue)
         finally:
@@ -3870,6 +3909,10 @@ def _is_chunked_read_error(exc: BaseException) -> bool:
         "incomplete read",
     )
     return any(needle in msg for needle in needles)
+
+
+#: Longest ``Retry-After`` a provider may impose on a retry.
+_RETRY_AFTER_MAX = 120.0
 
 
 def _is_glm_provider(config: LucNhanConfig, provider: LLMProvider) -> bool:

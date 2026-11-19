@@ -60,14 +60,19 @@ def load_mcp_config(path: str = "") -> list[MCPServerConfig]:
     for name, cfg in servers_dict.items():
         if not isinstance(cfg, dict):
             continue
-        server = MCPServerConfig(
-            name=name,
-            command=cfg.get("command", ""),
-            args=cfg.get("args", []),
-            env=cfg.get("env", {}),
-            enabled=cfg.get("enabled", True),
-            timeout=float(cfg.get("timeout", 30.0)),
-        )
+        try:
+            server = MCPServerConfig(
+                name=name,
+                command=cfg.get("command", ""),
+                args=cfg.get("args", []),
+                env=cfg.get("env", {}),
+                enabled=cfg.get("enabled", True),
+                timeout=float(cfg.get("timeout", 30.0)),
+            )
+        except (TypeError, ValueError) as e:
+            # One bad entry must not cost the user every other server.
+            log_error(f"MCP server {name}: invalid config ({e}), skipping")
+            continue
         if server.command:
             servers.append(server)
             log_debug(f"MCP server config: {name} cmd={server.command}")

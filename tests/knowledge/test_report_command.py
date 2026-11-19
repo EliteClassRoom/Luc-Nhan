@@ -45,6 +45,14 @@ class _FakeLoop:
     def _wait_for_queue(self, q: queue.Queue) -> str:
         return q.get(timeout=5)
 
+    def _drain_queue(self, q: queue.Queue) -> None:
+        """Mirror AgentLoop: nothing is drained here, the publish site does it."""
+        while True:
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                return
+
 
 def _seed_verified_memory(store, paths) -> KnowledgeMemory:
     """Insert one verified hypothesis so ``build_report_context`` is non-empty.

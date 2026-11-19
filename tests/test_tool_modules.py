@@ -125,6 +125,13 @@ class TestSearchFunctions(unittest.TestCase):
         result = search_functions("zzz_nonexistent_zzz")
         self.assertIn("No functions matching", result)
 
+    def test_non_positive_limit_still_returns_everything(self):
+        """``limit <= 0`` means unlimited in both the index and the walk."""
+        from lucnhan.ida.tools.functions import search_functions
+
+        result = search_functions("sub", limit=0)
+        self.assertEqual(result.count("0x"), result.count("  0x"))
+
 
 class TestGetFunctionInfo(unittest.TestCase):
     def test_returns_name_and_address(self):

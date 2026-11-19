@@ -588,6 +588,29 @@ class TestBuiltinTools(unittest.TestCase):
         self.assertNotIn("CreateFileA", result)
         self.assertIn("user32", result.lower())
 
+    def test_imports_by_module_non_positive_limit_counts_the_shown_row(self):
+        """The hidden-entry count subtracts what was actually printed."""
+        from unittest.mock import patch
+
+        from lucnhan.ida.tools import database
+
+        rows = [(0x1000, "CreateFileA", -1), (0x1004, "CloseHandle", -1), (0x1008, "ReadFile", -1)]
+
+        def fake_enum(idx, cb):
+            for ea, name, ordinal in rows:
+                cb(ea, name, ordinal)
+
+        with (
+            patch.object(database.ida_nalt, "get_import_module_qty", return_value=1),
+            patch.object(database.ida_nalt, "get_import_module_name", return_value="kernel32.dll"),
+            patch.object(database.ida_nalt, "enum_import_names", side_effect=fake_enum),
+        ):
+            result = database.imports_by_module(module_name="kernel32", limit=0)
+
+        self.assertIn("CreateFileA", result)
+        self.assertNotIn("CloseHandle", result)
+        self.assertIn("and 2 more", result)
+
     def test_imports_by_module_missing_module_returns_message(self):
         from unittest.mock import patch
 
