@@ -859,6 +859,12 @@ class WorkspaceStore:
                         time.time(),
                     ),
                 )
+                # Read back inside the transaction: this connection sees
+                # its own uncommitted rows, so the returned record cannot
+                # drift from what another writer does right after commit.
+                record = self.get_fact(selected_id)
+                if record is None:
+                    raise RuntimeError(f"saved fact disappeared before commit: {selected_id}")
                 self._conn.commit()
                 # Only a new fact changes list output; a dedup bump would
                 # invalidate the memo on every save_memory, defeating it.
@@ -868,9 +874,6 @@ class WorkspaceStore:
                 self._conn.rollback()
                 raise
 
-        record = self.get_fact(selected_id)
-        if record is None:
-            raise RuntimeError(f"saved fact disappeared after commit: {selected_id}")
         return record, outcome
 
     # ------------------------------------------------------------------
