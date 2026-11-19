@@ -10,6 +10,7 @@ from datetime import datetime
 from lucnhan.memory.paths import knowledge_paths
 from lucnhan.memory.raw_store import KnowledgeRawStore
 from lucnhan.memory.report import (
+    _MAX_REPORT_NAME,
     SUPPORTED_SCOPES,
     build_report_context,
     make_report_filename,
@@ -589,3 +590,16 @@ class TestReportSanitization(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLongReportName(unittest.TestCase):
+    def test_oversized_name_is_clamped_and_still_written(self):
+        tmp = tempfile.mkdtemp()
+        paths = knowledge_paths(os.path.join(tmp, "x.idb"))
+        paths.ensure()
+
+        path = write_report_file(paths, "body", "A" * 300 + ".md")
+
+        self.assertTrue(os.path.isfile(path))
+        self.assertLessEqual(len(os.path.basename(path)), _MAX_REPORT_NAME)
+        self.assertTrue(path.endswith(".md"))

@@ -523,9 +523,18 @@ def report_destination(paths: KnowledgePaths) -> str:
     return paths.reports_dir
 
 
+#: Longest report file name kept whole. Windows allows 255; a model-chosen
+#: title can be a whole sentence, and an over-long name fails the write.
+_MAX_REPORT_NAME = 120
+
+
 def _safe_report_name(name: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", name or "") or make_report_filename()
-    return safe
+    if len(safe) <= _MAX_REPORT_NAME:
+        return safe
+    stem, ext = os.path.splitext(safe)
+    keep = max(1, _MAX_REPORT_NAME - len(ext))
+    return stem[:keep] + ext
 
 
 def _collision_path(root: str, base: str) -> str:
