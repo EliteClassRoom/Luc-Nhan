@@ -139,3 +139,31 @@ class TestPromotionBackupGate:
         # After promotion a backup of the v1 case DB exists.
         backups = list(cases.locator.backups(case_id).glob("memory_*.db"))
         assert len(backups) == 1
+
+
+class TestPromotionCompensation:
+    def test_failed_observation_does_not_leave_the_fact(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import lucnhan.memory.workspace_store as ws
+
+        case_service, _, service, issuer, context, case_id, _ = _setup_service(tmp_path)
+        service.save_fact(issuer.issue(context), category="algorithm", fact="Uses RC4", source="save_memory")
+        fact_id = service.repository.list_memories()[0].id
+
+        def _boom(self: object, *a: object, **k: object) -> None:
+            raise RuntimeError("observation write failed")
+
+        monkeypatch.setattr(ws.WorkspaceStore, "append_observation", _boom)
+        with pytest.raises(RuntimeError):
+            case_service.promote(issuer.issue(context), context, case_id, fact_id)
+
+        monkeypatch.undo()
+
+        paths = case_service._cases.locator.case(case_id)
+        case_store = ws.WorkspaceStore.open(paths, owner_memory_id=case_id)
+        try:
+            assert [f.title for f in case_store.list_facts()] == []
+        finally:
+            case_store.close()
+
+        promotion = case_service.promote(issuer.issue(context), context, case_id, fact_id)
+        assert promotion.source.source_record_id == fact_id

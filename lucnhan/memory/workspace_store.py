@@ -678,6 +678,28 @@ class WorkspaceStore:
                 verification_citations=tuple(json.loads(row["verification_citations"] or "[]")),
             )
 
+    def delete_fact(self, fact_id: str) -> bool:
+        """Delete a fact and its revisions; returns whether anything went.
+
+        Used as compensation where two writes cannot share one transaction
+        (the caller undoes its own first write when the second fails).
+        """
+        with self._lock:
+            begin_immediate_with_retry(self._conn)
+            try:
+                # No ON DELETE CASCADE and foreign_keys is ON, so the
+                # revisions have to go first.
+                self._conn.execute("DELETE FROM fact_revisions WHERE fact_id = ?", (fact_id,))
+                cur = self._conn.execute("DELETE FROM facts WHERE fact_id = ?", (fact_id,))
+                deleted = cur.rowcount == 1
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+            if deleted:
+                self._note_write()
+            return deleted
+
     def list_facts(self) -> list[FactRecord]:
         """List all current facts."""
         with self._lock:

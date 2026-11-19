@@ -161,6 +161,11 @@ class CaseMemoryService:
                     sort_keys=True,
                 ),
             )
+        except BaseException:
+            # Two transactions: without the undo, a failed observation
+            # write left a promoted fact with no provenance behind it.
+            case_store.delete_fact(case_fact_id)
+            raise
         finally:
             # A leaked handle keeps memory.db open on Windows, so a later
             # backup/restore replace of the case workspace fails.

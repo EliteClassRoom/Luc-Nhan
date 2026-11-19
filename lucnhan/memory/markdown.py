@@ -171,6 +171,11 @@ def _strip_record_markers(text: str) -> str:
     return _RECORD_RE.sub("", text)
 
 
+#: Fallback only — used when ``portalocker`` is unavailable, but still
+#: shared by every projector instance in this process.
+_FALLBACK_PROJECTION_LOCK = threading.RLock()
+
+
 def _read_bounded_regular_utf8(path: Path, *, default: str = "# Memory\n") -> str:
     """Read a regular file with bounded size, rejecting symlinks/reparse points."""
     if not path.exists():
@@ -217,7 +222,9 @@ class MemoryProjector:
 
     def __init__(self, *, lock_timeout: float = MEMORY_LOCK_TIMEOUT_SECONDS) -> None:
         self._lock_timeout = lock_timeout
-        self._fallback_lock = threading.RLock()
+        # Module-level: a projector is constructed per wire-up, and the
+        # fallback has to hold across instances too.
+        self._fallback_lock = _FALLBACK_PROJECTION_LOCK
         self._lock_module: ModuleType | None = None
         # Concrete portalocker exception class once the probe succeeds;
         # stays ``Exception`` until then so ``except`` clauses never see
