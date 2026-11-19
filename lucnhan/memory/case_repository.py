@@ -357,8 +357,15 @@ class CaseRepository:
             except BaseException:
                 # Three separate transactions; drop what already landed so a
                 # failure cannot leave an endpoint pair without its relation.
-                store.delete_entity(obj_entity)
-                store.delete_entity(subj_entity)
+                # A failing cleanup must not mask the reason we are here.
+                try:
+                    store.delete_entity(obj_entity)
+                except BaseException:
+                    pass
+                try:
+                    store.delete_entity(subj_entity)
+                except BaseException:
+                    pass
                 raise
         finally:
             # Leaked handle pins memory.db on Windows against later replaces.

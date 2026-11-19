@@ -220,3 +220,30 @@ class TestRelationCompensation:
             assert store.list_entities() == []
         finally:
             store.close()
+
+
+class TestFailedRelationCleanup:
+    def test_a_failing_cleanup_does_not_mask_the_cause(self, tmp_path: Path) -> None:
+        """The delete runs in the handler; its own failure must not replace the cause."""
+        from lucnhan.memory.workspace_store import WorkspaceStore
+
+        cases, _, mid_a, mid_b = _setup(tmp_path)
+        case = cases.list_cases()[0]
+
+        def exploding_relation(*args, **kwargs):
+            raise RuntimeError("relation insert failed")
+
+        def exploding_delete(*args, **kwargs):
+            raise RuntimeError("cleanup failed")
+
+        with (
+            patch.object(WorkspaceStore, "put_relation", exploding_relation),
+            patch.object(WorkspaceStore, "delete_entity", exploding_delete),
+        ):
+            with pytest.raises(RuntimeError, match="relation insert failed"):
+                cases.put_case_relation(
+                    case.case_id,
+                    mid_a,
+                    CaseRelationType.EMBEDS_OR_LOADS,
+                    mid_b,
+                )
