@@ -15,6 +15,7 @@ import contextlib
 import json
 import os
 import secrets
+import socket
 import tempfile
 import threading
 import time
@@ -1123,7 +1124,12 @@ class ControlServer:
         pumping the dispatcher and detecting shutdown.
         """
         handler_cls = _make_handler(self._state, self._controller)
-        self._httpd = ThreadingHTTPServer((self._host, self._port), handler_cls)
+        # ThreadingHTTPServer is AF_INET; an accepted ``::1`` bind would fail
+        # in the socket layer, so pick the matching family here.
+        server_cls = ThreadingHTTPServer
+        if ":" in self._host:
+            server_cls = type("_IPv6Server", (ThreadingHTTPServer,), {"address_family": socket.AF_INET6})
+        self._httpd = server_cls((self._host, self._port), handler_cls)
         # Service each connection on a daemon thread so per-request threads
         # never block process shutdown, and the concurrency cap in
         # ``ControlHandler.handle`` bounds how many can be alive at once.

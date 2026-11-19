@@ -2011,3 +2011,30 @@ class TestEventBrokerReasoningPassThrough(unittest.TestCase):
 
         self.assertEqual(run.exit_code, 5)
         self.assertTrue(any("degeneration persisted" in e for e in run.errors))
+
+
+class TestControlServerBindsLoopback(unittest.TestCase):
+    """The accepted loopback hosts must actually bind."""
+
+    def test_ipv6_loopback_binds(self):
+        import socket
+
+        from lucnhan.control.server import ControlServer
+
+        # Probe the machine first so a family mismatch is not mistaken for
+        # a host without IPv6.
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+                probe.bind(("::1", 0))
+        except OSError:
+            self.skipTest("IPv6 loopback unavailable")
+
+        server = ControlServer(MagicMock(), host="::1", port=0)
+        server.start()  # must not raise: the family has to match the host
+        try:
+            self.assertGreater(server.port, 0)
+            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+                probe.settimeout(5.0)
+                probe.connect(("::1", server.port))
+        finally:
+            server.shutdown()
