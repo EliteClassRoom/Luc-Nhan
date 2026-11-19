@@ -777,11 +777,11 @@ def cmd_tool_approval_remote(args: argparse.Namespace) -> None:
 def cmd_approval_remote(args: argparse.Namespace) -> None:
     """Send a plan/exploration approval decision to a running server."""
     url = f"{args.server}/approval"
-    result = _http_post(
-        url,
-        args.token,
-        {"run_id": args.run_id, "decision": args.decision},
-    )
+    payload: dict[str, object] = {"run_id": args.run_id, "decision": args.decision}
+    question_id = getattr(args, "question_id", None)
+    if isinstance(question_id, str) and question_id:
+        payload["question_id"] = question_id
+    result = _http_post(url, args.token, payload)
     _die_on_error(result, "approval")
     print(json.dumps(result))
 
@@ -908,6 +908,10 @@ def build_parser() -> argparse.ArgumentParser:
         "decision",
         choices=["approve", "deny"],
         help="Decision: approve or deny",
+    )
+    p_ap.add_argument(
+        "--question-id",
+        help="Pin the decision to one plan/save request (stale decisions get 409)",
     )
     p_ap.set_defaults(func=cmd_approval_remote)
 

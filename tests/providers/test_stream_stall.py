@@ -342,7 +342,7 @@ def test_repeated_stalls_end_the_run_with_an_error() -> None:
     # The run terminates instead of looping forever, and the failure is
     # reported to the user.
     assert events, "expected events"
-    assert any(e.type is TurnEventType.ERROR for e in events)
+    assert any(e.type == TurnEventType.ERROR for e in events)
     assert provider.call_count < 10
 
 

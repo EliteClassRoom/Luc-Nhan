@@ -436,6 +436,9 @@ class CodexProvider(LLMProvider):
 
     @staticmethod
     def _positive_int(value: Any) -> int | None:
+        # ``bool`` subclasses ``int``, so ``true`` would pass as 1.
+        if isinstance(value, bool):
+            return None
         try:
             parsed = int(value)
         except (TypeError, ValueError):

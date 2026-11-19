@@ -449,6 +449,24 @@ class TestCLICommandHandlers(unittest.TestCase):
             self.assertEqual(body["decision"], "allow")
             self.assertEqual(body["tool_call_id"], "call-7")
 
+    def test_approval_forwards_the_pinned_question_id(self):
+        from unittest import mock
+
+        from lucnhan.cli.headless import cmd_approval_remote
+
+        args = mock.Mock()
+        args.server = "http://127.0.0.1:8765"
+        args.token = "test-token"
+        args.run_id = "abc123"
+        args.decision = "approve"
+        args.question_id = "q-4"
+
+        with mock.patch("lucnhan.cli.headless._http_post") as mock_post:
+            mock_post.return_value = {"status": "ok"}
+            cmd_approval_remote(args)
+            _, _, body = mock_post.call_args[0]
+            self.assertEqual(body["question_id"], "q-4")
+
 
 if __name__ == "__main__":
     unittest.main()

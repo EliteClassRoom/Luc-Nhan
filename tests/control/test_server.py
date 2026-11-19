@@ -658,6 +658,25 @@ class TestControlHandler(unittest.TestCase):
         handler.do_POST()
         self.assertEqual(handler.send_response.call_args.args[0], 409)
 
+    def test_approval_for_stale_question_id_is_409(self):
+        from lucnhan.control.server import RunState
+
+        agent_loop = MagicMock()
+        agent_loop.submit_user_answer.return_value = False
+        runner = MagicMock()
+        runner.agent_loop = agent_loop
+        self.controller.get_runner.return_value = runner
+        with self.state.lock:
+            self.state.run = RunState(run_id="test-run")
+
+        handler, _wfile = self._rh.request(
+            "POST",
+            "/approval",
+            body={"run_id": "test-run", "approved": True, "question_id": "stale"},
+        )
+        handler.do_POST()
+        self.assertEqual(handler.send_response.call_args.args[0], 409)
+
     def test_tool_approval_missing_run_id(self):
         handler, _wfile = self._rh.request("POST", "/tool-approval", body={"approved": True})
         handler.do_POST()

@@ -5068,7 +5068,14 @@ class TestExportWritesAtomically:
         target = tmp_path / "export.md"
         target.write_text("previous export", encoding="utf-8")
 
-        with patch("lucnhan.ui.panel_core.write_text_atomic") as writer:
+        # Patch the globals dict the method actually reads. This module is
+        # popped and re-imported by several test files, so neither patching
+        # ``lucnhan.ui.panel_core`` by name nor looking it up in sys.modules
+        # is reliable: a re-import leaves the class pointing at the OLD
+        # module's globals while sys.modules holds the new one.
+        globals_ = LucNhanPanelCore._export_session_to_file.__globals__
+        with patch.dict(globals_, {"write_text_atomic": MagicMock()}) as _:
+            writer = globals_["write_text_atomic"]
             LucNhanPanelCore._export_session_to_file(session, str(target))
 
         writer.assert_called_once()

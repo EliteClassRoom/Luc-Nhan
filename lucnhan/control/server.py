@@ -828,12 +828,15 @@ class ControlHandler(BaseHTTPRequestHandler):
             # parse_save_decision (save) resolve to the intended outcome:
             # "yes" -> APPROVE/SAVE, "no" -> CANCEL/DISCARD.
             answer = "yes" if decision == "approve" else "no"
-            runner.agent_loop.submit_user_answer(answer, body.get("question_id"))
+            delivered = runner.agent_loop.submit_user_answer(answer, body.get("question_id"))
         except Exception:
             logger.exception("submit_user_answer RPC failed")
             self._send(*make_error_json("Failed to submit approval", status=500))
             return
 
+        if delivered is False:
+            self._send(*make_error_json("No matching pending approval for that question_id", status=409))
+            return
         self._send(*make_json_response({"status": "ok"}))
 
     def _handle_cancel(self) -> None:

@@ -304,7 +304,7 @@ class _A2ASession:
                     self.task.status = A2ATaskStatus.COMPLETED
                 elif "error" in envelope:
                     err = envelope["error"]
-                    last_error = err.get("message", str(err))
+                    last_error = str(err.get("message") or str(err) or type(err).__name__)
                     self.task.error = last_error
                     self.task.status = A2ATaskStatus.FAILED
                     self._emit(
@@ -343,7 +343,7 @@ class _A2ASession:
                 return
 
             except Exception as e:
-                last_error = str(e)
+                last_error = str(e) or type(e).__name__
                 log_debug(f"A2A attempt {attempt + 1} failed for task {self.task.id}: {e}")
                 if attempt >= self._config.max_retries - 1 or not _may_retry(e):
                     break

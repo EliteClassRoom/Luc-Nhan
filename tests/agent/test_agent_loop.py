@@ -18,7 +18,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 install_ida_mocks()
 
 from lucnhan.agent.exploration_mode import ExplorationState
-from lucnhan.agent.loop import AgentLoop, BackgroundAgentRunner
+from lucnhan.agent.loop import AgentLoop, BackgroundAgentRunner, _audit_tool_name
 from lucnhan.agent.modes.turn_helpers import execute_single_turn
 from lucnhan.agent.turn import TurnEvent, TurnEventType
 from lucnhan.core.config import LucNhanConfig
@@ -3018,3 +3018,21 @@ class TestEstimatedUsageOnAcceptedTurns(unittest.TestCase):
         assert assistant.token_usage.total_tokens == (
             assistant.token_usage.prompt_tokens + assistant.token_usage.completion_tokens
         )
+
+
+class TestAuditToolName(unittest.TestCase):
+    """A provider-chosen tool name lands in the log, the undo stack and every
+    /undo listing, so it has to survive as one short printable run."""
+
+    def test_newlines_tabs_and_runs_collapse_to_one_line(self):
+        assert _audit_tool_name("set_comment\n\t  x  ") == "set_comment x"
+
+    def test_long_names_are_cut(self):
+        assert len(_audit_tool_name("a" * 500)) == 64
+        assert _audit_tool_name("a" * 500) == "a" * 64
+
+    def test_non_printable_characters_become_spaces(self):
+        assert _audit_tool_name("bad\x00name") == "bad name"
+
+    def test_blank_name_gets_a_placeholder(self):
+        assert _audit_tool_name("   ") == "(unnamed tool)"

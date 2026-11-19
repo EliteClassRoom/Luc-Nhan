@@ -232,6 +232,24 @@ _ORCHESTRA_ENABLED = False
 #: Ceiling for an LLM-chosen ``spawn_subagent`` turn budget. Each turn is a
 #: full provider call, so 100 is already a very long autonomous run.
 _MAX_SUBAGENT_TURNS = 100
+
+#: Longest tool name echoed into the audit trail / undo log.
+_MAX_AUDIT_TOOL_NAME = 64
+
+
+def _audit_tool_name(tool_name: str) -> str:
+    """Collapse an attacker-chosen tool name into one short printable run.
+
+    A tool name is written by the provider (or by an MCP server we do not
+    control) and is echoed into the mutation log, the undo stack and every
+    ``/undo`` listing; a name carrying newlines or thousands of characters
+    would wreck those one-line surfaces.
+    """
+    printable = "".join(ch if ch.isprintable() else " " for ch in tool_name)
+    collapsed = " ".join(printable.split()) or "(unnamed tool)"
+    return collapsed[:_MAX_AUDIT_TOOL_NAME]
+
+
 _ORCHESTRA_DISABLED_MESSAGE = (
     "Orchestra is temporarily disabled while its execution and context isolation contracts are being hardened."
 )
@@ -2543,6 +2561,7 @@ class AgentLoop:
                     elif not record.reversible:
                         # Successful mutation but non-reversible — emit a UI-only
                         # diagnostic event but do NOT append to the undo stack.
+                        record.tool_name = _audit_tool_name(record.tool_name)
                         log_debug(
                             f"mutation not added to undo stack because it is not reversible: {record.description}"
                         )
@@ -2554,6 +2573,7 @@ class AgentLoop:
                             reverse_args=record.reverse_arguments,
                         )
                     else:
+                        record.tool_name = _audit_tool_name(record.tool_name)
                         with self._mutation_lock:
                             self._mutation_log.append(record)
                         log_debug(f"Mutation recorded: {record.description}")

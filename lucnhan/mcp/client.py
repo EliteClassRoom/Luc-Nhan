@@ -217,8 +217,9 @@ def _unwrap_exception(exc: BaseException) -> str:
         parts = []
         for sub in exc.exceptions:
             parts.append(_unwrap_exception(sub))
-        return "; ".join(parts)
-    return str(exc)
+        return "; ".join(parts) or type(exc).__name__
+    # An exception may stringify to "" — keep something the user can act on.
+    return str(exc) or type(exc).__name__
 
 
 def _safe_errlog():

@@ -280,3 +280,19 @@ class TestCodexRetryableErrors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPositiveInt(unittest.TestCase):
+    def test_bool_is_not_a_number(self):
+        # ``True`` would otherwise come back as 1 and a ``true`` flag in the
+        # model payload would masquerade as a one-token limit.
+        assert CodexProvider._positive_int(True) is None
+        assert CodexProvider._positive_int(False) is None
+
+    def test_positive_numbers_survive(self):
+        assert CodexProvider._positive_int(272000) == 272000
+        assert CodexProvider._positive_int("4096") == 4096
+
+    def test_zero_negative_and_junk_fall_back(self):
+        for value in (0, -1, "junk", None, [1]):
+            assert CodexProvider._positive_int(value) is None
