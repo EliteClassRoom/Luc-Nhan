@@ -305,6 +305,39 @@ class TestBundleImport:
             import_workspace_bundle(tampered_path, target_repo)
         target_store.close()
 
+    def test_relation_to_unknown_entity_names_the_endpoint(self, tmp_path: Path) -> None:
+        """A tampered relation must not surface as a bare KeyError."""
+        import hashlib
+        import json as _json
+        import zipfile
+
+        bundle = _seed_and_export(tmp_path)
+        target_store, target_repo, _ = _open_target(tmp_path, "memory_relation")
+
+        with zipfile.ZipFile(bundle, "r") as src:
+            manifest_data = _json.loads(src.read("manifest.json"))
+            entry = next(f for f in manifest_data["files"] if f["name"] == "records/relations.jsonl")
+            record = _json.loads(src.read(entry["name"]).splitlines()[0])
+            record["payload"]["src"] = "ghost-entity"
+            payload = _json.dumps(record, separators=(",", ":")).encode("utf-8") + b"\n"
+
+        entry["sha256"] = hashlib.sha256(payload).hexdigest()
+        entry["uncompressed_size"] = len(payload)
+
+        doctored = tmp_path / "dangling.zip"
+        with zipfile.ZipFile(bundle, "r") as src, zipfile.ZipFile(doctored, "w", zipfile.ZIP_DEFLATED) as dst:
+            for item in src.infolist():
+                if item.filename == "manifest.json":
+                    dst.writestr(item, _json.dumps(manifest_data).encode("utf-8"))
+                elif item.filename == entry["name"]:
+                    dst.writestr(item, payload)
+                else:
+                    dst.writestr(item, src.read(item.filename))
+
+        with pytest.raises(ValueError, match="unknown entity 'ghost-entity'"):
+            import_workspace_bundle(doctored, target_repo)
+        target_store.close()
+
     def test_oversized_member_rejected_before_full_inflation(self, tmp_path: Path) -> None:
         """A member whose manifest declares a smaller uncompressed_size than
         reality must be rejected without blowing memory.

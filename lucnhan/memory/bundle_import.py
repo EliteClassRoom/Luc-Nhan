@@ -270,8 +270,8 @@ def import_workspace_bundle(
                     if not _relation_payload_matches(existing_relation, payload, id_map):
                         raise BundleImportConflictError(f"import destination conflict: {new_id}")
                     continue
-                src_id = id_map[("entity", str(payload.get("src", "")))]
-                dst_id = id_map[("entity", str(payload.get("dst", "")))]
+                src_id = _relation_endpoint(id_map, payload, "src", new_id)
+                dst_id = _relation_endpoint(id_map, payload, "dst", new_id)
                 staged_relations.append(
                     KnowledgeRelation(
                         id=new_id,
@@ -348,11 +348,27 @@ def _relation_payload_matches(
     predicate, and confidence.
     """
     return (
-        existing.src == id_map[("entity", str(payload.get("src", "")))]
+        existing.src == _relation_endpoint(id_map, payload, "src", existing.id)
         and existing.predicate == str(payload.get("predicate", "related_to"))
-        and existing.dst == id_map[("entity", str(payload.get("dst", "")))]
+        and existing.dst == _relation_endpoint(id_map, payload, "dst", existing.id)
         and existing.confidence == _payload_float(payload, "confidence", 0.5)
     )
+
+
+def _relation_endpoint(
+    id_map: dict[tuple[str, str], str], payload: dict[str, object], side: str, record_id: str
+) -> str:
+    """Resolve one relation endpoint, reporting the dangling name.
+
+    A tampered or hand-edited bundle can carry a relation whose entity is
+    missing; the bare ``KeyError`` that produced named neither the
+    relation nor the endpoint.
+    """
+    name = str(payload.get(side, ""))
+    try:
+        return id_map[("entity", name)]
+    except KeyError:
+        raise ValueError(f"relation {record_id} references unknown entity {name!r} ({side})") from None
 
 
 def _payload_float(payload: dict[str, object], key: str, default: float) -> float:
