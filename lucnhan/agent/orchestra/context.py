@@ -11,7 +11,7 @@ CHAR_TO_TOKEN_ESTIMATE = 4
 
 def sanitize_context(context: str) -> str:
     """Sanitize context by stripping injection markers."""
-    from ..core.sanitize import strip_injection_markers
+    from ...core.sanitize import strip_injection_markers
 
     return strip_injection_markers(context)
 
