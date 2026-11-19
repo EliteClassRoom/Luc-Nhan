@@ -808,7 +808,10 @@ class A2ABridgeWidget(QWidget):
             _OutputDialog(row.agent_name, row.task_excerpt, text, self).exec()
         except Exception as exc:
             logger.debug("A2A output: dialog failed", exc_info=exc)
-            QMessageBox(self).setText(text or "(no output)") or None
+            box = QMessageBox(self)
+            box.setWindowTitle(f"{row.agent_name} — output")
+            box.setText(text or "(no output)")
+            box.exec()
 
     def _on_clear_history_clicked(self) -> None:
         """Drop completed/failed rows from the table. In-flight rows stay."""

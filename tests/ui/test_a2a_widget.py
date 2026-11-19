@@ -470,6 +470,49 @@ class TestShutdown(unittest.TestCase):
         self.assertEqual(len(w._inflight), 0)
 
 
+class TestViewOutput(unittest.TestCase):
+    """The view-output button opens the dialog with the row's own text."""
+
+    @staticmethod
+    def _armed_widget(task_id: str, **fields) -> tuple:
+        from lucnhan.ui.a2a_widget import _HistoryRow
+
+        w, fixtures = _build_widget_with_mocks()
+        row = _HistoryRow(task_id=task_id, agent_name="claude", task_excerpt="do x")
+        for key, value in fields.items():
+            setattr(row, key, value)
+        w._history[task_id] = row
+        w._history_table.currentRow.return_value = 0
+        w._history_table.item.return_value.data.return_value = task_id
+        return w, fixtures
+
+    def test_dialog_gets_row_data(self) -> None:
+        w, _fixtures = self._armed_widget("task-1", result_text="the full result")
+
+        with patch("lucnhan.ui.a2a_widget._OutputDialog", create=True) as dialog:
+            w._on_view_output_clicked()
+
+        dialog.assert_called_once_with("claude", "do x", "the full result", w)
+        dialog.return_value.exec.assert_called_once_with()
+
+    def test_error_text_is_shown_when_nothing_streamed(self) -> None:
+        w, _fixtures = self._armed_widget("task-2", error_text="boom")
+
+        with patch("lucnhan.ui.a2a_widget._OutputDialog", create=True) as dialog:
+            w._on_view_output_clicked()
+
+        self.assertEqual(dialog.call_args[0][2], "boom")
+
+    def test_no_selection_does_nothing(self) -> None:
+        w, _fixtures = _build_widget_with_mocks()
+        w._history_table.currentRow.return_value = -1
+
+        with patch("lucnhan.ui.a2a_widget._OutputDialog", create=True) as dialog:
+            w._on_view_output_clicked()
+
+        dialog.assert_not_called()
+
+
 class TestHistoryRowModel(unittest.TestCase):
     """The _HistoryRow dataclass behaves as expected."""
 
